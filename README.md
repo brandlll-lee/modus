@@ -13,6 +13,10 @@
   <img alt="Local first" src="https://img.shields.io/badge/local--first-yes-16a34a">
 </p>
 
+<p align="center">
+  English | <a href="./README.zh-CN.md">简体中文</a>
+</p>
+
 ---
 
 Modus is an open-source, local-first alternative to the modern Cursor Agent Window.
