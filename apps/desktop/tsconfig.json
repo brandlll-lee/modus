@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node", "vite/client"],
+    "paths": {
+      "@renderer/*": ["./src/renderer/src/*"],
+      "@preload/*": ["./src/preload/*"],
+      "@main/*": ["./src/main/*"]
+    }
+  },
+  "include": [
+    "electron.vite.config.ts",
+    "electron-builder.config.ts",
+    "src/**/*.ts",
+    "src/**/*.tsx"
+  ]
+}

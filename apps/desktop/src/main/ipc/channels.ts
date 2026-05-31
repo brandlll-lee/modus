@@ -1,0 +1,25 @@
+export const IPC_CHANNELS = {
+  appVersion: "app:version",
+  securityState: "app:security-state",
+  workspaceOpen: "workspace:open",
+  workspaceList: "workspace:list",
+  agentCreate: "agent:create",
+  agentPrompt: "agent:prompt",
+  agentAbort: "agent:abort",
+  agentEvent: "agent:event",
+  terminalCreate: "terminal:create",
+  terminalWrite: "terminal:write",
+  terminalResize: "terminal:resize",
+  terminalKill: "terminal:kill",
+  terminalEvent: "terminal:event",
+  diffList: "diff:list",
+  diffRead: "diff:read",
+  diffRevert: "diff:revert",
+  worktreeList: "worktree:list",
+  worktreeCreate: "worktree:create",
+  worktreeDelete: "worktree:delete",
+  permissionDecide: "permission:decide",
+  permissionList: "permission:list",
+} as const;
+
+export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS];

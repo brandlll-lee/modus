@@ -1,0 +1,36 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.4.16/schema.json",
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": true
+    }
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "double",
+      "semicolons": "always",
+      "trailingCommas": "all"
+    }
+  },
+  "files": {
+    "includes": [
+      "**",
+      "!**/node_modules",
+      "!**/target",
+      "!**/.cargo-home",
+      "!**/out",
+      "!**/dist",
+      "!**/.modus-cache",
+      "!package-lock.json",
+      "!.cursor",
+      "!MODUS_V0.1.0_EXECUTION_PLAN.md"
+    ]
+  }
+}

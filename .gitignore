@@ -1,0 +1,13 @@
+node_modules/
+.cursor/
+target/
+.cargo-home/
+out/
+dist/
+coverage/
+.modus-cache/
+*.log
+.DS_Store
+.env
+.env.*
+!.env.example
