@@ -1,10 +1,111 @@
 @import "tailwindcss";
 
+/*
+ * Modus 设计系统 v4 —— 像素级对标 Cursor 3.0 桌面端：
+ *   - 字号一档 11–12.5px，全局 -0.011em 负字距，禁止字号忽大忽小
+ *   - hairline 极淡（≤ 6% 白），靠明度承载层级
+ *   - composer 背景接近 canvas，只浮起一丝（不再像旧版 surface 那么深）
+ *   - 强调色仅用于 send 等极少处，平时全灰阶
+ */
+@theme {
+  /* 纯深黑分层：主区/Chat 纯深黑，侧栏/Inspector 仅一丝提亮，composer 在主区上轻微浮起 */
+  --color-canvas: #131314; /* 主区 / Chat（纯深黑） */
+  --color-panel: #161617; /* 侧栏 / Inspector（一丝提亮） */
+  --color-surface: #1c1c1d; /* 输入框（在主区上轻浮起，对比克制） */
+  --color-elevated: #232325; /* 下拉 / 弹层 */
+
+  /* hairline 三级 —— 用途分层（明度对齐 Cursor 实测）：
+     - soft (0.03)     内部 list 分隔、超细分割
+     - hairline (0.05) 浮起元素细描边（composer、popup、tooltip、pill）
+     - strong (0.065)  区域级分隔（menubar 底、sidebar 右、inspector 左）
+       —— 6.5% 白：在 #131314 上目测刚好"可见但不抢戏"，0.10 会过亮显脏 */
+  --color-hairline: rgba(255, 255, 255, 0.05);
+  --color-hairline-soft: rgba(255, 255, 255, 0.03);
+  --color-hairline-strong: rgba(255, 255, 255, 0.065);
+
+  /* 悬停 / 选中 半透明白叠层 */
+  --color-hover: rgba(255, 255, 255, 0.04);
+  --color-active: rgba(255, 255, 255, 0.06);
+
+  /* 文本灰阶 —— 用颜色做层级，不靠字号 */
+  --color-fg: #e4e4e3;
+  --color-fg-muted: #b4b4b1;
+  --color-fg-subtle: #8a8a87;
+  --color-fg-faint: #5a5a5d;
+
+  /* 单一品牌电压：Cursor Orange，仅用于主操作（发送）等极少处 */
+  --color-accent: #f54e00;
+  --color-accent-hover: #ff5e12;
+  --color-accent-active: #d04200;
+  --color-on-accent: #ffffff;
+
+  /* 语义色：仅真正的成功/错误状态，平时不出现 */
+  --color-success: #3fae87;
+  --color-danger: #e5687a;
+
+  /* 字体：Inter Variable（自托管，CursorGothic 官方替代），代码面 JetBrains Mono Variable。
+     CSP font-src 'self' 满足；不联网。 */
+  --font-sans:
+    "Inter Variable", "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+  --font-mono:
+    "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Code", Consolas,
+    monospace;
+
+  /* 字号阶梯 —— 校准 Cursor 桌面 Agent Window：
+     2xs 11 → status / kbd
+     xs  12 → Pro Plan 副行、底部副文案
+     sm  13 → 侧栏 nav、面包屑、模型选择器、账户名（主体字号）
+     md  14 → composer textarea/placeholder（输入区）
+     lg  15 → 暂不使用
+     体系核心：用颜色做层级，字号阶梯本身用 13px 主导，避免"过分小" */
+  --text-2xs: 11px;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-md: 14px;
+  --text-lg: 15px;
+
+  /* 圆角阶梯（DESIGN.md：xs4 / sm6 / md8 / lg12 / xl16 / pill） */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+
+  /* hairline-only 纵深：仅给浮层一抹极淡阴影 */
+  --shadow-composer: 0 1px 10px -6px rgba(0, 0, 0, 0.5);
+  --shadow-popup: 0 6px 24px -10px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.06);
+
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
 :root {
   color-scheme: dark;
-  font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  background: #09090b;
+  font-family: var(--font-sans);
+  background: var(--color-canvas);
+  /* DESIGN.md：CursorGothic 替代是 Inter + letter-spacing -1.5%。
+     桌面端正文 11-13px 区间需要这个负字距才能贴出"精致" */
+  letter-spacing: -0.015em;
+  font-feature-settings: "cv11", "ss01", "ss03";
+  font-variation-settings: "opsz" 16;
+  font-synthesis-weight: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* 全局默认行高与字重，避免某些控件回退到浏览器默认（16px / bold） */
+html,
+body,
+button,
+input,
+textarea,
+select {
+  font-family: var(--font-sans);
+  font-weight: 400;
+  font-feature-settings: "cv11", "ss01", "ss03";
 }
 
 * {
@@ -15,9 +116,79 @@ body {
   min-width: 1120px;
   margin: 0;
   overflow: hidden;
+  color: var(--color-fg);
+  background: var(--color-canvas);
 }
 
 button,
-textarea {
+textarea,
+input {
   font: inherit;
+  letter-spacing: inherit;
+}
+
+/* Base UI portal 层叠上下文 */
+#root,
+.app-root {
+  isolation: isolate;
+  height: 100vh;
+}
+
+/* Electron 自定义标题栏拖拽 */
+@layer utilities {
+  .app-drag {
+    -webkit-app-region: drag;
+  }
+  .app-no-drag {
+    -webkit-app-region: no-drag;
+  }
+  /* 略紧的标题字距，呼应 DESIGN.md 负字距原则 */
+  .tracking-snug {
+    letter-spacing: -0.02em;
+  }
+}
+
+/* 极简滚动条：默认隐形，悬停容器时淡出现 */
+@layer base {
+  .scroll-thin {
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+  }
+  .scroll-thin:hover {
+    scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
+  }
+  .scroll-thin::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  .scroll-thin::-webkit-scrollbar-thumb {
+    background-color: transparent;
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  .scroll-thin:hover::-webkit-scrollbar-thumb {
+    background-color: rgba(255, 255, 255, 0.12);
+  }
+  .scroll-thin::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+}
+
+/* Magic UI TypingAnimation — cursor blink */
+@keyframes blink-cursor {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@layer utilities {
+  .animate-blink-cursor {
+    animation: blink-cursor 1s step-end infinite;
+  }
 }

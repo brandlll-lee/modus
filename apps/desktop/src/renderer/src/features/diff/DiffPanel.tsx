@@ -1,10 +1,38 @@
+import { IconFileDiff, IconRefresh } from "@tabler/icons-react";
 import * as monaco from "monaco-editor";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { FileChange } from "../../../../shared/contracts";
+import { EmptyState, PanelHeader } from "../../components/ui/Panel";
+import { cn } from "../../lib/cn";
 
 type DiffPanelProps = {
   cwd?: string | undefined;
 };
+
+let themeDefined = false;
+function ensureTheme(): void {
+  if (themeDefined) {
+    return;
+  }
+  // 自定义 Monaco 主题，背景与 inspector 面板对齐，diff 高亮保持低饱和
+  monaco.editor.defineTheme("modus-dark", {
+    base: "vs-dark",
+    inherit: true,
+    rules: [],
+    colors: {
+      "editor.background": "#171718",
+      "editorGutter.background": "#171718",
+      "minimap.background": "#171718",
+      "editor.lineHighlightBackground": "#ffffff08",
+      "editorLineNumber.foreground": "#4c4c50",
+      "diffEditor.insertedTextBackground": "#ffffff10",
+      "diffEditor.removedTextBackground": "#00000033",
+      "diffEditor.insertedLineBackground": "#ffffff08",
+      "diffEditor.removedLineBackground": "#0000001f",
+    },
+  });
+  themeDefined = true;
+}
 
 export function DiffPanel({ cwd }: DiffPanelProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -17,11 +45,16 @@ export function DiffPanel({ cwd }: DiffPanelProps) {
       return;
     }
 
+    ensureTheme();
     const editor = monaco.editor.createDiffEditor(containerRef.current, {
       automaticLayout: true,
       readOnly: true,
-      theme: "vs-dark",
+      theme: "modus-dark",
       minimap: { enabled: false },
+      fontSize: 12,
+      fontFamily: "JetBrains Mono, Consolas, monospace",
+      renderOverviewRuler: false,
+      scrollBeyondLastLine: false,
     });
     editorRef.current = editor;
 
@@ -59,36 +92,52 @@ export function DiffPanel({ cwd }: DiffPanelProps) {
   }, [cwd, selectedPath]);
 
   return (
-    <section className="flex min-h-80 flex-col border-zinc-800 border-t">
-      <div className="flex items-center justify-between px-4 py-2">
-        <h2 className="font-medium text-sm text-zinc-100">Diff Review</h2>
+    <section className="flex h-full min-h-0 flex-col">
+      <PanelHeader title="Changes">
         <button
-          className="rounded-lg border border-zinc-700 px-3 py-1 text-xs text-zinc-300 disabled:opacity-40"
+          className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-fg-subtle transition-colors hover:bg-hover hover:text-fg disabled:opacity-40"
           disabled={!cwd}
           onClick={() => void refreshChanges(cwd)}
           type="button"
         >
-          Refresh
+          <IconRefresh size={13} stroke={1.6} /> Refresh
         </button>
-      </div>
-      <div className="flex min-h-72 flex-1">
-        <div className="w-44 overflow-auto border-zinc-800 border-r p-2">
+      </PanelHeader>
+
+      <div className="flex min-h-0 flex-1">
+        <div className="scroll-thin w-44 shrink-0 overflow-y-auto px-2 pb-2">
           {changes.length === 0 ? (
-            <div className="text-xs text-zinc-500">No changes</div>
+            <div className="px-1 py-2 text-2xs text-fg-faint">No changes</div>
           ) : (
-            changes.map((change) => (
-              <button
-                className="mb-2 w-full rounded-lg border border-zinc-800 p-2 text-left text-xs text-zinc-300"
-                key={`${change.status}:${change.path}`}
-                onClick={() => setSelectedPath(change.path)}
-                type="button"
-              >
-                <span className="text-zinc-500">{change.status}</span> {change.path}
-              </button>
-            ))
+            changes.map((change) => {
+              const selected = selectedPath === change.path;
+              return (
+                <button
+                  className={cn(
+                    "mb-0.5 flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-xs transition-colors",
+                    selected ? "bg-active text-fg" : "text-fg-muted hover:bg-hover hover:text-fg",
+                  )}
+                  key={`${change.status}:${change.path}`}
+                  onClick={() => setSelectedPath(change.path)}
+                  type="button"
+                >
+                  <span className="font-mono text-fg-faint">{change.status}</span>
+                  <span className="truncate">{change.path}</span>
+                </button>
+              );
+            })
           )}
         </div>
-        <div className="min-h-72 flex-1" ref={containerRef} />
+        <div className="relative min-h-0 flex-1">
+          {changes.length === 0 ? (
+            <EmptyState
+              className="absolute inset-0"
+              hint={cwd ? "Working tree is clean." : "Open a workspace to review changes."}
+              icon={<IconFileDiff size={22} stroke={1.4} />}
+            />
+          ) : null}
+          <div className="h-full w-full" ref={containerRef} />
+        </div>
       </div>
     </section>
   );

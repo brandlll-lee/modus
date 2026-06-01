@@ -63,4 +63,11 @@ export type ModusApi = {
     create(input: { cwd: string; taskId: string }): Promise<WorktreeInfo>;
     delete(input: { cwd: string; path: string }): Promise<void>;
   };
+  window: {
+    minimize(): Promise<void>;
+    toggleMaximize(): Promise<void>;
+    close(): Promise<void>;
+    getState(): Promise<{ maximized: boolean }>;
+    onStateChange(listener: (state: { maximized: boolean }) => void): () => void;
+  };
 };

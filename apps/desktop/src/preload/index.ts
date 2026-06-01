@@ -49,6 +49,19 @@ const api: ModusApi = {
     create: (input) => ipcRenderer.invoke("worktree:create", input),
     delete: (input) => ipcRenderer.invoke("worktree:delete", input),
   },
+  window: {
+    minimize: () => ipcRenderer.invoke("window:minimize") as Promise<void>,
+    toggleMaximize: () => ipcRenderer.invoke("window:toggle-maximize") as Promise<void>,
+    close: () => ipcRenderer.invoke("window:close") as Promise<void>,
+    getState: () =>
+      ipcRenderer.invoke("window:state") as Promise<{ maximized: boolean }>,
+    onStateChange: (callback) => {
+      const listener = (_event: IpcRendererEvent, payload: unknown) =>
+        callback(payload as { maximized: boolean });
+      ipcRenderer.on("window:state-event", listener);
+      return () => ipcRenderer.removeListener("window:state-event", listener);
+    },
+  },
 };
 
 contextBridge.exposeInMainWorld("modus", api);

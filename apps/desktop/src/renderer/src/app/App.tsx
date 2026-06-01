@@ -1,284 +1,27 @@
-import { useEffect, useState } from "react";
+import { IconArrowUpRight, IconChevronDown, IconLayoutSidebarRight } from "@tabler/icons-react";
+import { AnimatePresence, LazyMotion, domAnimation, m } from "motion/react";
+import { type ReactNode, useEffect, useState } from "react";
+import type { SecurityState } from "../../../preload/types";
 import type { AgentEvent, AgentSessionInfo, WorkspaceInfo } from "../../../shared/contracts";
-import { StatusPill } from "../components/StatusPill";
-import { DiffPanel } from "../features/diff/DiffPanel";
-import { TerminalPanel } from "../features/terminal/TerminalPanel";
-import { changedFiles, sessions, timeline } from "./sample-data";
-
-type SecurityState = {
-  contextIsolation: boolean;
-  nodeIntegration: boolean;
-  sandbox: boolean;
-  senderValidation: boolean;
-};
-
-function getSessionTone(status: string): "neutral" | "success" | "warning" {
-  if (status === "Running") {
-    return "success";
-  }
-
-  if (status === "Queued") {
-    return "warning";
-  }
-
-  return "neutral";
-}
-
-function Sidebar({
-  workspaces,
-  activeWorkspace,
-  onOpenWorkspace,
-  onSelectWorkspace,
-  agentSession,
-}: {
-  workspaces: WorkspaceInfo[];
-  activeWorkspace: WorkspaceInfo | null;
-  onOpenWorkspace(): void;
-  onSelectWorkspace(workspace: WorkspaceInfo): void;
-  agentSession: AgentSessionInfo | null;
-}) {
-  return (
-    <aside className="flex min-w-72 flex-col border-zinc-800 border-r bg-zinc-950/80">
-      <div className="border-zinc-800 border-b p-4">
-        <div className="text-zinc-500 text-xs uppercase tracking-[0.22em]">Workspaces</div>
-        <div className="mt-3 space-y-2">
-          {workspaces.map((workspace) => (
-            <button
-              className="w-full rounded-xl border border-zinc-800 bg-zinc-900/70 p-3 text-left transition hover:border-zinc-700 hover:bg-zinc-900"
-              key={workspace.id}
-              onClick={() => onSelectWorkspace(workspace)}
-              type="button"
-            >
-              <div className="flex items-center justify-between gap-3">
-                <span className="font-medium text-sm text-zinc-100">{workspace.displayName}</span>
-                <StatusPill tone={activeWorkspace?.id === workspace.id ? "success" : "neutral"}>
-                  {activeWorkspace?.id === workspace.id ? "Active" : "Recent"}
-                </StatusPill>
-              </div>
-              <div className="mt-1 truncate text-xs text-zinc-500">{workspace.rootPath}</div>
-            </button>
-          ))}
-          <button
-            className="w-full rounded-xl border border-dashed border-zinc-700 p-3 text-center text-sm text-zinc-300 transition hover:bg-zinc-900"
-            onClick={onOpenWorkspace}
-            type="button"
-          >
-            Open local workspace
-          </button>
-        </div>
-      </div>
-
-      <div className="flex-1 overflow-auto p-4">
-        <div className="flex items-center justify-between">
-          <div className="text-zinc-500 text-xs uppercase tracking-[0.22em]">Agent Sessions</div>
-          <button
-            className="rounded-lg border border-zinc-700 px-2 py-1 text-xs text-zinc-300 transition hover:bg-zinc-800"
-            type="button"
-          >
-            New
-          </button>
-        </div>
-        <div className="mt-3 space-y-2">
-          {agentSession ? (
-            <button
-              className="w-full rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-left"
-              type="button"
-            >
-              <div className="font-medium text-sm text-zinc-100">{agentSession.title}</div>
-              <div className="mt-1 text-xs text-emerald-300">{agentSession.status}</div>
-            </button>
-          ) : null}
-          {sessions.map((session) => (
-            <button
-              className="w-full rounded-xl border border-zinc-800 bg-zinc-950 p-3 text-left transition hover:border-zinc-700 hover:bg-zinc-900"
-              key={session.id}
-              type="button"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className="font-medium text-sm text-zinc-100">{session.title}</div>
-                  <div className="mt-1 text-xs text-zinc-500">{session.branch}</div>
-                </div>
-                <StatusPill tone={getSessionTone(session.status)}>{session.status}</StatusPill>
-              </div>
-              <div className="mt-3 text-xs text-zinc-500">{session.model}</div>
-            </button>
-          ))}
-        </div>
-      </div>
-    </aside>
-  );
-}
-
-function Timeline({
-  activeWorkspace,
-  agentSession,
-  agentEvents,
-  onCreateAgent,
-  onPromptAgent,
-}: {
-  activeWorkspace: WorkspaceInfo | null;
-  agentSession: AgentSessionInfo | null;
-  agentEvents: Array<{ id: string; event: AgentEvent }>;
-  onCreateAgent(): void;
-  onPromptAgent(message: string): void;
-}) {
-  const [prompt, setPrompt] = useState("");
-
-  return (
-    <main className="flex min-w-0 flex-1 flex-col bg-zinc-950">
-      <header className="flex items-center justify-between border-zinc-800 border-b px-6 py-4">
-        <div>
-          <h1 className="font-semibold text-lg text-zinc-50">Agent Window</h1>
-          <p className="text-sm text-zinc-500">
-            {activeWorkspace
-              ? activeWorkspace.rootPath
-              : "Open a local repository to start a pi-powered session."}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <StatusPill tone="success">M2-M7</StatusPill>
-          <StatusPill>{activeWorkspace?.isGitRepository ? "Git" : "No Git"}</StatusPill>
-        </div>
-      </header>
-
-      <section className="flex-1 overflow-auto px-6 py-5">
-        <div className="mx-auto max-w-4xl space-y-4">
-          {timeline.map((item) => (
-            <article
-              className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4"
-              key={item.id}
-            >
-              <div className="flex items-center justify-between">
-                <div className="font-medium text-sm text-zinc-100">{item.title}</div>
-                <StatusPill tone={item.role === "tool" ? "warning" : "neutral"}>
-                  {item.role}
-                </StatusPill>
-              </div>
-              <p className="mt-3 text-sm leading-6 text-zinc-300">{item.body}</p>
-            </article>
-          ))}
-          {agentEvents.map(({ event, id }) => (
-            <article className="rounded-2xl border border-zinc-800 bg-black/40 p-4" key={id}>
-              <div className="font-medium text-sm text-zinc-100">{event.type}</div>
-              <pre className="mt-3 whitespace-pre-wrap text-xs text-zinc-400">
-                {JSON.stringify(event, null, 2)}
-              </pre>
-            </article>
-          ))}
-        </div>
-      </section>
-
-      <footer className="border-zinc-800 border-t bg-zinc-950 p-4">
-        <div className="mx-auto max-w-4xl rounded-2xl border border-zinc-800 bg-zinc-900 p-3 shadow-2xl">
-          <div className="mb-2 flex items-center gap-2 text-xs text-zinc-500">
-            <span>@file</span>
-            <span>@folder</span>
-            <span>@git-diff</span>
-            <span>@terminal</span>
-            <span>@session</span>
-          </div>
-          <textarea
-            className="min-h-20 w-full resize-none bg-transparent text-sm text-zinc-100 outline-none placeholder:text-zinc-600"
-            onChange={(event) => setPrompt(event.target.value)}
-            placeholder="Ask the local agent to work on this repo..."
-            value={prompt}
-          />
-          <div className="mt-3 flex items-center justify-between">
-            <div className="text-xs text-zinc-500">
-              Enter queues while running. Ctrl+Enter sends now.
-            </div>
-            <button
-              className="rounded-xl bg-zinc-100 px-4 py-2 font-medium text-sm text-zinc-950"
-              disabled={!agentSession}
-              onClick={() => {
-                onPromptAgent(prompt);
-                setPrompt("");
-              }}
-              type="button"
-            >
-              Send
-            </button>
-            <button
-              className="ml-2 rounded-xl border border-zinc-700 px-4 py-2 font-medium text-sm text-zinc-200 disabled:opacity-40"
-              disabled={!activeWorkspace || Boolean(agentSession)}
-              onClick={onCreateAgent}
-              type="button"
-            >
-              Start pi
-            </button>
-          </div>
-        </div>
-      </footer>
-    </main>
-  );
-}
-
-function Inspector({
-  securityState,
-  activeWorkspace,
-}: {
-  securityState: SecurityState | null;
-  activeWorkspace: WorkspaceInfo | null;
-}) {
-  return (
-    <aside className="flex w-96 flex-col border-zinc-800 border-l bg-zinc-950/90">
-      <div className="border-zinc-800 border-b p-4">
-        <div className="text-zinc-500 text-xs uppercase tracking-[0.22em]">Inspector</div>
-        <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs">
-          <StatusPill>Diff</StatusPill>
-          <StatusPill>Terminal</StatusPill>
-          <StatusPill>Context</StatusPill>
-        </div>
-      </div>
-
-      <section className="border-zinc-800 border-b p-4">
-        <h2 className="font-medium text-sm text-zinc-100">Changed Files</h2>
-        <div className="mt-3 space-y-2">
-          {changedFiles.map((file) => (
-            <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3" key={file.path}>
-              <div className="truncate text-sm text-zinc-200">{file.path}</div>
-              <div className="mt-1 flex justify-between text-xs text-zinc-500">
-                <span>{file.status}</span>
-                <span>{file.lines}</span>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="border-zinc-800 border-b p-4">
-        <h2 className="font-medium text-sm text-zinc-100">Security Baseline</h2>
-        <div className="mt-3 space-y-2 text-sm">
-          {securityState ? (
-            Object.entries(securityState).map(([key, value]) => (
-              <div className="flex items-center justify-between" key={key}>
-                <span className="text-zinc-500">{key}</span>
-                <StatusPill tone={value ? "success" : "danger"}>{String(value)}</StatusPill>
-              </div>
-            ))
-          ) : (
-            <div className="text-zinc-500">Loading preload IPC state...</div>
-          )}
-        </div>
-      </section>
-
-      <DiffPanel cwd={activeWorkspace?.rootPath} />
-      <TerminalPanel cwd={activeWorkspace?.rootPath} workspaceId={activeWorkspace?.id} />
-    </aside>
-  );
-}
+import { Sidebar } from "../components/Sidebar";
+import { Tooltip, TooltipProvider } from "../components/ui/Tooltip";
+import { cn } from "../lib/cn";
+import { Timeline } from "../features/agent/Timeline";
+import { Composer } from "../features/composer/Composer";
+import { Inspector } from "../features/inspector/Inspector";
 
 export function App() {
-  const [version, setVersion] = useState<string>("dev");
   const [securityState, setSecurityState] = useState<SecurityState | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([]);
   const [activeWorkspace, setActiveWorkspace] = useState<WorkspaceInfo | null>(null);
   const [agentSession, setAgentSession] = useState<AgentSessionInfo | null>(null);
   const [agentEvents, setAgentEvents] = useState<Array<{ id: string; event: AgentEvent }>>([]);
+  const [model, setModel] = useState("pi-default");
 
   useEffect(() => {
-    void window.modus.app.version().then(setVersion);
+    if (!window.modus) {
+      return;
+    }
     void window.modus.app.securityState().then(setSecurityState);
     void window.modus.workspace.list().then((items: WorkspaceInfo[]) => {
       setWorkspaces(items);
@@ -294,60 +37,361 @@ export function App() {
 
   async function openWorkspace(): Promise<void> {
     const workspace = await window.modus.workspace.open();
-
     if (!workspace) {
       return;
     }
-
     setActiveWorkspace(workspace);
     setWorkspaces(await window.modus.workspace.list());
   }
 
-  async function createAgent(): Promise<void> {
+  async function ensureSession(): Promise<AgentSessionInfo | null> {
+    if (agentSession) {
+      return agentSession;
+    }
     if (!activeWorkspace) {
-      return;
+      return null;
     }
-
-    setAgentSession(
-      await window.modus.agent.create({
-        workspaceId: activeWorkspace.id,
-        cwd: activeWorkspace.rootPath,
-        title: "Modus local agent",
-      }),
-    );
+    const session = await window.modus.agent.create({
+      workspaceId: activeWorkspace.id,
+      cwd: activeWorkspace.rootPath,
+      title: "Modus local agent",
+    });
+    setAgentSession(session);
+    return session;
   }
 
-  function promptAgent(message: string): void {
-    if (!agentSession || !message.trim()) {
+  async function submitPrompt(message: string): Promise<void> {
+    if (!message.trim()) {
       return;
     }
-
-    void window.modus.agent.prompt({ sessionId: agentSession.id, message });
+    const session = await ensureSession();
+    if (!session) {
+      return;
+    }
+    void window.modus.agent.prompt({ sessionId: session.id, message });
   }
+
+  const hasSession = Boolean(agentSession);
 
   return (
-    <div className="flex h-screen flex-col bg-zinc-950 text-zinc-100">
-      <div className="flex h-10 items-center justify-between border-zinc-800 border-b bg-zinc-950 px-4">
-        <div className="font-semibold text-sm">Modus</div>
-        <div className="text-xs text-zinc-500">v{version} · local-first desktop</div>
+    // LazyMotion + domAnimation：只加载 transform/opacity 等 DOM 动画 features，bundle 缩减 60%、
+    // 减少 SSR/初始化 cost。所有 motion. 改用更轻量的 m. 组件。
+    <LazyMotion features={domAnimation} strict>
+      <TooltipProvider>
+        <div className="app-root flex h-screen flex-col bg-canvas text-fg">
+          {/* Row 1: Cursor 风格 menubar（32px）—— 品牌 + File/Edit/View/Help + 右侧给 window controls 留位 */}
+          <MenuBar />
+
+          {/* Row 2: 三栏内容 */}
+          <div className="flex min-h-0 flex-1">
+            <Sidebar
+              activeWorkspace={activeWorkspace}
+              agentSession={agentSession}
+              canCreateSession={Boolean(activeWorkspace) && !hasSession}
+              onNewSession={() => void ensureSession()}
+              onOpenWorkspace={() => void openWorkspace()}
+              onSelectWorkspace={setActiveWorkspace}
+              workspaces={workspaces}
+            />
+
+            <main className="relative flex min-w-0 flex-1 flex-col bg-canvas">
+              {/* 面包屑栏 36px —— 居中三段 chip，右侧复刻 Cursor 的轻量图标区 */}
+              <header className="relative flex h-9 shrink-0 items-center px-3">
+                <div className="flex-1" />
+                <Breadcrumb activeWorkspace={activeWorkspace} />
+                <div className="flex flex-1 items-center justify-end pr-2">
+                  <HeaderActions />
+                </div>
+              </header>
+
+              <AnimatePresence initial={false} mode="wait">
+                {hasSession ? (
+                  <m.div
+                    animate={{ opacity: 1 }}
+                    className="flex min-h-0 flex-1 flex-col"
+                    exit={{ opacity: 0 }}
+                    initial={{ opacity: 0 }}
+                    key="conversation"
+                    transition={{ duration: 0.12, ease: "easeOut" }}
+                  >
+                    <div className="scroll-thin min-h-0 flex-1 overflow-y-auto">
+                      <Timeline agentEvents={agentEvents} />
+                    </div>
+                    <div className="shrink-0 px-6 pb-5">
+                      <div className="mx-auto max-w-3xl">
+                        <Composer
+                          canSubmit={Boolean(activeWorkspace)}
+                          hasSession
+                          model={model}
+                          onModelChange={setModel}
+                          onSubmit={(message) => void submitPrompt(message)}
+                        />
+                      </div>
+                    </div>
+                  </m.div>
+                ) : (
+                  <m.div
+                    animate={{ opacity: 1 }}
+                    className="flex min-h-0 flex-1 flex-col items-center justify-center px-6"
+                    exit={{ opacity: 0 }}
+                    initial={{ opacity: 0 }}
+                    key="hero"
+                    transition={{ duration: 0.12, ease: "easeOut" }}
+                  >
+                    <div className="w-full max-w-[680px] -translate-y-8">
+                      <Composer
+                        canSubmit={Boolean(activeWorkspace)}
+                        hasSession={false}
+                        model={model}
+                        onModelChange={setModel}
+                        onSubmit={(message) => void submitPrompt(message)}
+                      />
+                      <div className="mt-4 flex items-center justify-center gap-2">
+                        <Pill
+                          disabled={!activeWorkspace}
+                          onClick={() => void ensureSession()}
+                          shortcut="⌥Tab"
+                        >
+                          Plan New Idea
+                        </Pill>
+                        <Pill onClick={() => void openWorkspace()}>Use Your Model</Pill>
+                      </div>
+                    </div>
+                    <p className="absolute bottom-5 text-xs font-normal text-fg-faint">
+                      Bring your own model to Modus for local, private, context-aware agent work.
+                    </p>
+                  </m.div>
+                )}
+              </AnimatePresence>
+            </main>
+
+            {hasSession ? (
+              <Inspector activeWorkspace={activeWorkspace} securityState={securityState} />
+            ) : null}
+          </div>
+        </div>
+      </TooltipProvider>
+    </LazyMotion>
+  );
+}
+
+/**
+ * 顶部 menubar 行 —— 整行 36px 高，自绘 titlebar：
+ *   - 左侧 BrandMark + File/Edit/View/Help（menubar 区，app-drag）
+ *   - 右侧 WindowControls 自绘 min/max/close（无 native overlay，无越界）
+ * 这样 hover 命中区域完全由 CSS 控制，永远不会超出 menubar 高度。
+ */
+function MenuBar() {
+  return (
+    <div className="app-drag flex h-9 shrink-0 items-center border-hairline-strong border-b bg-canvas">
+      <div className="flex flex-1 items-center gap-0.5 pl-2.5">
+        <BrandMark />
+        <MenuItem>File</MenuItem>
+        <MenuItem>Edit</MenuItem>
+        <MenuItem>View</MenuItem>
+        <MenuItem>Help</MenuItem>
       </div>
-      <div className="flex min-h-0 flex-1">
-        <Sidebar
-          activeWorkspace={activeWorkspace}
-          agentSession={agentSession}
-          onOpenWorkspace={() => void openWorkspace()}
-          onSelectWorkspace={setActiveWorkspace}
-          workspaces={workspaces}
-        />
-        <Timeline
-          activeWorkspace={activeWorkspace}
-          agentEvents={agentEvents}
-          agentSession={agentSession}
-          onCreateAgent={() => void createAgent()}
-          onPromptAgent={promptAgent}
-        />
-        <Inspector activeWorkspace={activeWorkspace} securityState={securityState} />
-      </div>
+      <WindowControls />
     </div>
+  );
+}
+
+function BrandMark() {
+  return (
+    <div className="mr-1 flex size-7 items-center justify-center text-fg-muted">
+      <svg
+        aria-hidden
+        fill="none"
+        height="15"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.7"
+        viewBox="0 0 24 24"
+        width="15"
+      >
+        <title>Modus</title>
+        <path d="M12 2.5l9 5v9l-9 5-9-5v-9z" />
+        <path d="M12 7.5l4.5 2.5v5L12 17.5 7.5 15v-5z" />
+      </svg>
+    </div>
+  );
+}
+
+function MenuItem({ children }: { children: string }) {
+  return (
+    <button
+      className={cn(
+        "app-no-drag flex h-7 items-center rounded-md px-2 text-xs font-normal text-fg-muted",
+        "transition-colors hover:bg-hover hover:text-fg",
+      )}
+      type="button"
+    >
+      {children}
+    </button>
+  );
+}
+
+/**
+ * 自绘 Caption Buttons —— 严格被 menubar 36px 高度包覆，hover 区域不越界。
+ * Windows 风格：min/max/close 三键，close hover 用 #c42b1c 高亮。
+ * 命中区域 46×36（与 Windows 11 native caption buttons 一致），但绘制完全 CSS 控制。
+ */
+function WindowControls() {
+  const [maximized, setMaximized] = useState(false);
+
+  useEffect(() => {
+    if (!window.modus?.window) {
+      return;
+    }
+    void window.modus.window.getState().then((state: { maximized: boolean }) => {
+      setMaximized(state.maximized);
+    });
+    return window.modus.window.onStateChange((state: { maximized: boolean }) => {
+      setMaximized(state.maximized);
+    });
+  }, []);
+
+  return (
+    <div className="app-no-drag flex h-full shrink-0 items-stretch">
+      <CaptionButton label="Minimize" onClick={() => void window.modus?.window.minimize()}>
+        <svg aria-hidden height="10" viewBox="0 0 10 10" width="10">
+          <title>Minimize</title>
+          <path d="M0 5h10" stroke="currentColor" strokeWidth="1" />
+        </svg>
+      </CaptionButton>
+      <CaptionButton
+        label={maximized ? "Restore" : "Maximize"}
+        onClick={() => void window.modus?.window.toggleMaximize()}
+      >
+        {maximized ? (
+          <svg aria-hidden height="10" viewBox="0 0 10 10" width="10">
+            <title>Restore</title>
+            <path
+              d="M2.5 0.5h7v7h-2M0.5 2.5h7v7h-7v-7"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1"
+            />
+          </svg>
+        ) : (
+          <svg aria-hidden height="10" viewBox="0 0 10 10" width="10">
+            <title>Maximize</title>
+            <path d="M0.5 0.5h9v9h-9z" fill="none" stroke="currentColor" strokeWidth="1" />
+          </svg>
+        )}
+      </CaptionButton>
+      <CaptionButton
+        danger
+        label="Close"
+        onClick={() => void window.modus?.window.close()}
+      >
+        <svg aria-hidden height="10" viewBox="0 0 10 10" width="10">
+          <title>Close</title>
+          <path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" strokeWidth="1" />
+        </svg>
+      </CaptionButton>
+    </div>
+  );
+}
+
+function CaptionButton({
+  children,
+  label,
+  onClick,
+  danger = false,
+}: {
+  children: ReactNode;
+  label: string;
+  onClick(): void;
+  danger?: boolean;
+}) {
+  return (
+    <button
+      aria-label={label}
+      className={cn(
+        "flex h-full w-[46px] items-center justify-center text-fg-muted transition-colors",
+        danger ? "hover:bg-[#c42b1c] hover:text-white" : "hover:bg-hover hover:text-fg",
+      )}
+      onClick={onClick}
+      type="button"
+    >
+      {children}
+    </button>
+  );
+}
+
+function Breadcrumb({ activeWorkspace }: { activeWorkspace: WorkspaceInfo | null }) {
+  return (
+    <div className="app-no-drag flex items-center gap-0.5 text-sm font-normal text-fg-muted">
+      <BreadcrumbItem>{activeWorkspace?.displayName ?? "No workspace"}</BreadcrumbItem>
+      <BreadcrumbItem>main</BreadcrumbItem>
+      <BreadcrumbItem>Local</BreadcrumbItem>
+    </div>
+  );
+}
+
+function BreadcrumbItem({ children }: { children: string }) {
+  return (
+    <button
+      className="flex items-center gap-1 rounded-md px-2 py-1 transition-colors hover:bg-hover hover:text-fg"
+      type="button"
+    >
+      <span className="max-w-40 truncate">{children}</span>
+      <IconChevronDown className="text-fg-faint" size={11} stroke={2} />
+    </button>
+  );
+}
+
+function HeaderActions() {
+  return (
+    <div className="app-no-drag flex h-7 items-center gap-1">
+      <HeaderIconButton label="Open editor window">
+        <IconArrowUpRight size={13} stroke={1.65} />
+      </HeaderIconButton>
+      <HeaderIconButton label="Toggle right sidebar">
+        <IconLayoutSidebarRight size={14} stroke={1.55} />
+      </HeaderIconButton>
+    </div>
+  );
+}
+
+function HeaderIconButton({ children, label }: { children: ReactNode; label: string }) {
+  return (
+    <Tooltip content={label}>
+      <button
+        aria-label={label}
+        className="flex size-6 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-hover hover:text-fg-subtle"
+        type="button"
+      >
+        {children}
+      </button>
+    </Tooltip>
+  );
+}
+
+function Pill({
+  children,
+  onClick,
+  shortcut,
+  disabled = false,
+}: {
+  children: string;
+  onClick(): void;
+  shortcut?: string;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      className="flex items-center gap-1.5 rounded-full border border-hairline bg-white/2.5 px-3 py-[5px] text-xs font-normal text-fg-muted transition-colors hover:bg-white/6 hover:text-fg active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-white/2.5 disabled:hover:text-fg-muted"
+      disabled={disabled}
+      onClick={onClick}
+      type="button"
+    >
+      <span>{children}</span>
+      {shortcut ? (
+        <kbd className="font-sans text-2xs font-normal text-fg-faint">{shortcut}</kbd>
+      ) : null}
+    </button>
   );
 }

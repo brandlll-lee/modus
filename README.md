@@ -1,9 +1,7 @@
-<p align="center">
-  <h1 align="center">Modus</h1>
-  <p align="center">
-    The local-first Agent Window for open-source coding agents.
-  </p>
-</p>
+<div align="center">
+  <h1>Modus</h1>
+  <p><b>The open-source, local-first alternative to the Cursor 3.0 Agent Window.</b></p>
+</div>
 
 <p align="center">
   <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0-blue"></a>
@@ -17,55 +15,72 @@
   English | <a href="./README.zh-CN.md">简体中文</a>
 </p>
 
+<p align="center">
+  Run coding agents against your own repositories. Bring your own models through <code>pi</code>,
+  keep every line of code on your machine, and review every change before it lands.
+</p>
+
 ---
 
-Modus is an open-source, local-first alternative to the modern Cursor Agent Window.
+Modus is an open-source coding agent cockpit. It is **not a VS Code fork** — it is a focused
+desktop app built around the workflow that actually matters when an agent edits your code:
+**real terminal control, Git diff review, worktree isolation, and permission gates**, all
+backed by local metadata storage.
 
-It is not a VS Code fork. It is a focused desktop app for running coding agents against
-your local repositories, with real terminal control, Git diffs, worktrees, permission
-gates, and local metadata storage.
+**Your code stays on your machine. Your runtime is swappable. The UI is open source.**
 
-Bring your own models through `pi`, keep your code on your machine, and review every
-change before it lands.
+> Modus V0.1.0 is an engineering MVP. The desktop foundation is working end to end; the
+> product is moving fast toward a full Cursor-class Agent Window.
 
-> Modus V0.1.0 is an engineering MVP. The desktop foundation is working; the product is
-> still moving fast.
+## Demo
+
+<p align="center">
+  <video src="https://github.com/brandlll-lee/modus/releases/download/readme-demo-assets/Modu001.mp4" controls muted width="100%"></video>
+</p>
+
+If the video does not render inline, [watch the demo](https://github.com/brandlll-lee/modus/releases/download/readme-demo-assets/Modu001.mp4).
 
 ## Why Modus
 
-Most coding agents either live inside a closed IDE, a terminal-only interface, or a
-cloud workflow. Modus is built around a different bet:
+Most coding agents live inside a closed IDE, a terminal-only interface, or a cloud workflow.
+Modus is built around a different bet:
 
-- The agent UI should be open source.
-- The default execution path should be local-first.
-- Terminal, diff, permissions, and worktrees should be first-class product surfaces.
-- The runtime should be swappable instead of locked to one vendor.
-- The desktop app should feel like an agent cockpit, not a generic editor fork.
+- The agent UI should be **open source**.
+- The default execution path should be **local-first**.
+- Terminal, diff, permissions, and worktrees should be **first-class product surfaces**.
+- The runtime should be **swappable**, not locked to one vendor.
+- The desktop app should feel like an **agent cockpit**, not a generic editor fork.
 
-## Current Features
+## Features
 
-| Area | Status | What Works in V0.1.0 |
-| --- | --- | --- |
-| Desktop app | MVP | Electron desktop shell, secure preload bridge, React Agent Window UI |
-| Local workspaces | MVP | Open folders, remember recent workspaces, detect Git repositories |
-| Agent runtime | MVP | `pi --mode rpc` adapter, JSONL parsing, prompt/abort/event mapping |
-| Terminal | MVP | Real PTY sessions through the Rust `modus-pty-host` sidecar and `xterm.js` |
-| Diff review | MVP | Git changed-file scanner and Monaco diff viewer |
-| Permissions | MVP | Permission decision model, local persistence, IPC surface |
-| Worktrees | MVP | Git worktree list/create/delete IPC |
-| Packaging | MVP | Windows NSIS installer smoke test passes |
+| Feature | What works in V0.1.0 |
+| --- | --- |
+| **Agent Window** | Electron desktop shell with a secure preload bridge and a React Agent Window UI |
+| **Local Workspaces** | Open folders, remember recent workspaces, auto-detect Git repositories |
+| **Bring Your Own Model** | `pi --mode rpc` adapter with JSONL parsing and prompt / abort / event mapping |
+| **Real Terminal** | True PTY sessions through the Rust `modus-pty-host` sidecar and `xterm.js` |
+| **Diff Review** | Git changed-file scanner with a Monaco-powered diff viewer |
+| **Permission Gates** | Permission decision model, local persistence, and a typed IPC surface |
+| **Worktree Isolation** | Git worktree list / create / delete over IPC |
+| **Local-first Storage** | Workspace and session metadata stored locally via SQLite |
+| **Windows Packaging** | NSIS installer that passes a packaging smoke test |
 
-## Screenshots
+## How We Compare
 
-The first public screenshots will land with the next UI polish pass.
+| | Modus | Cursor | GitHub Copilot | Continue |
+|---|:---:|:---:|:---:|:---:|
+| Open source | ✅ | ❌ | ❌ | ✅ |
+| Local-first by default | ✅ | ❌ | ❌ | ⚠️ |
+| Standalone app (not a VS Code fork/extension) | ✅ | ⚠️ fork | ❌ | ❌ |
+| Real PTY terminal control | ✅ | ✅ | ❌ | ❌ |
+| Built-in Git diff review | ✅ | ✅ | ⚠️ | ⚠️ |
+| Permission gates for dangerous actions | ✅ | ⚠️ | ❌ | ❌ |
+| Git worktree isolation | ✅ | ❌ | ❌ | ❌ |
+| Swappable agent runtime | ✅ | ❌ | ❌ | ✅ |
+| Your code stays on your machine | ✅ | ⚠️ | ❌ | ✅ |
 
-For now, V0.1.0 contains the first Agent Window shell:
-
-- workspace/session sidebar
-- agent timeline and composer
-- security state panel
-- Git diff review panel
-- real terminal panel
+> ⚠️ = partial, vendor-dependent, or opt-in. Modus is early — this table is where we are
+> aiming, and most rows already work in V0.1.0.
 
 ## Architecture
 
@@ -91,10 +106,10 @@ Modus Desktop
       └─ portable-pty over PTY / ConPTY / openpty
 ```
 
-The key design choice is that Modus stays TypeScript-first at the product layer while
-moving low-level terminal control into a small Rust sidecar. This avoids Electron native
-addon rebuild problems and gives Modus a cleaner path toward terminal persistence,
-agent handoff, and crash isolation.
+The key design choice: Modus stays **TypeScript-first** at the product layer while moving
+low-level terminal control into a **small Rust sidecar**. This avoids Electron native addon
+rebuild problems and gives Modus a cleaner path toward terminal persistence, agent handoff,
+and crash isolation.
 
 ## Tech Stack
 
@@ -122,15 +137,10 @@ agent handoff, and crash isolation.
 - Git
 - `pi` available on your PATH for agent runtime experiments
 
-### Install
+### Install and run
 
 ```bash
 npm install
-```
-
-### Run the Desktop App
-
-```bash
 npm run dev
 ```
 
@@ -173,59 +183,44 @@ modus/
 └─ MODUS_V0.1.0_EXECUTION_PLAN.md
 ```
 
-## What V0.1.0 Is
-
-V0.1.0 is the foundation:
-
-- a working desktop shell
-- a local workspace model
-- a real terminal architecture
-- a Git diff surface
-- a permission model
-- a worktree model
-- a `pi` runtime adapter
-- a Windows packaging smoke path
-
-## What V0.1.0 Is Not Yet
-
-Modus is not yet a complete Cursor replacement.
-
-Still in progress:
-
-- polished production UI
-- full `@` context picker
-- complete permission prompts for every dangerous action
-- mature `pi` end-to-end workflows
-- terminal persistence and replay
-- multi-agent orchestration UI
-- macOS/Linux packaging smoke
-- signing, icons, auto-update, release channels
-
 ## Roadmap
 
 ### V0.2
 
-- real context picker for files, folders, diffs, terminal output, and sessions
-- stronger permission prompts and audit trail
-- terminal buffering and backpressure
-- better diff review actions
-- first usable `pi` task loop from prompt to patch
+- Real context picker for files, folders, diffs, terminal output, and sessions
+- Stronger permission prompts and an audit trail
+- Terminal buffering and backpressure
+- Better diff review actions
+- First usable `pi` task loop from prompt to patch
 
 ### V0.3
 
-- parallel local agents
-- worktree-backed task isolation
-- session replay and branching
-- richer tool call cards
-- agent review workflow
+- Parallel local agents
+- Worktree-backed task isolation
+- Session replay and branching
+- Richer tool call cards
+- Agent review workflow
 
 ### Later
 
-- cloud handoff as an optional feature
+- Cloud handoff as an optional feature
 - MCP server management
-- semantic/codegraph context
-- official website and docs
-- cross-platform signed releases
+- Semantic / codegraph context
+- Official website and docs
+- Cross-platform signed releases
+
+## What V0.1.0 Is Not Yet
+
+Modus is not yet a complete Cursor replacement. Still in progress:
+
+- Polished production UI
+- Full `@` context picker
+- Complete permission prompts for every dangerous action
+- Mature `pi` end-to-end workflows
+- Terminal persistence and replay
+- Multi-agent orchestration UI
+- macOS / Linux packaging smoke
+- Signing, icons, auto-update, release channels
 
 ## Development Commands
 
@@ -252,17 +247,20 @@ cargo check -p modus-pty-host
 
 Modus is early. The best contributions right now are:
 
-- bug reports with logs and repro steps
-- Windows/macOS/Linux packaging feedback
+- Bug reports with logs and repro steps
+- Windows / macOS / Linux packaging feedback
 - UI/UX critique for the Agent Window
 - `pi` runtime integration fixes
-- terminal sidecar improvements
-- documentation and examples
+- Terminal sidecar improvements
+- Documentation and examples
 
 Before opening large PRs, please start with an issue or design note so the architecture
 stays coherent.
 
 ## License
 
-Modus is open source under the AGPL-3.0 license.
+Modus is open source under the [AGPL-3.0](./LICENSE) license.
 
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=brandlll-lee/modus&type=Date)](https://www.star-history.com/#brandlll-lee/modus&Date)

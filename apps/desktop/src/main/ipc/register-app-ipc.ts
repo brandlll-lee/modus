@@ -161,4 +161,31 @@ export function registerAppIpc(): void {
     assertTrustedSender(event);
     await deleteWorktree(input.cwd, input.path);
   });
+
+  // 自绘 titlebar 的窗口控制 IPC —— 走 sender-validated 通道，不暴露原始 ipcRenderer
+  ipcMain.handle(IPC_CHANNELS.windowMinimize, (event) => {
+    assertTrustedSender(event);
+    getSenderWindow(event).minimize();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.windowToggleMaximize, (event) => {
+    assertTrustedSender(event);
+    const window = getSenderWindow(event);
+    if (window.isMaximized()) {
+      window.unmaximize();
+    } else {
+      window.maximize();
+    }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.windowClose, (event) => {
+    assertTrustedSender(event);
+    getSenderWindow(event).close();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.windowState, (event) => {
+    assertTrustedSender(event);
+    const window = getSenderWindow(event);
+    return { maximized: window.isMaximized() };
+  });
 }

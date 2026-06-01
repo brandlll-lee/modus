@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { BrowserWindow, shell } from "electron";
+import { IPC_CHANNELS } from "../ipc/channels";
 
 const currentDir = fileURLToPath(new URL(".", import.meta.url));
 const EXTERNAL_PROTOCOLS = new Set(["https:", "http:"]);
@@ -22,8 +23,14 @@ export function createMainWindow(): BrowserWindow {
     minWidth: 1120,
     minHeight: 720,
     title: "Modus",
-    backgroundColor: "#09090b",
+    backgroundColor: "#131314",
     show: false,
+    // 彻底放弃 Windows native window controls overlay —— 它的 caption buttons 绘制 + hover 命中区
+    // 由系统决定，不严格遵循 titleBarOverlay.height，会"伸出" menubar。
+    // 改用 frame: false 完全自绘 titlebar：renderer 内 MenuBar + WindowControls，通过 IPC 调
+    // win.minimize / win.maximize / win.unmaximize / win.close。
+    // thickFrame: true（默认）保留 Windows 的 resize handle 与窗口阴影。
+    frame: false,
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,
@@ -33,8 +40,21 @@ export function createMainWindow(): BrowserWindow {
     },
   });
 
+  // 把 maximize/unmaximize 状态推送给 renderer，用于切换 max/restore 按钮图标
+  const sendState = (): void => {
+    if (window.isDestroyed()) {
+      return;
+    }
+    window.webContents.send(IPC_CHANNELS.windowStateEvent, {
+      maximized: window.isMaximized(),
+    });
+  };
+  window.on("maximize", sendState);
+  window.on("unmaximize", sendState);
+
   window.once("ready-to-show", () => {
     window.show();
+    sendState();
   });
 
   window.webContents.setWindowOpenHandler(({ url }) => {

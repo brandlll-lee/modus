@@ -20,6 +20,12 @@ export const IPC_CHANNELS = {
   worktreeDelete: "worktree:delete",
   permissionDecide: "permission:decide",
   permissionList: "permission:list",
+  // 自绘 titlebar：renderer 调 IPC 触发 window 操作，main 反推 maximize 状态以同步图标
+  windowMinimize: "window:minimize",
+  windowToggleMaximize: "window:toggle-maximize",
+  windowClose: "window:close",
+  windowState: "window:state",
+  windowStateEvent: "window:state-event",
 } as const;
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS];
