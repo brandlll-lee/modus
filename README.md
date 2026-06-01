@@ -16,6 +16,12 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/brandlll-lee/modus/releases/download/readme-demo-assets/Modu001.mp4">
+    <img alt="Modus demo" src="./docs/media/modus-demo.gif" width="100%">
+  </a>
+</p>
+
+<p align="center">
   Run coding agents against your own repositories. Bring your own models through <code>pi</code>,
   keep every line of code on your machine, and review every change before it lands.
 </p>
@@ -31,14 +37,6 @@ backed by local metadata storage.
 
 > Modus V0.1.0 is an engineering MVP. The desktop foundation is working end to end; the
 > product is moving fast toward a full Cursor-class Agent Window.
-
-## Demo
-
-<p align="center">
-  <video src="https://github.com/brandlll-lee/modus/releases/download/readme-demo-assets/Modu001.mp4" controls muted width="100%"></video>
-</p>
-
-If the video does not render inline, [watch the demo](https://github.com/brandlll-lee/modus/releases/download/readme-demo-assets/Modu001.mp4).
 
 ## Why Modus
 

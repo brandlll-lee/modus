@@ -16,6 +16,12 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/brandlll-lee/modus/releases/download/readme-demo-assets/Modu001.mp4">
+    <img alt="Modus demo" src="./docs/media/modus-demo.gif" width="100%">
+  </a>
+</p>
+
+<p align="center">
   让编码 Agent 在你自己的仓库中运行。通过 <code>pi</code> 接入你自己的模型，
   让每一行代码都留在本地，并在每个改动落地前完成审查。
 </p>
@@ -28,14 +34,6 @@ Modus 是一个开源的编码 Agent 驾驶舱。它**不是 VS Code 分支**，
 **代码留在你的机器上，运行时可替换，UI 完全开源。**
 
 > Modus V0.1.0 是工程化 MVP。桌面端基础能力已端到端打通，产品正在快速迭代，目标是成为完整的 Cursor 级 Agent Window。
-
-## Demo
-
-<p align="center">
-  <video src="https://github.com/brandlll-lee/modus/releases/download/readme-demo-assets/Modu001.mp4" controls muted width="100%"></video>
-</p>
-
-如果视频没有内联渲染，可以[直接观看 Demo](https://github.com/brandlll-lee/modus/releases/download/readme-demo-assets/Modu001.mp4)。
 
 ## 为什么是 Modus
 
