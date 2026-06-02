@@ -256,9 +256,7 @@ function Shortcut({ children }: { children: string }) {
 
 function SectionLabel({ children }: { children: string }) {
   // 区段标签 13px、灰色、上 16px 间距，正常大小写
-  return (
-    <div className="px-2 pt-4 pb-1 text-sm font-normal text-fg-subtle">{children}</div>
-  );
+  return <div className="px-2 pt-4 pb-1 text-sm font-normal text-fg-subtle">{children}</div>;
 }
 
 function Avatar() {

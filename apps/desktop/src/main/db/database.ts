@@ -5,6 +5,17 @@ import { app } from "electron";
 
 let database: DatabaseSync | undefined;
 
+function hasColumn(db: DatabaseSync, table: string, column: string): boolean {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  return rows.some((row) => row.name === column);
+}
+
+function addColumn(db: DatabaseSync, table: string, column: string, definition: string): void {
+  if (!hasColumn(db, table, column)) {
+    db.exec(`alter table ${table} add column ${column} ${definition}`);
+  }
+}
+
 function migrate(db: DatabaseSync): void {
   db.exec(`
     create table if not exists workspaces (
@@ -33,7 +44,47 @@ function migrate(db: DatabaseSync): void {
       decision text not null,
       created_at text not null
     );
+
+    create table if not exists agent_events (
+      id text primary key,
+      session_id text not null references agent_sessions(id) on delete cascade,
+      type text not null,
+      payload_json text not null,
+      created_at text not null
+    );
+
+    create table if not exists terminal_outputs (
+      terminal_id text primary key,
+      workspace_id text not null,
+      cwd text not null,
+      output text not null,
+      updated_at text not null
+    );
+
+    create table if not exists docs_sources (
+      id text primary key,
+      workspace_id text not null,
+      title text not null,
+      path text,
+      url text,
+      created_at text not null,
+      updated_at text not null
+    );
+
+    create table if not exists docs_chunks (
+      id text primary key,
+      source_id text not null references docs_sources(id) on delete cascade,
+      heading text,
+      content text not null,
+      ordinal integer not null
+    );
   `);
+
+  addColumn(db, "agent_sessions", "runtime", "text not null default 'pi-sdk'");
+  addColumn(db, "agent_sessions", "model", "text");
+  addColumn(db, "agent_sessions", "pi_session_id", "text");
+  addColumn(db, "agent_sessions", "pi_session_file", "text");
+  addColumn(db, "agent_sessions", "worktree_path", "text");
 }
 
 export function getDatabase(): DatabaseSync {

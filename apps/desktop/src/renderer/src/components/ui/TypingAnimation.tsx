@@ -1,19 +1,19 @@
 import {
+  type DOMMotionComponents,
+  type HTMLMotionProps,
+  type MotionProps,
+  motion,
+  useInView,
+} from "motion/react";
+import {
+  type ComponentType,
+  type RefAttributes,
+  type RefObject,
   useEffect,
   useMemo,
   useRef,
   useState,
-  type ComponentType,
-  type RefAttributes,
-  type RefObject,
 } from "react";
-import {
-  motion,
-  useInView,
-  type DOMMotionComponents,
-  type HTMLMotionProps,
-  type MotionProps,
-} from "motion/react";
 import { cn } from "../../lib/cn";
 
 const motionElements = {
@@ -83,30 +83,27 @@ export function TypingAnimation({
     once: true,
   });
 
-  const wordsToAnimate = useMemo(
-    () => words ?? (children ? [children] : []),
-    [words, children],
-  );
+  const wordsToAnimate = useMemo(() => words ?? (children ? [children] : []), [words, children]);
   const hasMultipleWords = wordsToAnimate.length > 1;
 
   const typingSpeed = typeSpeed ?? duration;
   const deletingSpeed = deleteSpeed ?? typingSpeed / 2;
 
   const shouldStart = startOnView ? isInView : true;
-  const animationSourceKey = useMemo(
-    () => (words ? words.join("\u0000") : (children ?? "")),
-    [words, children],
-  );
-
-  useEffect(() => {
-    setDisplayedText("");
-    setCurrentWordIndex(0);
-    setCurrentCharIndex(0);
-    setPhase("typing");
-  }, [animationSourceKey]);
+  const animationSourceKey = words ? words.join("\u0000") : (children ?? "");
+  const lastAnimationSourceKey = useRef(animationSourceKey);
 
   useEffect(() => {
     let timeout: ReturnType<typeof setTimeout> | null = null;
+
+    if (lastAnimationSourceKey.current !== animationSourceKey) {
+      lastAnimationSourceKey.current = animationSourceKey;
+      setDisplayedText("");
+      setCurrentWordIndex(0);
+      setCurrentCharIndex(0);
+      setPhase("typing");
+      return;
+    }
 
     if (shouldStart && wordsToAnimate.length > 0) {
       const timeoutDelay =
@@ -160,6 +157,7 @@ export function TypingAnimation({
     };
   }, [
     shouldStart,
+    animationSourceKey,
     phase,
     currentCharIndex,
     currentWordIndex,

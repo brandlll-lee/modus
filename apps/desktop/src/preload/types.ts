@@ -1,10 +1,18 @@
 import type {
+  AddDocInput,
   AgentEvent,
   AgentSessionInfo,
+  ContextItem,
+  ContextKind,
+  ContextSuggestion,
+  DocHit,
+  DocSource,
   FileChange,
   FileDiff,
+  ModelInfo,
   PermissionAction,
   PermissionDecision,
+  ResolvedContext,
   TerminalEvent,
   TerminalInfo,
   WorkspaceInfo,
@@ -28,9 +36,19 @@ export type ModusApi = {
     list(): Promise<WorkspaceInfo[]>;
   };
   agent: {
-    create(input: { workspaceId: string; cwd: string; title: string }): Promise<AgentSessionInfo>;
-    prompt(input: { sessionId: string; message: string }): Promise<void>;
+    create(input: {
+      workspaceId: string;
+      cwd: string;
+      title: string;
+      model?: string;
+    }): Promise<AgentSessionInfo>;
+    prompt(input: { sessionId: string; message: string; context?: ContextItem[] }): Promise<void>;
     abort(sessionId: string): Promise<void>;
+    setModel(input: { sessionId: string; model: string }): Promise<AgentSessionInfo>;
+    cycleModel(input: {
+      sessionId?: string;
+      direction?: "forward" | "backward";
+    }): Promise<ModelInfo>;
     onEvent(callback: (event: AgentEvent) => void): () => void;
   };
   terminal: {
@@ -43,6 +61,7 @@ export type ModusApi = {
     write(input: { terminalId: string; data: string }): Promise<void>;
     resize(input: { terminalId: string; cols: number; rows: number }): Promise<void>;
     kill(terminalId: string): Promise<void>;
+    list(): Promise<TerminalInfo[]>;
     onEvent(callback: (event: TerminalEvent) => void): () => void;
   };
   diff: {
@@ -62,6 +81,24 @@ export type ModusApi = {
     list(cwd: string): Promise<WorktreeInfo[]>;
     create(input: { cwd: string; taskId: string }): Promise<WorktreeInfo>;
     delete(input: { cwd: string; path: string }): Promise<void>;
+  };
+  context: {
+    search(input: {
+      workspaceId: string;
+      cwd: string;
+      query: string;
+      kind?: ContextKind;
+    }): Promise<ContextSuggestion[]>;
+    resolve(input: { cwd: string; items: ContextItem[] }): Promise<ResolvedContext[]>;
+  };
+  docs: {
+    list(workspaceId: string): Promise<DocSource[]>;
+    add(input: AddDocInput): Promise<DocSource>;
+    search(input: { workspaceId: string; query: string }): Promise<DocHit[]>;
+  };
+  model: {
+    list(): Promise<ModelInfo[]>;
+    setDefault(model: string): Promise<void>;
   };
   window: {
     minimize(): Promise<void>;

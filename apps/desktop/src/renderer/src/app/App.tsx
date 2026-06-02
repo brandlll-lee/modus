@@ -1,14 +1,20 @@
 import { IconArrowUpRight, IconChevronDown, IconLayoutSidebarRight } from "@tabler/icons-react";
-import { AnimatePresence, LazyMotion, domAnimation, m } from "motion/react";
-import { type ReactNode, useEffect, useState } from "react";
+import { AnimatePresence, domAnimation, LazyMotion, m } from "motion/react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 import type { SecurityState } from "../../../preload/types";
-import type { AgentEvent, AgentSessionInfo, WorkspaceInfo } from "../../../shared/contracts";
+import type {
+  AgentEvent,
+  AgentSessionInfo,
+  ContextItem,
+  ModelInfo,
+  WorkspaceInfo,
+} from "../../../shared/contracts";
 import { Sidebar } from "../components/Sidebar";
 import { Tooltip, TooltipProvider } from "../components/ui/Tooltip";
-import { cn } from "../lib/cn";
 import { Timeline } from "../features/agent/Timeline";
 import { Composer } from "../features/composer/Composer";
 import { Inspector } from "../features/inspector/Inspector";
+import { cn } from "../lib/cn";
 
 export function App() {
   const [securityState, setSecurityState] = useState<SecurityState | null>(null);
@@ -16,6 +22,8 @@ export function App() {
   const [activeWorkspace, setActiveWorkspace] = useState<WorkspaceInfo | null>(null);
   const [agentSession, setAgentSession] = useState<AgentSessionInfo | null>(null);
   const [agentEvents, setAgentEvents] = useState<Array<{ id: string; event: AgentEvent }>>([]);
+  const [contextItems, setContextItems] = useState<ContextItem[]>([]);
+  const [models, setModels] = useState<ModelInfo[]>([]);
   const [model, setModel] = useState("pi-default");
 
   useEffect(() => {
@@ -27,9 +35,13 @@ export function App() {
       setWorkspaces(items);
       setActiveWorkspace(items[0] ?? null);
     });
+    void window.modus.model.list().then((items: ModelInfo[]) => {
+      setModels(items);
+      setModel(items.find((item) => item.available)?.id ?? items[0]?.id ?? "pi-default");
+    });
     return window.modus.agent.onEvent((event: AgentEvent) => {
       setAgentEvents((events) => [
-        ...events.slice(-20),
+        ...events.slice(-200),
         { id: `${Date.now()}:${crypto.randomUUID()}`, event },
       ]);
     });
@@ -54,13 +66,14 @@ export function App() {
     const session = await window.modus.agent.create({
       workspaceId: activeWorkspace.id,
       cwd: activeWorkspace.rootPath,
+      model,
       title: "Modus local agent",
     });
     setAgentSession(session);
     return session;
   }
 
-  async function submitPrompt(message: string): Promise<void> {
+  async function submitPrompt(message: string, context: ContextItem[]): Promise<void> {
     if (!message.trim()) {
       return;
     }
@@ -68,8 +81,43 @@ export function App() {
     if (!session) {
       return;
     }
-    void window.modus.agent.prompt({ sessionId: session.id, message });
+    void window.modus.agent.prompt({ context, sessionId: session.id, message });
   }
+
+  async function changeModel(nextModel: string): Promise<void> {
+    setModel(nextModel);
+    await window.modus.model.setDefault(nextModel);
+    if (agentSession) {
+      const nextSession = await window.modus.agent.setModel({
+        sessionId: agentSession.id,
+        model: nextModel,
+      });
+      setAgentSession(nextSession);
+    }
+  }
+
+  const cycleModel = useCallback(
+    async (direction: "forward" | "backward"): Promise<void> => {
+      const next = await window.modus.agent.cycleModel({
+        direction,
+        sessionId: agentSession?.id,
+      });
+      setModel(next.id);
+    },
+    [agentSession],
+  );
+
+  useEffect(() => {
+    function handleModelCycle(event: globalThis.KeyboardEvent): void {
+      if (event.ctrlKey && event.key === "/") {
+        event.preventDefault();
+        void cycleModel(event.shiftKey ? "backward" : "forward");
+      }
+    }
+
+    window.addEventListener("keydown", handleModelCycle);
+    return () => window.removeEventListener("keydown", handleModelCycle);
+  }, [cycleModel]);
 
   const hasSession = Boolean(agentSession);
 
@@ -121,10 +169,15 @@ export function App() {
                       <div className="mx-auto max-w-3xl">
                         <Composer
                           canSubmit={Boolean(activeWorkspace)}
+                          contextItems={contextItems}
+                          cwd={activeWorkspace?.rootPath}
                           hasSession
                           model={model}
-                          onModelChange={setModel}
-                          onSubmit={(message) => void submitPrompt(message)}
+                          models={models}
+                          onContextChange={setContextItems}
+                          onModelChange={(next) => void changeModel(next)}
+                          onSubmit={(message, context) => void submitPrompt(message, context)}
+                          workspaceId={activeWorkspace?.id}
                         />
                       </div>
                     </div>
@@ -141,10 +194,15 @@ export function App() {
                     <div className="w-full max-w-[680px] -translate-y-8">
                       <Composer
                         canSubmit={Boolean(activeWorkspace)}
+                        contextItems={contextItems}
+                        cwd={activeWorkspace?.rootPath}
                         hasSession={false}
                         model={model}
-                        onModelChange={setModel}
-                        onSubmit={(message) => void submitPrompt(message)}
+                        models={models}
+                        onContextChange={setContextItems}
+                        onModelChange={(next) => void changeModel(next)}
+                        onSubmit={(message, context) => void submitPrompt(message, context)}
+                        workspaceId={activeWorkspace?.id}
                       />
                       <div className="mt-4 flex items-center justify-center gap-2">
                         <Pill
@@ -281,11 +339,7 @@ function WindowControls() {
           </svg>
         )}
       </CaptionButton>
-      <CaptionButton
-        danger
-        label="Close"
-        onClick={() => void window.modus?.window.close()}
-      >
+      <CaptionButton danger label="Close" onClick={() => void window.modus?.window.close()}>
         <svg aria-hidden height="10" viewBox="0 0 10 10" width="10">
           <title>Close</title>
           <path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" strokeWidth="1" />

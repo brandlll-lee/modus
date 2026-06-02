@@ -8,9 +8,13 @@ import {
 } from "@tabler/icons-react";
 import { AnimatePresence, m } from "motion/react";
 import { type KeyboardEvent, useState } from "react";
+import type { ContextItem, ContextSuggestion, ModelInfo } from "../../../../shared/contracts";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { TypingAnimation } from "../../components/ui/TypingAnimation";
 import { cn } from "../../lib/cn";
+import { ContextMentionMenu } from "./ContextMentionMenu";
+import { ContextToken } from "./ContextToken";
+import { useComposerMentions } from "./useComposerMentions";
 
 const HERO_PLACEHOLDER_WORDS = [
   "Plan, build, / for skills, @ for context",
@@ -23,34 +27,95 @@ const SESSION_PLACEHOLDER_WORDS = [
   "Ask a follow-up…  / for skills, @ for context",
 ];
 
-// Cursor 桌面 Composer 的模型按钮形态："族名 + tag"两段式 (例 "Opus 4.7 Max Fast")，不带图标。
-const MODELS = [
-  { value: "pi-default", name: "pi", tag: "default" },
-  { value: "pi-fast", name: "pi", tag: "fast" },
-  { value: "pi-reasoning", name: "pi", tag: "reasoning" },
-];
-
 type ComposerProps = {
   model: string;
+  models: ModelInfo[];
+  contextItems: ContextItem[];
+  workspaceId: string | undefined;
+  cwd: string | undefined;
   canSubmit: boolean;
   hasSession: boolean;
   onModelChange(model: string): void;
-  onSubmit(message: string): void;
+  onContextChange(items: ContextItem[]): void;
+  onSubmit(message: string, context: ContextItem[]): void;
 };
 
-export function Composer({ model, canSubmit, hasSession, onModelChange, onSubmit }: ComposerProps) {
+export function Composer({
+  model,
+  models,
+  contextItems,
+  workspaceId,
+  cwd,
+  canSubmit,
+  hasSession,
+  onModelChange,
+  onContextChange,
+  onSubmit,
+}: ComposerProps) {
   const [value, setValue] = useState("");
   const hasText = value.trim().length > 0;
+  const { activeIndex, isOpen, mention, setActiveIndex, suggestions } = useComposerMentions({
+    cwd,
+    value,
+    workspaceId,
+  });
 
   function send(): void {
     if (!hasText || !canSubmit) {
       return;
     }
-    onSubmit(value.trim());
+    onSubmit(value.trim(), contextItems);
     setValue("");
+    onContextChange([]);
+  }
+
+  function addContext(suggestion: ContextSuggestion): void {
+    const key = contextItemKey(suggestion.item);
+    if (!contextItems.some((item) => contextItemKey(item) === key)) {
+      onContextChange([...contextItems, suggestion.item]);
+    }
+    if (mention) {
+      setValue(
+        `${value.slice(0, mention.start)}${value.slice(mention.start).replace(/@[^\s]*$/, "")}`,
+      );
+    }
+  }
+
+  async function openContextMenu(): Promise<void> {
+    if (!workspaceId || !cwd) {
+      return;
+    }
+    if (value.endsWith("@") || /(?:^|\s)@[^\s]*$/.test(value)) {
+      return;
+    }
+    setValue((current) => `${current}${current && !current.endsWith(" ") ? " " : ""}@`);
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
+    if (isOpen && event.key === "ArrowDown") {
+      event.preventDefault();
+      setActiveIndex((index) => (index + 1) % suggestions.length);
+      return;
+    }
+
+    if (isOpen && event.key === "ArrowUp") {
+      event.preventDefault();
+      setActiveIndex((index) => (index - 1 + suggestions.length) % suggestions.length);
+      return;
+    }
+
+    if (isOpen && event.key === "Escape") {
+      event.preventDefault();
+      setValue((current) => (mention ? current.slice(0, mention.start) : current));
+      return;
+    }
+
+    if (isOpen && event.key === "Enter" && suggestions[activeIndex]) {
+      event.preventDefault();
+      addContext(suggestions[activeIndex]);
+      return;
+    }
+
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       send();
@@ -84,20 +149,40 @@ export function Composer({ model, canSubmit, hasSession, onModelChange, onSubmit
           onKeyDown={handleKeyDown}
           value={value}
         />
+        <ContextMentionMenu
+          activeIndex={activeIndex}
+          onSelect={addContext}
+          suggestions={isOpen ? suggestions : []}
+        />
       </div>
+
+      {contextItems.length > 0 ? (
+        <div className="flex flex-wrap gap-1.5 px-3 pt-1">
+          {contextItems.map((item, index) => (
+            <ContextToken
+              item={item}
+              key={contextItemKey(item)}
+              onRemove={() =>
+                onContextChange(contextItems.filter((_, itemIndex) => itemIndex !== index))
+              }
+            />
+          ))}
+        </div>
+      ) : null}
 
       <div className="flex items-center gap-2 px-3 pt-1 pb-2.5">
         <Tooltip content="Add context">
           <button
             aria-label="Add context"
             className="flex size-[26px] items-center justify-center rounded-full text-fg-subtle transition-colors hover:bg-hover hover:text-fg"
+            onClick={() => void openContextMenu()}
             type="button"
           >
             <IconPlus size={16} stroke={1.7} />
           </button>
         </Tooltip>
 
-        <ModelSelect model={model} onModelChange={onModelChange} />
+        <ModelSelect model={model} models={models} onModelChange={onModelChange} />
 
         <div className="flex-1" />
 
@@ -141,16 +226,20 @@ export function Composer({ model, canSubmit, hasSession, onModelChange, onSubmit
 
 function ModelSelect({
   model,
+  models,
   onModelChange,
 }: {
   model: string;
+  models: ModelInfo[];
   onModelChange(model: string): void;
 }) {
-  const current = MODELS.find((item) => item.value === model);
-  const name = current?.name ?? "pi";
-  const tag = current?.tag ?? "default";
+  const items: ModelInfo[] =
+    models.length > 0 ? models : [{ available: false, id: model, provider: "pi", name: "default" }];
+  const current = items.find((item) => item.id === model) ?? items[0];
+  const name = current?.provider ?? "pi";
+  const tag = current?.name ?? "default";
 
-  return (
+  return current ? (
     <Select.Root onValueChange={(next) => onModelChange(String(next))} value={model}>
       {/* 不再前置 Sparkles 图标，与 Cursor 原生模型按钮形态一致 */}
       <Select.Trigger className="app-no-drag flex h-[26px] items-center gap-1 rounded-md px-2 text-sm font-normal transition-colors hover:bg-hover data-popup-open:bg-hover">
@@ -166,22 +255,33 @@ function ModelSelect({
         <Select.Positioner
           align="start"
           alignItemWithTrigger={false}
+          collisionAvoidance={{ side: "none", align: "shift", fallbackAxisSide: "none" }}
           side="bottom"
-          sideOffset={6}
+          sideOffset={4}
         >
-          <Select.Popup className="origin-(--transform-origin) min-w-[220px] rounded-lg border border-hairline bg-elevated p-1 shadow-popup transition-[transform,opacity] duration-100 data-ending-style:translate-y-[-4px] data-ending-style:opacity-0 data-starting-style:translate-y-[-4px] data-starting-style:opacity-0">
-            {MODELS.map((item) => (
+          <Select.Popup
+            className="scroll-thin origin-(--transform-origin) w-[340px] max-w-[calc(100vw-24px)] overflow-y-auto rounded-lg border border-hairline bg-elevated p-1 shadow-popup transition-[transform,opacity] duration-100 data-ending-style:translate-y-[-4px] data-ending-style:opacity-0 data-starting-style:translate-y-[-4px] data-starting-style:opacity-0"
+            style={{ maxHeight: "min(320px, var(--available-height))" }}
+          >
+            {items.map((item) => (
               <Select.Item
                 className={cn(
                   "flex h-8 cursor-default items-center gap-1.5 rounded-md px-2 text-sm outline-none select-none",
                   "data-highlighted:bg-hover",
                 )}
-                key={item.value}
-                value={item.value}
+                key={item.id}
+                value={item.id}
               >
-                <Select.ItemText className="text-fg-muted">{item.name}</Select.ItemText>
-                <span className="text-sm text-fg-subtle">{item.tag}</span>
-                <span className="ml-auto flex w-3.5 justify-center text-fg">
+                <Select.ItemText className="shrink-0 text-fg-muted">
+                  {item.provider}
+                </Select.ItemText>
+                <span className="min-w-0 truncate text-sm text-fg-subtle">{item.name}</span>
+                {!item.available ? (
+                  <span className="ml-1 shrink-0 rounded bg-white/6 px-1 text-2xs text-fg-faint">
+                    off
+                  </span>
+                ) : null}
+                <span className="ml-auto flex w-3.5 shrink-0 justify-center text-fg">
                   <Select.ItemIndicator>
                     <IconCheck size={13} stroke={2} />
                   </Select.ItemIndicator>
@@ -192,5 +292,21 @@ function ModelSelect({
         </Select.Positioner>
       </Select.Portal>
     </Select.Root>
-  );
+  ) : null;
+}
+
+function contextItemKey(item: ContextItem): string {
+  if (item.type === "file" || item.type === "folder") {
+    return `${item.type}:${item.path}`;
+  }
+
+  if (item.type === "doc") {
+    return `doc:${item.docId}`;
+  }
+
+  if (item.type === "terminal") {
+    return `terminal:${item.terminalId}:${item.range?.fromLine ?? ""}:${item.range?.toLine ?? ""}`;
+  }
+
+  return `git-diff:${item.mode}:${item.base ?? ""}`;
 }

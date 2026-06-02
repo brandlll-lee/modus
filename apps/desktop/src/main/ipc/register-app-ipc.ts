@@ -1,5 +1,8 @@
 import { app, BrowserWindow, type IpcMainInvokeEvent, ipcMain } from "electron";
-import { abortPiSession, createPiRpcSession, promptPiSession } from "../agent/pi-rpc-service";
+import { listModels, setDefaultModel } from "../agent/model-service";
+import { getAgentRuntime } from "../agent/runtime-registry";
+import { resolveContext, searchContext } from "../context/context-service";
+import { addDocSource, indexWorkspaceDocs, listDocSources, searchDocs } from "../docs/docs-service";
 import {
   createWorktree,
   deleteWorktree,
@@ -12,6 +15,7 @@ import { listPermissionDecisions, recordPermissionDecision } from "../permission
 import {
   createTerminal,
   killTerminal,
+  listTerminals,
   resizeTerminal,
   writeTerminal,
 } from "../terminal/terminal-service";
@@ -87,19 +91,33 @@ export function registerAppIpc(): void {
     return getRecentWorkspaces();
   });
 
-  ipcMain.handle(IPC_CHANNELS.agentCreate, (event, input) => {
+  ipcMain.handle(IPC_CHANNELS.agentCreate, async (event, input) => {
     assertTrustedSender(event);
-    return createPiRpcSession(getSenderWindow(event), input);
+    return await getAgentRuntime().create(getSenderWindow(event), input);
   });
 
-  ipcMain.handle(IPC_CHANNELS.agentPrompt, (event, input) => {
+  ipcMain.handle(IPC_CHANNELS.agentPrompt, async (event, input) => {
     assertTrustedSender(event);
-    promptPiSession(input.sessionId, input.message);
+    await getAgentRuntime().prompt({
+      sessionId: input.sessionId,
+      message: input.message,
+      context: input.context ?? [],
+    });
   });
 
-  ipcMain.handle(IPC_CHANNELS.agentAbort, (event, sessionId: string) => {
+  ipcMain.handle(IPC_CHANNELS.agentAbort, async (event, sessionId: string) => {
     assertTrustedSender(event);
-    abortPiSession(sessionId);
+    await getAgentRuntime().abort(sessionId);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.agentSetModel, async (event, input) => {
+    assertTrustedSender(event);
+    return await getAgentRuntime().setModel(input.sessionId, input.model);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.agentCycleModel, async (event, input) => {
+    assertTrustedSender(event);
+    return await getAgentRuntime().cycleModel(input.sessionId, input.direction);
   });
 
   ipcMain.handle(IPC_CHANNELS.terminalCreate, (event, input) => {
@@ -120,6 +138,11 @@ export function registerAppIpc(): void {
   ipcMain.handle(IPC_CHANNELS.terminalKill, (event, terminalId: string) => {
     assertTrustedSender(event);
     killTerminal(terminalId);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.terminalList, (event) => {
+    assertTrustedSender(event);
+    return listTerminals();
   });
 
   ipcMain.handle(IPC_CHANNELS.diffList, async (event, cwd: string) => {
@@ -145,6 +168,44 @@ export function registerAppIpc(): void {
   ipcMain.handle(IPC_CHANNELS.permissionList, (event) => {
     assertTrustedSender(event);
     return listPermissionDecisions();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.contextSearch, async (event, input) => {
+    assertTrustedSender(event);
+    if (input.kind === "doc" || /^docs?/i.test(input.query)) {
+      await indexWorkspaceDocs(input.workspaceId, input.cwd);
+    }
+    return await searchContext(input);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.contextResolve, async (event, input) => {
+    assertTrustedSender(event);
+    return await resolveContext(input.cwd, input.items);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.docsList, (event, workspaceId: string) => {
+    assertTrustedSender(event);
+    return listDocSources(workspaceId);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.docsAdd, (event, input) => {
+    assertTrustedSender(event);
+    return addDocSource(input);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.docsSearch, (event, input) => {
+    assertTrustedSender(event);
+    return searchDocs(input.workspaceId, input.query);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.modelList, (event) => {
+    assertTrustedSender(event);
+    return listModels();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.modelSetDefault, (event, model: string) => {
+    assertTrustedSender(event);
+    setDefaultModel(model);
   });
 
   ipcMain.handle(IPC_CHANNELS.worktreeList, async (event, cwd: string) => {

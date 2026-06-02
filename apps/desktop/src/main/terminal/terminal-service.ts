@@ -5,10 +5,12 @@ import { join } from "node:path";
 import type { BrowserWindow } from "electron";
 import { app } from "electron";
 import type { TerminalEvent, TerminalInfo } from "../../shared/contracts";
+import { getDatabase } from "../db/database";
 import { IPC_CHANNELS } from "../ipc/channels";
 
 type TerminalRecord = {
   info: TerminalInfo;
+  output: string;
 };
 
 type HostEvent =
@@ -20,6 +22,11 @@ type HostEvent =
 const terminals = new Map<string, TerminalRecord>();
 let host: ChildProcessWithoutNullStreams | undefined;
 let hostBuffer = "";
+const MAX_OUTPUT_BYTES = 64 * 1024;
+const ANSI_PATTERN = new RegExp(
+  `${String.fromCharCode(27)}(?:[@-Z\\\\-_]|\\[[0-?]*[ -/]*[@-~])`,
+  "g",
+);
 
 function defaultShell(): string {
   if (process.platform === "win32") {
@@ -59,6 +66,35 @@ function emit(window: BrowserWindow, event: TerminalEvent): void {
   window.webContents.send(IPC_CHANNELS.terminalEvent, event);
 }
 
+function stripAnsi(value: string): string {
+  return value.replace(ANSI_PATTERN, "");
+}
+
+function appendOutput(terminalId: string, data: string): void {
+  const terminal = terminals.get(terminalId);
+  if (!terminal) {
+    return;
+  }
+
+  const nextOutput = `${terminal.output}${stripAnsi(data)}`.slice(-MAX_OUTPUT_BYTES);
+  terminal.output = nextOutput;
+  getDatabase()
+    .prepare(
+      `insert into terminal_outputs (terminal_id, workspace_id, cwd, output, updated_at)
+       values (?, ?, ?, ?, ?)
+       on conflict(terminal_id) do update set
+         output = excluded.output,
+         updated_at = excluded.updated_at`,
+    )
+    .run(
+      terminal.info.id,
+      terminal.info.workspaceId,
+      terminal.info.cwd,
+      terminal.output,
+      new Date().toISOString(),
+    );
+}
+
 function writeHost(command: unknown): void {
   if (!host) {
     throw new Error("PTY host is not running.");
@@ -69,6 +105,7 @@ function writeHost(command: unknown): void {
 
 function handleHostEvent(window: BrowserWindow, event: HostEvent): void {
   if (event.type === "data") {
+    appendOutput(event.id, event.data);
     emit(window, { type: "terminal.data", terminalId: event.id, data: event.data });
     return;
   }
@@ -161,7 +198,7 @@ export function createTerminal(
     rows,
   };
 
-  terminals.set(id, { info });
+  terminals.set(id, { info, output: "" });
   writeHost({
     type: "spawn",
     id,
@@ -195,4 +232,20 @@ export function killTerminal(terminalId: string): void {
 
   writeHost({ type: "kill", id: terminalId });
   terminals.delete(terminalId);
+}
+
+export function listTerminals(): TerminalInfo[] {
+  return [...terminals.values()].map((terminal) => terminal.info);
+}
+
+export function getTerminalOutput(terminalId: string): string {
+  const active = terminals.get(terminalId)?.output;
+  if (active !== undefined) {
+    return active;
+  }
+
+  const row = getDatabase()
+    .prepare("select output from terminal_outputs where terminal_id = ?")
+    .get(terminalId) as { output: string } | undefined;
+  return row?.output ?? "";
 }

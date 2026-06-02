@@ -16,6 +16,8 @@ const api: ModusApi = {
     create: (input) => ipcRenderer.invoke("agent:create", input),
     prompt: (input) => ipcRenderer.invoke("agent:prompt", input),
     abort: (sessionId) => ipcRenderer.invoke("agent:abort", sessionId),
+    setModel: (input) => ipcRenderer.invoke("agent:set-model", input),
+    cycleModel: (input) => ipcRenderer.invoke("agent:cycle-model", input),
     onEvent: (callback) => {
       const listener = (_event: IpcRendererEvent, payload: unknown) =>
         callback(payload as AgentEvent);
@@ -28,6 +30,7 @@ const api: ModusApi = {
     write: (input) => ipcRenderer.invoke("terminal:write", input),
     resize: (input) => ipcRenderer.invoke("terminal:resize", input),
     kill: (terminalId) => ipcRenderer.invoke("terminal:kill", terminalId),
+    list: () => ipcRenderer.invoke("terminal:list"),
     onEvent: (callback) => {
       const listener = (_event: IpcRendererEvent, payload: unknown) =>
         callback(payload as TerminalEvent);
@@ -49,12 +52,24 @@ const api: ModusApi = {
     create: (input) => ipcRenderer.invoke("worktree:create", input),
     delete: (input) => ipcRenderer.invoke("worktree:delete", input),
   },
+  context: {
+    search: (input) => ipcRenderer.invoke("context:search", input),
+    resolve: (input) => ipcRenderer.invoke("context:resolve", input),
+  },
+  docs: {
+    list: (workspaceId) => ipcRenderer.invoke("docs:list", workspaceId),
+    add: (input) => ipcRenderer.invoke("docs:add", input),
+    search: (input) => ipcRenderer.invoke("docs:search", input),
+  },
+  model: {
+    list: () => ipcRenderer.invoke("model:list"),
+    setDefault: (model) => ipcRenderer.invoke("model:set-default", model),
+  },
   window: {
     minimize: () => ipcRenderer.invoke("window:minimize") as Promise<void>,
     toggleMaximize: () => ipcRenderer.invoke("window:toggle-maximize") as Promise<void>,
     close: () => ipcRenderer.invoke("window:close") as Promise<void>,
-    getState: () =>
-      ipcRenderer.invoke("window:state") as Promise<{ maximized: boolean }>,
+    getState: () => ipcRenderer.invoke("window:state") as Promise<{ maximized: boolean }>,
     onStateChange: (callback) => {
       const listener = (_event: IpcRendererEvent, payload: unknown) =>
         callback(payload as { maximized: boolean });
