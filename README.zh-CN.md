@@ -1,12 +1,12 @@
 <div align="center">
   <h1>Modus</h1>
-  <p><b>一个给编码 Agent 使用的本地桌面驾驶舱。</b></p>
+  <p><b>Codex App 和 Cursor Agents Window 的早期开源桌面端替代产品。</b></p>
 </div>
 
 <p align="center">
-  <img alt="Status" src="https://img.shields.io/badge/status-active%20desktop%20prototype-black">
+  <img alt="Status" src="https://img.shields.io/badge/status-early%20desktop%20prototype-black">
+  <img alt="Target" src="https://img.shields.io/badge/target-Codex%20App%20%2B%20Cursor-2563eb">
   <img alt="Desktop" src="https://img.shields.io/badge/desktop-Electron-47848f">
-  <img alt="Runtime" src="https://img.shields.io/badge/runtime-PI%20SDK-7c3aed">
   <img alt="Local first" src="https://img.shields.io/badge/local--first-yes-16a34a">
 </p>
 
@@ -20,14 +20,52 @@
   </a>
 </p>
 
-想象一下，你身边坐着一个很会写代码的助手。
+如果你喜欢 Codex App 和 Cursor，你大概率喜欢这样的画面：
 
-它能看你的项目，能打开终端，能读 Git 改动，能记住你们刚刚聊了什么，也能切换不同模型。
-但它不是飘在远处的云端黑盒，而是坐在你电脑里的一个小工作台上：离代码很近，动作看得见，改动能检查，危险操作有人拦。
+一个编码 Agent 坐在你的仓库旁边。它能读项目，能开终端，能看 Git 改动，能切换模型，能保留会话，还能一步步帮你把事情做完。
 
-这就是 Modus。
+再加一个愿望：如果这个桌面 Agent 窗口是开放的、本地优先的、可以自己改的呢？
 
-Modus 是一个面向 AI 编码 Agent 的桌面应用。它不是完整 IDE，也不是 VS Code 分支。它更像一个专门给 Agent 准备的工作窗口：左边放项目和会话，中间聊天，右边放 Git、终端、Worktree 和安全状态。
+这就是 Modus 想做的事。
+
+Modus 是一个面向 AI 编码 Agent 的早期桌面应用。它不会假装自己已经追上 Codex App 或 Cursor 3.x。没有。它们是成熟产品，Modus 现在还是工作台。但方向很清楚：做一个 Codex App 和 Cursor Agents Window 这个产品形态的开源桌面替代品，然后在公开代码里一点点追上去。
+
+## 先把话说实在
+
+今天的 Modus，是下面三个产品里最弱的那个。这很正常。
+
+Codex App 已经有成熟桌面体验：worktree、自动化、Git review、集成终端、内置浏览器、computer use、skills、MCP 等等。Cursor 3.x 已经有 Agents Window、多 Agent 并行、Cloud Agents、worktree、PR review、Bugbot、浏览器工具、自动化、MCP、rules 和 Auto-review mode。
+
+Modus 现在有的是地基：本地桌面壳、项目、会话、模型选择、上下文挂载、Git diff、终端、worktree 管理、本地存储和安全层。
+
+我们的目标很简单，也很难：Codex App 和 Cursor 里那些真正有用的能力，Modus 以后也应该有，而且产品代码和路线图都尽量公开，让大家能看、能改、能一起建设。
+
+> License 提醒：当前 checkout 里还没有 license 文件。正式分发安装包、或把仓库当作法律意义上的可复用开源项目前，需要先补上。
+
+## 功能对比，2026 年 6 月
+
+| 能力 | Modus 当前 | Codex App | Cursor 3.x+ |
+| --- | --- | --- | --- |
+| 产品定位 | 早期本地桌面 Agent 应用 | 成熟 Codex 桌面端 | 成熟 Agent-first IDE 和 Agents Window |
+| 源码开放 | 目标是开源；license 仍待补齐 | 商业闭源产品 | 商业闭源产品 |
+| 桌面 Agent 工作区 | 早期 Electron 壳：侧边栏、聊天、右侧面板 | 成熟桌面 thread 工作区 | 成熟 Agents Window + 传统编辑器 |
+| 本地项目管理 | 打开文件夹、记住工作区、识别 Git 仓库 | 多项目桌面工作流 | 多工作区 Agents Window |
+| Agent 会话 | 本地会话、流式事件、历史持久化 | 并行 Codex threads | Agent chats、队列消息、checkpoint |
+| 模型选择 | PI 模型列表和会话级模型切换 | Codex 模型与 reasoning 控制 | 模型选择器、对话中切换模型 |
+| 上下文挂载 | 文件、文件夹、终端输出、Git diff、Markdown docs | 项目、终端、浏览器、图片、IDE 上下文 | `@` 文件、文件夹、docs、终端、历史聊天、Git diff、浏览器 |
+| Git review | 基础变更列表、diff、增删行、回滚文件 | review pane、行内评论、stage/revert hunk、commit/push/PR | diff、PR review、commits tab、文件树、changes picker |
+| 集成终端 | Rust sidecar 驱动的真实 PTY 终端 | 每个 thread 的集成终端 | Agent 终端执行、sandbox、allowlist |
+| Worktrees | 列出、新建、删除 Git worktree | Local/Worktree 模式、handoff、清理、快照 | Agents Window worktrees、`/worktree`、`/best-of-n`、清理 |
+| Cloud agents | 还没有 | Cloud mode | Cloud Agents，可从桌面、网页、Slack、GitHub、Linear、API 启动 |
+| 并行 Agent | 还没有 | 并行 threads 和后台任务 | Agents Window、tiled layout、`/multitask`、async subagents |
+| 浏览器/设计工具 | 还没有 | in-app browser、浏览器评论、browser use | Browser tool、Design Mode、design sidebar、可视化编辑 |
+| Computer use | 还没有 | 可操作 macOS/Windows 应用，需要审批 | Cloud agents 可控制远程桌面/浏览器 |
+| 自动化 | 侧边栏占位，还未实现 | 项目自动化和 thread 自动化 | Cloud-agent automations，支持计划任务、事件、多 repo/无 repo |
+| MCP/plugins/skills | 还没做成用户功能 | MCP、Agent Skills、plugins | MCP、MCP Apps、marketplace、skills、subagents、hooks |
+| Rules/memories | 还没有 | Skills、rules、memories，取决于配置 | 项目/用户/团队 rules、AGENTS.md、automations memory |
+| PR/代码审查自动化 | 还没有 | `/review` 和 review pane 工作流 | Bugbot、Bugbot Autofix、Cursor Review |
+| 权限模型 | 早期 typed IPC 和 PI 工具调用拦截 | approvals 和 sandbox 设置 | sandbox、allowlist、`permissions.json`、Auto-review mode |
+| 非代码产物 | 还没有 | PDF、表格、文档、演示文稿预览和生成 | 浏览器/设计/产物能力较强，随具体功能变化 |
 
 ## Modus 现在已经能做什么
 
@@ -158,6 +196,7 @@ Modus 已经能作为本地原型跑起来，但还不是完整成熟产品：
 - 终端输出可以保存，但完整终端回放还没成熟。
 - Markdown 文档可以索引和搜索，但还不是完整知识库。
 - Worktree 能管理，但完整任务编排还在后面。
+- MCP、Cloud Agents、浏览器工具、自动化、rules、memories、PR review 自动化、computer use 都还没实现。
 - 跨平台打包、签名、自动更新、发布通道还没完成。
 - 当前 checkout 里还没有 license 文件；正式分发前需要补上。
 
@@ -173,10 +212,37 @@ npm --workspace @modus/desktop run package:win -- --publish never
 cargo check -p modus-pty-host
 ```
 
+## 对比资料来源
+
+- [Codex app features](https://developers.openai.com/codex/app/features)
+- [Codex app review pane](https://developers.openai.com/codex/app/review)
+- [Codex app worktrees](https://developers.openai.com/codex/app/worktrees)
+- [Codex app in-app browser](https://developers.openai.com/codex/app/browser)
+- [Codex app automations](https://developers.openai.com/codex/app/automations)
+- [Codex Agent Skills](https://developers.openai.com/codex/skills)
+- [Cursor 3.0 changelog](https://cursor.com/changelog/3-0)
+- [Cursor 3.1 changelog](https://cursor.com/changelog/3-1)
+- [Cursor 3.2 changelog](https://cursor.com/changelog/04-24-26)
+- [Cursor 3.3 changelog](https://cursor.com/changelog/05-07-26)
+- [Cursor 3.4 changelog](https://cursor.com/changelog/3-4)
+- [Cursor 3.5 changelog](https://cursor.com/changelog/05-20-26)
+- [Cursor 3.6 Auto-review changelog](https://cursor.com/changelog/auto-review)
+- [Cursor Agents Window docs](https://cursor.com/docs/agent/agents-window)
+- [Cursor Agent overview](https://cursor.com/docs/agent/overview)
+- [Cursor prompting and context docs](https://cursor.com/docs/agent/prompting)
+- [Cursor worktrees docs](https://cursor.com/docs/configuration/worktrees)
+- [Cursor terminal docs](https://cursor.com/docs/agent/tools/terminal)
+- [Cursor browser docs](https://cursor.com/docs/agent/tools/browser)
+- [Cursor MCP docs](https://cursor.com/docs/mcp)
+- [Cursor Cloud Agents docs](https://cursor.com/docs/cloud-agent)
+- [Cursor Automations docs](https://cursor.com/docs/cloud-agent/automations)
+- [Cursor Bugbot docs](https://cursor.com/docs/bugbot)
+- [Cursor permissions docs](https://cursor.com/docs/reference/permissions)
+
 ## 接下来想去哪里
 
 Modus 的目标很简单：让 AI 写代码这件事，不像把仓库交给一个看不见的人，而像在一张干净、明亮、本地的工作桌旁一起干活。
 
-接下来会继续打磨 Agent 时间线、更强的权限提示、更丰富的上下文、更好用的 Diff 审查、更稳定的终端，以及基于 Worktree 的任务隔离。
+近期会继续打磨 Agent 时间线、更强的权限提示、更丰富的上下文、更好用的 Diff 审查、更稳定的终端，以及基于 Worktree 的任务隔离。
 
-如果你也想要一个看得见、查得到、能掌控的编码 Agent 窗口，Modus 就是这个工作台。
+更远一点，Modus 会追赶完整桌面 Agent 闭环：并行 Agent、浏览器审查、MCP、rules、memories、自动化、云端或远程执行、PR review 和生产级发布。我们不说这些已经完成。我们说的是：这段追赶会尽量公开。
