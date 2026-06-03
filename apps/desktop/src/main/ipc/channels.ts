@@ -4,6 +4,8 @@ export const IPC_CHANNELS = {
   workspaceOpen: "workspace:open",
   workspaceList: "workspace:list",
   agentCreate: "agent:create",
+  agentList: "agent:list",
+  agentListEvents: "agent:list-events",
   agentPrompt: "agent:prompt",
   agentAbort: "agent:abort",
   agentSetModel: "agent:set-model",

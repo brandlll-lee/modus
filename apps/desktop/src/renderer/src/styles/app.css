@@ -2,7 +2,7 @@
 
 /*
  * Modus 设计系统 v4 —— 像素级对标 Cursor 3.0 桌面端：
- *   - 字号一档 11–12.5px，全局 -0.011em 负字距，禁止字号忽大忽小
+ *   - 字号一档 11–15px，字距归零，禁止字号忽大忽小
  *   - hairline 极淡（≤ 6% 白），靠明度承载层级
  *   - composer 背景接近 canvas，只浮起一丝（不再像旧版 surface 那么深）
  *   - 强调色仅用于 send 等极少处，平时全灰阶
@@ -83,9 +83,7 @@
   color-scheme: dark;
   font-family: var(--font-sans);
   background: var(--color-canvas);
-  /* DESIGN.md：CursorGothic 替代是 Inter + letter-spacing -1.5%。
-     桌面端正文 11-13px 区间需要这个负字距才能贴出"精致" */
-  letter-spacing: -0.015em;
+  letter-spacing: 0;
   font-feature-settings: "cv11", "ss01", "ss03";
   font-variation-settings: "opsz" 16;
   font-synthesis-weight: none;
@@ -142,9 +140,9 @@ input {
   .app-no-drag {
     -webkit-app-region: no-drag;
   }
-  /* 略紧的标题字距，呼应 DESIGN.md 负字距原则 */
+  /* 明确保留给极少数标题使用；默认正文始终归零。 */
   .tracking-snug {
-    letter-spacing: -0.02em;
+    letter-spacing: 0;
   }
 }
 

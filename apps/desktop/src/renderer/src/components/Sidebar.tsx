@@ -1,29 +1,30 @@
 import {
-  IconBolt,
-  IconChevronLeft,
   IconChevronRight,
   IconClock,
+  IconDeviceMobile,
+  IconEdit,
   IconFolder,
-  IconLayoutSidebar,
-  IconMenu2,
-  IconMessageCircle,
+  IconFolderPlus,
+  IconGridDots,
+  IconGripHorizontal,
   IconSearch,
   IconSettings,
-  IconSparkles,
 } from "@tabler/icons-react";
-import { m } from "motion/react";
-import type { ReactNode } from "react";
+import { AnimatePresence, m } from "motion/react";
+import { type MouseEvent, type ReactNode, useState } from "react";
 import type { AgentSessionInfo, WorkspaceInfo } from "../../../shared/contracts";
 import { cn } from "../lib/cn";
-import { Tooltip } from "./ui/Tooltip";
 
 type SidebarProps = {
   workspaces: WorkspaceInfo[];
   activeWorkspace: WorkspaceInfo | null;
   agentSession: AgentSessionInfo | null;
+  agentSessions: AgentSessionInfo[];
   onOpenWorkspace(): void;
   onSelectWorkspace(workspace: WorkspaceInfo): void;
+  onSelectSession(session: AgentSessionInfo): void;
   onNewSession(): void;
+  onNewWorkspaceSession(workspace: WorkspaceInfo): void;
   canCreateSession: boolean;
 };
 
@@ -31,109 +32,98 @@ export function Sidebar({
   workspaces,
   activeWorkspace,
   agentSession,
+  agentSessions,
   onOpenWorkspace,
   onSelectWorkspace,
+  onSelectSession,
   onNewSession,
+  onNewWorkspaceSession,
   canCreateSession,
 }: SidebarProps) {
-  const primary = workspaces.slice(0, 4);
-  const secondary = workspaces.slice(4);
+  const [projectsExpanded, setProjectsExpanded] = useState(true);
+  const sessionsByWorkspace = groupSessionsByWorkspace(agentSessions);
 
   return (
-    // 侧栏宽度 230px —— Cursor 桌面侧栏实际约 220-235px，比之前 220 略宽一点能撑住 nav row
-    // 右侧 border 用 -strong（10% 白）—— 与 menubar 底部 border 一致，把三大区域视觉切块
-    <aside className="flex w-[230px] min-w-[230px] flex-col border-hairline-strong border-r bg-panel">
-      {/* 顶部工具行 36px 高，左 sidebar/search、右 ← → */}
-      <div className="app-drag flex h-9 items-center gap-0.5 px-2">
-        <IconTool drag={false} label="Toggle sidebar">
-          <IconLayoutSidebar size={16} stroke={1.55} />
-        </IconTool>
-        <IconTool drag={false} label="Search">
-          <IconSearch size={15} stroke={1.55} />
-        </IconTool>
-        <div className="flex-1" />
-        <IconTool drag={false} label="Back">
-          <IconChevronLeft size={15} stroke={1.6} />
-        </IconTool>
-        <IconTool drag={false} label="Forward">
-          <IconChevronRight size={15} stroke={1.6} />
-        </IconTool>
-      </div>
-
-      {/* 主入口 + 列表（可滚） —— 与上方留 4px 间距，整体内边距 8px */}
-      <div className="scroll-thin flex-1 overflow-y-auto px-2 pt-1 pb-2">
+    <aside className="flex w-[300px] min-w-[300px] flex-col border-hairline-strong border-r bg-panel">
+      <div className="scroll-thin flex-1 overflow-y-auto px-2.5 pt-4 pb-2">
         <NavRow
-          highlight
-          icon={<IconBolt size={16} stroke={1.6} />}
-          onClick={onNewSession}
           disabled={!canCreateSession}
-          trailing={<Shortcut>⌃N</Shortcut>}
+          icon={<IconEdit size={17} stroke={1.75} />}
+          onClick={onNewSession}
         >
-          New session
+          New chat
         </NavRow>
-        <NavRow icon={<IconClock size={16} stroke={1.55} />}>Automations</NavRow>
-        <NavRow icon={<IconSparkles size={16} stroke={1.55} />}>Customize</NavRow>
+        <NavRow icon={<IconSearch size={17} stroke={1.75} />}>Search</NavRow>
+        <NavRow icon={<IconGridDots size={17} stroke={1.75} />}>Plugins</NavRow>
+        <NavRow icon={<IconClock size={17} stroke={1.75} />}>Automations</NavRow>
+        <NavRow
+          icon={
+            <span className="relative flex">
+              <IconDeviceMobile size={17} stroke={1.75} />
+              <span className="-right-0.5 -bottom-0.5 absolute size-1.5 rounded-full bg-[#1e8cff]" />
+            </span>
+          }
+        >
+          Codex mobile
+        </NavRow>
 
-        <SectionLabel>Workspaces</SectionLabel>
+        <SectionHeader
+          expanded={projectsExpanded}
+          onToggle={() => setProjectsExpanded((expanded) => !expanded)}
+        >
+          Projects
+        </SectionHeader>
 
-        {primary.length === 0 ? (
-          <NavRow icon={<IconFolder size={16} stroke={1.55} />} muted onClick={onOpenWorkspace}>
-            Open a repository…
-          </NavRow>
-        ) : (
-          primary.map((workspace) => (
-            <WorkspaceItem
-              activeSession={agentSession}
-              isActive={activeWorkspace?.id === workspace.id}
-              key={workspace.id}
-              onSelect={() => onSelectWorkspace(workspace)}
-              workspace={workspace}
-            />
-          ))
-        )}
+        <AnimatePresence initial={false}>
+          {projectsExpanded ? (
+            <m.div
+              animate={{ height: "auto", opacity: 1 }}
+              className="overflow-hidden"
+              exit={{ height: 0, opacity: 0 }}
+              initial={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+            >
+              {workspaces.length === 0 ? (
+                <NavRow
+                  icon={<IconFolder size={17} stroke={1.6} />}
+                  muted
+                  onClick={onOpenWorkspace}
+                >
+                  Open a repository…
+                </NavRow>
+              ) : (
+                workspaces.map((workspace) => (
+                  <WorkspaceItem
+                    activeSessionId={agentSession?.id}
+                    isActive={activeWorkspace?.id === workspace.id}
+                    key={workspace.id}
+                    onNewSession={() => onNewWorkspaceSession(workspace)}
+                    onSelect={() => onSelectWorkspace(workspace)}
+                    onSelectSession={onSelectSession}
+                    sessions={sessionsByWorkspace.get(workspace.id) ?? []}
+                    workspace={workspace}
+                  />
+                ))
+              )}
 
-        {primary.length >= 4 ? <SeeMore /> : null}
+              <div className="mt-1">
+                <NavRow
+                  icon={<IconFolderPlus size={17} stroke={1.6} />}
+                  muted
+                  onClick={onOpenWorkspace}
+                >
+                  Open workspace
+                </NavRow>
+              </div>
+            </m.div>
+          ) : null}
+        </AnimatePresence>
 
-        {secondary.length > 0 ? (
-          <div className="mt-3">
-            {secondary.map((workspace) => (
-              <WorkspaceItem
-                activeSession={agentSession}
-                isActive={activeWorkspace?.id === workspace.id}
-                key={workspace.id}
-                onSelect={() => onSelectWorkspace(workspace)}
-                workspace={workspace}
-              />
-            ))}
-          </div>
-        ) : null}
-
-        <div className="mt-3">
-          <NavRow icon={<IconFolder size={16} stroke={1.55} />} muted onClick={onOpenWorkspace}>
-            Open workspace
-          </NavRow>
-        </div>
+        <SectionLabel>Chats</SectionLabel>
       </div>
 
-      {/* 账户行 —— 复刻 Cursor 底部：头像 + 双行信息 + 菜单/设置，无商业 Update 按钮 */}
-      <div className="app-no-drag px-2 pt-1.5 pb-2">
-        <div className="flex h-[32px] items-center gap-2">
-          <Avatar />
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-[12px] font-medium leading-[13px] text-fg-muted">
-              {activeWorkspace?.displayName ?? "Local workspace"}
-            </div>
-            <div className="truncate text-[12px] font-normal leading-[13px] text-fg-faint">
-              Local agent
-            </div>
-          </div>
-          <IconTool label="More">
-            <IconMenu2 size={15} stroke={1.5} />
-          </IconTool>
-          <IconTool label="Settings">
-            <IconSettings size={15} stroke={1.5} />
-          </IconTool>
-        </div>
+      <div className="app-no-drag px-2.5 pt-2 pb-3">
+        <NavRow icon={<IconSettings size={17} stroke={1.75} />}>Settings</NavRow>
       </div>
     </aside>
   );
@@ -142,51 +132,122 @@ export function Sidebar({
 function WorkspaceItem({
   workspace,
   isActive,
-  activeSession,
+  activeSessionId,
+  sessions,
   onSelect,
+  onSelectSession,
+  onNewSession,
 }: {
   workspace: WorkspaceInfo;
   isActive: boolean;
-  activeSession: AgentSessionInfo | null;
+  activeSessionId: string | undefined;
+  sessions: AgentSessionInfo[];
   onSelect(): void;
+  onSelectSession(session: AgentSessionInfo): void;
+  onNewSession(): void;
 }) {
   return (
     <>
-      <NavRow
-        active={isActive}
-        icon={<IconFolder size={16} stroke={1.55} />}
-        layoutHighlight={isActive}
+      <ProjectRow
+        isActive={isActive}
         onClick={onSelect}
+        onCreate={(event) => {
+          event.stopPropagation();
+          onNewSession();
+        }}
         title={workspace.rootPath}
       >
         {workspace.displayName}
-      </NavRow>
-      {isActive && activeSession ? (
-        <SessionRow title={activeSession.title} status={activeSession.status} />
-      ) : null}
+      </ProjectRow>
+      {sessions.map((session) => (
+        <SessionRow
+          isActive={activeSessionId === session.id}
+          key={session.id}
+          onCreate={(event) => {
+            event.stopPropagation();
+            onNewSession();
+          }}
+          onSelect={() => onSelectSession(session)}
+          title={session.title}
+          updatedAt={session.updatedAt}
+        />
+      ))}
     </>
   );
 }
 
-function SessionRow({ title, status }: { title: string; status: string }) {
-  // 缩进 28px（icon 宽 + gap），13px font，行高 30px 与父 nav row 一致
+function SessionRow({
+  title,
+  updatedAt,
+  isActive,
+  onSelect,
+  onCreate,
+}: {
+  title: string;
+  updatedAt: string;
+  isActive: boolean;
+  onSelect(): void;
+  onCreate(event: MouseEvent<HTMLButtonElement>): void;
+}) {
   return (
-    <div className="group flex h-[30px] items-center gap-2 rounded-md pr-2 pl-[30px] text-sm font-normal text-fg-muted hover:bg-hover hover:text-fg">
-      <IconMessageCircle className="shrink-0 text-fg-faint" size={12} stroke={1.55} />
-      <span className="min-w-0 flex-1 truncate">{title}</span>
-      <span className="shrink-0 text-2xs text-fg-faint">{status}</span>
-    </div>
+    <m.div
+      className={cn(
+        "group ml-[30px] flex h-[34px] w-[calc(100%-30px)] items-center rounded-lg pr-1 text-sm font-normal transition-colors hover:bg-hover",
+        isActive ? "bg-active text-fg" : "text-fg-muted hover:text-fg",
+      )}
+      layout
+      transition={{ duration: 0.14, ease: "easeOut" }}
+    >
+      <button
+        className="flex min-w-0 flex-1 items-center py-2 pr-1 pl-3 text-left"
+        onClick={onSelect}
+        type="button"
+      >
+        <span className="min-w-0 flex-1 truncate">{title}</span>
+        <span className="ml-2 shrink-0 text-xs font-normal text-fg-faint">
+          {formatRelativeTime(updatedAt)}
+        </span>
+      </button>
+      <HoverActions onCreate={onCreate} />
+    </m.div>
   );
 }
 
-function SeeMore() {
+function ProjectRow({
+  children,
+  isActive,
+  onClick,
+  onCreate,
+  title,
+}: {
+  children: ReactNode;
+  isActive: boolean;
+  onClick(): void;
+  onCreate(event: MouseEvent<HTMLButtonElement>): void;
+  title?: string;
+}) {
   return (
-    <button
-      className="ml-[30px] flex h-[30px] items-center text-sm font-normal text-fg-subtle transition-colors hover:text-fg"
-      type="button"
+    <m.div
+      className={cn(
+        "group flex h-[36px] w-full items-center rounded-lg pr-1 text-sm font-normal transition-colors hover:bg-hover",
+        isActive ? "text-fg" : "text-fg-muted hover:text-fg",
+      )}
+      layout
+      transition={{ duration: 0.14, ease: "easeOut" }}
     >
-      See more
-    </button>
+      <button
+        className="flex min-w-0 flex-1 items-center gap-3 px-2 text-left"
+        onClick={onClick}
+        title={title}
+        type="button"
+      >
+        <span className={cn("shrink-0", isActive ? "text-fg" : "text-fg-subtle")}>
+          <IconFolder size={17} stroke={1.6} />
+        </span>
+        <span className="min-w-0 flex-1 truncate">{children}</span>
+      </button>
+      <HoverActions onCreate={onCreate} />
+    </m.div>
   );
 }
 
@@ -213,13 +274,12 @@ function NavRow({
   highlight?: boolean;
   title?: string;
 }) {
-  // 行高 30px、字号 13px、font-weight 400、左 padding 8px、icon 与文字 gap 10px
   return (
     <button
       className={cn(
-        "group relative flex h-[30px] w-full items-center gap-2.5 rounded-md px-2 text-left text-sm font-normal transition-colors",
-        active ? "text-fg" : "text-fg-muted hover:bg-hover hover:text-fg",
-        highlight && "bg-active text-fg hover:bg-active",
+        "group relative flex h-[36px] w-full items-center gap-3 rounded-lg px-2 text-left text-sm font-normal transition-colors",
+        active ? "text-fg hover:bg-hover" : "text-fg-muted hover:bg-hover hover:text-fg",
+        highlight && "bg-active text-fg hover:bg-hover",
         muted && "text-fg-subtle hover:text-fg-muted",
         disabled && "cursor-not-allowed opacity-40 hover:bg-transparent hover:text-fg-subtle",
       )}
@@ -229,9 +289,8 @@ function NavRow({
       type="button"
     >
       {active && layoutHighlight ? (
-        // 选中高亮：tween + ease-out 120ms —— 比 spring 更稳定，无低帧机抖动
         <m.span
-          className="absolute inset-0 rounded-md bg-active"
+          className="absolute inset-0 rounded-lg bg-active"
           layoutId="sidebar-active"
           transition={{ duration: 0.12, ease: "easeOut" }}
         />
@@ -250,44 +309,108 @@ function NavRow({
   );
 }
 
-function Shortcut({ children }: { children: string }) {
-  return <kbd className="font-sans text-xs font-normal text-fg-faint">{children}</kbd>;
-}
-
-function SectionLabel({ children }: { children: string }) {
-  // 区段标签 13px、灰色、上 16px 间距，正常大小写
-  return <div className="px-2 pt-4 pb-1 text-sm font-normal text-fg-subtle">{children}</div>;
-}
-
-function Avatar() {
+function HoverActions({ onCreate }: { onCreate(event: MouseEvent<HTMLButtonElement>): void }) {
   return (
-    <div className="flex size-6 shrink-0 items-center justify-center rounded-full bg-white/6 font-mono text-[9px] font-normal text-fg-subtle">
-      ID
+    <span className="ml-1 flex shrink-0 items-center gap-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
+      <IconButton label="More">
+        <IconGripHorizontal size={14} stroke={1.8} />
+      </IconButton>
+      <IconButton label="New session" onClick={onCreate}>
+        <IconEdit size={14} stroke={1.8} />
+      </IconButton>
+    </span>
+  );
+}
+
+function IconButton({
+  children,
+  label,
+  onClick,
+}: {
+  children: ReactNode;
+  label: string;
+  onClick?: (event: MouseEvent<HTMLButtonElement>) => void;
+}) {
+  return (
+    <m.button
+      aria-label={label}
+      className="flex size-6 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-active hover:text-fg-muted"
+      onClick={onClick}
+      type="button"
+      whileTap={{ scale: 0.96 }}
+    >
+      {children}
+    </m.button>
+  );
+}
+
+function SectionHeader({
+  children,
+  expanded,
+  onToggle,
+}: {
+  children: string;
+  expanded: boolean;
+  onToggle(): void;
+}) {
+  return (
+    <div className="group mt-5 mb-1 flex h-7 items-center px-2 text-sm font-normal text-fg-faint">
+      <button
+        aria-expanded={expanded}
+        className="flex items-center gap-1.5 transition-colors hover:text-fg-subtle"
+        onClick={onToggle}
+        type="button"
+      >
+        <span>{children}</span>
+        <m.span
+          animate={{ rotate: expanded ? 90 : 0 }}
+          className="flex size-3.5 items-center justify-center opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100"
+          transition={{ duration: 0.16, ease: "easeOut" }}
+        >
+          <IconChevronRight size={13} stroke={1.7} />
+        </m.span>
+      </button>
     </div>
   );
 }
 
-function IconTool({
-  children,
-  label,
-  drag = true,
-}: {
-  children: ReactNode;
-  label: string;
-  drag?: boolean;
-}) {
-  return (
-    <Tooltip content={label}>
-      <button
-        aria-label={label}
-        className={cn(
-          "flex size-7 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-hover hover:text-fg-subtle",
-          !drag && "app-no-drag",
-        )}
-        type="button"
-      >
-        {children}
-      </button>
-    </Tooltip>
-  );
+function SectionLabel({ children }: { children: string }) {
+  return <div className="px-2 pt-5 pb-1 text-sm font-normal text-fg-faint">{children}</div>;
+}
+
+function formatRelativeTime(value: string): string {
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) {
+    return "";
+  }
+
+  const diffMs = Date.now() - timestamp;
+  const minutes = Math.max(1, Math.floor(diffMs / 60_000));
+  if (minutes < 60) {
+    return `${minutes}m`;
+  }
+
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) {
+    return `${hours}h`;
+  }
+
+  const days = Math.floor(hours / 24);
+  if (days < 14) {
+    return `${days}d`;
+  }
+
+  return `${Math.floor(days / 7)}w`;
+}
+
+function groupSessionsByWorkspace(sessions: AgentSessionInfo[]): Map<string, AgentSessionInfo[]> {
+  const grouped = new Map<string, AgentSessionInfo[]>();
+
+  for (const session of sessions) {
+    const workspaceSessions = grouped.get(session.workspaceId) ?? [];
+    workspaceSessions.push(session);
+    grouped.set(session.workspaceId, workspaceSessions);
+  }
+
+  return grouped;
 }

@@ -1,13 +1,12 @@
 <div align="center">
   <h1>Modus</h1>
-  <p><b>开源、本地优先的 Cursor 3.0 Agent Window 替代方案。</b></p>
+  <p><b>一个给编码 Agent 使用的本地桌面驾驶舱。</b></p>
 </div>
 
 <p align="center">
-  <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0-blue"></a>
-  <img alt="Status" src="https://img.shields.io/badge/status-v0.1.0%20MVP-black">
+  <img alt="Status" src="https://img.shields.io/badge/status-active%20desktop%20prototype-black">
   <img alt="Desktop" src="https://img.shields.io/badge/desktop-Electron-47848f">
-  <img alt="Runtime" src="https://img.shields.io/badge/runtime-pi-7c3aed">
+  <img alt="Runtime" src="https://img.shields.io/badge/runtime-PI%20SDK-7c3aed">
   <img alt="Local first" src="https://img.shields.io/badge/local--first-yes-16a34a">
 </p>
 
@@ -21,119 +20,68 @@
   </a>
 </p>
 
-<p align="center">
-  让编码 Agent 在你自己的仓库中运行。通过 <code>pi</code> 接入你自己的模型，
-  让每一行代码都留在本地，并在每个改动落地前完成审查。
-</p>
+想象一下，你身边坐着一个很会写代码的助手。
 
----
+它能看你的项目，能打开终端，能读 Git 改动，能记住你们刚刚聊了什么，也能切换不同模型。
+但它不是飘在远处的云端黑盒，而是坐在你电脑里的一个小工作台上：离代码很近，动作看得见，改动能检查，危险操作有人拦。
 
-Modus 是一个开源的编码 Agent 驾驶舱。它**不是 VS Code 分支**，而是一个专注于「Agent 改你代码时真正重要的工作流」的桌面应用：
-**真实终端控制、Git Diff Review、Worktree 隔离、权限门禁**，并由本地元数据存储支撑。
+这就是 Modus。
 
-**代码留在你的机器上，运行时可替换，UI 完全开源。**
+Modus 是一个面向 AI 编码 Agent 的桌面应用。它不是完整 IDE，也不是 VS Code 分支。它更像一个专门给 Agent 准备的工作窗口：左边放项目和会话，中间聊天，右边放 Git、终端、Worktree 和安全状态。
 
-> Modus V0.1.0 是工程化 MVP。桌面端基础能力已端到端打通，产品正在快速迭代，目标是成为完整的 Cursor 级 Agent Window。
+## Modus 现在已经能做什么
 
-## 为什么是 Modus
+当前真实源码里，Modus 已经打通了这些能力：
 
-大多数编码 Agent 要么被锁在闭源 IDE 里，要么只存在于终端界面，要么依赖云端工作流。Modus 选择了另一条路线：
+- **桌面外壳**：Electron 应用，包含自定义菜单栏、左侧边栏、聊天区、右侧检查面板。
+- **工作区**：打开本地文件夹，记住最近项目，并识别这个文件夹是不是 Git 仓库。
+- **Agent 会话**：新建会话、发送提示词、接收流式事件、本地保存历史，并能从左侧重新打开旧会话。
+- **模型选择**：从 PI 模型注册表读取模型，设置默认模型，为当前会话切换模型，也支持键盘循环切换。
+- **`@` 上下文**：把文件、文件夹、终端输出、Git diff、Markdown 文档片段挂到提示词里。
+- **Git 审查**：查看变更文件，预览 diff，统计新增/删除行，并能从界面回滚单个文件。
+- **真实终端**：通过 Rust sidecar 创建真正的 PTY 终端，再用 xterm.js 显示出来。
+- **Worktree 管理**：列出、新建、删除 Git worktree，用来隔离不同任务。
+- **安全层**：渲染进程没有 Node 权限，所有能力走 typed preload API，IPC 会校验来源，危险 PI 工具调用会在执行前被拦截。
+- **本地存储**：工作区、会话、Agent 事件、权限记录、终端输出、文档索引都存在本机 SQLite 里。
 
-- Agent UI 应该是**开源**的。
-- 默认执行路径应该是**本地优先**的。
-- 终端、Diff、权限和 Worktree 应该是**一等产品界面**。
-- Agent Runtime 应该**可以替换**，而不是绑定单一厂商。
-- 桌面应用应该像 **Agent 驾驶舱**，而不是通用编辑器分支。
+## 像逛一圈一样理解它
 
-## 功能
+打开 Modus，左边像一个项目书架。你可以打开本地文件夹，也可以点进之前的项目。每个项目下面都有会话，像一本本小笔记，还会显示最后活跃时间。
 
-| 功能 | V0.1.0 已实现 |
-| --- | --- |
-| **Agent Window** | Electron 桌面壳、安全 preload bridge、React Agent Window UI |
-| **本地工作区** | 打开文件夹、记录最近工作区、自动检测 Git 仓库 |
-| **接入你自己的模型** | `pi --mode rpc` 适配器，JSONL 解析，prompt / abort / event 映射 |
-| **真实终端** | 基于 Rust `modus-pty-host` sidecar 与 `xterm.js` 的真实 PTY 会话 |
-| **Diff Review** | Git 改动文件扫描 + Monaco Diff 查看器 |
-| **权限门禁** | 权限决策模型、本地持久化、类型化 IPC 接口 |
-| **Worktree 隔离** | Git worktree list / create / delete IPC |
-| **本地优先存储** | 工作区与会话元数据通过 SQLite 本地存储 |
-| **Windows 打包** | 通过打包 smoke test 的 NSIS 安装包 |
+中间是你和 Agent 对话的地方。你可以直接问，也可以输入 `@README.md`、`@git diff` 这类上下文，让 Agent 少猜一点。消息会流式出现，用户消息、思考、工具调用都会按时间线排好。
 
-## 横向对比
-
-| | Modus | Cursor | GitHub Copilot | Continue |
-|---|:---:|:---:|:---:|:---:|
-| 开源 | ✅ | ❌ | ❌ | ✅ |
-| 默认本地优先 | ✅ | ❌ | ❌ | ⚠️ |
-| 独立应用（非 VS Code 分支/插件） | ✅ | ⚠️ 分支 | ❌ | ❌ |
-| 真实 PTY 终端控制 | ✅ | ✅ | ❌ | ❌ |
-| 内置 Git Diff Review | ✅ | ✅ | ⚠️ | ⚠️ |
-| 危险操作权限门禁 | ✅ | ⚠️ | ❌ | ❌ |
-| Git Worktree 隔离 | ✅ | ❌ | ❌ | ❌ |
-| 可替换 Agent Runtime | ✅ | ❌ | ❌ | ✅ |
-| 代码留在你的机器上 | ✅ | ⚠️ | ❌ | ✅ |
-
-> ⚠️ = 部分支持、依赖厂商或需手动开启。Modus 仍处于早期，这张表是我们的目标，且大多数能力在 V0.1.0 已经可用。
-
-## 架构
-
-```text
-Modus Desktop
-├─ Electron Main
-│  ├─ secure window lifecycle
-│  ├─ typed IPC handlers
-│  ├─ workspace, Git, permission, diff, and worktree services
-│  ├─ pi RPC adapter
-│  └─ Rust PTY sidecar bridge
-│
-├─ Preload
-│  └─ window.modus typed API
-│
-├─ Renderer
-│  ├─ React Agent Window
-│  ├─ xterm.js terminal UI
-│  └─ Monaco diff viewer
-│
-└─ Rust Sidecar
-   └─ modus-pty-host
-      └─ portable-pty over PTY / ConPTY / openpty
-```
-
-关键设计选择：Modus 在产品层保持 **TypeScript-first**，同时把低层终端控制移动到一个**小型 Rust sidecar** 中。
-这样可以避开 Electron 原生 Node addon 的 rebuild 问题，也为终端持久化、Agent handoff 和崩溃隔离留下更干净的演进路径。
-
-## 技术栈
-
-| 层级 | 技术 |
-| --- | --- |
-| 桌面运行时 | Electron 42 |
-| 构建 | electron-vite + Vite |
-| UI | React 19 + Tailwind CSS v4 |
-| 编辑器和 Diff | Monaco Editor |
-| 终端 UI | xterm.js |
-| PTY Host | Rust + portable-pty |
-| 本地数据 | SQLite via Node `node:sqlite` |
-| Agent Runtime | `pi` |
-| 包管理 | npm workspaces |
-| 质量工具 | TypeScript strict + Biome + Vitest |
-| 打包 | electron-builder |
+右边像一个工具抽屉。Git 改动、真实终端、Worktree、安全状态都在这里。Agent 如果碰了你的代码，你马上能看到证据，而不是等它说“我改好了”。
 
 ## 快速开始
 
-### 环境要求
+### 需要准备
 
 - Node.js `>=22.19.0`
 - npm
-- 带 Cargo 的 Rust toolchain
+- Rust 和 Cargo
 - Git
-- 如需实验 Agent Runtime，请确保 `pi` 已在 PATH 中可用
+- 可供 `@earendil-works/pi-coding-agent` 使用的 PI 模型配置或凭据
 
-### 安装并运行
+### 安装
 
 ```bash
 npm install
+```
+
+### 启动桌面端
+
+```bash
 npm run dev
 ```
+
+然后按这个顺序试：
+
+1. 点击 **Open workspace**。
+2. 选择一个本地项目文件夹。
+3. 新建一个聊天。
+4. 在输入框下方选择模型。
+5. 输入问题，或用 `@` 添加文件、文件夹、Git diff、终端输出等上下文。
+6. 打开右侧面板，看 Git、终端、Worktree 和安全状态。
 
 ### 构建
 
@@ -141,7 +89,7 @@ npm run dev
 npm --workspace @modus/desktop run build
 ```
 
-这会同时构建 Electron 应用和 Rust `modus-pty-host` sidecar。
+这个命令会同时构建 Electron 应用和 Rust `modus-pty-host` 终端 sidecar。
 
 ### Windows 打包
 
@@ -149,11 +97,7 @@ npm --workspace @modus/desktop run build
 npm --workspace @modus/desktop run package:win -- --publish never
 ```
 
-Windows unpacked app 会包含：
-
-```text
-resources/bin/modus-pty-host.exe
-```
+打包配置会把 Rust 终端 sidecar 作为 unpacked binary resource 带进应用。
 
 ## 仓库结构
 
@@ -161,57 +105,61 @@ resources/bin/modus-pty-host.exe
 modus/
 ├─ apps/
 │  ├─ desktop/              # Electron 桌面应用
-│  └─ web/                  # 预留给未来官网
+│  └─ web/                  # 未来官网占位
 ├─ crates/
-│  └─ pty-host/             # Rust PTY sidecar
-├─ packages/
-│  ├─ agent-protocol/       # 共享 Agent event protocol
-│  ├─ config/               # 共享配置占位
-│  ├─ core/                 # 共享领域类型
-│  └─ ui/                   # 共享 UI/design exports
+│  └─ pty-host/             # Rust PTY sidecar，负责真实终端
 ├─ docs/
 │  └─ architecture/         # 架构说明
-└─ MODUS_V0.1.0_EXECUTION_PLAN.md
+├─ packages/                # 共享包占位
+├─ MODUS_V0.1.0_EXECUTION_PLAN.md
+└─ MODUS_V0.1.1_EXECUTION_PLAN.md
 ```
 
-## 路线图
+## 用大白话讲架构
 
-### V0.2
+```text
+Renderer UI
+  你看得见的界面：侧边栏、聊天、输入框、右侧面板、终端、diff。
 
-- 面向文件、文件夹、Diff、终端输出和 session 的真实 context picker
-- 更强的权限弹窗和审计记录
-- 终端 buffering 和 backpressure
-- 更好的 Diff Review 操作
-- 第一版可用的 `pi` prompt-to-patch 任务循环
+Preload bridge
+  一扇很窄的安全门，名字叫 window.modus。
 
-### V0.3
+Electron main process
+  真正有权限的一侧：负责工作区、Git、终端、文档、模型、权限和 Agent。
 
-- 并行本地 Agent
-- 基于 Worktree 的任务隔离
-- Session replay 和 branching
-- 更丰富的 tool call cards
-- Agent Review 工作流
+Rust PTY sidecar
+  一个小助手，专门负责开真实终端，避免把底层终端代码塞进 React。
 
-### Later
+SQLite
+  本地小本本，记录工作区、会话、事件、权限、文档和终端输出。
+```
 
-- 可选的云端 handoff
-- MCP server 管理
-- semantic / codegraph context
-- 官方网站和文档
-- 跨平台签名 release
+重点是：界面不能随便碰你的电脑。它必须通过 `window.modus` 这扇窄门问主进程。危险的 Agent 工具调用，也会先经过权限扩展检查。
 
-## V0.1.0 还不是什么
+## 技术栈
 
-Modus 还不是完整的 Cursor 替代品。仍在推进中的能力：
+| 层级 | 当前实现 |
+| --- | --- |
+| 桌面 | Electron 42, electron-vite |
+| UI | React 19, Base UI, Tailwind CSS v4, Motion, Tabler Icons |
+| 终端 | xterm.js + Rust `modus-pty-host` |
+| Agent Runtime | `@earendil-works/pi-coding-agent` PI SDK |
+| 本地数据 | Node `node:sqlite` |
+| Diff 和 Git | Git CLI services |
+| 质量工具 | TypeScript, Biome, Vitest |
+| 打包 | electron-builder |
 
-- 更成熟的生产级 UI
-- 完整 `@` context picker
-- 覆盖所有危险操作的权限弹窗
-- 更成熟的 `pi` 端到端工作流
-- 终端持久化和回放
-- 多 Agent 编排 UI
-- macOS / Linux 打包 smoke
-- 签名、图标、自动更新、release channels
+## 现在还比较早的地方
+
+Modus 已经能作为本地原型跑起来，但还不是完整成熟产品：
+
+- UI 还在继续向 Cursor 级质感打磨。
+- 权限拦截已经有了，但用户确认流程还比较早期。
+- 终端输出可以保存，但完整终端回放还没成熟。
+- Markdown 文档可以索引和搜索，但还不是完整知识库。
+- Worktree 能管理，但完整任务编排还在后面。
+- 跨平台打包、签名、自动更新、发布通道还没完成。
+- 当前 checkout 里还没有 license 文件；正式分发前需要补上。
 
 ## 开发命令
 
@@ -219,38 +167,16 @@ Modus 还不是完整的 Cursor 替代品。仍在推进中的能力：
 npm run dev
 npm run check
 npm run format
+npm run test
 npm --workspace @modus/desktop run build
 npm --workspace @modus/desktop run package:win -- --publish never
 cargo check -p modus-pty-host
 ```
 
-## 设计原则
+## 接下来想去哪里
 
-- 默认本地优先。
-- 默认开源。
-- Renderer 不拥有特权能力。
-- 危险操作必须经过权限门禁。
-- Agent 的工作应该能通过 Diff 被审查。
-- 终端控制应该是真实 PTY 控制，而不是假的文本框。
-- 低层系统边界应该放在小而隔离的 host 中。
+Modus 的目标很简单：让 AI 写代码这件事，不像把仓库交给一个看不见的人，而像在一张干净、明亮、本地的工作桌旁一起干活。
 
-## 贡献
+接下来会继续打磨 Agent 时间线、更强的权限提示、更丰富的上下文、更好用的 Diff 审查、更稳定的终端，以及基于 Worktree 的任务隔离。
 
-Modus 还处于早期阶段。现阶段最有价值的贡献包括：
-
-- 带日志和复现步骤的 bug report
-- Windows / macOS / Linux 打包反馈
-- Agent Window 的 UI/UX critique
-- `pi` runtime 集成修复
-- 终端 sidecar 改进
-- 文档和示例
-
-在提交大型 PR 前，请先开 issue 或设计说明，帮助我们保持架构一致性。
-
-## License
-
-Modus 基于 [AGPL-3.0](./LICENSE) 协议开源。
-
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=brandlll-lee/modus&type=Date)](https://www.star-history.com/#brandlll-lee/modus&Date)
+如果你也想要一个看得见、查得到、能掌控的编码 Agent 窗口，Modus 就是这个工作台。

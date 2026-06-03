@@ -1,11 +1,26 @@
-import { IconArrowUpRight, IconChevronDown, IconLayoutSidebarRight } from "@tabler/icons-react";
+import { Popover } from "@base-ui/react/popover";
+import {
+  IconBrandVisualStudio,
+  IconCheck,
+  IconChevronDown,
+  IconCircles,
+  IconDeviceLaptop,
+  IconFolder,
+  IconGitBranch,
+  IconLayoutSidebarRight,
+  IconListDetails,
+  IconSettings,
+  IconSourceCode,
+  IconVersions,
+} from "@tabler/icons-react";
 import { AnimatePresence, domAnimation, LazyMotion, m } from "motion/react";
-import { type ReactNode, useCallback, useEffect, useState } from "react";
+import { type ReactNode, type UIEvent, useCallback, useEffect, useState } from "react";
 import type { SecurityState } from "../../../preload/types";
 import type {
   AgentEvent,
   AgentSessionInfo,
   ContextItem,
+  FileDiff,
   ModelInfo,
   WorkspaceInfo,
 } from "../../../shared/contracts";
@@ -21,10 +36,15 @@ export function App() {
   const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([]);
   const [activeWorkspace, setActiveWorkspace] = useState<WorkspaceInfo | null>(null);
   const [agentSession, setAgentSession] = useState<AgentSessionInfo | null>(null);
+  const [agentSessions, setAgentSessions] = useState<AgentSessionInfo[]>([]);
   const [agentEvents, setAgentEvents] = useState<Array<{ id: string; event: AgentEvent }>>([]);
   const [contextItems, setContextItems] = useState<ContextItem[]>([]);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [model, setModel] = useState("pi-default");
+  const [inspectorOpen, setInspectorOpen] = useState(true);
+  const [inspectorWidth, setInspectorWidth] = useState(384);
+  const [environmentStats, setEnvironmentStats] = useState({ added: 0, removed: 0 });
+  const [pinnedUserMessageId, setPinnedUserMessageId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!window.modus) {
@@ -35,6 +55,7 @@ export function App() {
       setWorkspaces(items);
       setActiveWorkspace(items[0] ?? null);
     });
+    void window.modus.agent.list().then(setAgentSessions);
     void window.modus.model.list().then((items: ModelInfo[]) => {
       setModels(items);
       setModel(items.find((item) => item.available)?.id ?? items[0]?.id ?? "pi-default");
@@ -44,6 +65,14 @@ export function App() {
         ...events.slice(-200),
         { id: `${Date.now()}:${crypto.randomUUID()}`, event },
       ]);
+      if (
+        event.type === "agent.started" ||
+        event.type === "agent.ended" ||
+        event.type === "message.completed" ||
+        event.type === "runtime.error"
+      ) {
+        void window.modus.agent.list().then(setAgentSessions);
+      }
     });
   }, []);
 
@@ -54,23 +83,39 @@ export function App() {
     }
     setActiveWorkspace(workspace);
     setWorkspaces(await window.modus.workspace.list());
+    setAgentSessions(await window.modus.agent.list());
+  }
+
+  async function createSession(workspace: WorkspaceInfo | null): Promise<AgentSessionInfo | null> {
+    if (!workspace) {
+      return null;
+    }
+    const session = await window.modus.agent.create({
+      workspaceId: workspace.id,
+      cwd: workspace.rootPath,
+      model,
+      title: "Modus local agent",
+    });
+    setActiveWorkspace(workspace);
+    setAgentSession(session);
+    setAgentEvents([]);
+    setAgentSessions(await window.modus.agent.list());
+    return session;
   }
 
   async function ensureSession(): Promise<AgentSessionInfo | null> {
     if (agentSession) {
       return agentSession;
     }
-    if (!activeWorkspace) {
-      return null;
-    }
-    const session = await window.modus.agent.create({
-      workspaceId: activeWorkspace.id,
-      cwd: activeWorkspace.rootPath,
-      model,
-      title: "Modus local agent",
-    });
+    return await createSession(activeWorkspace);
+  }
+
+  async function selectSession(session: AgentSessionInfo): Promise<void> {
     setAgentSession(session);
-    return session;
+    setActiveWorkspace(
+      workspaces.find((workspace) => workspace.id === session.workspaceId) ?? activeWorkspace,
+    );
+    setAgentEvents(await window.modus.agent.listEvents(session.id));
   }
 
   async function submitPrompt(message: string, context: ContextItem[]): Promise<void> {
@@ -81,7 +126,26 @@ export function App() {
     if (!session) {
       return;
     }
-    void window.modus.agent.prompt({ context, sessionId: session.id, message });
+    const messageId = `local-user:${crypto.randomUUID()}`;
+    setAgentEvents((events) => [
+      ...events,
+      {
+        id: `${Date.now()}:${messageId}:start`,
+        event: { type: "message.started", sessionId: session.id, messageId, role: "user" },
+      },
+      {
+        id: `${Date.now()}:${messageId}:delta`,
+        event: { type: "message.delta", sessionId: session.id, messageId, delta: message },
+      },
+      {
+        id: `${Date.now()}:${messageId}:completed`,
+        event: { type: "message.completed", sessionId: session.id, messageId },
+      },
+    ]);
+    void window.modus.agent
+      .prompt({ context, sessionId: session.id, message })
+      .then(() => window.modus.agent.list())
+      .then(setAgentSessions);
   }
 
   async function changeModel(nextModel: string): Promise<void> {
@@ -121,6 +185,30 @@ export function App() {
 
   const hasSession = Boolean(agentSession);
 
+  useEffect(() => {
+    if (!activeWorkspace?.rootPath) {
+      setEnvironmentStats({ added: 0, removed: 0 });
+      return;
+    }
+
+    void window.modus.diff.read({ cwd: activeWorkspace.rootPath }).then((fileDiff: FileDiff) => {
+      setEnvironmentStats(getDiffTotals(fileDiff.diff));
+    });
+  }, [activeWorkspace]);
+
+  function handleTimelineScroll(event: UIEvent<HTMLDivElement>): void {
+    const container = event.currentTarget;
+    const userMessages = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-message-role="user"]'),
+    );
+    const containerTop = container.getBoundingClientRect().top;
+    const pinned = userMessages
+      .filter((element) => element.getBoundingClientRect().top <= containerTop + 16)
+      .at(-1);
+
+    setPinnedUserMessageId(pinned?.dataset.messageId ?? null);
+  }
+
   return (
     // LazyMotion + domAnimation：只加载 transform/opacity 等 DOM 动画 features，bundle 缩减 60%、
     // 减少 SSR/初始化 cost。所有 motion. 改用更轻量的 m. 组件。
@@ -135,9 +223,12 @@ export function App() {
             <Sidebar
               activeWorkspace={activeWorkspace}
               agentSession={agentSession}
+              agentSessions={agentSessions}
               canCreateSession={Boolean(activeWorkspace) && !hasSession}
               onNewSession={() => void ensureSession()}
+              onNewWorkspaceSession={(workspace) => void createSession(workspace)}
               onOpenWorkspace={() => void openWorkspace()}
+              onSelectSession={(session) => void selectSession(session)}
               onSelectWorkspace={setActiveWorkspace}
               workspaces={workspaces}
             />
@@ -145,10 +236,16 @@ export function App() {
             <main className="relative flex min-w-0 flex-1 flex-col bg-canvas">
               {/* 面包屑栏 36px —— 居中三段 chip，右侧复刻 Cursor 的轻量图标区 */}
               <header className="relative flex h-9 shrink-0 items-center px-3">
-                <div className="flex-1" />
-                <Breadcrumb activeWorkspace={activeWorkspace} />
+                <div className="flex flex-1 items-center">
+                  {!hasSession ? <ChatTopBar activeWorkspace={activeWorkspace} /> : null}
+                </div>
                 <div className="flex flex-1 items-center justify-end pr-2">
-                  <HeaderActions />
+                  <HeaderActions
+                    activeWorkspace={activeWorkspace}
+                    environmentStats={environmentStats}
+                    inspectorOpen={inspectorOpen}
+                    onToggleInspector={() => setInspectorOpen((open) => !open)}
+                  />
                 </div>
               </header>
 
@@ -162,8 +259,14 @@ export function App() {
                     key="conversation"
                     transition={{ duration: 0.12, ease: "easeOut" }}
                   >
-                    <div className="scroll-thin min-h-0 flex-1 overflow-y-auto">
-                      <Timeline agentEvents={agentEvents} />
+                    <div
+                      className="scroll-thin min-h-0 flex-1 overflow-y-auto"
+                      onScroll={handleTimelineScroll}
+                    >
+                      <Timeline
+                        agentEvents={agentEvents}
+                        pinnedUserMessageId={pinnedUserMessageId}
+                      />
                     </div>
                     <div className="shrink-0 px-6 pb-5">
                       <div className="mx-auto max-w-3xl">
@@ -224,7 +327,14 @@ export function App() {
             </main>
 
             {hasSession ? (
-              <Inspector activeWorkspace={activeWorkspace} securityState={securityState} />
+              <Inspector
+                activeWorkspace={activeWorkspace}
+                onOpenChange={setInspectorOpen}
+                onWidthChange={setInspectorWidth}
+                open={inspectorOpen}
+                securityState={securityState}
+                width={inspectorWidth}
+              />
             ) : null}
           </div>
         </div>
@@ -375,47 +485,212 @@ function CaptionButton({
   );
 }
 
-function Breadcrumb({ activeWorkspace }: { activeWorkspace: WorkspaceInfo | null }) {
+function ChatTopBar({ activeWorkspace }: { activeWorkspace: WorkspaceInfo | null }) {
   return (
-    <div className="app-no-drag flex items-center gap-0.5 text-sm font-normal text-fg-muted">
-      <BreadcrumbItem>{activeWorkspace?.displayName ?? "No workspace"}</BreadcrumbItem>
-      <BreadcrumbItem>main</BreadcrumbItem>
-      <BreadcrumbItem>Local</BreadcrumbItem>
+    <div className="app-no-drag flex items-center gap-3 text-sm font-normal text-fg-subtle">
+      <TopBarItem icon={<IconFolder size={15} stroke={1.65} />}>
+        {activeWorkspace?.displayName ?? "No workspace"}
+      </TopBarItem>
+      <TopBarItem icon={<IconDeviceLaptop size={15} stroke={1.65} />}>Work locally</TopBarItem>
+      <TopBarItem icon={<IconGitBranch size={15} stroke={1.65} />}>main</TopBarItem>
     </div>
   );
 }
 
-function BreadcrumbItem({ children }: { children: string }) {
+function TopBarItem({ children, icon }: { children: string; icon: ReactNode }) {
   return (
     <button
-      className="flex items-center gap-1 rounded-md px-2 py-1 transition-colors hover:bg-hover hover:text-fg"
+      className="flex h-7 items-center gap-1.5 rounded-md px-2 transition-colors hover:bg-hover hover:text-fg-muted"
       type="button"
     >
+      <span className="text-fg-faint">{icon}</span>
       <span className="max-w-40 truncate">{children}</span>
       <IconChevronDown className="text-fg-faint" size={11} stroke={2} />
     </button>
   );
 }
 
-function HeaderActions() {
+function HeaderActions({
+  activeWorkspace,
+  environmentStats,
+  inspectorOpen,
+  onToggleInspector,
+}: {
+  activeWorkspace: WorkspaceInfo | null;
+  environmentStats: { added: number; removed: number };
+  inspectorOpen: boolean;
+  onToggleInspector(): void;
+}) {
   return (
     <div className="app-no-drag flex h-7 items-center gap-1">
-      <HeaderIconButton label="Open editor window">
-        <IconArrowUpRight size={13} stroke={1.65} />
-      </HeaderIconButton>
-      <HeaderIconButton label="Toggle right sidebar">
-        <IconLayoutSidebarRight size={14} stroke={1.55} />
+      <EnvironmentPopover activeWorkspace={activeWorkspace} environmentStats={environmentStats} />
+      <HeaderIconButton
+        active={inspectorOpen}
+        label={inspectorOpen ? "Hide right sidebar" : "Show right sidebar"}
+        onClick={onToggleInspector}
+      >
+        <IconLayoutSidebarRight size={15} stroke={1.65} />
       </HeaderIconButton>
     </div>
   );
 }
 
-function HeaderIconButton({ children, label }: { children: ReactNode; label: string }) {
+function EnvironmentPopover({
+  activeWorkspace,
+  environmentStats,
+}: {
+  activeWorkspace: WorkspaceInfo | null;
+  environmentStats: { added: number; removed: number };
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <Popover.Root onOpenChange={setOpen} open={open}>
+      <Popover.Trigger
+        aria-label="Environment"
+        className={cn(
+          "flex size-7 items-center justify-center rounded-md transition-colors hover:bg-hover hover:text-fg-subtle",
+          open ? "bg-active text-fg-subtle" : "text-fg-faint",
+        )}
+      >
+        <IconListDetails size={15} stroke={1.65} />
+      </Popover.Trigger>
+      <AnimatePresence>
+        {open ? (
+          <Popover.Portal keepMounted>
+            <Popover.Positioner align="end" side="bottom" sideOffset={10}>
+              <Popover.Popup render={<m.div />}>
+                <m.div
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  className="w-[375px] rounded-[22px] border border-hairline bg-surface p-5 shadow-popup outline-none"
+                  exit={{ opacity: 0, scale: 0.98, y: -6 }}
+                  initial={{ opacity: 0, scale: 0.98, y: -6 }}
+                  transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
+                >
+                  <div className="mb-4 flex items-center justify-between">
+                    <h2 className="text-sm font-normal text-fg-subtle">Environment</h2>
+                    <button
+                      aria-label="Environment settings"
+                      className="flex size-7 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-hover hover:text-fg-subtle"
+                      type="button"
+                    >
+                      <IconSettings size={15} stroke={1.65} />
+                    </button>
+                  </div>
+                  <div className="space-y-3 text-sm text-fg">
+                    <EnvironmentRow icon={<IconSourceCode size={17} stroke={1.65} />}>
+                      <span>Changes</span>
+                      <span className="ml-auto font-mono text-success">
+                        +{environmentStats.added}
+                      </span>
+                      <span className="font-mono text-danger">-{environmentStats.removed}</span>
+                    </EnvironmentRow>
+                    <EnvironmentRow icon={<IconDeviceLaptop size={17} stroke={1.65} />}>
+                      <span>{activeWorkspace ? "Local" : "No workspace"}</span>
+                      <IconChevronDown className="text-fg-faint" size={12} stroke={2} />
+                    </EnvironmentRow>
+                    <EnvironmentRow icon={<IconGitBranch size={17} stroke={1.65} />}>
+                      <span>main</span>
+                      <IconChevronDown className="text-fg-faint" size={12} stroke={2} />
+                    </EnvironmentRow>
+                    <EnvironmentRow icon={<IconVersions size={17} stroke={1.65} />}>
+                      <span>Commit or push</span>
+                    </EnvironmentRow>
+                  </div>
+
+                  <div className="my-5 h-px bg-hairline-soft" />
+
+                  <section>
+                    <h2 className="mb-3 text-sm font-normal text-fg-subtle">Progress</h2>
+                    <div className="space-y-2.5 text-sm text-fg-muted">
+                      <ProgressRow done>梳理 Chat 顶部栏与 Session 状态</ProgressRow>
+                      <ProgressRow done>核对 BaseUI、Motion 官方用法</ProgressRow>
+                      <ProgressRow done>重构极简顶部栏显示逻辑</ProgressRow>
+                      <ProgressRow>弹出面板动画与视觉校准</ProgressRow>
+                    </div>
+                  </section>
+
+                  <div className="my-5 h-px bg-hairline-soft" />
+
+                  <section>
+                    <h2 className="mb-3 text-sm font-normal text-fg-subtle">Sources</h2>
+                    <div className="flex items-center gap-3 text-fg-subtle">
+                      <IconCircles size={18} stroke={1.6} />
+                      <span className="flex size-5 items-center justify-center rounded bg-[#2f5dff] text-white">
+                        <IconBrandVisualStudio size={15} stroke={1.7} />
+                      </span>
+                      <IconCircles size={18} stroke={1.6} />
+                    </div>
+                  </section>
+                </m.div>
+              </Popover.Popup>
+            </Popover.Positioner>
+          </Popover.Portal>
+        ) : null}
+      </AnimatePresence>
+    </Popover.Root>
+  );
+}
+
+function EnvironmentRow({ children, icon }: { children: ReactNode; icon: ReactNode }) {
+  return (
+    <button
+      className="flex h-8 w-full items-center gap-3 rounded-md px-1 text-left transition-colors hover:bg-hover"
+      type="button"
+    >
+      <span className="flex size-5 items-center justify-center text-fg">{icon}</span>
+      {children}
+    </button>
+  );
+}
+
+function ProgressRow({ children, done = false }: { children: string; done?: boolean }) {
+  return (
+    <div className="flex items-start gap-3">
+      <span
+        className={cn(
+          "mt-0.5 flex size-[18px] shrink-0 items-center justify-center rounded-full border",
+          done ? "border-transparent bg-fg-subtle text-canvas" : "border-fg-faint text-transparent",
+        )}
+      >
+        {done ? <IconCheck size={12} stroke={2.2} /> : null}
+      </span>
+      <span className="leading-snug">{children}</span>
+    </div>
+  );
+}
+
+function getDiffTotals(diff: string): { added: number; removed: number } {
+  return diff.split("\n").reduce(
+    (total, line) => {
+      if (line.startsWith("+") && !line.startsWith("+++")) total.added += 1;
+      if (line.startsWith("-") && !line.startsWith("---")) total.removed += 1;
+      return total;
+    },
+    { added: 0, removed: 0 },
+  );
+}
+
+function HeaderIconButton({
+  children,
+  label,
+  active = false,
+  onClick,
+}: {
+  children: ReactNode;
+  label: string;
+  active?: boolean;
+  onClick?: () => void;
+}) {
   return (
     <Tooltip content={label}>
       <button
         aria-label={label}
-        className="flex size-6 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-hover hover:text-fg-subtle"
+        className={cn(
+          "flex size-7 items-center justify-center rounded-md transition-colors hover:bg-hover hover:text-fg-subtle",
+          active ? "bg-active text-fg-subtle" : "text-fg-faint",
+        )}
+        onClick={onClick}
         type="button"
       >
         {children}

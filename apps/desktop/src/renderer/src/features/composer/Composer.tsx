@@ -130,17 +130,21 @@ export function Composer({
             aria-hidden
             className="pointer-events-none absolute inset-x-0 top-0 px-4 pt-4 text-md font-normal text-fg-subtle"
           >
-            <TypingAnimation
-              blinkCursor
-              cursorStyle="line"
-              deleteSpeed={28}
-              loop
-              pauseDelay={2200}
-              showCursor
-              startOnView={false}
-              typeSpeed={42}
-              words={hasSession ? SESSION_PLACEHOLDER_WORDS : HERO_PLACEHOLDER_WORDS}
-            />
+            {hasSession ? (
+              SESSION_PLACEHOLDER_WORDS[0]
+            ) : (
+              <TypingAnimation
+                blinkCursor
+                cursorStyle="line"
+                deleteSpeed={28}
+                loop
+                pauseDelay={2200}
+                showCursor
+                startOnView={false}
+                typeSpeed={42}
+                words={HERO_PLACEHOLDER_WORDS}
+              />
+            )}
           </div>
         ) : null}
         <textarea
@@ -255,12 +259,12 @@ function ModelSelect({
         <Select.Positioner
           align="start"
           alignItemWithTrigger={false}
-          collisionAvoidance={{ side: "none", align: "shift", fallbackAxisSide: "none" }}
+          collisionAvoidance={{ side: "flip", align: "shift", fallbackAxisSide: "none" }}
           side="bottom"
           sideOffset={4}
         >
           <Select.Popup
-            className="scroll-thin origin-(--transform-origin) w-[340px] max-w-[calc(100vw-24px)] overflow-y-auto rounded-lg border border-hairline bg-elevated p-1 shadow-popup transition-[transform,opacity] duration-100 data-ending-style:translate-y-[-4px] data-ending-style:opacity-0 data-starting-style:translate-y-[-4px] data-starting-style:opacity-0"
+            className="scroll-thin origin-(--transform-origin) w-[340px] max-w-[calc(100vw-24px)] overflow-y-auto rounded-lg border border-hairline bg-elevated p-1 shadow-popup transition-[transform,opacity] duration-100 data-[side=bottom]:data-ending-style:translate-y-[-4px] data-[side=bottom]:data-starting-style:translate-y-[-4px] data-[side=top]:data-ending-style:translate-y-[4px] data-[side=top]:data-starting-style:translate-y-[4px] data-ending-style:opacity-0 data-starting-style:opacity-0"
             style={{ maxHeight: "min(320px, var(--available-height))" }}
           >
             {items.map((item) => (

@@ -1,12 +1,14 @@
 import { IconAlertTriangle, IconSparkles } from "@tabler/icons-react";
 import { m } from "motion/react";
 import type { AgentEvent } from "../../../../shared/contracts";
+import { cn } from "../../lib/cn";
 import { MessageBlock } from "./MessageBlock";
 import { PermissionCard } from "./PermissionCard";
 import { ToolCard } from "./ToolCard";
 
 type TimelineProps = {
   agentEvents: Array<{ id: string; event: AgentEvent }>;
+  pinnedUserMessageId?: string | null;
 };
 
 type MessageBlockItem = {
@@ -146,34 +148,30 @@ function buildBlocks(agentEvents: TimelineProps["agentEvents"]): TimelineBlock[]
 
 function Notice({ body, isError = false, title }: NoticeBlockItem) {
   return (
-    <div className="flex gap-3">
-      <span className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-md bg-white/6 text-fg-subtle">
-        <IconAlertTriangle size={13} stroke={1.7} />
-      </span>
-      <div className="min-w-0 flex-1">
-        <div
-          className={
-            isError
-              ? "mb-1 font-mono text-2xs text-danger"
-              : "mb-1 font-mono text-2xs text-fg-subtle"
-          }
-        >
-          {title}
-        </div>
-        {body ? (
-          <pre className="scroll-thin overflow-x-auto whitespace-pre-wrap rounded-md bg-white/2.5 px-3 py-2 font-mono text-xs text-fg-muted leading-relaxed">
-            {body}
-          </pre>
-        ) : null}
+    <div className="flex min-w-0 items-start gap-2 text-sm text-fg-subtle">
+      <IconAlertTriangle
+        className={isError ? "mt-0.5 shrink-0 text-danger" : "mt-0.5 shrink-0 text-fg-faint"}
+        size={15}
+        stroke={1.65}
+      />
+      <div className="min-w-0">
+        <span className={isError ? "text-danger" : "text-fg-muted"}>{title}</span>
+        {body ? <span className="ml-2 text-fg-faint">{body}</span> : null}
       </div>
     </div>
   );
 }
 
-export function Timeline({ agentEvents }: TimelineProps) {
+export function Timeline({ agentEvents, pinnedUserMessageId }: TimelineProps) {
   const blocks = buildBlocks(agentEvents);
+  const visibleBlocks = blocks.filter(
+    (block) => block.type !== "message" || block.role !== "user" || block.content.trim(),
+  );
+  const pinnedBlock = pinnedUserMessageId
+    ? visibleBlocks.find((block) => block.type === "message" && block.id === pinnedUserMessageId)
+    : undefined;
 
-  if (blocks.length === 0) {
+  if (visibleBlocks.length === 0) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2.5 px-6 text-center">
         <span className="flex size-8 items-center justify-center rounded-lg bg-white/4 text-fg-subtle">
@@ -187,29 +185,48 @@ export function Timeline({ agentEvents }: TimelineProps) {
   }
 
   return (
-    <div className="mx-auto w-full max-w-3xl space-y-6 px-6 py-8">
-      {blocks.map((block) => (
+    <div className="relative mx-auto w-full max-w-3xl px-6 py-8">
+      {pinnedBlock?.type === "message" ? (
         <m.div
-          animate={{ opacity: 1 }}
-          initial={{ opacity: 0 }}
-          key={block.id}
-          transition={{ duration: 0.15, ease: "easeOut" }}
+          animate={{ opacity: 1, y: 0 }}
+          className="sticky top-0 z-10 mb-5 bg-canvas/96 pt-1 pb-3 backdrop-blur"
+          initial={{ opacity: 0, y: -4 }}
+          transition={{ duration: 0.14, ease: "easeOut" }}
         >
-          {block.type === "message" ? (
-            <MessageBlock content={block.content} role={block.role} thinking={block.thinking} />
-          ) : null}
-          {block.type === "tool" ? (
-            <ToolCard
-              args={block.args}
-              isError={block.isError ?? false}
-              name={block.name}
-              output={block.output}
-            />
-          ) : null}
-          {block.type === "permission" ? <PermissionCard request={block.request} /> : null}
-          {block.type === "notice" ? <Notice {...block} /> : null}
+          <MessageBlock content={pinnedBlock.content} messageRole="user" thinking="" />
         </m.div>
-      ))}
+      ) : null}
+      <div className="space-y-4">
+        {visibleBlocks.map((block) => (
+          <m.div
+            animate={{ opacity: block.id === pinnedUserMessageId ? 0 : 1 }}
+            className={cn(block.id === pinnedUserMessageId && "pointer-events-none")}
+            data-message-id={block.type === "message" ? block.id : undefined}
+            data-message-role={block.type === "message" ? block.role : undefined}
+            initial={{ opacity: 0 }}
+            key={block.id}
+            transition={{ duration: 0.15, ease: "easeOut" }}
+          >
+            {block.type === "message" ? (
+              <MessageBlock
+                content={block.content}
+                messageRole={block.role}
+                thinking={block.thinking}
+              />
+            ) : null}
+            {block.type === "tool" ? (
+              <ToolCard
+                args={block.args}
+                isError={block.isError ?? false}
+                name={block.name}
+                output={block.output}
+              />
+            ) : null}
+            {block.type === "permission" ? <PermissionCard request={block.request} /> : null}
+            {block.type === "notice" ? <Notice {...block} /> : null}
+          </m.div>
+        ))}
+      </div>
     </div>
   );
 }

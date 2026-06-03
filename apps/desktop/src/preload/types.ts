@@ -42,6 +42,8 @@ export type ModusApi = {
       title: string;
       model?: string;
     }): Promise<AgentSessionInfo>;
+    list(): Promise<AgentSessionInfo[]>;
+    listEvents(sessionId: string): Promise<Array<{ id: string; event: AgentEvent }>>;
     prompt(input: { sessionId: string; message: string; context?: ContextItem[] }): Promise<void>;
     abort(sessionId: string): Promise<void>;
     setModel(input: { sessionId: string; model: string }): Promise<AgentSessionInfo>;

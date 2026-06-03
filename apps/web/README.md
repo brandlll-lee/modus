@@ -1,6 +1,9 @@
 # Modus Web
 
-Reserved for the future Modus website.
+This package is reserved for the future Modus website.
 
-V0.1.0 focuses on the local-first desktop app. The website will later reuse the
-desktop design tokens and documentation structure.
+The product work currently lives in `apps/desktop`. The web package should eventually become the
+front door for people who want to understand Modus before installing it: a short story, screenshots,
+download links, docs, and release notes.
+
+Until then, keep this package light. Do not duplicate desktop product logic here.

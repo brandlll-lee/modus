@@ -1,4 +1,6 @@
 import { app, BrowserWindow, type IpcMainInvokeEvent, ipcMain } from "electron";
+import { listAgentEvents } from "../agent/agent-event-store";
+import { listAgentSessions } from "../agent/agent-store";
 import { listModels, setDefaultModel } from "../agent/model-service";
 import { getAgentRuntime } from "../agent/runtime-registry";
 import { resolveContext, searchContext } from "../context/context-service";
@@ -94,6 +96,16 @@ export function registerAppIpc(): void {
   ipcMain.handle(IPC_CHANNELS.agentCreate, async (event, input) => {
     assertTrustedSender(event);
     return await getAgentRuntime().create(getSenderWindow(event), input);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.agentList, (event) => {
+    assertTrustedSender(event);
+    return listAgentSessions();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.agentListEvents, (event, sessionId: string) => {
+    assertTrustedSender(event);
+    return listAgentEvents(sessionId);
   });
 
   ipcMain.handle(IPC_CHANNELS.agentPrompt, async (event, input) => {

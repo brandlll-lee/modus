@@ -14,6 +14,8 @@ const api: ModusApi = {
   },
   agent: {
     create: (input) => ipcRenderer.invoke("agent:create", input),
+    list: () => ipcRenderer.invoke("agent:list"),
+    listEvents: (sessionId) => ipcRenderer.invoke("agent:list-events", sessionId),
     prompt: (input) => ipcRenderer.invoke("agent:prompt", input),
     abort: (sessionId) => ipcRenderer.invoke("agent:abort", sessionId),
     setModel: (input) => ipcRenderer.invoke("agent:set-model", input),

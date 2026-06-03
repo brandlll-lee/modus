@@ -1,10 +1,10 @@
 import "@xterm/xterm/css/xterm.css";
-import { IconPlayerPlay } from "@tabler/icons-react";
+import { IconPlus, IconTerminal2 } from "@tabler/icons-react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
-import { useEffect, useRef, useState } from "react";
-import type { TerminalInfo } from "../../../../shared/contracts";
-import { PanelHeader } from "../../components/ui/Panel";
+import { m } from "motion/react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { TerminalEvent, TerminalInfo } from "../../../../shared/contracts";
 import { cn } from "../../lib/cn";
 
 type TerminalPanelProps = {
@@ -17,7 +17,20 @@ export function TerminalPanel({ workspaceId, cwd }: TerminalPanelProps) {
   const terminalRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const terminalInfoRef = useRef<TerminalInfo | null>(null);
-  const [terminalInfo, setTerminalInfo] = useState<TerminalInfo | null>(null);
+  const buffersRef = useRef<Record<string, string>>({});
+  const [terminals, setTerminals] = useState<TerminalInfo[]>([]);
+  const [activeTerminalId, setActiveTerminalId] = useState<string | null>(null);
+
+  const activeTerminal = terminals.find((terminal) => terminal.id === activeTerminalId) ?? null;
+
+  const refreshTerminals = useCallback(async () => {
+    const nextTerminals: TerminalInfo[] = await window.modus.terminal.list();
+    const workspaceTerminals = workspaceId
+      ? nextTerminals.filter((terminal) => terminal.workspaceId === workspaceId)
+      : nextTerminals;
+    setTerminals(workspaceTerminals);
+    setActiveTerminalId((current) => current ?? workspaceTerminals[0]?.id ?? null);
+  }, [workspaceId]);
 
   useEffect(() => {
     if (!containerRef.current) {
@@ -69,17 +82,26 @@ export function TerminalPanel({ workspaceId, cwd }: TerminalPanelProps) {
       }
     });
 
-    const unsubscribe = window.modus.terminal.onEvent(
-      (event: { type: string; data?: string; exitCode?: number }) => {
-        if (event.type === "terminal.data") {
-          terminal.write(event.data ?? "");
-        }
+    const unsubscribe = window.modus.terminal.onEvent((event: TerminalEvent) => {
+      if (event.type === "terminal.data") {
+        buffersRef.current[event.terminalId] =
+          (buffersRef.current[event.terminalId] ?? "") + event.data;
+      }
 
-        if (event.type === "terminal.exit") {
-          terminal.write(`\r\n\x1b[38;5;245m[process exited: ${event.exitCode}]\x1b[0m\r\n`);
+      if (event.type === "terminal.data" && event.terminalId === terminalInfoRef.current?.id) {
+        terminal.write(event.data);
+      }
+
+      if (event.type === "terminal.exit") {
+        const exitText = `\r\n\x1b[38;5;245m[process exited: ${event.exitCode}]\x1b[0m\r\n`;
+        buffersRef.current[event.terminalId] =
+          (buffersRef.current[event.terminalId] ?? "") + exitText;
+        if (event.terminalId === terminalInfoRef.current?.id) {
+          terminal.write(exitText);
         }
-      },
-    );
+        void refreshTerminals();
+      }
+    });
 
     return () => {
       resizeObserver.disconnect();
@@ -87,7 +109,7 @@ export function TerminalPanel({ workspaceId, cwd }: TerminalPanelProps) {
       disposeData.dispose();
       terminal.dispose();
     };
-  }, []);
+  }, [refreshTerminals]);
 
   async function spawnTerminal(): Promise<void> {
     if (!workspaceId || !cwd || !terminalRef.current || !fitRef.current) {
@@ -102,38 +124,84 @@ export function TerminalPanel({ workspaceId, cwd }: TerminalPanelProps) {
       rows: terminalRef.current.rows,
     });
     terminalInfoRef.current = info;
-    setTerminalInfo(info);
-    terminalRef.current.write(`\x1b[38;5;110m[spawned ${info.shell} in ${info.cwd}]\x1b[0m\r\n`);
+    buffersRef.current[info.id] = `\x1b[38;5;110m[spawned ${info.shell} in ${info.cwd}]\x1b[0m\r\n`;
+    setTerminals((current) => [...current.filter((terminal) => terminal.id !== info.id), info]);
+    setActiveTerminalId(info.id);
   }
+
+  useEffect(() => {
+    void refreshTerminals();
+  }, [refreshTerminals]);
+
+  useEffect(() => {
+    const nextActive = terminals.find((terminal) => terminal.id === activeTerminalId) ?? null;
+    terminalInfoRef.current = nextActive;
+    if (!terminalRef.current || !nextActive) {
+      return;
+    }
+
+    terminalRef.current.clear();
+    terminalRef.current.write(
+      buffersRef.current[nextActive.id] ||
+        `\x1b[38;5;110m${nextActive.shell} ${nextActive.cwd}\x1b[0m\r\n`,
+    );
+    fitRef.current?.fit();
+  }, [activeTerminalId, terminals]);
 
   return (
     <section className="flex h-full min-h-0 flex-col">
-      <PanelHeader title="Terminal">
-        <div className="flex items-center gap-2">
-          <span
-            className={cn(
-              "flex items-center gap-1.5 text-xs",
-              terminalInfo ? "text-fg-muted" : "text-fg-faint",
-            )}
-          >
-            <span
-              className={cn("size-1.5 rounded-full", terminalInfo ? "bg-fg-muted" : "bg-fg-faint")}
-            />
-            {terminalInfo ? "running" : "idle"}
-          </span>
-          <button
-            className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-fg-subtle transition-colors hover:bg-hover hover:text-fg disabled:opacity-40"
-            disabled={!workspaceId || !cwd || Boolean(terminalInfo)}
-            onClick={() => void spawnTerminal()}
-            type="button"
-          >
-            <IconPlayerPlay size={13} stroke={1.6} /> Spawn shell
-          </button>
+      <div className="flex h-9 shrink-0 items-center justify-between border-hairline border-b px-2">
+        <div className="flex min-w-0 items-center gap-2 text-sm text-fg">
+          <IconTerminal2 className="text-fg-subtle" size={15} stroke={1.65} />
+          <span className="truncate">{activeTerminal?.shell ?? "pwsh"}</span>
         </div>
-      </PanelHeader>
-      <div className="min-h-0 flex-1 bg-panel px-2 pb-2">
-        <div className="h-full w-full" ref={containerRef} />
+        <button
+          aria-label="New terminal"
+          className="flex size-7 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-hover hover:text-fg-subtle disabled:opacity-40"
+          disabled={!workspaceId || !cwd}
+          onClick={() => void spawnTerminal()}
+          type="button"
+        >
+          <IconPlus size={15} stroke={1.65} />
+        </button>
+      </div>
+      <div className="flex min-h-0 flex-1 bg-panel">
+        <div className="w-[250px] shrink-0 border-hairline border-r px-2 py-3">
+          <div className="mb-2 text-xs text-fg-subtle">
+            {Math.max(terminals.length, 1)} Terminal
+          </div>
+          <div className="space-y-1">
+            {getTerminalItems(terminals).map((terminal) => {
+              const selected =
+                terminal.id === activeTerminalId || (!activeTerminalId && terminal.id === "idle");
+              return (
+                <m.button
+                  animate={{ opacity: 1, y: 0 }}
+                  className={cn(
+                    "flex h-7 w-full items-center gap-2 rounded-md px-2 text-left text-sm transition-colors",
+                    selected ? "bg-active text-fg" : "text-fg-muted hover:bg-hover hover:text-fg",
+                  )}
+                  initial={{ opacity: 0, y: 3 }}
+                  key={terminal.id}
+                  onClick={() => terminal.id !== "idle" && setActiveTerminalId(terminal.id)}
+                  transition={{ duration: 0.14, ease: [0.22, 1, 0.36, 1] }}
+                  type="button"
+                >
+                  <IconTerminal2 className="shrink-0 text-fg-subtle" size={15} stroke={1.65} />
+                  <span className="truncate">{terminal.shell}</span>
+                </m.button>
+              );
+            })}
+          </div>
+        </div>
+        <div className="min-h-0 flex-1 px-2 py-2">
+          <div className="h-full w-full" ref={containerRef} />
+        </div>
       </div>
     </section>
   );
+}
+
+function getTerminalItems(terminals: TerminalInfo[]): Array<Pick<TerminalInfo, "id" | "shell">> {
+  return terminals.length ? terminals : [{ id: "idle", shell: "pwsh" }];
 }
