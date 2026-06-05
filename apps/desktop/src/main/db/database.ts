@@ -53,6 +53,18 @@ function migrate(db: DatabaseSync): void {
       created_at text not null
     );
 
+    create table if not exists agent_runs (
+      id text primary key,
+      session_id text not null references agent_sessions(id) on delete cascade,
+      user_message_id text,
+      prompt text not null,
+      status text not null,
+      model text,
+      started_at text not null,
+      completed_at text,
+      error text
+    );
+
     create table if not exists terminal_outputs (
       terminal_id text primary key,
       workspace_id text not null,
@@ -77,6 +89,18 @@ function migrate(db: DatabaseSync): void {
       heading text,
       content text not null,
       ordinal integer not null
+    );
+
+    create table if not exists agent_reviews (
+      id text primary key,
+      session_id text,
+      workspace_id text,
+      cwd text not null,
+      depth text not null,
+      status text not null,
+      summary text not null,
+      issues_json text not null,
+      created_at text not null
     );
   `);
 

@@ -8,10 +8,18 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { app, type BrowserWindow } from "electron";
-import type { AgentSessionInfo, ModelInfo } from "../../shared/contracts";
+import type { AgentRunInfo, AgentSessionInfo, ModelInfo } from "../../shared/contracts";
 import { formatResolvedContext, resolveContext } from "../context/context-service";
+import { createWorktree, isGitRepository } from "../git/git-service";
 import { IPC_CHANNELS } from "../ipc/channels";
 import { recordAgentEvent } from "./agent-event-store";
+import {
+  createAgentRun,
+  getActiveAgentRun,
+  getAgentRun,
+  listAgentRuns,
+  updateAgentRunStatus,
+} from "./agent-run-store";
 import {
   createAgentSessionRecord,
   getAgentSession,
@@ -52,12 +60,23 @@ export class PiSdkRuntime implements AgentRuntime {
     };
     const selectedModel = findModel(input.model) ?? getDefaultModel();
     const modelId = selectedModel ? modelToId(selectedModel) : input.model;
-    const recordInput: CreateAgentRuntimeInput & { runtime: "pi-sdk"; model?: string } = {
+    let effectiveCwd = input.cwd;
+    let worktreePath: string | undefined;
+    if ((input.worktreeMode ?? "auto") === "auto" && (await isGitRepository(input.cwd))) {
+      const worktree = await createWorktree(input.cwd, `session-${Date.now().toString(36)}`);
+      effectiveCwd = worktree.path;
+      worktreePath = worktree.path;
+    }
+    const recordInput: Parameters<typeof createAgentSessionRecord>[0] = {
       ...input,
+      cwd: effectiveCwd,
       runtime: "pi-sdk",
     };
     if (modelId !== undefined) {
       recordInput.model = modelId;
+    }
+    if (worktreePath !== undefined) {
+      recordInput.worktreePath = worktreePath;
     }
     const info = createAgentSessionRecord(recordInput);
 
@@ -68,7 +87,7 @@ export class PiSdkRuntime implements AgentRuntime {
 
     const settingsManager = SettingsManager.inMemory({ compaction: { enabled: true } });
     const loader = new DefaultResourceLoader({
-      cwd: input.cwd,
+      cwd: effectiveCwd,
       agentDir,
       extensionFactories: [createModusPermissionExtension(info.id, emit)],
       settingsManager,
@@ -76,12 +95,12 @@ export class PiSdkRuntime implements AgentRuntime {
     await loader.reload();
 
     const sessionOptions: Parameters<typeof createAgentSession>[0] = {
-      cwd: input.cwd,
+      cwd: effectiveCwd,
       agentDir,
       authStorage: getModelRegistry().authStorage,
       modelRegistry: getModelRegistry(),
       resourceLoader: loader,
-      sessionManager: SessionManager.create(input.cwd, sessionDir),
+      sessionManager: SessionManager.create(effectiveCwd, sessionDir),
       settingsManager,
     };
     if (selectedModel !== undefined) {
@@ -122,12 +141,52 @@ export class PiSdkRuntime implements AgentRuntime {
     const resolved = await resolveContext(runtimeSession.info.cwd, input.context);
     const contextText = formatResolvedContext(resolved);
     const message = contextText ? `${contextText}\n\n${input.message}` : input.message;
+    const delivery = input.delivery ?? "normal";
+    const runInput: Parameters<typeof createAgentRun>[0] = {
+      sessionId: input.sessionId,
+      prompt: input.message,
+    };
+    if (input.userMessageId !== undefined) runInput.userMessageId = input.userMessageId;
+    if (runtimeSession.info.model !== undefined) runInput.model = runtimeSession.info.model;
+    const run = createAgentRun(runInput);
 
     updateAgentSessionStatus(input.sessionId, "running");
+    const startedEvent = {
+      type: "run.started",
+      sessionId: input.sessionId,
+      runId: run.id,
+      delivery,
+    } as const;
+    runtimeSession.emit(
+      input.userMessageId !== undefined
+        ? { ...startedEvent, userMessageId: input.userMessageId }
+        : startedEvent,
+    );
     try {
-      await runtimeSession.session.prompt(message, { source: "rpc" });
+      await runtimeSession.session.prompt(message, {
+        source: "rpc",
+        ...(delivery === "normal"
+          ? {}
+          : { streamingBehavior: delivery === "follow-up" ? "followUp" : "steer" }),
+      });
+      const currentRun = getAgentRun(run.id);
+      if (currentRun?.status === "running") {
+        updateAgentRunStatus(run.id, "completed");
+        runtimeSession.emit({ type: "run.completed", sessionId: input.sessionId, runId: run.id });
+      }
     } catch (error) {
+      updateAgentRunStatus(
+        run.id,
+        "failed",
+        error instanceof Error ? error.message : String(error),
+      );
       updateAgentSessionStatus(input.sessionId, "error");
+      runtimeSession.emit({
+        type: "run.failed",
+        sessionId: input.sessionId,
+        runId: run.id,
+        message: error instanceof Error ? error.message : String(error),
+      });
       runtimeSession.emit({
         type: "runtime.error",
         sessionId: input.sessionId,
@@ -146,9 +205,18 @@ export class PiSdkRuntime implements AgentRuntime {
     if (!runtimeSession) {
       return;
     }
+    const activeRun = getActiveAgentRun(sessionId);
 
     await runtimeSession.session.abort();
+    if (activeRun) {
+      updateAgentRunStatus(activeRun.id, "cancelled");
+      runtimeSession.emit({ type: "run.cancelled", sessionId, runId: activeRun.id });
+    }
     updateAgentSessionStatus(sessionId, "idle");
+  }
+
+  async listRuns(sessionId: string): Promise<AgentRunInfo[]> {
+    return listAgentRuns(sessionId);
   }
 
   async dispose(sessionId: string): Promise<void> {

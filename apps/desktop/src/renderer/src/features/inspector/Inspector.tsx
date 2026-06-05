@@ -22,6 +22,8 @@ import { TerminalPanel } from "../terminal/TerminalPanel";
 
 type InspectorProps = {
   activeWorkspace: WorkspaceInfo | null;
+  cwd?: string | undefined;
+  sessionId?: string | undefined;
   securityState: SecurityState | null;
   open: boolean;
   width: number;
@@ -43,6 +45,8 @@ const TABS = [
 
 export function Inspector({
   activeWorkspace,
+  cwd,
+  sessionId,
   securityState,
   open,
   width,
@@ -157,13 +161,10 @@ export function Inspector({
                 </div>
 
                 <Tabs.Panel className="min-h-0 flex-1 outline-none" value="changes">
-                  <DiffPanel cwd={activeWorkspace?.rootPath} />
+                  <DiffPanel cwd={cwd} sessionId={sessionId} workspaceId={activeWorkspace?.id} />
                 </Tabs.Panel>
                 <Tabs.Panel className="min-h-0 flex-1 outline-none" value="terminal">
-                  <TerminalPanel
-                    cwd={activeWorkspace?.rootPath}
-                    workspaceId={activeWorkspace?.id}
-                  />
+                  <TerminalPanel cwd={cwd} workspaceId={activeWorkspace?.id} />
                 </Tabs.Panel>
                 <Tabs.Panel className="min-h-0 flex-1 outline-none" value="worktrees">
                   <WorktreesPanel cwd={activeWorkspace?.rootPath} />
@@ -209,6 +210,7 @@ function InspectorIconButton({
 function WorktreesPanel({ cwd }: { cwd?: string | undefined }) {
   const [worktrees, setWorktrees] = useState<WorktreeInfo[]>([]);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | undefined>();
 
   const refresh = useCallback(async (target: string | undefined): Promise<void> => {
     if (!target) {
@@ -216,8 +218,10 @@ function WorktreesPanel({ cwd }: { cwd?: string | undefined }) {
       return;
     }
     try {
+      setError(undefined);
       setWorktrees(await window.modus.worktree.list(target));
-    } catch {
+    } catch (error) {
+      setError(error instanceof Error ? error.message : String(error));
       setWorktrees([]);
     }
   }, []);
@@ -231,9 +235,12 @@ function WorktreesPanel({ cwd }: { cwd?: string | undefined }) {
       return;
     }
     setBusy(true);
+    setError(undefined);
     try {
       await window.modus.worktree.create({ cwd, taskId: `task-${Date.now().toString(36)}` });
       await refresh(cwd);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : String(error));
     } finally {
       setBusy(false);
     }
@@ -243,8 +250,13 @@ function WorktreesPanel({ cwd }: { cwd?: string | undefined }) {
     if (!cwd) {
       return;
     }
-    await window.modus.worktree.delete({ cwd, path });
-    await refresh(cwd);
+    setError(undefined);
+    try {
+      await window.modus.worktree.delete({ cwd, path });
+      await refresh(cwd);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : String(error));
+    }
   }
 
   return (
@@ -260,6 +272,11 @@ function WorktreesPanel({ cwd }: { cwd?: string | undefined }) {
         </button>
       </PanelHeader>
       <div className="scroll-thin flex-1 space-y-1.5 overflow-y-auto p-3">
+        {error ? (
+          <div className="rounded-md border border-danger/30 bg-danger/8 px-2.5 py-2 text-xs text-danger">
+            {error}
+          </div>
+        ) : null}
         {worktrees.length === 0 ? (
           <EmptyState
             hint={

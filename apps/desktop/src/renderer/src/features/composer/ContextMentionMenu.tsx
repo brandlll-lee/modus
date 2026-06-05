@@ -3,6 +3,10 @@ import {
   IconFileText,
   IconFolder,
   IconGitBranch,
+  IconListSearch,
+  IconNotebook,
+  IconReportSearch,
+  IconSearch,
   IconTerminal2,
 } from "@tabler/icons-react";
 import type { ContextKind, ContextSuggestion } from "../../../../shared/contracts";
@@ -29,6 +33,22 @@ function iconForType(type: ContextKind) {
 
   if (type === "git-diff") {
     return <IconGitBranch size={14} stroke={1.6} />;
+  }
+
+  if (type === "project-summary") {
+    return <IconReportSearch size={14} stroke={1.6} />;
+  }
+
+  if (type === "recent-changes") {
+    return <IconListSearch size={14} stroke={1.6} />;
+  }
+
+  if (type === "rules") {
+    return <IconNotebook size={14} stroke={1.6} />;
+  }
+
+  if (type === "search") {
+    return <IconSearch size={14} stroke={1.6} />;
   }
 
   return <IconFileText size={14} stroke={1.6} />;

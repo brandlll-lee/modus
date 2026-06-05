@@ -11,7 +11,7 @@ export type AgentSessionInfo = {
   workspaceId: string;
   title: string;
   cwd: string;
-  status: "starting" | "running" | "idle" | "exited" | "error";
+  status: "starting" | AgentRunStatus | "idle" | "exited" | "error";
   runtime?: "pi-sdk" | "pi-rpc";
   model?: string;
   piSessionId?: string;
@@ -21,16 +21,51 @@ export type AgentSessionInfo = {
   updatedAt: string;
 };
 
+export type AgentRunStatus = "running" | "completed" | "failed" | "blocked" | "cancelled";
+
+export type PromptDelivery = "normal" | "steer" | "follow-up";
+
+export type AgentRunInfo = {
+  id: string;
+  sessionId: string;
+  userMessageId?: string;
+  prompt: string;
+  status: AgentRunStatus;
+  model?: string;
+  startedAt: string;
+  completedAt?: string;
+  error?: string;
+};
+
 export type PermissionRequest = {
   id: string;
+  sessionId?: string;
+  runId?: string;
   action: PermissionAction;
   target: string;
   reason: string;
+  severity?: "medium" | "high" | "danger";
 };
 
 export type AgentEvent =
   | { type: "agent.started"; sessionId: string }
   | { type: "agent.ended"; sessionId: string }
+  | {
+      type: "run.started";
+      sessionId: string;
+      runId: string;
+      userMessageId?: string;
+      delivery: PromptDelivery;
+    }
+  | {
+      type: "run.completed";
+      sessionId: string;
+      runId: string;
+      summary?: string;
+    }
+  | { type: "run.failed"; sessionId: string; runId: string; message: string }
+  | { type: "run.blocked"; sessionId: string; runId: string; requestId: string; reason: string }
+  | { type: "run.cancelled"; sessionId: string; runId: string }
   | { type: "message.started"; sessionId: string; messageId: string; role: "assistant" | "user" }
   | { type: "message.delta"; sessionId: string; messageId: string; delta: string }
   | { type: "message.completed"; sessionId: string; messageId: string }
@@ -45,9 +80,18 @@ export type AgentEvent =
   | { type: "tool.output"; sessionId: string; toolCallId: string; output: string }
   | { type: "tool.ended"; sessionId: string; toolCallId: string; isError: boolean }
   | { type: "permission.requested"; sessionId: string; request: PermissionRequest }
+  | {
+      type: "permission.resolved";
+      sessionId: string;
+      requestId: string;
+      decision: PermissionDecision["decision"];
+    }
   | { type: "queue.updated"; sessionId: string; steering: string[]; followUp: string[] }
   | { type: "compaction.started"; sessionId: string; reason: string }
   | { type: "compaction.ended"; sessionId: string; summary?: string; aborted: boolean }
+  | { type: "review.started"; sessionId: string; reviewId: string }
+  | { type: "review.completed"; sessionId: string; review: AgentReviewResult }
+  | { type: "review.failed"; sessionId: string; reviewId: string; message: string }
   | { type: "runtime.error"; sessionId: string; message: string };
 
 export type TerminalInfo = {
@@ -66,11 +110,18 @@ export type TerminalEvent =
 export type FileChange = {
   path: string;
   status: string;
+  staged?: boolean;
+  unstaged?: boolean;
+  untracked?: boolean;
+  renamedFrom?: string;
 };
+
+export type DiffMode = "unstaged" | "staged" | "working-state";
 
 export type FileDiff = {
   path: string;
   diff: string;
+  mode?: DiffMode;
 };
 
 export type PermissionAction =
@@ -95,14 +146,27 @@ export type WorktreeInfo = {
   head: string;
 };
 
-export type ContextKind = "file" | "folder" | "doc" | "terminal" | "git-diff";
+export type ContextKind =
+  | "file"
+  | "folder"
+  | "doc"
+  | "terminal"
+  | "git-diff"
+  | "project-summary"
+  | "recent-changes"
+  | "rules"
+  | "search";
 
 export type ContextItem =
   | { type: "file"; path: string }
   | { type: "folder"; path: string }
   | { type: "doc"; docId: string; title: string; query?: string }
   | { type: "terminal"; terminalId: string; range?: { fromLine?: number; toLine?: number } }
-  | { type: "git-diff"; mode: "working-state" | "branch"; base?: string };
+  | { type: "git-diff"; mode: "working-state" | "branch"; base?: string }
+  | { type: "project-summary" }
+  | { type: "recent-changes"; limit?: number }
+  | { type: "rules" }
+  | { type: "search"; query: string };
 
 export type ContextSuggestion = {
   id: string;
@@ -150,4 +214,27 @@ export type ModelInfo = {
   provider: string;
   name: string;
   available: boolean;
+};
+
+export type AgentReviewDepth = "fast" | "standard" | "deep";
+
+export type AgentReviewIssue = {
+  id: string;
+  severity: "low" | "medium" | "high";
+  title: string;
+  file?: string;
+  line?: number;
+  detail: string;
+};
+
+export type AgentReviewResult = {
+  id: string;
+  sessionId?: string;
+  workspaceId?: string;
+  cwd: string;
+  depth: AgentReviewDepth;
+  status: "completed" | "failed";
+  summary: string;
+  issues: AgentReviewIssue[];
+  createdAt: string;
 };

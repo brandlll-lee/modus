@@ -1,6 +1,9 @@
 import type {
   AddDocInput,
   AgentEvent,
+  AgentReviewDepth,
+  AgentReviewResult,
+  AgentRunInfo,
   AgentSessionInfo,
   ContextItem,
   ContextKind,
@@ -12,6 +15,7 @@ import type {
   ModelInfo,
   PermissionAction,
   PermissionDecision,
+  PromptDelivery,
   ResolvedContext,
   TerminalEvent,
   TerminalInfo,
@@ -41,10 +45,18 @@ export type ModusApi = {
       cwd: string;
       title: string;
       model?: string;
+      worktreeMode?: "auto" | "off";
     }): Promise<AgentSessionInfo>;
     list(): Promise<AgentSessionInfo[]>;
     listEvents(sessionId: string): Promise<Array<{ id: string; event: AgentEvent }>>;
-    prompt(input: { sessionId: string; message: string; context?: ContextItem[] }): Promise<void>;
+    listRuns(sessionId: string): Promise<AgentRunInfo[]>;
+    prompt(input: {
+      sessionId: string;
+      message: string;
+      context?: ContextItem[];
+      delivery?: PromptDelivery;
+      userMessageId?: string;
+    }): Promise<void>;
     abort(sessionId: string): Promise<void>;
     setModel(input: { sessionId: string; model: string }): Promise<AgentSessionInfo>;
     cycleModel(input: {
@@ -68,11 +80,17 @@ export type ModusApi = {
   };
   diff: {
     list(cwd: string): Promise<FileChange[]>;
-    read(input: { cwd: string; path?: string }): Promise<FileDiff>;
+    read(input: { cwd: string; path?: string; mode?: FileDiff["mode"] }): Promise<FileDiff>;
     revert(input: { cwd: string; path: string }): Promise<void>;
+    stage(input: { cwd: string; path: string }): Promise<void>;
+    unstage(input: { cwd: string; path: string }): Promise<void>;
+    discard(input: { cwd: string; path: string }): Promise<void>;
+    commit(input: { cwd: string; message: string }): Promise<string>;
   };
   permission: {
     decide(input: {
+      requestId?: string;
+      sessionId?: string;
       action: PermissionAction;
       target: string;
       decision: PermissionDecision["decision"];
@@ -101,6 +119,15 @@ export type ModusApi = {
   model: {
     list(): Promise<ModelInfo[]>;
     setDefault(model: string): Promise<void>;
+  };
+  review: {
+    start(input: {
+      cwd: string;
+      sessionId?: string;
+      workspaceId?: string;
+      depth?: AgentReviewDepth;
+    }): Promise<AgentReviewResult>;
+    list(cwd: string): Promise<AgentReviewResult[]>;
   };
   window: {
     minimize(): Promise<void>;

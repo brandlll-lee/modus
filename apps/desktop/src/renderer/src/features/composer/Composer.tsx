@@ -4,11 +4,17 @@ import {
   IconCheck,
   IconChevronDown,
   IconMicrophone,
+  IconPlayerStop,
   IconPlus,
 } from "@tabler/icons-react";
 import { AnimatePresence, m } from "motion/react";
 import { type KeyboardEvent, useState } from "react";
-import type { ContextItem, ContextSuggestion, ModelInfo } from "../../../../shared/contracts";
+import type {
+  ContextItem,
+  ContextSuggestion,
+  ModelInfo,
+  PromptDelivery,
+} from "../../../../shared/contracts";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { TypingAnimation } from "../../components/ui/TypingAnimation";
 import { cn } from "../../lib/cn";
@@ -35,9 +41,11 @@ type ComposerProps = {
   cwd: string | undefined;
   canSubmit: boolean;
   hasSession: boolean;
+  isRunning?: boolean;
   onModelChange(model: string): void;
   onContextChange(items: ContextItem[]): void;
-  onSubmit(message: string, context: ContextItem[]): void;
+  onSubmit(message: string, context: ContextItem[], delivery?: PromptDelivery): void;
+  onAbort?(): void;
 };
 
 export function Composer({
@@ -48,6 +56,8 @@ export function Composer({
   cwd,
   canSubmit,
   hasSession,
+  isRunning = false,
+  onAbort,
   onModelChange,
   onContextChange,
   onSubmit,
@@ -60,11 +70,11 @@ export function Composer({
     workspaceId,
   });
 
-  function send(): void {
+  function send(delivery: PromptDelivery = isRunning ? "follow-up" : "normal"): void {
     if (!hasText || !canSubmit) {
       return;
     }
-    onSubmit(value.trim(), contextItems);
+    onSubmit(value.trim(), contextItems, delivery);
     setValue("");
     onContextChange([]);
   }
@@ -118,7 +128,7 @@ export function Composer({
 
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
-      send();
+      send(event.ctrlKey && isRunning ? "steer" : undefined);
     }
   }
 
@@ -202,11 +212,25 @@ export function Composer({
               exit={{ opacity: 0 }}
               initial={{ opacity: 0 }}
               key="send"
-              onClick={send}
+              onClick={() => send()}
               transition={{ duration: 0.08, ease: "linear" }}
               type="button"
             >
               <IconArrowUp size={14} stroke={2.4} />
+            </m.button>
+          ) : isRunning && onAbort ? (
+            <m.button
+              animate={{ opacity: 1 }}
+              aria-label="Stop"
+              className="flex size-[26px] items-center justify-center rounded-full bg-danger/80 text-white transition-colors hover:bg-danger active:scale-[0.94]"
+              exit={{ opacity: 0 }}
+              initial={{ opacity: 0 }}
+              key="stop"
+              onClick={onAbort}
+              transition={{ duration: 0.08, ease: "linear" }}
+              type="button"
+            >
+              <IconPlayerStop size={13} stroke={2.1} />
             </m.button>
           ) : (
             <m.button
@@ -312,5 +336,17 @@ function contextItemKey(item: ContextItem): string {
     return `terminal:${item.terminalId}:${item.range?.fromLine ?? ""}:${item.range?.toLine ?? ""}`;
   }
 
-  return `git-diff:${item.mode}:${item.base ?? ""}`;
+  if (item.type === "git-diff") {
+    return `git-diff:${item.mode}:${item.base ?? ""}`;
+  }
+
+  if (item.type === "recent-changes") {
+    return `recent-changes:${item.limit ?? ""}`;
+  }
+
+  if (item.type === "search") {
+    return `search:${item.query}`;
+  }
+
+  return item.type;
 }

@@ -16,7 +16,7 @@
     "package:win": "electron-builder --win --config electron-builder.config.ts",
     "package:linux": "electron-builder --linux --config electron-builder.config.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run --root ../.. apps/desktop/src"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.0",

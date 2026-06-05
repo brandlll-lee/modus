@@ -56,7 +56,7 @@ export function MessageBlock({ messageRole, content, thinking }: MessageBlockPro
           </AnimatePresence>
         </div>
       ) : null}
-      <div className="whitespace-pre-wrap text-fg-muted">{content || "Thinking..."}</div>
+      {content ? <div className="whitespace-pre-wrap text-fg-muted">{content}</div> : null}
     </div>
   );
 }

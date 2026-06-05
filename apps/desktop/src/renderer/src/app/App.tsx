@@ -14,7 +14,7 @@ import {
   IconVersions,
 } from "@tabler/icons-react";
 import { AnimatePresence, domAnimation, LazyMotion, m } from "motion/react";
-import { type ReactNode, type UIEvent, useCallback, useEffect, useState } from "react";
+import { type ReactNode, type UIEvent, useCallback, useEffect, useRef, useState } from "react";
 import type { SecurityState } from "../../../preload/types";
 import type {
   AgentEvent,
@@ -22,6 +22,9 @@ import type {
   ContextItem,
   FileDiff,
   ModelInfo,
+  PermissionDecision,
+  PermissionRequest,
+  PromptDelivery,
   WorkspaceInfo,
 } from "../../../shared/contracts";
 import { Sidebar } from "../components/Sidebar";
@@ -45,6 +48,12 @@ export function App() {
   const [inspectorWidth, setInspectorWidth] = useState(384);
   const [environmentStats, setEnvironmentStats] = useState({ added: 0, removed: 0 });
   const [pinnedUserMessageId, setPinnedUserMessageId] = useState<string | null>(null);
+  const [sessionCreateError, setSessionCreateError] = useState<string | undefined>();
+  const activeSessionIdRef = useRef<string | undefined>(undefined);
+
+  useEffect(() => {
+    activeSessionIdRef.current = agentSession?.id;
+  }, [agentSession?.id]);
 
   useEffect(() => {
     if (!window.modus) {
@@ -61,14 +70,20 @@ export function App() {
       setModel(items.find((item) => item.available)?.id ?? items[0]?.id ?? "pi-default");
     });
     return window.modus.agent.onEvent((event: AgentEvent) => {
-      setAgentEvents((events) => [
-        ...events.slice(-200),
-        { id: `${Date.now()}:${crypto.randomUUID()}`, event },
-      ]);
+      if (event.sessionId === activeSessionIdRef.current) {
+        setAgentEvents((events) => [
+          ...events.slice(-200),
+          { id: `${Date.now()}:${crypto.randomUUID()}`, event },
+        ]);
+      }
       if (
         event.type === "agent.started" ||
         event.type === "agent.ended" ||
         event.type === "message.completed" ||
+        event.type === "run.completed" ||
+        event.type === "run.failed" ||
+        event.type === "run.cancelled" ||
+        event.type === "run.blocked" ||
         event.type === "runtime.error"
       ) {
         void window.modus.agent.list().then(setAgentSessions);
@@ -90,17 +105,23 @@ export function App() {
     if (!workspace) {
       return null;
     }
-    const session = await window.modus.agent.create({
-      workspaceId: workspace.id,
-      cwd: workspace.rootPath,
-      model,
-      title: "Modus local agent",
-    });
-    setActiveWorkspace(workspace);
-    setAgentSession(session);
-    setAgentEvents([]);
-    setAgentSessions(await window.modus.agent.list());
-    return session;
+    try {
+      const session = await window.modus.agent.create({
+        workspaceId: workspace.id,
+        cwd: workspace.rootPath,
+        model,
+        title: "Modus local agent",
+      });
+      setSessionCreateError(undefined);
+      setActiveWorkspace(workspace);
+      setAgentSession(session);
+      setAgentEvents([]);
+      setAgentSessions(await window.modus.agent.list());
+      return session;
+    } catch (error) {
+      setSessionCreateError(error instanceof Error ? error.message : String(error));
+      return null;
+    }
   }
 
   async function ensureSession(): Promise<AgentSessionInfo | null> {
@@ -111,6 +132,7 @@ export function App() {
   }
 
   async function selectSession(session: AgentSessionInfo): Promise<void> {
+    setSessionCreateError(undefined);
     setAgentSession(session);
     setActiveWorkspace(
       workspaces.find((workspace) => workspace.id === session.workspaceId) ?? activeWorkspace,
@@ -118,7 +140,11 @@ export function App() {
     setAgentEvents(await window.modus.agent.listEvents(session.id));
   }
 
-  async function submitPrompt(message: string, context: ContextItem[]): Promise<void> {
+  async function submitPrompt(
+    message: string,
+    context: ContextItem[],
+    delivery: PromptDelivery = "normal",
+  ): Promise<void> {
     if (!message.trim()) {
       return;
     }
@@ -143,9 +169,31 @@ export function App() {
       },
     ]);
     void window.modus.agent
-      .prompt({ context, sessionId: session.id, message })
+      .prompt({ context, delivery, sessionId: session.id, message, userMessageId: messageId })
       .then(() => window.modus.agent.list())
       .then(setAgentSessions);
+  }
+
+  async function runReview(): Promise<void> {
+    if (!activeCwd || !agentSession) return;
+    await window.modus.review.start({
+      cwd: activeCwd,
+      sessionId: agentSession.id,
+      workspaceId: activeWorkspace?.id,
+    });
+  }
+
+  async function decidePermission(
+    request: PermissionRequest,
+    decision: PermissionDecision["decision"],
+  ): Promise<void> {
+    await window.modus.permission.decide({
+      requestId: request.id,
+      sessionId: request.sessionId,
+      action: request.action,
+      target: request.target,
+      decision,
+    });
   }
 
   async function changeModel(nextModel: string): Promise<void> {
@@ -184,17 +232,20 @@ export function App() {
   }, [cycleModel]);
 
   const hasSession = Boolean(agentSession);
+  const activeCwd = agentSession?.worktreePath ?? agentSession?.cwd ?? activeWorkspace?.rootPath;
+  const activeRunStatus = latestRunStatus(agentEvents);
+  const isRunning = activeRunStatus === "running" || activeRunStatus === "blocked";
 
   useEffect(() => {
-    if (!activeWorkspace?.rootPath) {
+    if (!activeCwd) {
       setEnvironmentStats({ added: 0, removed: 0 });
       return;
     }
 
-    void window.modus.diff.read({ cwd: activeWorkspace.rootPath }).then((fileDiff: FileDiff) => {
+    void window.modus.diff.read({ cwd: activeCwd }).then((fileDiff: FileDiff) => {
       setEnvironmentStats(getDiffTotals(fileDiff.diff));
     });
-  }, [activeWorkspace]);
+  }, [activeCwd]);
 
   function handleTimelineScroll(event: UIEvent<HTMLDivElement>): void {
     const container = event.currentTarget;
@@ -249,6 +300,12 @@ export function App() {
                 </div>
               </header>
 
+              {sessionCreateError ? (
+                <div className="mx-6 mb-2 rounded-md border border-danger/30 bg-danger/8 px-3 py-2 text-xs text-danger">
+                  {sessionCreateError}
+                </div>
+              ) : null}
+
               <AnimatePresence initial={false} mode="wait">
                 {hasSession ? (
                   <m.div
@@ -265,6 +322,16 @@ export function App() {
                     >
                       <Timeline
                         agentEvents={agentEvents}
+                        {...(activeRunStatus === "completed"
+                          ? {
+                              onContinue: () =>
+                                void submitPrompt("Continue from the last result.", [], "normal"),
+                            }
+                          : {})}
+                        onPermissionDecision={(request, decision) =>
+                          void decidePermission(request, decision)
+                        }
+                        onReviewRun={() => void runReview()}
                         pinnedUserMessageId={pinnedUserMessageId}
                       />
                     </div>
@@ -273,10 +340,16 @@ export function App() {
                         <Composer
                           canSubmit={Boolean(activeWorkspace)}
                           contextItems={contextItems}
-                          cwd={activeWorkspace?.rootPath}
+                          cwd={activeCwd}
                           hasSession
+                          isRunning={isRunning}
                           model={model}
                           models={models}
+                          onAbort={() =>
+                            agentSession
+                              ? void window.modus.agent.abort(agentSession.id)
+                              : undefined
+                          }
                           onContextChange={setContextItems}
                           onModelChange={(next) => void changeModel(next)}
                           onSubmit={(message, context) => void submitPrompt(message, context)}
@@ -298,7 +371,7 @@ export function App() {
                       <Composer
                         canSubmit={Boolean(activeWorkspace)}
                         contextItems={contextItems}
-                        cwd={activeWorkspace?.rootPath}
+                        cwd={activeCwd}
                         hasSession={false}
                         model={model}
                         models={models}
@@ -329,6 +402,8 @@ export function App() {
             {hasSession ? (
               <Inspector
                 activeWorkspace={activeWorkspace}
+                cwd={activeCwd}
+                sessionId={agentSession?.id}
                 onOpenChange={setInspectorOpen}
                 onWidthChange={setInspectorWidth}
                 open={inspectorOpen}
@@ -669,6 +744,14 @@ function getDiffTotals(diff: string): { added: number; removed: number } {
     },
     { added: 0, removed: 0 },
   );
+}
+
+function latestRunStatus(events: Array<{ event: AgentEvent }>): string | undefined {
+  return events
+    .map(({ event }) => event)
+    .reverse()
+    .find((event) => event.type.startsWith("run."))
+    ?.type.replace("run.", "");
 }
 
 function HeaderIconButton({

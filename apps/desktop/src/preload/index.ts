@@ -16,6 +16,7 @@ const api: ModusApi = {
     create: (input) => ipcRenderer.invoke("agent:create", input),
     list: () => ipcRenderer.invoke("agent:list"),
     listEvents: (sessionId) => ipcRenderer.invoke("agent:list-events", sessionId),
+    listRuns: (sessionId) => ipcRenderer.invoke("agent:list-runs", sessionId),
     prompt: (input) => ipcRenderer.invoke("agent:prompt", input),
     abort: (sessionId) => ipcRenderer.invoke("agent:abort", sessionId),
     setModel: (input) => ipcRenderer.invoke("agent:set-model", input),
@@ -44,6 +45,10 @@ const api: ModusApi = {
     list: (cwd) => ipcRenderer.invoke("diff:list", cwd),
     read: (input) => ipcRenderer.invoke("diff:read", input),
     revert: (input) => ipcRenderer.invoke("diff:revert", input),
+    stage: (input) => ipcRenderer.invoke("diff:stage", input),
+    unstage: (input) => ipcRenderer.invoke("diff:unstage", input),
+    discard: (input) => ipcRenderer.invoke("diff:discard", input),
+    commit: (input) => ipcRenderer.invoke("diff:commit", input),
   },
   permission: {
     decide: (input) => ipcRenderer.invoke("permission:decide", input),
@@ -66,6 +71,10 @@ const api: ModusApi = {
   model: {
     list: () => ipcRenderer.invoke("model:list"),
     setDefault: (model) => ipcRenderer.invoke("model:set-default", model),
+  },
+  review: {
+    start: (input) => ipcRenderer.invoke("review:start", input),
+    list: (cwd) => ipcRenderer.invoke("review:list", cwd),
   },
   window: {
     minimize: () => ipcRenderer.invoke("window:minimize") as Promise<void>,

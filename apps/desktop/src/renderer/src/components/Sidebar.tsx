@@ -64,7 +64,7 @@ export function Sidebar({
             </span>
           }
         >
-          Codex mobile
+          Remote control
         </NavRow>
 
         <SectionHeader

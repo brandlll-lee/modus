@@ -1,18 +1,28 @@
 import { app, BrowserWindow, type IpcMainInvokeEvent, ipcMain } from "electron";
-import { listAgentEvents } from "../agent/agent-event-store";
+import { listAgentEvents, recordAgentEvent } from "../agent/agent-event-store";
+import { listAgentRuns } from "../agent/agent-run-store";
 import { listAgentSessions } from "../agent/agent-store";
 import { listModels, setDefaultModel } from "../agent/model-service";
+import { listAgentReviews, startAgentReview } from "../agent/review-service";
 import { getAgentRuntime } from "../agent/runtime-registry";
 import { resolveContext, searchContext } from "../context/context-service";
 import { addDocSource, indexWorkspaceDocs, listDocSources, searchDocs } from "../docs/docs-service";
 import {
+  commitChanges,
   createWorktree,
   deleteWorktree,
+  discardFile,
   listChanges,
   listWorktrees,
   readDiff,
   revertFile,
+  stageFile,
+  unstageFile,
 } from "../git/git-service";
+import {
+  denyPendingPermissionRequests,
+  resolvePermissionRequest,
+} from "../permissions/permission-broker";
 import { listPermissionDecisions, recordPermissionDecision } from "../permissions/permission-store";
 import {
   createTerminal,
@@ -23,6 +33,29 @@ import {
 } from "../terminal/terminal-service";
 import { getRecentWorkspaces, openWorkspace } from "../workspace/workspace-service";
 import { IPC_CHANNELS } from "./channels";
+import {
+  agentCreateSchema,
+  agentCycleModelSchema,
+  agentPromptSchema,
+  agentSetModelSchema,
+  contextResolveSchema,
+  contextSearchSchema,
+  cwdSchema,
+  diffCommitSchema,
+  diffPathSchema,
+  diffReadSchema,
+  docsAddSchema,
+  docsSearchSchema,
+  parseIpcInput,
+  permissionDecideSchema,
+  reviewStartSchema,
+  sessionIdSchema,
+  terminalCreateSchema,
+  terminalResizeSchema,
+  terminalWriteSchema,
+  worktreeCreateSchema,
+  worktreeDeleteSchema,
+} from "./schemas";
 
 const TRUSTED_DEV_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
@@ -95,7 +128,14 @@ export function registerAppIpc(): void {
 
   ipcMain.handle(IPC_CHANNELS.agentCreate, async (event, input) => {
     assertTrustedSender(event);
-    return await getAgentRuntime().create(getSenderWindow(event), input);
+    const parsed = parseIpcInput(agentCreateSchema, input, IPC_CHANNELS.agentCreate);
+    return await getAgentRuntime().create(getSenderWindow(event), {
+      workspaceId: parsed.workspaceId,
+      cwd: parsed.cwd,
+      title: parsed.title,
+      ...(parsed.model !== undefined ? { model: parsed.model } : {}),
+      ...(parsed.worktreeMode !== undefined ? { worktreeMode: parsed.worktreeMode } : {}),
+    });
   });
 
   ipcMain.handle(IPC_CHANNELS.agentList, (event) => {
@@ -105,51 +145,71 @@ export function registerAppIpc(): void {
 
   ipcMain.handle(IPC_CHANNELS.agentListEvents, (event, sessionId: string) => {
     assertTrustedSender(event);
-    return listAgentEvents(sessionId);
+    return listAgentEvents(parseIpcInput(sessionIdSchema, sessionId, IPC_CHANNELS.agentListEvents));
+  });
+
+  ipcMain.handle(IPC_CHANNELS.agentListRuns, (event, sessionId: string) => {
+    assertTrustedSender(event);
+    return listAgentRuns(parseIpcInput(sessionIdSchema, sessionId, IPC_CHANNELS.agentListRuns));
   });
 
   ipcMain.handle(IPC_CHANNELS.agentPrompt, async (event, input) => {
     assertTrustedSender(event);
+    const parsed = parseIpcInput(agentPromptSchema, input, IPC_CHANNELS.agentPrompt);
     await getAgentRuntime().prompt({
-      sessionId: input.sessionId,
-      message: input.message,
-      context: input.context ?? [],
+      sessionId: parsed.sessionId,
+      message: parsed.message,
+      context: parsed.context ?? [],
+      ...(parsed.delivery !== undefined ? { delivery: parsed.delivery } : {}),
+      ...(parsed.userMessageId !== undefined ? { userMessageId: parsed.userMessageId } : {}),
     });
   });
 
   ipcMain.handle(IPC_CHANNELS.agentAbort, async (event, sessionId: string) => {
     assertTrustedSender(event);
-    await getAgentRuntime().abort(sessionId);
+    await getAgentRuntime().abort(
+      parseIpcInput(sessionIdSchema, sessionId, IPC_CHANNELS.agentAbort),
+    );
   });
 
   ipcMain.handle(IPC_CHANNELS.agentSetModel, async (event, input) => {
     assertTrustedSender(event);
-    return await getAgentRuntime().setModel(input.sessionId, input.model);
+    const parsed = parseIpcInput(agentSetModelSchema, input, IPC_CHANNELS.agentSetModel);
+    return await getAgentRuntime().setModel(parsed.sessionId, parsed.model);
   });
 
   ipcMain.handle(IPC_CHANNELS.agentCycleModel, async (event, input) => {
     assertTrustedSender(event);
-    return await getAgentRuntime().cycleModel(input.sessionId, input.direction);
+    const parsed = parseIpcInput(agentCycleModelSchema, input, IPC_CHANNELS.agentCycleModel);
+    return await getAgentRuntime().cycleModel(parsed.sessionId, parsed.direction);
   });
 
   ipcMain.handle(IPC_CHANNELS.terminalCreate, (event, input) => {
     assertTrustedSender(event);
-    return createTerminal(getSenderWindow(event), input);
+    const parsed = parseIpcInput(terminalCreateSchema, input, IPC_CHANNELS.terminalCreate);
+    return createTerminal(getSenderWindow(event), {
+      workspaceId: parsed.workspaceId,
+      cwd: parsed.cwd,
+      ...(parsed.cols !== undefined ? { cols: parsed.cols } : {}),
+      ...(parsed.rows !== undefined ? { rows: parsed.rows } : {}),
+    });
   });
 
   ipcMain.handle(IPC_CHANNELS.terminalWrite, (event, input) => {
     assertTrustedSender(event);
-    writeTerminal(input.terminalId, input.data);
+    const parsed = parseIpcInput(terminalWriteSchema, input, IPC_CHANNELS.terminalWrite);
+    writeTerminal(parsed.terminalId, parsed.data);
   });
 
   ipcMain.handle(IPC_CHANNELS.terminalResize, (event, input) => {
     assertTrustedSender(event);
-    resizeTerminal(input.terminalId, input.cols, input.rows);
+    const parsed = parseIpcInput(terminalResizeSchema, input, IPC_CHANNELS.terminalResize);
+    resizeTerminal(parsed.terminalId, parsed.cols, parsed.rows);
   });
 
   ipcMain.handle(IPC_CHANNELS.terminalKill, (event, terminalId: string) => {
     assertTrustedSender(event);
-    killTerminal(terminalId);
+    killTerminal(parseIpcInput(sessionIdSchema, terminalId, IPC_CHANNELS.terminalKill));
   });
 
   ipcMain.handle(IPC_CHANNELS.terminalList, (event) => {
@@ -159,22 +219,55 @@ export function registerAppIpc(): void {
 
   ipcMain.handle(IPC_CHANNELS.diffList, async (event, cwd: string) => {
     assertTrustedSender(event);
-    return await listChanges(cwd);
+    return await listChanges(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.diffList));
   });
 
   ipcMain.handle(IPC_CHANNELS.diffRead, async (event, input) => {
     assertTrustedSender(event);
-    return await readDiff(input.cwd, input.path);
+    const parsed = parseIpcInput(diffReadSchema, input, IPC_CHANNELS.diffRead);
+    return await readDiff(parsed.cwd, parsed.path, parsed.mode);
   });
 
   ipcMain.handle(IPC_CHANNELS.diffRevert, async (event, input) => {
     assertTrustedSender(event);
-    await revertFile(input.cwd, input.path);
+    const parsed = parseIpcInput(diffPathSchema, input, IPC_CHANNELS.diffRevert);
+    await revertFile(parsed.cwd, parsed.path);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.diffStage, async (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(diffPathSchema, input, IPC_CHANNELS.diffStage);
+    await stageFile(parsed.cwd, parsed.path);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.diffUnstage, async (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(diffPathSchema, input, IPC_CHANNELS.diffUnstage);
+    await unstageFile(parsed.cwd, parsed.path);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.diffDiscard, async (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(diffPathSchema, input, IPC_CHANNELS.diffDiscard);
+    await discardFile(parsed.cwd, parsed.path);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.diffCommit, async (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(diffCommitSchema, input, IPC_CHANNELS.diffCommit);
+    return await commitChanges(parsed.cwd, parsed.message);
   });
 
   ipcMain.handle(IPC_CHANNELS.permissionDecide, (event, input) => {
     assertTrustedSender(event);
-    return recordPermissionDecision(input.action, input.target, input.decision);
+    const parsed = parseIpcInput(permissionDecideSchema, input, IPC_CHANNELS.permissionDecide);
+    if (parsed.requestId) {
+      const resolved = resolvePermissionRequest(parsed.requestId, parsed.decision);
+      if (resolved) {
+        return resolved;
+      }
+    }
+    return recordPermissionDecision(parsed.action, parsed.target, parsed.decision);
   });
 
   ipcMain.handle(IPC_CHANNELS.permissionList, (event) => {
@@ -184,30 +277,93 @@ export function registerAppIpc(): void {
 
   ipcMain.handle(IPC_CHANNELS.contextSearch, async (event, input) => {
     assertTrustedSender(event);
-    if (input.kind === "doc" || /^docs?/i.test(input.query)) {
-      await indexWorkspaceDocs(input.workspaceId, input.cwd);
+    const parsed = parseIpcInput(contextSearchSchema, input, IPC_CHANNELS.contextSearch);
+    if (parsed.kind === "doc" || /^docs?/i.test(parsed.query)) {
+      await indexWorkspaceDocs(parsed.workspaceId, parsed.cwd);
     }
-    return await searchContext(input);
+    return await searchContext({
+      workspaceId: parsed.workspaceId,
+      cwd: parsed.cwd,
+      query: parsed.query,
+      ...(parsed.kind !== undefined ? { kind: parsed.kind } : {}),
+    });
   });
 
   ipcMain.handle(IPC_CHANNELS.contextResolve, async (event, input) => {
     assertTrustedSender(event);
-    return await resolveContext(input.cwd, input.items);
+    const parsed = parseIpcInput(contextResolveSchema, input, IPC_CHANNELS.contextResolve);
+    return await resolveContext(parsed.cwd, parsed.items);
   });
 
   ipcMain.handle(IPC_CHANNELS.docsList, (event, workspaceId: string) => {
     assertTrustedSender(event);
-    return listDocSources(workspaceId);
+    return listDocSources(parseIpcInput(sessionIdSchema, workspaceId, IPC_CHANNELS.docsList));
   });
 
   ipcMain.handle(IPC_CHANNELS.docsAdd, (event, input) => {
     assertTrustedSender(event);
-    return addDocSource(input);
+    const parsed = parseIpcInput(docsAddSchema, input, IPC_CHANNELS.docsAdd);
+    return addDocSource({
+      workspaceId: parsed.workspaceId,
+      title: parsed.title,
+      ...(parsed.path !== undefined ? { path: parsed.path } : {}),
+      ...(parsed.url !== undefined ? { url: parsed.url } : {}),
+    });
   });
 
   ipcMain.handle(IPC_CHANNELS.docsSearch, (event, input) => {
     assertTrustedSender(event);
-    return searchDocs(input.workspaceId, input.query);
+    const parsed = parseIpcInput(docsSearchSchema, input, IPC_CHANNELS.docsSearch);
+    return searchDocs(parsed.workspaceId, parsed.query);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.reviewStart, async (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(reviewStartSchema, input, IPC_CHANNELS.reviewStart);
+    if (parsed.sessionId) {
+      const startedEvent = {
+        type: "review.started",
+        sessionId: parsed.sessionId,
+        reviewId: "pending",
+      } as const;
+      recordAgentEvent(startedEvent);
+      getSenderWindow(event).webContents.send(IPC_CHANNELS.agentEvent, startedEvent);
+    }
+    try {
+      const review = await startAgentReview({
+        cwd: parsed.cwd,
+        ...(parsed.sessionId !== undefined ? { sessionId: parsed.sessionId } : {}),
+        ...(parsed.workspaceId !== undefined ? { workspaceId: parsed.workspaceId } : {}),
+        ...(parsed.depth !== undefined ? { depth: parsed.depth } : {}),
+      });
+      if (parsed.sessionId) {
+        const completedEvent = {
+          type: "review.completed",
+          sessionId: parsed.sessionId,
+          review,
+        } as const;
+        recordAgentEvent(completedEvent);
+        getSenderWindow(event).webContents.send(IPC_CHANNELS.agentEvent, completedEvent);
+      }
+      return review;
+    } catch (error) {
+      if (parsed.sessionId) {
+        const failedEvent = {
+          type: "review.failed",
+          sessionId: parsed.sessionId,
+          reviewId: "pending",
+          message: error instanceof Error ? error.message : String(error),
+        } as const;
+        recordAgentEvent(failedEvent);
+        getSenderWindow(event).webContents.send(IPC_CHANNELS.agentEvent, failedEvent);
+      }
+      throw error;
+    }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.reviewList, (event, cwd: string) => {
+    assertTrustedSender(event);
+    return listAgentReviews(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.reviewList));
   });
 
   ipcMain.handle(IPC_CHANNELS.modelList, (event) => {
@@ -217,22 +373,24 @@ export function registerAppIpc(): void {
 
   ipcMain.handle(IPC_CHANNELS.modelSetDefault, (event, model: string) => {
     assertTrustedSender(event);
-    setDefaultModel(model);
+    setDefaultModel(parseIpcInput(sessionIdSchema, model, IPC_CHANNELS.modelSetDefault));
   });
 
   ipcMain.handle(IPC_CHANNELS.worktreeList, async (event, cwd: string) => {
     assertTrustedSender(event);
-    return await listWorktrees(cwd);
+    return await listWorktrees(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.worktreeList));
   });
 
   ipcMain.handle(IPC_CHANNELS.worktreeCreate, async (event, input) => {
     assertTrustedSender(event);
-    return await createWorktree(input.cwd, input.taskId);
+    const parsed = parseIpcInput(worktreeCreateSchema, input, IPC_CHANNELS.worktreeCreate);
+    return await createWorktree(parsed.cwd, parsed.taskId);
   });
 
   ipcMain.handle(IPC_CHANNELS.worktreeDelete, async (event, input) => {
     assertTrustedSender(event);
-    await deleteWorktree(input.cwd, input.path);
+    const parsed = parseIpcInput(worktreeDeleteSchema, input, IPC_CHANNELS.worktreeDelete);
+    await deleteWorktree(parsed.cwd, parsed.path);
   });
 
   // 自绘 titlebar 的窗口控制 IPC —— 走 sender-validated 通道，不暴露原始 ipcRenderer
@@ -253,6 +411,7 @@ export function registerAppIpc(): void {
 
   ipcMain.handle(IPC_CHANNELS.windowClose, (event) => {
     assertTrustedSender(event);
+    denyPendingPermissionRequests("Window closed");
     getSenderWindow(event).close();
   });
 

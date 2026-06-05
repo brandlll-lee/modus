@@ -1,5 +1,7 @@
+import { execFile } from "node:child_process";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { basename, join, relative, resolve } from "node:path";
+import { promisify } from "node:util";
 import type {
   ContextItem,
   ContextKind,
@@ -12,6 +14,7 @@ import { getTerminalOutput, listTerminals } from "../terminal/terminal-service";
 
 const MAX_FILE_BYTES = 64 * 1024;
 const MAX_FOLDER_ENTRIES = 80;
+const execFileAsync = promisify(execFile);
 
 function inside(root: string, target: string): boolean {
   const rootPath = resolve(root);
@@ -59,6 +62,41 @@ async function searchFiles(cwd: string, query: string): Promise<ContextSuggestio
     });
 }
 
+async function grepProject(cwd: string, query: string): Promise<string> {
+  if (!query.trim()) {
+    return "";
+  }
+  const { stdout } = await execFileAsync(
+    "rg",
+    ["--line-number", "--hidden", "--glob", "!node_modules", "--glob", "!.git", query],
+    { cwd, windowsHide: true, maxBuffer: 1024 * 1024 * 2 },
+  ).catch(() => ({ stdout: "" }));
+  return stdout.split("\n").slice(0, 80).join("\n");
+}
+
+async function projectSummary(cwd: string): Promise<string> {
+  const entries = await readdir(cwd, { withFileTypes: true }).catch(() => []);
+  return entries
+    .filter((entry) => entry.name !== "node_modules" && entry.name !== ".git")
+    .slice(0, MAX_FOLDER_ENTRIES)
+    .map((entry) => `${entry.isDirectory() ? "dir " : "file"} ${entry.name}`)
+    .join("\n");
+}
+
+async function readRules(cwd: string): Promise<string> {
+  const candidates = ["AGENTS.md", "CLAUDE.md", ".cursorrules", ".cursor/rules"];
+  const chunks: string[] = [];
+  for (const candidate of candidates) {
+    const target = join(cwd, candidate);
+    const info = await stat(target).catch(() => undefined);
+    if (!info || info.isDirectory() || info.size > MAX_FILE_BYTES) {
+      continue;
+    }
+    chunks.push(`${candidate}\n${await readFile(target, "utf8")}`);
+  }
+  return chunks.join("\n\n");
+}
+
 export async function searchContext(input: {
   workspaceId: string;
   cwd: string;
@@ -66,6 +104,55 @@ export async function searchContext(input: {
   kind?: ContextKind;
 }): Promise<ContextSuggestion[]> {
   const query = input.query.trim();
+
+  if (input.kind === "project-summary" || /project|summary|overview/i.test(query)) {
+    return [
+      {
+        id: "project-summary",
+        type: "project-summary",
+        label: "Project Summary",
+        detail: "Top-level files and folders",
+        item: { type: "project-summary" },
+      },
+    ];
+  }
+
+  if (input.kind === "recent-changes" || /recent|history/i.test(query)) {
+    return [
+      {
+        id: "recent-changes",
+        type: "recent-changes",
+        label: "Recent Changes",
+        detail: "Recent Git commits",
+        item: { type: "recent-changes", limit: 20 },
+      },
+    ];
+  }
+
+  if (input.kind === "rules" || /rules?|instructions?/i.test(query)) {
+    return [
+      {
+        id: "rules",
+        type: "rules",
+        label: "Project Rules",
+        detail: "AGENTS, CLAUDE, Cursor rules",
+        item: { type: "rules" },
+      },
+    ];
+  }
+
+  if (input.kind === "search" || /^search\s+/i.test(query)) {
+    const searchQuery = query.replace(/^search\s+/i, "").trim();
+    return [
+      {
+        id: `search:${searchQuery}`,
+        type: "search",
+        label: `Search: ${searchQuery || query}`,
+        detail: "Project text search",
+        item: { type: "search", query: searchQuery || query },
+      },
+    ];
+  }
 
   if (input.kind === "terminal" || /terminals?/i.test(query)) {
     return listTerminals().map((terminal) => ({
@@ -163,6 +250,51 @@ export async function resolveContext(
         item,
         title: `doc:${item.title}`,
         content: chunk ? `${chunk.heading ?? chunk.title}\n${chunk.content}` : "",
+      });
+    }
+
+    if (item.type === "project-summary") {
+      resolvedItems.push({
+        item,
+        title: "project-summary",
+        content: await projectSummary(cwd),
+      });
+    }
+
+    if (item.type === "recent-changes") {
+      const [status, stat, log] = await Promise.all([
+        execFileAsync("git", ["status", "--short"], { cwd, windowsHide: true }).catch(() => ({
+          stdout: "",
+        })),
+        execFileAsync("git", ["diff", "--stat"], { cwd, windowsHide: true }).catch(() => ({
+          stdout: "",
+        })),
+        execFileAsync("git", ["log", "--oneline", `-${item.limit ?? 20}`], {
+          cwd,
+          windowsHide: true,
+        }).catch(() => ({ stdout: "" })),
+      ]);
+      resolvedItems.push({
+        item,
+        title: "recent-changes",
+        content:
+          `Status\n${status.stdout}\n\nDiff stat\n${stat.stdout}\n\nRecent commits\n${log.stdout}`.trim(),
+      });
+    }
+
+    if (item.type === "rules") {
+      resolvedItems.push({
+        item,
+        title: "project-rules",
+        content: await readRules(cwd),
+      });
+    }
+
+    if (item.type === "search") {
+      resolvedItems.push({
+        item,
+        title: `search:${item.query}`,
+        content: await grepProject(cwd, item.query),
       });
     }
   }

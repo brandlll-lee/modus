@@ -3,6 +3,10 @@ import {
   IconFileText,
   IconFolder,
   IconGitBranch,
+  IconListSearch,
+  IconNotebook,
+  IconReportSearch,
+  IconSearch,
   IconTerminal2,
   IconX,
 } from "@tabler/icons-react";
@@ -39,6 +43,22 @@ function tokenMeta(item: ContextItem): {
       icon: <IconTerminal2 size={12} stroke={1.7} />,
       label: `terminal:${item.terminalId.slice(0, 6)}`,
     };
+  }
+
+  if (item.type === "project-summary") {
+    return { icon: <IconReportSearch size={12} stroke={1.7} />, label: "project summary" };
+  }
+
+  if (item.type === "recent-changes") {
+    return { icon: <IconListSearch size={12} stroke={1.7} />, label: "recent changes" };
+  }
+
+  if (item.type === "rules") {
+    return { icon: <IconNotebook size={12} stroke={1.7} />, label: "project rules" };
+  }
+
+  if (item.type === "search") {
+    return { icon: <IconSearch size={12} stroke={1.7} />, label: `search:${item.query}` };
   }
 
   return { icon: <IconGitBranch size={12} stroke={1.7} />, label: "working diff" };

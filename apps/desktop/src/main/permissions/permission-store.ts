@@ -10,6 +10,10 @@ type PermissionRow = {
   created_at: string;
 };
 
+export function normalizePermissionTarget(target: string): string {
+  return target.trim().replace(/\s+/g, " ");
+}
+
 function toPermission(row: PermissionRow): PermissionDecision {
   return {
     id: row.id,
@@ -28,7 +32,7 @@ export function recordPermissionDecision(
   const entry = {
     id: randomUUID(),
     action,
-    target,
+    target: normalizePermissionTarget(target),
     decision,
     createdAt: new Date().toISOString(),
   };
@@ -54,4 +58,21 @@ export function listPermissionDecisions(): PermissionDecision[] {
     .all() as PermissionRow[];
 
   return rows.map(toPermission);
+}
+
+export function findWorkspaceAllowDecision(
+  action: PermissionAction,
+  target: string,
+): PermissionDecision | undefined {
+  const row = getDatabase()
+    .prepare(
+      `select id, action, target, decision, created_at
+       from permissions
+       where action = ? and target = ? and decision = 'allow-workspace'
+       order by created_at desc
+       limit 1`,
+    )
+    .get(action, normalizePermissionTarget(target)) as PermissionRow | undefined;
+
+  return row ? toPermission(row) : undefined;
 }
