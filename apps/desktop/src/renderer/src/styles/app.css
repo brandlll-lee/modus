@@ -190,3 +190,196 @@ input {
     animation: blink-cursor 1s step-end infinite;
   }
 }
+
+/* AI response Markdown. Capability comes from Streamdown; visuals stay inside Modus tokens. */
+.modus-markdown {
+  --background: var(--color-canvas);
+  --foreground: var(--color-fg);
+  --border: var(--color-hairline);
+  --muted: var(--color-hover);
+  --muted-foreground: var(--color-fg-subtle);
+  --sidebar: var(--color-surface);
+  --sdm-bg: transparent;
+  color: var(--color-fg);
+  font-size: var(--text-sm);
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.modus-markdown :where(p) {
+  margin: 0.65rem 0;
+}
+
+.modus-markdown :where(h1, h2, h3, h4, h5, h6) {
+  margin: 1rem 0 0.45rem;
+  color: var(--color-fg);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  line-height: 1.45;
+  letter-spacing: 0;
+}
+
+.modus-markdown :where(h1, h2) {
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid var(--color-hairline-soft);
+}
+
+.modus-markdown :where(a) {
+  color: #7bbcff;
+  text-decoration: none;
+}
+
+.modus-markdown :where(a:hover) {
+  color: #a8d5ff;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.modus-markdown :where(strong) {
+  color: var(--color-fg);
+  font-weight: 650;
+}
+
+.modus-markdown :where(em) {
+  color: var(--color-fg-muted);
+}
+
+.modus-markdown :where(ul, ol) {
+  margin: 0.6rem 0;
+  padding-left: 1.35rem;
+}
+
+.modus-markdown :where(li) {
+  margin: 0.25rem 0;
+  padding-left: 0.1rem;
+}
+
+.modus-markdown :where(li > p) {
+  margin: 0.25rem 0;
+}
+
+.modus-markdown :where(input[type="checkbox"]) {
+  width: 13px;
+  height: 13px;
+  margin: 0 0.45rem 0 0;
+  vertical-align: -2px;
+  accent-color: var(--color-accent);
+}
+
+.modus-markdown :where(blockquote) {
+  margin: 0.8rem 0;
+  padding: 0.1rem 0 0.1rem 0.9rem;
+  border-left: 1px solid var(--color-hairline-strong);
+  color: var(--color-fg-muted);
+  font-style: normal;
+}
+
+.modus-markdown :where(hr) {
+  height: 1px;
+  margin: 1rem 0;
+  border: 0;
+  background: var(--color-hairline-soft);
+}
+
+.modus-markdown :where(table) {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-xs);
+}
+
+.modus-markdown :where([data-streamdown="table-container"], table) {
+  max-width: 100%;
+}
+
+.modus-markdown :where(th, td) {
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--color-hairline);
+  text-align: left;
+  vertical-align: top;
+}
+
+.modus-markdown :where(th) {
+  background: var(--color-hover);
+  color: var(--color-fg);
+  font-weight: 600;
+}
+
+.modus-markdown :where(td) {
+  color: var(--color-fg-muted);
+}
+
+.modus-markdown-inline-code,
+.modus-markdown :where([data-streamdown="inline-code"]) {
+  border: 1px solid var(--color-hairline-soft);
+  border-radius: var(--radius-xs);
+  background: var(--color-hover);
+  color: var(--color-fg);
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  padding: 0.08rem 0.32rem;
+}
+
+.modus-markdown :where([data-streamdown="code-block"], [data-streamdown="mermaid-block"]) {
+  margin: 0.85rem 0;
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  padding: 0.4rem;
+  box-shadow: none;
+}
+
+.modus-markdown :where([data-streamdown="code-block-header"]) {
+  height: 1.6rem;
+  color: var(--color-fg-faint);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+}
+
+.modus-markdown :where([data-streamdown="code-block-body"]) {
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--color-canvas);
+  padding: 0.75rem;
+  font-size: var(--text-xs);
+}
+
+.modus-markdown :where(pre, code) {
+  font-family: var(--font-mono);
+}
+
+.modus-markdown :where(pre) {
+  margin: 0;
+  line-height: 1.65;
+}
+
+.modus-markdown :where([data-streamdown="code-block-actions"], [data-streamdown="mermaid-block-actions"]) {
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-sm);
+  background: color-mix(in oklab, var(--color-surface) 92%, transparent);
+}
+
+.modus-markdown :where(button) {
+  color: var(--color-fg-subtle);
+}
+
+.modus-markdown :where(button:hover) {
+  color: var(--color-fg);
+}
+
+.modus-markdown :where([data-streamdown="mermaid"]) {
+  border-radius: var(--radius-sm);
+  background: var(--color-canvas);
+}
+
+.modus-markdown :where(.katex) {
+  color: var(--color-fg);
+  font-size: 1em;
+}
+
+.modus-markdown :where(.katex-display) {
+  margin: 0.9rem 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.2rem 0;
+}

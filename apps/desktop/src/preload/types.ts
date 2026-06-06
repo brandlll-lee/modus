@@ -12,6 +12,9 @@ import type {
   DocSource,
   FileChange,
   FileDiff,
+  ConfigureProviderInput,
+  ModelProviderDetail,
+  ModelSettingsState,
   ModelInfo,
   PermissionAction,
   PermissionDecision,
@@ -19,6 +22,9 @@ import type {
   ResolvedContext,
   TerminalEvent,
   TerminalInfo,
+  ThinkingLevel,
+  UpdateModelConfigInput,
+  UpsertCustomProviderInput,
   WorkspaceInfo,
   WorktreeInfo,
 } from "../shared/contracts";
@@ -48,8 +54,9 @@ export type ModusApi = {
       worktreeMode?: "auto" | "off";
     }): Promise<AgentSessionInfo>;
     list(): Promise<AgentSessionInfo[]>;
-    listEvents(sessionId: string): Promise<Array<{ id: string; event: AgentEvent }>>;
+    listEvents(sessionId: string): Promise<Array<{ id: string; event: AgentEvent; createdAt?: string }>>;
     listRuns(sessionId: string): Promise<AgentRunInfo[]>;
+    ensure(sessionId: string): Promise<AgentSessionInfo>;
     prompt(input: {
       sessionId: string;
       message: string;
@@ -58,7 +65,7 @@ export type ModusApi = {
       userMessageId?: string;
     }): Promise<void>;
     abort(sessionId: string): Promise<void>;
-    setModel(input: { sessionId: string; model: string }): Promise<AgentSessionInfo>;
+    setModel(input: { sessionId: string; model: string; thinkingLevel?: ThinkingLevel }): Promise<AgentSessionInfo>;
     cycleModel(input: {
       sessionId?: string;
       direction?: "forward" | "backward";
@@ -119,6 +126,11 @@ export type ModusApi = {
   model: {
     list(): Promise<ModelInfo[]>;
     setDefault(model: string): Promise<void>;
+    settings(): Promise<ModelSettingsState>;
+    providerDetail(provider: string): Promise<ModelProviderDetail | undefined>;
+    configureProvider(input: ConfigureProviderInput): Promise<ModelProviderDetail>;
+    upsertCustomProvider(input: UpsertCustomProviderInput): Promise<ModelProviderDetail>;
+    updateConfig(input: UpdateModelConfigInput): Promise<ModelInfo>;
   };
   review: {
     start(input: {

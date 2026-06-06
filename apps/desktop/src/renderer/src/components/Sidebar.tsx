@@ -25,6 +25,7 @@ type SidebarProps = {
   onSelectSession(session: AgentSessionInfo): void;
   onNewSession(): void;
   onNewWorkspaceSession(workspace: WorkspaceInfo): void;
+  onOpenSettings(): void;
   canCreateSession: boolean;
 };
 
@@ -38,6 +39,7 @@ export function Sidebar({
   onSelectSession,
   onNewSession,
   onNewWorkspaceSession,
+  onOpenSettings,
   canCreateSession,
 }: SidebarProps) {
   const [projectsExpanded, setProjectsExpanded] = useState(true);
@@ -123,7 +125,9 @@ export function Sidebar({
       </div>
 
       <div className="app-no-drag px-2.5 pt-2 pb-3">
-        <NavRow icon={<IconSettings size={17} stroke={1.75} />}>Settings</NavRow>
+        <NavRow icon={<IconSettings size={17} stroke={1.75} />} onClick={onOpenSettings}>
+          Settings
+        </NavRow>
       </div>
     </aside>
   );
@@ -192,7 +196,7 @@ function SessionRow({
   return (
     <m.div
       className={cn(
-        "group ml-[30px] flex h-[34px] w-[calc(100%-30px)] items-center rounded-lg pr-1 text-sm font-normal transition-colors hover:bg-hover",
+        "group flex h-[34px] w-full items-center rounded-lg pr-1 pl-[30px] text-sm font-normal transition-colors hover:bg-hover",
         isActive ? "bg-active text-fg" : "text-fg-muted hover:text-fg",
       )}
       layout

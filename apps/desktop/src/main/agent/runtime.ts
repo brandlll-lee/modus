@@ -26,12 +26,22 @@ export type PromptAgentInput = {
 
 export type AgentRuntime = {
   create(window: BrowserWindow, input: CreateAgentRuntimeInput): Promise<AgentSessionInfo>;
-  prompt(input: PromptAgentInput): Promise<void>;
+  ensure(window: BrowserWindow, sessionId: string): Promise<AgentSessionInfo>;
+  prompt(window: BrowserWindow, input: PromptAgentInput): Promise<void>;
   abort(sessionId: string): Promise<void>;
   listRuns(sessionId: string): Promise<AgentRunInfo[]>;
   dispose(sessionId: string): Promise<void>;
-  setModel(sessionId: string, model: string): Promise<AgentSessionInfo>;
-  cycleModel(sessionId: string | undefined, direction?: "forward" | "backward"): Promise<ModelInfo>;
+  setModel(
+    window: BrowserWindow,
+    sessionId: string,
+    model: string,
+    thinkingLevel?: string,
+  ): Promise<AgentSessionInfo>;
+  cycleModel(
+    window: BrowserWindow | undefined,
+    sessionId: string | undefined,
+    direction?: "forward" | "backward",
+  ): Promise<ModelInfo>;
 };
 
 export type EmitAgentEvent = (event: AgentEvent) => void;

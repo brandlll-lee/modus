@@ -3,6 +3,7 @@ import {
   IconArrowUp,
   IconCheck,
   IconChevronDown,
+  IconEdit,
   IconMicrophone,
   IconPlayerStop,
   IconPlus,
@@ -14,6 +15,7 @@ import type {
   ContextSuggestion,
   ModelInfo,
   PromptDelivery,
+  ThinkingLevel,
 } from "../../../../shared/contracts";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { TypingAnimation } from "../../components/ui/TypingAnimation";
@@ -43,6 +45,7 @@ type ComposerProps = {
   hasSession: boolean;
   isRunning?: boolean;
   onModelChange(model: string): void;
+  onModelConfigChange?(model: string, thinkingLevel: ThinkingLevel): Promise<void> | void;
   onContextChange(items: ContextItem[]): void;
   onSubmit(message: string, context: ContextItem[], delivery?: PromptDelivery): void;
   onAbort?(): void;
@@ -59,6 +62,7 @@ export function Composer({
   isRunning = false,
   onAbort,
   onModelChange,
+  onModelConfigChange,
   onContextChange,
   onSubmit,
 }: ComposerProps) {
@@ -71,7 +75,7 @@ export function Composer({
   });
 
   function send(delivery: PromptDelivery = isRunning ? "follow-up" : "normal"): void {
-    if (!hasText || !canSubmit) {
+    if (!hasText || !canSubmit || models.length === 0 || !model) {
       return;
     }
     onSubmit(value.trim(), contextItems, delivery);
@@ -196,7 +200,12 @@ export function Composer({
           </button>
         </Tooltip>
 
-        <ModelSelect model={model} models={models} onModelChange={onModelChange} />
+        <ModelSelect
+          model={model}
+          models={models}
+          onModelChange={onModelChange}
+          {...(onModelConfigChange ? { onModelConfigChange } : {})}
+        />
 
         <div className="flex-1" />
 
@@ -208,7 +217,7 @@ export function Composer({
               animate={{ opacity: 1 }}
               aria-label="Send"
               className="flex size-[26px] items-center justify-center rounded-full bg-fg text-canvas transition-colors hover:bg-white active:scale-[0.94] disabled:bg-white/10 disabled:text-fg-faint"
-              disabled={!canSubmit}
+              disabled={!canSubmit || models.length === 0 || !model}
               exit={{ opacity: 0 }}
               initial={{ opacity: 0 }}
               key="send"
@@ -220,17 +229,17 @@ export function Composer({
             </m.button>
           ) : isRunning && onAbort ? (
             <m.button
-              animate={{ opacity: 1 }}
+              animate={{ opacity: 1, scale: 1 }}
               aria-label="Stop"
-              className="flex size-[26px] items-center justify-center rounded-full bg-danger/80 text-white transition-colors hover:bg-danger active:scale-[0.94]"
+              className="flex size-[26px] items-center justify-center rounded-full bg-fg text-canvas shadow-composer transition-colors hover:bg-white active:scale-[0.94]"
               exit={{ opacity: 0 }}
-              initial={{ opacity: 0 }}
+              initial={{ opacity: 0, scale: 0.96 }}
               key="stop"
               onClick={onAbort}
-              transition={{ duration: 0.08, ease: "linear" }}
+              transition={{ duration: 0.12, ease: [0.22, 1, 0.36, 1] }}
               type="button"
             >
-              <IconPlayerStop size={13} stroke={2.1} />
+              <IconPlayerStop size={13} stroke={2.4} />
             </m.button>
           ) : (
             <m.button
@@ -256,16 +265,18 @@ function ModelSelect({
   model,
   models,
   onModelChange,
+  onModelConfigChange,
 }: {
   model: string;
   models: ModelInfo[];
   onModelChange(model: string): void;
+  onModelConfigChange?(model: string, thinkingLevel: ThinkingLevel): Promise<void> | void;
 }) {
-  const items: ModelInfo[] =
-    models.length > 0 ? models : [{ available: false, id: model, provider: "pi", name: "default" }];
-  const current = items.find((item) => item.id === model) ?? items[0];
-  const name = current?.provider ?? "pi";
-  const tag = current?.name ?? "default";
+  const [editingModel, setEditingModel] = useState<string | null>(null);
+  const current = models.find((item) => item.id === model) ?? models[0];
+  const editingItem = models.find((item) => item.id === editingModel);
+  const name = current?.provider ?? "Settings";
+  const tag = current?.name ?? "No model configured";
 
   return current ? (
     <Select.Root onValueChange={(next) => onModelChange(String(next))} value={model}>
@@ -273,6 +284,7 @@ function ModelSelect({
       <Select.Trigger className="app-no-drag flex h-[26px] items-center gap-1 rounded-md px-2 text-sm font-normal transition-colors hover:bg-hover data-popup-open:bg-hover">
         <span className="text-fg-muted">{name}</span>
         <span className="text-fg-subtle">{tag}</span>
+        <span className="text-fg-faint">{current.thinkingLevel}</span>
         <Select.Icon>
           <IconChevronDown className="text-fg-faint" size={12} stroke={2} />
         </Select.Icon>
@@ -291,10 +303,10 @@ function ModelSelect({
             className="scroll-thin origin-(--transform-origin) w-[340px] max-w-[calc(100vw-24px)] overflow-y-auto rounded-lg border border-hairline bg-elevated p-1 shadow-popup transition-[transform,opacity] duration-100 data-[side=bottom]:data-ending-style:translate-y-[-4px] data-[side=bottom]:data-starting-style:translate-y-[-4px] data-[side=top]:data-ending-style:translate-y-[4px] data-[side=top]:data-starting-style:translate-y-[4px] data-ending-style:opacity-0 data-starting-style:opacity-0"
             style={{ maxHeight: "min(320px, var(--available-height))" }}
           >
-            {items.map((item) => (
+            {models.map((item) => (
               <Select.Item
                 className={cn(
-                  "flex h-8 cursor-default items-center gap-1.5 rounded-md px-2 text-sm outline-none select-none",
+                  "group/model flex h-8 cursor-default items-center gap-1.5 rounded-md px-2 text-sm outline-none select-none",
                   "data-highlighted:bg-hover",
                 )}
                 key={item.id}
@@ -309,18 +321,72 @@ function ModelSelect({
                     off
                   </span>
                 ) : null}
-                <span className="ml-auto flex w-3.5 shrink-0 justify-center text-fg">
+                <span className="ml-1 shrink-0 text-2xs text-fg-faint">
+                  {item.thinkingLevel}
+                </span>
+                <button
+                  aria-label={`Edit ${item.name}`}
+                  className="ml-auto flex size-6 shrink-0 items-center justify-center rounded-md text-fg-faint opacity-0 transition-opacity hover:bg-active hover:text-fg-muted group-hover/model:opacity-100 data-[open=true]:opacity-100"
+                  data-open={editingModel === item.id}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setEditingModel((current) => (current === item.id ? null : item.id));
+                  }}
+                  type="button"
+                >
+                  <IconEdit size={13} stroke={1.8} />
+                </button>
+                <span className="flex w-3.5 shrink-0 justify-center text-fg">
                   <Select.ItemIndicator>
                     <IconCheck size={13} stroke={2} />
                   </Select.ItemIndicator>
                 </span>
               </Select.Item>
             ))}
+            {editingItem ? (
+              <div className="mt-1 border-hairline-soft border-t px-1 pt-2 pb-1">
+                <div className="mb-1 flex items-center justify-between px-1">
+                  <span className="truncate text-xs text-fg-faint">
+                    Thinking · {editingItem.name}
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {editingItem.thinkingLevels.map((level) => (
+                    <button
+                      className={cn(
+                        "h-7 rounded-md px-2 text-xs transition-colors",
+                        editingItem.thinkingLevel === level
+                          ? "bg-active text-fg"
+                          : "text-fg-subtle hover:bg-hover hover:text-fg",
+                      )}
+                      key={level}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        void onModelConfigChange?.(editingItem.id, level);
+                        setEditingModel(null);
+                      }}
+                      type="button"
+                    >
+                      {level}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </Select.Popup>
         </Select.Positioner>
       </Select.Portal>
     </Select.Root>
-  ) : null;
+  ) : (
+    <button
+      className="app-no-drag flex h-[26px] items-center gap-1 rounded-md px-2 text-sm font-normal text-fg-faint transition-colors hover:bg-hover hover:text-fg-subtle"
+      type="button"
+    >
+      No model configured
+    </button>
+  );
 }
 
 function contextItemKey(item: ContextItem): string {

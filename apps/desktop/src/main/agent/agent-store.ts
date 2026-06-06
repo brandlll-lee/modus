@@ -146,6 +146,23 @@ export function updateAgentSessionMetadata(
   return next;
 }
 
+export function updateAgentSessionTitle(
+  sessionId: string,
+  title: string,
+): AgentSessionInfo | undefined {
+  const existing = getAgentSession(sessionId);
+  if (!existing) {
+    return undefined;
+  }
+
+  const next = { ...existing, title, updatedAt: new Date().toISOString() };
+  getDatabase()
+    .prepare("update agent_sessions set title = ?, updated_at = ? where id = ?")
+    .run(next.title, next.updatedAt, sessionId);
+
+  return next;
+}
+
 export function getAgentSession(sessionId: string): AgentSessionInfo | undefined {
   const row = getDatabase()
     .prepare(

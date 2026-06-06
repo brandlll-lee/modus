@@ -5,7 +5,17 @@ import { getDatabase } from "../db/database";
 type AgentEventRow = {
   id: string;
   payload_json: string;
+  created_at: string;
 };
+
+type AgentRunPromptRow = {
+  id: string;
+  user_message_id: string | null;
+  prompt: string;
+  started_at: string;
+};
+
+type AgentEventItem = { id: string; event: AgentEvent; createdAt: string };
 
 export function recordAgentEvent(event: AgentEvent): void {
   getDatabase()
@@ -22,15 +32,104 @@ export function recordAgentEvent(event: AgentEvent): void {
     );
 }
 
-export function listAgentEvents(sessionId: string): Array<{ id: string; event: AgentEvent }> {
-  const rows = getDatabase()
+export function listAgentEvents(
+  sessionId: string,
+): Array<{ id: string; event: AgentEvent; createdAt: string }> {
+  const db = getDatabase();
+  const rows = db
     .prepare(
-      `select id, payload_json
+      `select id, payload_json, created_at
        from agent_events
        where session_id = ?
-       order by created_at asc`,
+       order by created_at asc, rowid asc`,
     )
     .all(sessionId) as AgentEventRow[];
+  const events = rows.map((row) => ({
+    id: row.id,
+    event: JSON.parse(row.payload_json) as AgentEvent,
+    createdAt: row.created_at,
+  }));
+  const runs = db
+    .prepare(
+      `select id, user_message_id, prompt, started_at
+       from agent_runs
+       where session_id = ?
+       order by started_at asc, rowid asc`,
+    )
+    .all(sessionId) as AgentRunPromptRow[];
 
-  return rows.map((row) => ({ id: row.id, event: JSON.parse(row.payload_json) as AgentEvent }));
+  return backfillUserPromptEvents(sessionId, events, runs);
+}
+
+function backfillUserPromptEvents(
+  sessionId: string,
+  events: AgentEventItem[],
+  runs: AgentRunPromptRow[],
+): AgentEventItem[] {
+  if (runs.length === 0) {
+    return events;
+  }
+
+  const userMessageTextById = new Map<string, string>();
+  for (const { event } of events) {
+    if (event.type === "message.started" && event.role === "user") {
+      userMessageTextById.set(event.messageId, userMessageTextById.get(event.messageId) ?? "");
+      continue;
+    }
+    if (event.type === "message.delta" && userMessageTextById.has(event.messageId)) {
+      userMessageTextById.set(
+        event.messageId,
+        `${userMessageTextById.get(event.messageId) ?? ""}${event.delta}`,
+      );
+    }
+  }
+  const backfilledByRunId = new Map<string, AgentEventItem[]>();
+
+  for (const run of runs) {
+    const messageId = run.user_message_id ?? `user:${run.id}`;
+    if ((userMessageTextById.get(messageId) ?? "").trim()) {
+      continue;
+    }
+    const createdAt = run.started_at;
+    backfilledByRunId.set(run.id, [
+      {
+        id: `backfill:${run.id}:user:start`,
+        event: { type: "message.started", sessionId, messageId, role: "user" },
+        createdAt,
+      },
+      {
+        id: `backfill:${run.id}:user:delta`,
+        event: { type: "message.delta", sessionId, messageId, delta: run.prompt },
+        createdAt,
+      },
+      {
+        id: `backfill:${run.id}:user:completed`,
+        event: { type: "message.completed", sessionId, messageId },
+        createdAt,
+      },
+    ]);
+  }
+
+  if (backfilledByRunId.size === 0) {
+    return events;
+  }
+
+  const result: AgentEventItem[] = [];
+  for (const item of events) {
+    const event = item.event;
+    if (event.type === "run.started") {
+      const userEvents = backfilledByRunId.get(event.runId);
+      if (userEvents) {
+        result.push(...userEvents);
+        backfilledByRunId.delete(event.runId);
+      }
+    }
+    result.push(item);
+  }
+
+  for (const userEvents of backfilledByRunId.values()) {
+    result.push(...userEvents);
+  }
+
+  return result;
 }

@@ -3,6 +3,17 @@ import type { ContextItem } from "../../shared/contracts";
 
 const nonEmptyString = z.string().trim().min(1);
 const optionalNonEmptyString = nonEmptyString.optional();
+const thinkingLevelSchema = z.enum(["off", "minimal", "low", "medium", "high", "xhigh"]);
+const jsonObjectSchema = z.record(z.string(), z.unknown());
+const optionalHeadersSchema = z.record(z.string(), z.string()).optional();
+const modelCostSchema = z
+  .object({
+    input: z.number().min(0).optional(),
+    output: z.number().min(0).optional(),
+    cacheRead: z.number().min(0).optional(),
+    cacheWrite: z.number().min(0).optional(),
+  })
+  .optional();
 
 export const agentCreateSchema = z.object({
   workspaceId: nonEmptyString,
@@ -28,6 +39,7 @@ export const sessionIdSchema = nonEmptyString;
 export const agentSetModelSchema = z.object({
   sessionId: nonEmptyString,
   model: nonEmptyString,
+  thinkingLevel: thinkingLevelSchema.optional(),
 });
 
 export const agentCycleModelSchema = z.object({
@@ -127,6 +139,73 @@ export const reviewStartSchema = z.object({
   sessionId: optionalNonEmptyString,
   workspaceId: optionalNonEmptyString,
   depth: z.enum(["fast", "standard", "deep"]).optional(),
+});
+
+export const configureProviderSchema = z.object({
+  provider: nonEmptyString,
+  apiKey: z.string().optional(),
+  enabledModelIds: z.array(nonEmptyString).optional(),
+});
+
+const providerCompatibilitySchema = z.object({
+  supportsDeveloperRole: z.boolean().optional(),
+  supportsReasoningEffort: z.boolean().optional(),
+});
+
+const modelCompatibilitySchema = z.object({
+  thinkingFormat: z
+    .enum([
+      "none",
+      "openai",
+      "openrouter",
+      "deepseek",
+      "together",
+      "zai",
+      "qwen",
+      "qwen-chat-template",
+    ])
+    .optional(),
+  supportsUsageInStreaming: z.boolean().optional(),
+});
+
+export const customProviderModelSchema = z.object({
+  id: nonEmptyString,
+  name: z.string().optional(),
+  api: z.string().trim().min(1).optional(),
+  baseUrl: z.string().trim().url().optional(),
+  headers: optionalHeadersSchema,
+  contextWindow: z.number().int().min(1_000).max(10_000_000).optional(),
+  maxTokens: z.number().int().min(1).max(1_000_000).optional(),
+  reasoning: z.boolean().optional(),
+  input: z
+    .array(z.enum(["text", "image"]))
+    .min(1)
+    .optional(),
+  cost: modelCostSchema,
+  compat: jsonObjectSchema.optional(),
+  compatibility: modelCompatibilitySchema.optional(),
+  thinkingLevelMap: z.partialRecord(thinkingLevelSchema, z.string().nullable()).optional(),
+});
+
+export const upsertCustomProviderSchema = z.object({
+  provider: nonEmptyString,
+  name: nonEmptyString,
+  baseUrl: z.string().trim().url(),
+  apiKey: z.string().optional(),
+  api: z.string().trim().min(1).optional(),
+  authHeader: z.boolean().optional(),
+  headers: optionalHeadersSchema,
+  compat: jsonObjectSchema.optional(),
+  compatibility: providerCompatibilitySchema.optional(),
+  models: z.array(customProviderModelSchema).min(1),
+});
+
+export const updateModelConfigSchema = z.object({
+  model: nonEmptyString,
+  enabled: z.boolean().optional(),
+  thinkingLevel: thinkingLevelSchema.optional(),
+  contextWindow: z.number().int().min(1_000).max(10_000_000).optional(),
+  maxTokens: z.number().int().min(1).max(1_000_000).optional(),
 });
 
 export const worktreeCreateSchema = z.object({

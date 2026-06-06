@@ -102,6 +102,41 @@ function migrate(db: DatabaseSync): void {
       issues_json text not null,
       created_at text not null
     );
+
+    create table if not exists app_settings (
+      key text primary key,
+      value text,
+      updated_at text not null
+    );
+
+    create table if not exists model_provider_configs (
+      provider_id text primary key,
+      display_name text not null,
+      source text not null,
+      base_url text,
+      api text,
+      auth_header integer not null default 0,
+      headers_json text,
+      created_at text not null,
+      updated_at text not null
+    );
+
+    create table if not exists model_configs (
+      id text primary key,
+      provider_id text not null references model_provider_configs(provider_id) on delete cascade,
+      model_id text not null,
+      display_name text not null,
+      source text not null,
+      enabled integer not null default 0,
+      context_window integer,
+      max_tokens integer,
+      reasoning integer not null default 0,
+      thinking_level text not null default 'off',
+      thinking_level_map_json text,
+      created_at text not null,
+      updated_at text not null,
+      unique(provider_id, model_id)
+    );
   `);
 
   addColumn(db, "agent_sessions", "runtime", "text not null default 'pi-sdk'");

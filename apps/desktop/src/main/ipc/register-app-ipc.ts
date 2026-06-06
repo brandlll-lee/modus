@@ -2,7 +2,15 @@ import { app, BrowserWindow, type IpcMainInvokeEvent, ipcMain } from "electron";
 import { listAgentEvents, recordAgentEvent } from "../agent/agent-event-store";
 import { listAgentRuns } from "../agent/agent-run-store";
 import { listAgentSessions } from "../agent/agent-store";
-import { listModels, setDefaultModel } from "../agent/model-service";
+import {
+  configureProvider,
+  getModelSettings,
+  getProviderDetail,
+  listModels,
+  setDefaultModel,
+  updateModelConfig,
+  upsertCustomProvider,
+} from "../agent/model-service";
 import { listAgentReviews, startAgentReview } from "../agent/review-service";
 import { getAgentRuntime } from "../agent/runtime-registry";
 import { resolveContext, searchContext } from "../context/context-service";
@@ -40,6 +48,7 @@ import {
   agentSetModelSchema,
   contextResolveSchema,
   contextSearchSchema,
+  configureProviderSchema,
   cwdSchema,
   diffCommitSchema,
   diffPathSchema,
@@ -53,6 +62,8 @@ import {
   terminalCreateSchema,
   terminalResizeSchema,
   terminalWriteSchema,
+  updateModelConfigSchema,
+  upsertCustomProviderSchema,
   worktreeCreateSchema,
   worktreeDeleteSchema,
 } from "./schemas";
@@ -153,10 +164,18 @@ export function registerAppIpc(): void {
     return listAgentRuns(parseIpcInput(sessionIdSchema, sessionId, IPC_CHANNELS.agentListRuns));
   });
 
+  ipcMain.handle(IPC_CHANNELS.agentEnsure, async (event, sessionId: string) => {
+    assertTrustedSender(event);
+    return await getAgentRuntime().ensure(
+      getSenderWindow(event),
+      parseIpcInput(sessionIdSchema, sessionId, IPC_CHANNELS.agentEnsure),
+    );
+  });
+
   ipcMain.handle(IPC_CHANNELS.agentPrompt, async (event, input) => {
     assertTrustedSender(event);
     const parsed = parseIpcInput(agentPromptSchema, input, IPC_CHANNELS.agentPrompt);
-    await getAgentRuntime().prompt({
+    await getAgentRuntime().prompt(getSenderWindow(event), {
       sessionId: parsed.sessionId,
       message: parsed.message,
       context: parsed.context ?? [],
@@ -175,13 +194,22 @@ export function registerAppIpc(): void {
   ipcMain.handle(IPC_CHANNELS.agentSetModel, async (event, input) => {
     assertTrustedSender(event);
     const parsed = parseIpcInput(agentSetModelSchema, input, IPC_CHANNELS.agentSetModel);
-    return await getAgentRuntime().setModel(parsed.sessionId, parsed.model);
+    return await getAgentRuntime().setModel(
+      getSenderWindow(event),
+      parsed.sessionId,
+      parsed.model,
+      parsed.thinkingLevel,
+    );
   });
 
   ipcMain.handle(IPC_CHANNELS.agentCycleModel, async (event, input) => {
     assertTrustedSender(event);
     const parsed = parseIpcInput(agentCycleModelSchema, input, IPC_CHANNELS.agentCycleModel);
-    return await getAgentRuntime().cycleModel(parsed.sessionId, parsed.direction);
+    return await getAgentRuntime().cycleModel(
+      getSenderWindow(event),
+      parsed.sessionId,
+      parsed.direction,
+    );
   });
 
   ipcMain.handle(IPC_CHANNELS.terminalCreate, (event, input) => {
@@ -374,6 +402,44 @@ export function registerAppIpc(): void {
   ipcMain.handle(IPC_CHANNELS.modelSetDefault, (event, model: string) => {
     assertTrustedSender(event);
     setDefaultModel(parseIpcInput(sessionIdSchema, model, IPC_CHANNELS.modelSetDefault));
+  });
+
+  ipcMain.handle(IPC_CHANNELS.modelSettings, (event) => {
+    assertTrustedSender(event);
+    return getModelSettings();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.modelProviderDetail, (event, provider: string) => {
+    assertTrustedSender(event);
+    return getProviderDetail(
+      parseIpcInput(sessionIdSchema, provider, IPC_CHANNELS.modelProviderDetail),
+    );
+  });
+
+  ipcMain.handle(IPC_CHANNELS.modelConfigureProvider, async (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(
+      configureProviderSchema,
+      input,
+      IPC_CHANNELS.modelConfigureProvider,
+    );
+    return await configureProvider(parsed);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.modelUpsertCustomProvider, async (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(
+      upsertCustomProviderSchema,
+      input,
+      IPC_CHANNELS.modelUpsertCustomProvider,
+    );
+    return await upsertCustomProvider(parsed);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.modelUpdateConfig, (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(updateModelConfigSchema, input, IPC_CHANNELS.modelUpdateConfig);
+    return updateModelConfig(parsed);
   });
 
   ipcMain.handle(IPC_CHANNELS.worktreeList, async (event, cwd: string) => {

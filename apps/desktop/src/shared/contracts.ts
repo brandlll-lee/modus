@@ -212,8 +212,126 @@ export type AddDocInput = {
 export type ModelInfo = {
   id: string;
   provider: string;
+  providerName?: string;
   name: string;
   available: boolean;
+  enabled: boolean;
+  configured: boolean;
+  source: "builtin" | "custom";
+  contextWindow?: number;
+  maxTokens?: number;
+  supportsThinking: boolean;
+  thinkingLevel: ThinkingLevel;
+  thinkingLevels: ThinkingLevel[];
+};
+
+export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+export type ModelInputKind = "text" | "image";
+
+export type JsonObject = Record<string, unknown>;
+
+export type ModelCost = {
+  input?: number | undefined;
+  output?: number | undefined;
+  cacheRead?: number | undefined;
+  cacheWrite?: number | undefined;
+};
+
+export type ModelProviderInfo = {
+  id: string;
+  name: string;
+  source: "builtin" | "custom";
+  configured: boolean;
+  authSource?: string;
+  authLabel?: string;
+  modelCount: number;
+  enabledModelCount: number;
+  baseUrl?: string;
+  api?: string;
+  error?: string;
+};
+
+export type ProviderModelConfig = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  contextWindow?: number;
+  maxTokens?: number;
+  reasoning: boolean;
+  thinkingLevel: ThinkingLevel;
+  thinkingLevels: ThinkingLevel[];
+};
+
+export type ModelProviderDetail = ModelProviderInfo & {
+  models: ProviderModelConfig[];
+};
+
+export type ModelSettingsState = {
+  providers: ModelProviderInfo[];
+  models: ModelInfo[];
+  defaultModel?: string;
+};
+
+export type ConfigureProviderInput = {
+  provider: string;
+  apiKey?: string | undefined;
+  enabledModelIds?: string[] | undefined;
+};
+
+export type ProviderCompatibilityInput = {
+  supportsDeveloperRole?: boolean | undefined;
+  supportsReasoningEffort?: boolean | undefined;
+};
+
+export type ModelCompatibilityInput = {
+  thinkingFormat?:
+    | "none"
+    | "openai"
+    | "openrouter"
+    | "deepseek"
+    | "together"
+    | "zai"
+    | "qwen"
+    | "qwen-chat-template"
+    | undefined;
+  supportsUsageInStreaming?: boolean | undefined;
+};
+
+export type CustomProviderModelInput = {
+  id: string;
+  name?: string | undefined;
+  api?: string | undefined;
+  baseUrl?: string | undefined;
+  headers?: Record<string, string> | undefined;
+  contextWindow?: number | undefined;
+  maxTokens?: number | undefined;
+  reasoning?: boolean | undefined;
+  input?: ModelInputKind[] | undefined;
+  cost?: ModelCost | undefined;
+  compat?: JsonObject | undefined;
+  compatibility?: ModelCompatibilityInput | undefined;
+  thinkingLevelMap?: Partial<Record<ThinkingLevel, string | null>> | undefined;
+};
+
+export type UpsertCustomProviderInput = {
+  provider: string;
+  name: string;
+  baseUrl: string;
+  apiKey?: string | undefined;
+  api?: string | undefined;
+  authHeader?: boolean | undefined;
+  headers?: Record<string, string> | undefined;
+  compat?: JsonObject | undefined;
+  compatibility?: ProviderCompatibilityInput | undefined;
+  models: CustomProviderModelInput[];
+};
+
+export type UpdateModelConfigInput = {
+  model: string;
+  enabled?: boolean | undefined;
+  thinkingLevel?: ThinkingLevel | undefined;
+  contextWindow?: number | undefined;
+  maxTokens?: number | undefined;
 };
 
 export type AgentReviewDepth = "fast" | "standard" | "deep";

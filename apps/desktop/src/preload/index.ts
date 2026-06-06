@@ -17,6 +17,7 @@ const api: ModusApi = {
     list: () => ipcRenderer.invoke("agent:list"),
     listEvents: (sessionId) => ipcRenderer.invoke("agent:list-events", sessionId),
     listRuns: (sessionId) => ipcRenderer.invoke("agent:list-runs", sessionId),
+    ensure: (sessionId) => ipcRenderer.invoke("agent:ensure", sessionId),
     prompt: (input) => ipcRenderer.invoke("agent:prompt", input),
     abort: (sessionId) => ipcRenderer.invoke("agent:abort", sessionId),
     setModel: (input) => ipcRenderer.invoke("agent:set-model", input),
@@ -71,6 +72,11 @@ const api: ModusApi = {
   model: {
     list: () => ipcRenderer.invoke("model:list"),
     setDefault: (model) => ipcRenderer.invoke("model:set-default", model),
+    settings: () => ipcRenderer.invoke("model:settings"),
+    providerDetail: (provider) => ipcRenderer.invoke("model:provider-detail", provider),
+    configureProvider: (input) => ipcRenderer.invoke("model:configure-provider", input),
+    upsertCustomProvider: (input) => ipcRenderer.invoke("model:upsert-custom-provider", input),
+    updateConfig: (input) => ipcRenderer.invoke("model:update-config", input),
   },
   review: {
     start: (input) => ipcRenderer.invoke("review:start", input),

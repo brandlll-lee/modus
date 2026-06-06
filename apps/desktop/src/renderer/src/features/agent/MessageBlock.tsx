@@ -1,14 +1,21 @@
 import { IconChevronRight } from "@tabler/icons-react";
 import { AnimatePresence, m } from "motion/react";
 import { useState } from "react";
+import { MarkdownMessage } from "./MarkdownMessage";
 
 type MessageBlockProps = {
   messageRole: "assistant" | "user";
   content: string;
   thinking: string;
+  streaming?: boolean;
 };
 
-export function MessageBlock({ messageRole, content, thinking }: MessageBlockProps) {
+export function MessageBlock({
+  messageRole,
+  content,
+  thinking,
+  streaming = false,
+}: MessageBlockProps) {
   const [thinkingOpen, setThinkingOpen] = useState(false);
 
   if (messageRole === "user") {
@@ -16,7 +23,7 @@ export function MessageBlock({ messageRole, content, thinking }: MessageBlockPro
 
     return (
       <div className="flex justify-end">
-        <div className="max-w-[78%] rounded-xl border border-hairline bg-surface px-3.5 py-2 text-sm text-fg leading-relaxed shadow-composer">
+        <div className="max-w-[78%] rounded-xl border border-hairline bg-surface/95 px-4 py-2.5 text-sm text-fg leading-relaxed shadow-composer">
           <div className="whitespace-pre-wrap">{content}</div>
         </div>
       </div>
@@ -39,7 +46,7 @@ export function MessageBlock({ messageRole, content, thinking }: MessageBlockPro
             >
               <IconChevronRight size={12} stroke={1.8} />
             </m.span>
-            Thought for {estimateThinkingSeconds(thinking)}s
+            <span>{`Thought for ${estimateThinkingSeconds(thinking)}s`}</span>
           </button>
           <AnimatePresence initial={false}>
             {thinkingOpen ? (
@@ -56,7 +63,7 @@ export function MessageBlock({ messageRole, content, thinking }: MessageBlockPro
           </AnimatePresence>
         </div>
       ) : null}
-      {content ? <div className="whitespace-pre-wrap text-fg-muted">{content}</div> : null}
+      {content ? <MarkdownMessage content={content} streaming={streaming} /> : null}
     </div>
   );
 }
