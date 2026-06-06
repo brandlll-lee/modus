@@ -1,27 +1,23 @@
 import {
   IconAlertTriangle,
-  IconCircleCheck,
-  IconPlayerPlay,
-  IconReportSearch,
+  IconChevronRight,
   IconSparkles,
 } from "@tabler/icons-react";
 import { m } from "motion/react";
+import { useMemo } from "react";
 import type {
   AgentEvent,
   PermissionDecision,
   PermissionRequest,
 } from "../../../../shared/contracts";
-import { cn } from "../../lib/cn";
 import { MessageBlock } from "./MessageBlock";
 import { PermissionCard } from "./PermissionCard";
+import { ShinyText } from "./TextEffects";
 import { ToolCard } from "./ToolCard";
 
 type TimelineProps = {
-  agentEvents: Array<{ id: string; event: AgentEvent }>;
-  pinnedUserMessageId?: string | null;
-  onContinue?(): void;
+  agentEvents: Array<{ id: string; event: AgentEvent; createdAt?: string }>;
   onPermissionDecision?(request: PermissionRequest, decision: PermissionDecision["decision"]): void;
-  onReviewRun?(): void;
 };
 
 type MessageBlockItem = {
@@ -30,6 +26,7 @@ type MessageBlockItem = {
   role: "assistant" | "user";
   content: string;
   thinking: string;
+  streaming?: boolean;
 };
 
 type ToolBlockItem = {
@@ -38,6 +35,7 @@ type ToolBlockItem = {
   name: string;
   args?: unknown;
   output: string;
+  isComplete?: boolean;
   isError?: boolean;
 };
 
@@ -55,6 +53,8 @@ type RunBlockItem = {
   status: "running" | "completed" | "failed" | "blocked" | "cancelled";
   delivery?: string;
   body?: string;
+  startedAt: number;
+  completedAt?: number;
 };
 
 type NoticeBlockItem = {
@@ -65,18 +65,56 @@ type NoticeBlockItem = {
   isError?: boolean;
 };
 
+type ThinkingBlockItem = {
+  id: string;
+  type: "thinking";
+  runId: string;
+};
+
 type TimelineBlock =
   | MessageBlockItem
   | ToolBlockItem
   | PermissionBlockItem
   | RunBlockItem
-  | NoticeBlockItem;
+  | NoticeBlockItem
+  | ThinkingBlockItem;
 
 export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): TimelineBlock[] {
   const blocks: TimelineBlock[] = [];
   const blockById = new Map<string, TimelineBlock>();
+  let order = 0;
+  let activeAssistantMessageId: string | undefined;
+  let activeRunId: string | undefined;
 
-  for (const { id, event } of agentEvents) {
+  function appendMessageBlock(block: MessageBlockItem): MessageBlockItem {
+    blocks.push(block);
+    blockById.set(block.id, block);
+    if (block.role === "assistant") {
+      activeAssistantMessageId = block.id;
+    }
+    return block;
+  }
+
+  function ensureAssistantMessageBlock(messageId: string): MessageBlockItem {
+    const block = blockById.get(messageId);
+    if (block?.type === "message") {
+      if (block.role === "assistant") {
+        activeAssistantMessageId = messageId;
+      }
+      return block;
+    }
+    return appendMessageBlock({
+      id: messageId,
+      type: "message",
+      role: "assistant",
+      content: "",
+      thinking: "",
+    });
+  }
+
+  for (const item of agentEvents) {
+    const { id, event } = item;
+    const eventAt = eventTime(item.createdAt, order);
     if (event.type === "run.started") {
       const block: RunBlockItem = {
         id: event.runId,
@@ -84,9 +122,12 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
         runId: event.runId,
         status: "running",
         delivery: event.delivery,
+        startedAt: eventAt,
       };
+      order++;
       blocks.push(block);
       blockById.set(event.runId, block);
+      activeRunId = event.runId;
       continue;
     }
 
@@ -94,15 +135,28 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
       const block = blockById.get(event.runId);
       if (block?.type === "run") {
         block.status = "completed";
-        block.body = event.summary ?? "Ready for the next step.";
+        block.completedAt = eventAt;
+        order++;
+        if (event.summary !== undefined) {
+          block.body = event.summary;
+        }
       } else {
-        blocks.push({
+        const completedBlock: RunBlockItem = {
           id: event.runId,
           type: "run",
           runId: event.runId,
           status: "completed",
-          body: event.summary ?? "Ready for the next step.",
-        });
+          startedAt: eventAt,
+          completedAt: eventAt,
+        };
+        order++;
+        if (event.summary !== undefined) {
+          completedBlock.body = event.summary;
+        }
+        blocks.push(completedBlock);
+      }
+      if (activeRunId === event.runId) {
+        activeRunId = undefined;
       }
       continue;
     }
@@ -112,6 +166,8 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
       if (block?.type === "run") {
         block.status = "failed";
         block.body = event.message;
+        block.completedAt = eventAt;
+        order++;
       } else {
         blocks.push({
           id: event.runId,
@@ -119,7 +175,13 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
           runId: event.runId,
           status: "failed",
           body: event.message,
+          startedAt: eventAt,
+          completedAt: eventAt,
         });
+        order++;
+      }
+      if (activeRunId === event.runId) {
+        activeRunId = undefined;
       }
       continue;
     }
@@ -129,6 +191,8 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
       if (block?.type === "run") {
         block.status = "blocked";
         block.body = event.reason;
+        block.completedAt = eventAt;
+        order++;
       } else {
         blocks.push({
           id: event.runId,
@@ -136,7 +200,13 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
           runId: event.runId,
           status: "blocked",
           body: event.reason,
+          startedAt: eventAt,
+          completedAt: eventAt,
         });
+        order++;
+      }
+      if (activeRunId === event.runId) {
+        activeRunId = undefined;
       }
       continue;
     }
@@ -146,6 +216,8 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
       if (block?.type === "run") {
         block.status = "cancelled";
         block.body = "Stopped by user.";
+        block.completedAt = eventAt;
+        order++;
       } else {
         blocks.push({
           id: event.runId,
@@ -153,7 +225,13 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
           runId: event.runId,
           status: "cancelled",
           body: "Stopped by user.",
+          startedAt: eventAt,
+          completedAt: eventAt,
         });
+        order++;
+      }
+      if (activeRunId === event.runId) {
+        activeRunId = undefined;
       }
       continue;
     }
@@ -166,8 +244,7 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
         content: "",
         thinking: "",
       };
-      blocks.push(block);
-      blockById.set(event.messageId, block);
+      appendMessageBlock(block);
       continue;
     }
 
@@ -175,6 +252,13 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
       const block = blockById.get(event.messageId);
       if (block?.type === "message") {
         block.content += event.delta;
+      } else if (activeAssistantMessageId) {
+        const activeBlock = blockById.get(activeAssistantMessageId);
+        if (activeBlock?.type === "message") {
+          activeBlock.content += event.delta;
+        }
+      } else {
+        ensureAssistantMessageBlock(event.messageId).content += event.delta;
       }
       continue;
     }
@@ -183,6 +267,20 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
       const block = blockById.get(event.messageId);
       if (block?.type === "message") {
         block.thinking += event.delta;
+      } else if (activeAssistantMessageId) {
+        const activeBlock = blockById.get(activeAssistantMessageId);
+        if (activeBlock?.type === "message") {
+          activeBlock.thinking += event.delta;
+        }
+      } else {
+        ensureAssistantMessageBlock(event.messageId).thinking += event.delta;
+      }
+      continue;
+    }
+
+    if (event.type === "message.completed") {
+      if (activeAssistantMessageId === event.messageId) {
+        activeAssistantMessageId = undefined;
       }
       continue;
     }
@@ -211,6 +309,7 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
     if (event.type === "tool.ended") {
       const block = blockById.get(event.toolCallId);
       if (block?.type === "tool") {
+        block.isComplete = true;
         block.isError = event.isError;
       }
       continue;
@@ -298,35 +397,57 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
     }
   }
 
+  if (activeRunId) {
+    const runBlock = blockById.get(activeRunId);
+    if (runBlock?.type === "run" && runBlock.status === "running") {
+      if (activeAssistantMessageId) {
+        const activeBlock = blockById.get(activeAssistantMessageId);
+        if (activeBlock?.type === "message" && activeBlock.role === "assistant") {
+          activeBlock.streaming = true;
+        }
+      }
+      let insertAfter = blocks.length - 1;
+      for (let index = blocks.length - 1; index >= 0; index -= 1) {
+        const block = blocks[index];
+        if (!block) continue;
+        if (block.type !== "run" || block.runId === activeRunId) {
+          insertAfter = index;
+          break;
+        }
+      }
+      blocks.splice(insertAfter + 1, 0, {
+        id: `thinking:${activeRunId}`,
+        type: "thinking",
+        runId: activeRunId,
+      });
+    }
+  }
+
   return blocks;
 }
 
-function RunRow({ block, onReviewRun }: { block: RunBlockItem; onReviewRun?: () => void }) {
+function RunRow({ block }: { block: RunBlockItem }) {
   const isError = block.status === "failed" || block.status === "blocked";
+  const elapsed = formatElapsed(block.completedAt ?? Date.now(), block.startedAt);
   return (
-    <div className="flex min-w-0 items-center gap-2 text-sm text-fg-subtle">
-      {block.status === "completed" ? (
-        <IconCircleCheck className="shrink-0 text-success" size={15} stroke={1.65} />
-      ) : (
-        <IconPlayerPlay
-          className={isError ? "shrink-0 text-danger" : "shrink-0 text-fg-faint"}
-          size={15}
-          stroke={1.65}
-        />
-      )}
-      <span className={isError ? "text-danger" : "text-fg-muted"}>{block.status}</span>
-      {block.delivery ? <span className="text-fg-faint">{block.delivery}</span> : null}
-      {block.body ? <span className="min-w-0 truncate text-fg-faint">{block.body}</span> : null}
-      {block.status === "completed" && onReviewRun ? (
-        <button
-          className="ml-auto flex shrink-0 items-center gap-1 rounded-md border border-hairline px-2 py-1 text-2xs text-fg-muted transition-colors hover:bg-hover hover:text-fg"
-          onClick={onReviewRun}
-          type="button"
-        >
-          <IconReportSearch size={13} stroke={1.65} />
-          Run review
-        </button>
-      ) : null}
+    <div className="border-hairline-soft border-b pb-3">
+      <div className="flex min-w-0 items-center gap-1.5 text-sm text-fg-muted">
+        <span className={isError ? "text-danger" : "text-fg-muted"}>
+          {block.status === "running" ? `Working for ${elapsed}` : `Worked for ${elapsed}`}
+        </span>
+        {block.status === "running" ? null : (
+          <IconChevronRight className="shrink-0 text-fg-faint" size={13} stroke={1.65} />
+        )}
+        {block.body ? <span className="min-w-0 truncate text-fg-faint">{block.body}</span> : null}
+      </div>
+    </div>
+  );
+}
+
+function ThinkingRow() {
+  return (
+    <div className="text-sm leading-relaxed">
+      <ShinyText>Thinking</ShinyText>
     </div>
   );
 }
@@ -349,18 +470,22 @@ function Notice({ body, isError = false, title }: NoticeBlockItem) {
 
 export function Timeline({
   agentEvents,
-  onContinue,
   onPermissionDecision,
-  onReviewRun,
-  pinnedUserMessageId,
 }: TimelineProps) {
-  const blocks = buildBlocks(agentEvents);
-  const visibleBlocks = blocks.filter(
-    (block) => block.type !== "message" || block.role !== "user" || block.content.trim(),
+  const blocks = useMemo(() => buildBlocks(agentEvents), [agentEvents]);
+  const visibleBlocks = useMemo(
+    () =>
+      blocks.filter((block) => {
+        if (block.type !== "message") {
+          return true;
+        }
+        if (block.role === "user") {
+          return block.content.trim();
+        }
+        return block.content.trim() || block.thinking.trim();
+      }),
+    [blocks],
   );
-  const pinnedBlock = pinnedUserMessageId
-    ? visibleBlocks.find((block) => block.type === "message" && block.id === pinnedUserMessageId)
-    : undefined;
 
   if (visibleBlocks.length === 0) {
     return (
@@ -376,24 +501,11 @@ export function Timeline({
   }
 
   return (
-    <div className="relative mx-auto w-full max-w-3xl px-6 py-8">
-      {pinnedBlock?.type === "message" ? (
-        <m.div
-          animate={{ opacity: 1, y: 0 }}
-          className="sticky top-0 z-10 mb-5 bg-canvas/96 pt-1 pb-3 backdrop-blur"
-          initial={{ opacity: 0, y: -4 }}
-          transition={{ duration: 0.14, ease: "easeOut" }}
-        >
-          <MessageBlock content={pinnedBlock.content} messageRole="user" thinking="" />
-        </m.div>
-      ) : null}
+    <div className="relative mx-auto w-full max-w-4xl px-6 py-8">
       <div className="space-y-4">
         {visibleBlocks.map((block) => (
           <m.div
-            animate={{ opacity: block.id === pinnedUserMessageId ? 0 : 1 }}
-            className={cn(block.id === pinnedUserMessageId && "pointer-events-none")}
-            data-message-id={block.type === "message" ? block.id : undefined}
-            data-message-role={block.type === "message" ? block.role : undefined}
+            animate={{ opacity: 1 }}
             initial={{ opacity: 0 }}
             key={block.id}
             transition={{ duration: 0.15, ease: "easeOut" }}
@@ -402,12 +514,14 @@ export function Timeline({
               <MessageBlock
                 content={block.content}
                 messageRole={block.role}
+                streaming={block.streaming ?? false}
                 thinking={block.thinking}
               />
             ) : null}
             {block.type === "tool" ? (
               <ToolCard
                 args={block.args}
+                isComplete={block.isComplete ?? false}
                 isError={block.isError ?? false}
                 name={block.name}
                 output={block.output}
@@ -421,21 +535,28 @@ export function Timeline({
               />
             ) : null}
             {block.type === "run" ? (
-              <RunRow {...(onReviewRun ? { onReviewRun } : {})} block={block} />
+              <RunRow block={block} />
             ) : null}
             {block.type === "notice" ? <Notice {...block} /> : null}
+            {block.type === "thinking" ? <ThinkingRow /> : null}
           </m.div>
         ))}
-        {onContinue ? (
-          <button
-            className="rounded-md border border-hairline px-2.5 py-1.5 text-xs text-fg-subtle transition-colors hover:bg-hover hover:text-fg"
-            onClick={onContinue}
-            type="button"
-          >
-            Continue
-          </button>
-        ) : null}
       </div>
     </div>
   );
+}
+
+function eventTime(createdAt: string | undefined, fallbackOrder: number): number {
+  if (createdAt) {
+    const parsed = Date.parse(createdAt);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return fallbackOrder * 1000;
+}
+
+function formatElapsed(end: number, start: number): string {
+  const seconds = Math.max(0, Math.round((end - start) / 1000));
+  return `${seconds}s`;
 }
