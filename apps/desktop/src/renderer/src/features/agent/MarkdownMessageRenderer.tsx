@@ -30,10 +30,15 @@ const code = createCodePlugin({
   themes: ["github-light", "one-dark-pro"],
 });
 
-/* Math/CJK plugins are theme-agnostic — kept as stable module constants. */
+/* Math/CJK plugins are theme-agnostic — kept as stable module constants.
+ * singleDollarTextMath: true renders inline `$...$` (what LLMs emit for math),
+ * matching ChatGPT/Claude. Block `$$...$$` works regardless. Tradeoff: bare
+ * currency like "$5" can be misread as math, but for a coding/math agent
+ * correct formula rendering is the right call. errorColor stays muted so an
+ * invalid expression degrades quietly in both themes. */
 const math = createMathPlugin({
   errorColor: "#8a8a87",
-  singleDollarTextMath: false,
+  singleDollarTextMath: true,
 });
 
 /* ── Mermaid theme — literal hex values (mermaid cannot resolve CSS var()), so

@@ -857,9 +857,12 @@ input {
   background: var(--color-hover);
 }
 
+/* Let KaTeX keep its native 1.21em scale (math glyphs read smaller than text at
+ * the same em, so KaTeX upsizes on purpose). The previous `font-size: 1em` here
+ * shrank every formula and made dense fractions cramped. We only retint to the
+ * theme fg; sizing is KaTeX's own. */
 .modus-markdown :where(.katex) {
   color: var(--color-fg);
-  font-size: 1em;
 }
 
 .modus-markdown :where(.katex-display) {
@@ -867,4 +870,10 @@ input {
   overflow-x: auto;
   overflow-y: hidden;
   padding: 0.2rem 0;
+}
+
+/* Block formulas get a touch more presence, like ChatGPT/Obsidian display math,
+ * while inline math stays inline-sized. */
+.modus-markdown :where(.katex-display) > .katex {
+  font-size: 1.32em;
 }
