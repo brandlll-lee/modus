@@ -47,6 +47,9 @@
   /* 浅一档品牌紫：状态点 / 次级强调（如 Remote control 激活点） */
   --color-focus-ring-soft: #b388ff;
 
+  /* 文本选区：半透明品牌紫。文字色保留（含代码高亮），暗底上读作柔和紫高亮 */
+  --color-selection: rgba(133, 63, 244, 0.42);
+
   /* Markdown 链接色（暗色：柔和天蓝；亮色见 light 覆盖） */
   --color-link: #7bbcff;
   --color-link-hover: #a8d5ff;
@@ -162,6 +165,9 @@
   --color-focus-ring: #853ff4;
   --color-focus-ring-soft: #8b5cf6;
 
+  /* Text selection — lighter brand-purple tint so dark text stays readable on white */
+  --color-selection: rgba(133, 63, 244, 0.2);
+
   /* Markdown link — blue-600, AA (~5.2:1) on white */
   --color-link: #2563eb;
   --color-link-hover: #1d4ed8;
@@ -189,6 +195,17 @@
 }
 :root[data-theme="light"] .scroll-thin:hover::-webkit-scrollbar-thumb {
   background-color: rgba(0, 0, 0, 0.22);
+}
+
+/*
+ * Text selection — replace the OS blue with a translucent brand-purple tint.
+ * Background only (no color override) so selected text keeps its own color,
+ * including syntax-highlighted code, VS Code style. The token flips with
+ * data-theme, so dark gets a richer tint and light a softer one — both keep
+ * text fully readable. Painted by the compositor, so zero runtime cost.
+ */
+::selection {
+  background-color: var(--color-selection);
 }
 
 /* 全局默认行高与字重，避免某些控件回退到浏览器默认（16px / bold） */
