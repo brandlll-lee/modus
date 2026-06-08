@@ -1,4 +1,5 @@
 <div align="center">
+  <img alt="Modus logo" src="./docs/media/modus-logo.png" width="104" height="104">
   <h1>Modus</h1>
   <p><b>An early open-source desktop alternative to Codex App and Cursor Agents Window.</b></p>
 </div>
@@ -15,9 +16,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/brandlll-lee/modus/releases/download/readme-demo-assets/Modu001.mp4">
-    <img alt="Modus demo" src="./docs/media/modus-demo.gif" width="100%">
-  </a>
+  <img alt="Modus desktop UI" src="./docs/media/modus-ui.png" width="100%">
 </p>
 
 If you like the idea of Codex App and Cursor, you probably like this dream:

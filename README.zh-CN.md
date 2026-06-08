@@ -1,4 +1,5 @@
 <div align="center">
+  <img alt="Modus logo" src="./docs/media/modus-logo.png" width="104" height="104">
   <h1>Modus</h1>
   <p><b>Codex App 和 Cursor Agents Window 的早期开源桌面端替代产品。</b></p>
 </div>
@@ -15,9 +16,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/brandlll-lee/modus/releases/download/readme-demo-assets/Modu001.mp4">
-    <img alt="Modus demo" src="./docs/media/modus-demo.gif" width="100%">
-  </a>
+  <img alt="Modus 桌面界面" src="./docs/media/modus-ui.png" width="100%">
 </p>
 
 如果你喜欢 Codex App 和 Cursor，你大概率喜欢这样的画面：
