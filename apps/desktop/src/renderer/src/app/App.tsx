@@ -62,7 +62,8 @@ export function App() {
   const [model, setModel] = useState("");
   const [modelSettings, setModelSettings] = useState<ModelSettingsState | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarWidth, setSidebarWidth] = useState(300);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [inspectorWidth, setInspectorWidth] = useState(384);
   const [environmentStats, setEnvironmentStats] = useState({ added: 0, removed: 0 });
@@ -434,15 +435,17 @@ export function App() {
                   agentSession={agentSession}
                   agentSessions={agentSessions}
                   canCreateSession={Boolean(activeWorkspace) && !hasSession && Boolean(model)}
-                  collapsed={sidebarCollapsed}
                   onArchiveSession={(session) => void archiveSession(session)}
                   onNewSession={() => void ensureSession()}
                   onNewWorkspaceSession={(workspace) => void createSession(workspace)}
+                  onOpenChange={setSidebarOpen}
                   onOpenWorkspace={() => void openWorkspace()}
                   onOpenSettings={() => setSettingsOpen(true)}
                   onSelectSession={(session) => void selectSession(session)}
                   onSelectWorkspace={setActiveWorkspace}
-                  onToggleCollapsed={() => setSidebarCollapsed((collapsed) => !collapsed)}
+                  onWidthChange={setSidebarWidth}
+                  open={sidebarOpen}
+                  width={sidebarWidth}
                   workspaces={workspaces}
                 />
 
@@ -450,7 +453,7 @@ export function App() {
                   <header className="relative flex h-9 shrink-0 items-center px-3">
                     <div className="app-no-drag flex flex-1 items-center gap-1.5">
                       <AnimatePresence initial={false}>
-                        {sidebarCollapsed ? (
+                        {!sidebarOpen ? (
                           <m.div
                             animate={{ opacity: 1, width: "auto" }}
                             className="overflow-hidden"
@@ -460,7 +463,7 @@ export function App() {
                           >
                             <ToolbarButton
                               label="Show left sidebar"
-                              onClick={() => setSidebarCollapsed(false)}
+                              onClick={() => setSidebarOpen(true)}
                             >
                               <IconLayoutSidebar size={15} stroke={1.65} />
                             </ToolbarButton>

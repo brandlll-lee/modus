@@ -12,18 +12,30 @@ import {
   IconSearch,
   IconSettings,
 } from "@tabler/icons-react";
-import { AnimatePresence, m } from "motion/react";
-import { type MouseEvent, type ReactNode, useState } from "react";
+import { AnimatePresence, animate, m, useMotionValue } from "motion/react";
+import {
+  type MouseEvent,
+  type PointerEvent,
+  type ReactNode,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import type { AgentSessionInfo, WorkspaceInfo } from "../../../shared/contracts";
 import { cn } from "../lib/cn";
 import { ToolbarButton } from "./ui/ToolbarButton";
+
+const SIDEBAR_MIN_WIDTH = 240;
+const SIDEBAR_MAX_WIDTH = 480;
+const SIDEBAR_TRANSITION = { duration: 0.18, ease: [0.22, 1, 0.36, 1] } as const;
 
 type SidebarProps = {
   workspaces: WorkspaceInfo[];
   activeWorkspace: WorkspaceInfo | null;
   agentSession: AgentSessionInfo | null;
   agentSessions: AgentSessionInfo[];
-  collapsed: boolean;
+  open: boolean;
+  width: number;
   onOpenWorkspace(): void;
   onSelectWorkspace(workspace: WorkspaceInfo): void;
   onSelectSession(session: AgentSessionInfo): void;
@@ -31,7 +43,8 @@ type SidebarProps = {
   onNewWorkspaceSession(workspace: WorkspaceInfo): void;
   onArchiveSession(session: AgentSessionInfo): void;
   onOpenSettings(): void;
-  onToggleCollapsed(): void;
+  onOpenChange(open: boolean): void;
+  onWidthChange(width: number): void;
   canCreateSession: boolean;
 };
 
@@ -40,7 +53,8 @@ export function Sidebar({
   activeWorkspace,
   agentSession,
   agentSessions,
-  collapsed,
+  open,
+  width,
   onOpenWorkspace,
   onSelectWorkspace,
   onSelectSession,
@@ -48,24 +62,94 @@ export function Sidebar({
   onNewWorkspaceSession,
   onArchiveSession,
   onOpenSettings,
-  onToggleCollapsed,
+  onOpenChange,
+  onWidthChange,
   canCreateSession,
 }: SidebarProps) {
   const [projectsExpanded, setProjectsExpanded] = useState(true);
   const sessionsByWorkspace = groupSessionsByWorkspace(agentSessions);
 
+  const dragStartRef = useRef<{ x: number; width: number } | null>(null);
+  const latestWidthRef = useRef(width);
+  // Width is a motion value, not React state: a drag calls `.set()` which writes
+  // straight to the DOM without re-rendering App + the heavy Timeline on every
+  // pointermove. `contentWidth` keeps the inner content laid out at a stable
+  // width so the panel *clips* (instead of reflowing) while it slides shut —
+  // exactly how the right inspector behaves.
+  const panelWidth = useMotionValue(open ? width : 0);
+  const contentWidth = useMotionValue(width);
+
+  // Drive the open/close animation and keep the motion value in sync with an
+  // externally committed width. Never re-animate mid-drag (the pointer owns it).
+  useEffect(() => {
+    if (dragStartRef.current) {
+      return;
+    }
+    latestWidthRef.current = width;
+    if (open) {
+      contentWidth.set(width);
+      const controls = animate(panelWidth, width, SIDEBAR_TRANSITION);
+      return () => controls.stop();
+    }
+    // Freeze content at its current visible width, then slide the panel to 0 so
+    // the text clips away cleanly with no last-frame reflow or snap.
+    contentWidth.set(Math.max(panelWidth.get(), 1));
+    const controls = animate(panelWidth, 0, SIDEBAR_TRANSITION);
+    return () => controls.stop();
+  }, [open, width, panelWidth, contentWidth]);
+
+  const startResize = (event: PointerEvent<HTMLButtonElement>): void => {
+    event.preventDefault();
+    dragStartRef.current = { x: event.clientX, width };
+    latestWidthRef.current = width;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  };
+
+  const resize = (event: PointerEvent<HTMLButtonElement>): void => {
+    if (!dragStartRef.current) {
+      return;
+    }
+    // Left panel: the handle is on the right edge, so dragging right widens.
+    const nextWidth = Math.min(
+      SIDEBAR_MAX_WIDTH,
+      Math.max(
+        SIDEBAR_MIN_WIDTH,
+        dragStartRef.current.width + event.clientX - dragStartRef.current.x,
+      ),
+    );
+    latestWidthRef.current = nextWidth;
+    panelWidth.set(nextWidth);
+    contentWidth.set(nextWidth);
+  };
+
+  const stopResize = (): void => {
+    if (!dragStartRef.current) {
+      return;
+    }
+    dragStartRef.current = null;
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+    const finalWidth = latestWidthRef.current;
+    // Drag-to-collapse: releasing at (or near) the floor closes the panel and
+    // keeps the last good width, so reopening never lands on a sliver.
+    if (finalWidth < SIDEBAR_MIN_WIDTH + 24) {
+      onOpenChange(false);
+    } else {
+      onWidthChange(finalWidth);
+    }
+  };
+
   return (
-    // Animate only `width` (a single layout dimension) on the outer wrapper while
-    // the inner panel keeps a fixed 300px width — content clips instead of
-    // reflowing, so the collapse stays buttery. Same easing/duration as the
-    // right Inspector panel for a perfectly symmetric feel.
     <m.aside
-      animate={{ width: collapsed ? 0 : 300 }}
-      className="shrink-0 overflow-hidden bg-panel"
-      initial={false}
-      transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+      className={cn(
+        "relative flex shrink-0 flex-col overflow-hidden bg-panel",
+        open && "border-hairline-strong border-r",
+      )}
+      style={{ width: panelWidth }}
     >
-      <div className="flex h-full w-[300px] min-w-[300px] flex-col border-hairline-strong border-r bg-panel">
+      <m.div className="flex h-full flex-col bg-panel" style={{ width: contentWidth }}>
         <div className="scroll-thin flex-1 overflow-y-auto px-2.5 pt-4 pb-2">
           <NavRow
             disabled={!canCreateSession}
@@ -150,11 +234,22 @@ export function Sidebar({
               Settings
             </NavRow>
           </div>
-          <ToolbarButton label="Collapse sidebar" onClick={onToggleCollapsed}>
+          <ToolbarButton label="Collapse sidebar" onClick={() => onOpenChange(false)}>
             <IconLayoutSidebar size={15} stroke={1.65} />
           </ToolbarButton>
         </div>
-      </div>
+      </m.div>
+      {open ? (
+        <button
+          aria-label="Resize left panel"
+          className="app-no-drag absolute top-0 right-0 bottom-0 z-20 w-1 cursor-col-resize hover:bg-chip-strong"
+          onPointerCancel={stopResize}
+          onPointerDown={startResize}
+          onPointerMove={resize}
+          onPointerUp={stopResize}
+          type="button"
+        />
+      ) : null}
     </m.aside>
   );
 }
