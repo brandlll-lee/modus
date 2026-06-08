@@ -1,7 +1,7 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import type { BrowserWindow } from "electron";
 import { app } from "electron";
 import type { TerminalEvent, TerminalInfo } from "../../shared/contracts";
@@ -20,17 +20,46 @@ type HostEvent =
   | { type: "error"; id?: string; message: string };
 
 const terminals = new Map<string, TerminalRecord>();
+const persistTimers = new Map<string, ReturnType<typeof setTimeout>>();
 let host: ChildProcessWithoutNullStreams | undefined;
 let hostBuffer = "";
 const MAX_OUTPUT_BYTES = 64 * 1024;
+// Cap how often a terminal's scrollback snapshot hits SQLite. Without this, a
+// burst of output (think `npm install`) fires one synchronous upsert per chunk
+// on the main process and visibly stalls every terminal.
+const PERSIST_THROTTLE_MS = 600;
 const ANSI_PATTERN = new RegExp(
   `${String.fromCharCode(27)}(?:[@-Z\\\\-_]|\\[[0-?]*[ -/]*[@-~])`,
   "g",
 );
 
+/** First match for `exe` across the PATH dirs, or undefined. */
+function resolveOnPath(exe: string): string | undefined {
+  for (const dir of (process.env.PATH ?? "").split(delimiter)) {
+    if (!dir) {
+      continue;
+    }
+    const candidate = join(dir, exe);
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Pick the default shell. On Windows we mirror what Cursor/VS Code do: prefer
+ * PowerShell 7 (`pwsh`), then Windows PowerShell (always present in System32),
+ * and only fall back to the bare `cmd` from COMSPEC. `MODUS_DEFAULT_SHELL`
+ * overrides everything.
+ */
 function defaultShell(): string {
+  if (process.env.MODUS_DEFAULT_SHELL) {
+    return process.env.MODUS_DEFAULT_SHELL;
+  }
+
   if (process.platform === "win32") {
-    return process.env.COMSPEC ?? "powershell.exe";
+    return resolveOnPath("pwsh.exe") ?? "powershell.exe";
   }
 
   return process.env.SHELL ?? "bash";
@@ -70,14 +99,12 @@ function stripAnsi(value: string): string {
   return value.replace(ANSI_PATTERN, "");
 }
 
-function appendOutput(terminalId: string, data: string): void {
+function persistOutput(terminalId: string): void {
   const terminal = terminals.get(terminalId);
   if (!terminal) {
     return;
   }
 
-  const nextOutput = `${terminal.output}${stripAnsi(data)}`.slice(-MAX_OUTPUT_BYTES);
-  terminal.output = nextOutput;
   getDatabase()
     .prepare(
       `insert into terminal_outputs (terminal_id, workspace_id, cwd, output, updated_at)
@@ -93,6 +120,40 @@ function appendOutput(terminalId: string, data: string): void {
       terminal.output,
       new Date().toISOString(),
     );
+}
+
+/** Throttle SQLite writes: at most one upsert per terminal per window. */
+function schedulePersist(terminalId: string): void {
+  if (persistTimers.has(terminalId)) {
+    return;
+  }
+  const timer = setTimeout(() => {
+    persistTimers.delete(terminalId);
+    persistOutput(terminalId);
+  }, PERSIST_THROTTLE_MS);
+  // Don't let a pending snapshot keep the process alive on shutdown.
+  timer.unref?.();
+  persistTimers.set(terminalId, timer);
+}
+
+/** Persist immediately and cancel any pending throttle (used on exit/kill). */
+function flushPersist(terminalId: string): void {
+  const timer = persistTimers.get(terminalId);
+  if (timer) {
+    clearTimeout(timer);
+    persistTimers.delete(terminalId);
+  }
+  persistOutput(terminalId);
+}
+
+function appendOutput(terminalId: string, data: string): void {
+  const terminal = terminals.get(terminalId);
+  if (!terminal) {
+    return;
+  }
+
+  terminal.output = `${terminal.output}${stripAnsi(data)}`.slice(-MAX_OUTPUT_BYTES);
+  schedulePersist(terminalId);
 }
 
 function writeHost(command: unknown): void {
@@ -116,6 +177,7 @@ function handleHostEvent(window: BrowserWindow, event: HostEvent): void {
       terminalId: event.id,
       exitCode: event.exit_code ?? 0,
     });
+    flushPersist(event.id);
     terminals.delete(event.id);
     return;
   }
@@ -167,6 +229,7 @@ function ensureHost(window: BrowserWindow): ChildProcessWithoutNullStreams {
   host.on("exit", () => {
     host = undefined;
     for (const terminal of terminals.values()) {
+      flushPersist(terminal.info.id);
       emit(window, {
         type: "terminal.exit",
         terminalId: terminal.info.id,
@@ -231,6 +294,7 @@ export function killTerminal(terminalId: string): void {
   }
 
   writeHost({ type: "kill", id: terminalId });
+  flushPersist(terminalId);
   terminals.delete(terminalId);
 }
 

@@ -70,6 +70,34 @@ fn pty_size(cols: u16, rows: u16) -> PtySize {
     }
 }
 
+/// Split a byte buffer into the longest valid UTF-8 prefix plus any trailing
+/// bytes that don't yet form a complete character.
+///
+/// PTY reads land on arbitrary byte boundaries, so a multi-byte character
+/// (CJK, emoji, box-drawing) can straddle two reads. `String::from_utf8_lossy`
+/// would replace the split halves with `U+FFFD` *irreversibly*. Instead we emit
+/// only the complete prefix and hand the incomplete tail back to the caller to
+/// prepend to the next read. Genuinely invalid bytes still collapse to a single
+/// replacement char so we never stall.
+fn split_utf8(buf: &[u8]) -> (String, Vec<u8>) {
+    match std::str::from_utf8(buf) {
+        Ok(text) => (text.to_owned(), Vec::new()),
+        Err(error) => {
+            let valid_up_to = error.valid_up_to();
+            let mut text = String::from_utf8_lossy(&buf[..valid_up_to]).into_owned();
+            match error.error_len() {
+                None => (text, buf[valid_up_to..].to_vec()),
+                Some(len) => {
+                    text.push('\u{FFFD}');
+                    let (rest_text, carry) = split_utf8(&buf[valid_up_to + len..]);
+                    text.push_str(&rest_text);
+                    (text, carry)
+                }
+            }
+        }
+    }
+}
+
 fn spawn_session(
     sessions: &Sessions,
     writer: &HostWriter,
@@ -116,19 +144,26 @@ fn spawn_session(
     let read_id = id.clone();
     thread::spawn(move || {
         let mut buffer = [0_u8; 8192];
+        // Incomplete trailing UTF-8 bytes from the previous read, prepended to
+        // the next chunk so multi-byte characters survive read boundaries.
+        let mut carry: Vec<u8> = Vec::new();
 
         loop {
             match reader.read(&mut buffer) {
                 Ok(0) => break,
                 Ok(size) => {
-                    let data = String::from_utf8_lossy(&buffer[..size]).to_string();
-                    let _ = send_event(
-                        &read_writer,
-                        HostEvent::Data {
-                            id: &read_id,
-                            data,
-                        },
-                    );
+                    carry.extend_from_slice(&buffer[..size]);
+                    let (data, rest) = split_utf8(&carry);
+                    carry = rest;
+                    if !data.is_empty() {
+                        let _ = send_event(
+                            &read_writer,
+                            HostEvent::Data {
+                                id: &read_id,
+                                data,
+                            },
+                        );
+                    }
                 }
                 Err(error) => {
                     let _ = send_event(
@@ -141,6 +176,17 @@ fn spawn_session(
                     break;
                 }
             }
+        }
+
+        // Flush any dangling bytes (process died mid-character) so nothing is lost.
+        if !carry.is_empty() {
+            let _ = send_event(
+                &read_writer,
+                HostEvent::Data {
+                    id: &read_id,
+                    data: String::from_utf8_lossy(&carry).into_owned(),
+                },
+            );
         }
 
         let _ = read_sessions.lock().map(|mut sessions| sessions.remove(&read_id));

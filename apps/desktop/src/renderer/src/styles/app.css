@@ -14,6 +14,9 @@
   --color-surface: #1c1c1d; /* 输入框（在主区上轻浮起，对比克制） */
   --color-elevated: #232325; /* 下拉 / 弹层 */
 
+  /* 代码块背景：暗色比主区略浮起，亮色用浅灰让代码块从白底"读"出来 */
+  --color-code-bg: #1c1c1d;
+
   /* hairline 三级 —— 用途分层（明度对齐 Cursor 实测）：
      - soft (0.03)     内部 list 分隔、超细分割
      - hairline (0.05) 浮起元素细描边（composer、popup、tooltip、pill）
@@ -38,6 +41,20 @@
   --color-accent-hover: #ff5e12;
   --color-accent-active: #d04200;
   --color-on-accent: #ffffff;
+
+  /* 品牌紫：仅用于输入框聚焦态描边（focus-within），与灰阶基调形成克制的高亮 */
+  --color-focus-ring: #853ff4;
+  /* 浅一档品牌紫：状态点 / 次级强调（如 Remote control 激活点） */
+  --color-focus-ring-soft: #b388ff;
+
+  /* Markdown 链接色（暗色：柔和天蓝；亮色见 light 覆盖） */
+  --color-link: #7bbcff;
+  --color-link-hover: #a8d5ff;
+
+  /* 语义填充叠层：暗色为白色 alpha，亮色覆盖为黑色 alpha —— 用于 chip/pill/tile/ghost 按钮底 */
+  --color-chip-faint: rgba(255, 255, 255, 0.03);
+  --color-chip: rgba(255, 255, 255, 0.05);
+  --color-chip-strong: rgba(255, 255, 255, 0.08);
 
   /* 语义色：仅真正的成功/错误状态，平时不出现 */
   --color-success: #3fae87;
@@ -74,6 +91,10 @@
 
   /* hairline-only 纵深：仅给浮层一抹极淡阴影 */
   --shadow-composer: 0 1px 10px -6px rgba(0, 0, 0, 0.5);
+  /* composer 聚焦态：保留原纵深 + 1px 品牌紫描边环 + 极淡紫色外发光 */
+  --shadow-composer-focus:
+    0 1px 10px -6px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--color-focus-ring),
+    0 0 16px -3px rgba(133, 63, 244, 0.4);
   --shadow-popup: 0 6px 24px -10px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.06);
 
   --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
@@ -92,6 +113,82 @@
   -moz-osx-font-smoothing: grayscale;
   font-size: 13px;
   line-height: 1.5;
+}
+
+/*
+ * ── Light theme ─────────────────────────────────────────────────────────
+ * A deliberate second theme (not a naive invert), derived from the dark tokens
+ * per modern light-mode rules:
+ *   - base is a soft off-white (#f7f7f6), never pure #fff (less glare);
+ *   - elevation runs the OPPOSITE way to dark — raised/overlay surfaces step
+ *     toward pure white and lean on shadows for depth (dark lightens to lift);
+ *   - hairlines / hover / active become black-alpha so they read on white;
+ *   - text tiers are WCAG-checked dark-on-light (fg≈16:1, muted≈9:1, subtle≈5:1);
+ *   - brand accent (orange) and focus purple are preserved across both themes.
+ * Only the semantic CSS variables change; every component keeps its classes.
+ */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  /* Surfaces — elevation = whiter + shadow */
+  --color-canvas: #f7f7f6; /* app base (chat / main) */
+  --color-panel: #f1f1f0; /* sidebar / inspector */
+  --color-surface: #ffffff; /* composer / cards / input — pops above canvas */
+  --color-elevated: #ffffff; /* dropdowns / popovers — white + shadow-popup */
+  --color-code-bg: #f3f4f6; /* code blocks — soft gray so they read on white */
+
+  /* Hairlines — black-alpha, a touch stronger so they survive on white */
+  --color-hairline: rgba(0, 0, 0, 0.09);
+  --color-hairline-soft: rgba(0, 0, 0, 0.055);
+  --color-hairline-strong: rgba(0, 0, 0, 0.14);
+
+  /* Hover / active overlays — black-alpha */
+  --color-hover: rgba(0, 0, 0, 0.045);
+  --color-active: rgba(0, 0, 0, 0.07);
+
+  /* Text — dark-on-light, color carries hierarchy */
+  --color-fg: #1b1b1d;
+  --color-fg-muted: #44464a;
+  --color-fg-subtle: #6a6c72;
+  --color-fg-faint: #9a9ca2;
+
+  /* Brand accent (send): orange fill works on both themes */
+  --color-accent: #f54e00;
+  --color-accent-hover: #ff5e12;
+  --color-accent-active: #d04200;
+  --color-on-accent: #ffffff;
+
+  /* Focus purple — keep brand; soften variant darkened so it reads on white */
+  --color-focus-ring: #853ff4;
+  --color-focus-ring-soft: #8b5cf6;
+
+  /* Markdown link — blue-600, AA (~5.2:1) on white */
+  --color-link: #2563eb;
+  --color-link-hover: #1d4ed8;
+
+  /* Semantic fills become black-alpha so chips/tiles read on white */
+  --color-chip-faint: rgba(0, 0, 0, 0.035);
+  --color-chip: rgba(0, 0, 0, 0.055);
+  --color-chip-strong: rgba(0, 0, 0, 0.09);
+
+  /* Semantic — darkened for contrast on white */
+  --color-success: #1f9d6b;
+  --color-danger: #d63a4f;
+
+  /* Shadows — visible & soft to carry elevation that dark gets from lightness */
+  --shadow-composer: 0 1px 2px rgba(0, 0, 0, 0.07), 0 1px 1px rgba(0, 0, 0, 0.04);
+  --shadow-composer-focus:
+    0 1px 3px rgba(0, 0, 0, 0.08), 0 0 0 1px var(--color-focus-ring),
+    0 0 16px -4px rgba(133, 63, 244, 0.28);
+  --shadow-popup: 0 8px 28px -8px rgba(0, 0, 0, 0.18), 0 0 0 1px rgba(0, 0, 0, 0.07);
+}
+
+/* Light-mode scrollbar thumb must be dark to be visible on white. */
+:root[data-theme="light"] .scroll-thin:hover {
+  scrollbar-color: rgba(0, 0, 0, 0.22) transparent;
+}
+:root[data-theme="light"] .scroll-thin:hover::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, 0.22);
 }
 
 /* 全局默认行高与字重，避免某些控件回退到浏览器默认（16px / bold） */
@@ -191,6 +288,43 @@ input {
   }
 }
 
+/* Magic UI Border Beam —— 仅在 agent 工作时挂载于 composer。
+   关键性能取舍：用纯 CSS @keyframes 驱动 offset-distance（脱离 JS rAF 调度），
+   agent 流式输出占满主线程时也不抢占 JS，比 Motion 逐帧 set 更不易掉帧；
+   彗星元素 will-change 提层，mask 把绘制裁剪到 1.5px 边框环，重绘面积极小。 */
+@keyframes modus-border-beam {
+  from {
+    offset-distance: 0%;
+  }
+  to {
+    offset-distance: 100%;
+  }
+}
+
+@layer utilities {
+  /* 边框环：mask 求交 padding-box 透明 ∩ border-box 实色 = 只保留描边区域 */
+  .modus-border-beam-ring {
+    border: var(--mbb-border-width, 1.5px) solid transparent;
+    mask:
+      linear-gradient(transparent, transparent) padding-box,
+      linear-gradient(#000, #000) border-box;
+    mask-composite: intersect;
+  }
+
+  .modus-border-beam-comet {
+    position: absolute;
+    aspect-ratio: 1 / 1;
+    will-change: offset-distance;
+    animation: modus-border-beam var(--mbb-duration, 6s) linear infinite;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .modus-border-beam-comet {
+    animation: none;
+  }
+}
+
 /* AI response Markdown. Capability comes from Streamdown; visuals stay inside Modus tokens. */
 .modus-markdown {
   --background: var(--color-canvas);
@@ -201,22 +335,44 @@ input {
   --sidebar: var(--color-surface);
   --sdm-bg: transparent;
   color: var(--color-fg);
-  font-size: var(--text-sm);
-  line-height: 1.65;
+  font-size: var(--text-md); /* 14px — 比 13px 更易读，留白更舒展 */
+  line-height: 1.7;
   overflow-wrap: anywhere;
 }
 
 .modus-markdown :where(p) {
-  margin: 0.65rem 0;
+  margin: 0.7rem 0;
 }
 
+/* 标题层级 —— 用字号拉开 h1>h2>h3，恢复正常的阅读结构（Streamdown 工具类未编译，靠这里承载） */
 .modus-markdown :where(h1, h2, h3, h4, h5, h6) {
-  margin: 1rem 0 0.45rem;
+  margin: 1.3rem 0 0.5rem;
   color: var(--color-fg);
-  font-size: var(--text-sm);
-  font-weight: 600;
-  line-height: 1.45;
-  letter-spacing: 0;
+  font-weight: 650;
+  line-height: 1.35;
+  letter-spacing: -0.01em;
+}
+
+.modus-markdown :where(h1) {
+  font-size: 1.3rem; /* ≈18px */
+}
+
+.modus-markdown :where(h2) {
+  font-size: 1.15rem; /* ≈16px */
+}
+
+.modus-markdown :where(h3) {
+  font-size: 1rem; /* ≈14px */
+}
+
+.modus-markdown :where(h4, h5, h6) {
+  font-size: 0.95rem;
+  color: var(--color-fg-muted);
+}
+
+/* 首个标题不要顶出过大空隙 */
+.modus-markdown > :where(h1, h2, h3, h4, h5, h6):first-child {
+  margin-top: 0;
 }
 
 .modus-markdown :where(h1, h2) {
@@ -225,12 +381,12 @@ input {
 }
 
 .modus-markdown :where(a) {
-  color: #7bbcff;
+  color: var(--color-link);
   text-decoration: none;
 }
 
 .modus-markdown :where(a:hover) {
-  color: #a8d5ff;
+  color: var(--color-link-hover);
   text-decoration: underline;
   text-underline-offset: 3px;
 }
@@ -245,17 +401,35 @@ input {
 }
 
 .modus-markdown :where(ul, ol) {
-  margin: 0.6rem 0;
-  padding-left: 1.35rem;
+  margin: 0.7rem 0;
+  padding-left: 1.5rem;
+}
+
+/* 恢复列表符号 —— Tailwind preflight 把 ul/ol 重置成 list-style:none，这里显式补回 */
+.modus-markdown :where(ul) {
+  list-style: disc;
+}
+
+.modus-markdown :where(ol) {
+  list-style: decimal;
+}
+
+/* 嵌套无序列表换用空心圈，层级更清晰 */
+.modus-markdown :where(ul ul) {
+  list-style: circle;
 }
 
 .modus-markdown :where(li) {
-  margin: 0.25rem 0;
-  padding-left: 0.1rem;
+  margin: 0.3rem 0;
+  padding-left: 0.2rem;
+}
+
+.modus-markdown :where(li)::marker {
+  color: var(--color-fg-faint);
 }
 
 .modus-markdown :where(li > p) {
-  margin: 0.25rem 0;
+  margin: 0.3rem 0;
 }
 
 .modus-markdown :where(input[type="checkbox"]) {
@@ -281,6 +455,7 @@ input {
   background: var(--color-hairline-soft);
 }
 
+/* ── Tables ─────────────────────────────────────────────────────────── */
 .modus-markdown :where(table) {
   width: max-content;
   min-width: 100%;
@@ -288,19 +463,105 @@ input {
   font-size: var(--text-xs);
 }
 
-.modus-markdown :where([data-streamdown="table-container"], table) {
+.modus-markdown :where([data-streamdown="table-wrapper"], table) {
   max-width: 100%;
 }
 
-.modus-markdown :where(th, td) {
-  padding: 0.45rem 0.6rem;
+/*
+ * ── Table — single frame, frameless wrapper (same shape as mermaid) ─────
+ *
+ * Streamdown nests TWO frames: the outer [data-streamdown="table-wrapper"]
+ * (`flex flex-col gap-2 rounded-lg border border-border bg-sidebar p-2`) plus
+ * an inner unlabeled `rounded-md border bg-background` div around the <table>.
+ * The doubled border + `bg-sidebar` wrapper reads as a code-block / composer
+ * input box around the table — the table looks "nested inside an input box".
+ *
+ * The original rules targeted [data-streamdown="table-container"] — an
+ * attribute Streamdown never emits — so they never applied and the raw double
+ * frame showed through. We flatten the outer wrapper to a bare column
+ * (transparent, no border/padding), float the copy control into the corner,
+ * and let the inner box be the ONE frame that holds the table.
+ * Unlayered so these beat Streamdown's `utilities` cascade layer.
+ */
+.modus-markdown [data-streamdown="table-wrapper"] {
+  position: relative;
+  margin: 1rem 0;
+  gap: 0.35rem;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+/* Controls cluster (copy / download) — the child div with no table. Compact icon
+   row right-aligned above the table (in flow, so it never occludes the header). */
+.modus-markdown [data-streamdown="table-wrapper"] > div:not(:has(table)) {
+  margin: 0;
+  padding: 0;
+}
+
+/* The ONE frame: the inner box that directly wraps the table. */
+.modus-markdown [data-streamdown="table-wrapper"] > div:has(> table) {
+  margin: 0;
   border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-lg);
+  background: transparent;
+  overflow: auto;
+}
+
+/*
+ * Table copy menu (Markdown / CSV / TSV).
+ *
+ * Streamdown's "copy table" control is a dropdown whose menu relies on
+ * un-compiled utilities (`min-w-[120px]`, `top-full`, `bg-background`, ...).
+ * With none of them applied the popup collapses to a ~1ch column and every
+ * label wraps one letter per line (图). Re-style it as a Modus elevated menu:
+ * fixed min width, anchored under the trigger, horizontal labels.
+ */
+.modus-markdown [data-streamdown="table-wrapper"] [class~="top-full"] {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 8.5rem;
+  margin-top: 0.3rem;
+  padding: 0.25rem;
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-md);
+  background: var(--color-elevated);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+
+.modus-markdown [data-streamdown="table-wrapper"] [class~="top-full"] button {
+  width: 100%;
+  padding: 0.4rem 0.6rem;
+  border-radius: var(--radius-xs);
+  font-size: var(--text-xs);
+  text-align: left;
+  white-space: nowrap;
+  color: var(--color-fg-muted);
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+
+.modus-markdown [data-streamdown="table-wrapper"] [class~="top-full"] button:hover {
+  background: var(--color-hover);
+  color: var(--color-fg);
+}
+
+.modus-markdown :where(th, td) {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--color-hairline-soft);
   text-align: left;
   vertical-align: top;
 }
 
 .modus-markdown :where(th) {
-  background: var(--color-hover);
+  background: color-mix(in oklab, var(--color-surface) 60%, var(--color-canvas));
   color: var(--color-fg);
   font-weight: 600;
 }
@@ -309,39 +570,59 @@ input {
   color: var(--color-fg-muted);
 }
 
+/* ── Inline code ───────────────────────────────────────────────────── */
 .modus-markdown-inline-code,
 .modus-markdown :where([data-streamdown="inline-code"]) {
   border: 1px solid var(--color-hairline-soft);
   border-radius: var(--radius-xs);
-  background: var(--color-hover);
+  background: rgba(255, 255, 255, 0.04);
   color: var(--color-fg);
   font-family: var(--font-mono);
-  font-size: 0.92em;
-  padding: 0.08rem 0.32rem;
+  font-size: 0.88em;
+  padding: 0.1rem 0.35rem;
+  vertical-align: 0.5px;
 }
 
-.modus-markdown :where([data-streamdown="code-block"], [data-streamdown="mermaid-block"]) {
-  margin: 0.85rem 0;
+/*
+ * ── Code block (txt / env / plain fences) — single frame, no top bar ──
+ *
+ * Streamdown ships a Tailwind DOM: the outer [data-streamdown="code-block"]
+ * is `border bg-sidebar rounded-xl p-2 flex-col gap-2`, with an EMPTY
+ * `flex h-8` header (label hidden) that reads as a dead placeholder bar
+ * (图4). We collapse that header and float the copy control into the
+ * top-right corner — one clean frame, content starts immediately (图5/图6).
+ *
+ * These rules are intentionally UNLAYERED: Streamdown's utilities live in
+ * Tailwind's `utilities` cascade layer, so any unlayered rule here wins the
+ * cascade regardless of specificity. `:has()` targets the unlabeled wrapper
+ * divs (Electron/Chromium supports it).
+ */
+.modus-markdown [data-streamdown="code-block"] {
+  position: relative;
+  margin: 1rem 0;
+  padding: 0;
+  gap: 0;
   border: 1px solid var(--color-hairline);
-  border-radius: var(--radius-md);
-  background: var(--color-surface);
-  padding: 0.4rem;
-  box-shadow: none;
+  border-radius: var(--radius-lg);
+  background: var(--color-code-bg);
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
 }
 
-.modus-markdown :where([data-streamdown="code-block-header"]) {
-  height: 1.6rem;
-  color: var(--color-fg-faint);
-  font-family: var(--font-mono);
-  font-size: var(--text-2xs);
+/* Collapse the empty language-label header — kills the top placeholder bar */
+.modus-markdown [data-streamdown="code-block-header"] {
+  display: none;
 }
 
-.modus-markdown :where([data-streamdown="code-block-body"]) {
+/* Code body — content starts at top-left; copy button floats in the corner */
+.modus-markdown [data-streamdown="code-block-body"] {
   border: 0;
-  border-radius: var(--radius-sm);
-  background: var(--color-canvas);
-  padding: 0.75rem;
+  border-radius: 0;
+  background: transparent;
+  padding: 0.8rem 1rem;
   font-size: var(--text-xs);
+  line-height: 1.7;
+  overflow-x: auto;
 }
 
 .modus-markdown :where(pre, code) {
@@ -350,26 +631,213 @@ input {
 
 .modus-markdown :where(pre) {
   margin: 0;
-  line-height: 1.65;
+  line-height: 1.7;
 }
 
-.modus-markdown :where([data-streamdown="code-block-actions"], [data-streamdown="mermaid-block-actions"]) {
-  border: 1px solid var(--color-hairline);
+/*
+ * Shiki syntax colours. Streamdown highlights with a [light, dark] theme pair
+ * and stamps each token with inline CSS vars — `--sdm-c` (light colour) and
+ * `--shiki-dark` (dark colour) — but consumes them via Tailwind
+ * `text-[var(--sdm-c)]` / `dark:text-[var(--shiki-dark)]` utilities that aren't
+ * in our bundle (and whose `dark:` tracks OS scheme, not our toggle). So the
+ * tokens fell back to `inherit` → flat monochrome code. We apply the colours
+ * ourselves and switch on Modus's own `data-theme`.
+ */
+.modus-markdown [data-streamdown="code-block-body"] span {
+  color: var(--sdm-c, inherit);
+}
+.modus-markdown [data-streamdown="code-block-body"] span[style*="--sdm-tbg"] {
+  background-color: var(--sdm-tbg);
+  border-radius: 3px;
+}
+:root[data-theme="dark"] .modus-markdown [data-streamdown="code-block-body"] span {
+  color: var(--shiki-dark, var(--sdm-c, inherit));
+}
+:root[data-theme="dark"]
+  .modus-markdown
+  [data-streamdown="code-block-body"]
+  span[style*="--shiki-dark-bg"] {
+  background-color: var(--shiki-dark-bg, var(--sdm-tbg));
+}
+
+/* Float the copy/download control cluster into the top-right corner.
+   The wrapper is an unlabeled `sticky -mt-10` div — neutralize it and pin it. */
+.modus-markdown [data-streamdown="code-block"] > div:has(> [data-streamdown="code-block-actions"]) {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.4rem;
+  z-index: 2;
+  margin: 0;
+  height: auto;
+}
+
+.modus-markdown [data-streamdown="code-block-actions"] {
+  border: 1px solid var(--color-hairline-soft);
   border-radius: var(--radius-sm);
-  background: color-mix(in oklab, var(--color-surface) 92%, transparent);
+  background: color-mix(in oklab, var(--color-surface) 80%, transparent);
+  padding: 2px;
+  color: var(--color-fg-faint);
+  backdrop-filter: blur(6px);
 }
 
+/*
+ * Re-enable clicks on Streamdown's action clusters.
+ *
+ * Streamdown marks each block's control wrapper `pointer-events-none` and the
+ * inner cluster `pointer-events-auto` to let clicks pass through the empty
+ * header strip but still hit the buttons. We don't run Streamdown through our
+ * Tailwind build (its utilities ship un-compiled), and Modus DOES use
+ * `pointer-events-none` elsewhere — so that class IS generated while
+ * `pointer-events-auto` is NOT. The wrapper ends up non-interactive and the
+ * inner cluster inherits it, leaving every copy/download/fullscreen button
+ * dead (click "does nothing"). Supply the missing utility ourselves.
+ */
+.modus-markdown [class~="pointer-events-auto"] {
+  pointer-events: auto;
+}
+
+.modus-markdown [data-streamdown="code-block-actions"] button {
+  color: var(--color-fg-faint);
+  transition: color 0.12s ease;
+}
+
+.modus-markdown [data-streamdown="code-block-actions"] button:hover {
+  color: var(--color-fg);
+}
+
+/* ── Global button resets inside markdown ───────────────────────────── */
 .modus-markdown :where(button) {
   color: var(--color-fg-subtle);
+  transition: color 0.12s ease;
 }
 
 .modus-markdown :where(button:hover) {
   color: var(--color-fg);
 }
 
-.modus-markdown :where([data-streamdown="mermaid"]) {
+/*
+ * ── Mermaid diagram — single frame, frameless wrapper (图2 / 图3) ──────
+ *
+ * Streamdown nests TWO frames: the outer [data-streamdown="mermaid-block"]
+ * (`border bg-sidebar rounded-xl p-2`) AND an inner unlabeled
+ * `rounded-md border bg-background` div around the diagram. That doubled
+ * border is exactly what we strip. We flatten the outer wrapper to a bare
+ * column (transparent, no border/padding), keep the `mermaid` label + the
+ * copy/fullscreen controls floating on a transparent header row, and let the
+ * inner box be the ONE frame that holds the diagram.
+ */
+.modus-markdown [data-streamdown="mermaid-block"] {
+  position: relative;
+  margin: 1rem 0;
+  padding: 0;
+  gap: 0.4rem;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  overflow: visible;
+  box-shadow: none;
+}
+
+/* Header row: holds the `mermaid` label (left). Transparent, compact. */
+.modus-markdown [data-streamdown="mermaid-block"] > div:first-child {
+  height: auto;
+  min-height: 0;
+  margin: 0;
+  padding: 0 0.1rem;
+  color: var(--color-fg-subtle);
+}
+
+.modus-markdown [data-streamdown="mermaid-block"] > div:first-child > span {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-weight: 500;
+  color: var(--color-fg-subtle);
+  text-transform: lowercase;
+  letter-spacing: 0;
+}
+
+/* Actions cluster wrapper (copy / fullscreen) — pin to the header's right. */
+.modus-markdown [data-streamdown="mermaid-block"]
+  > div:has(> [data-streamdown="mermaid-block-actions"]) {
+  position: absolute;
+  top: -0.1rem;
+  right: 0;
+  z-index: 3;
+  margin: 0;
+  height: auto;
+}
+
+/* Bare action pill — drop Streamdown's filled pill for a minimal icon row. */
+.modus-markdown [data-streamdown="mermaid-block-actions"] {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  border: none;
   border-radius: var(--radius-sm);
+  background: transparent;
+  padding: 0;
+  color: var(--color-fg-subtle);
+  backdrop-filter: none;
+}
+
+.modus-markdown [data-streamdown="mermaid-block-actions"] button,
+.modus-markdown [data-streamdown="mermaid-block-actions"] a {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-fg-faint);
+  cursor: pointer;
+  transition:
+    color 0.12s ease,
+    background 0.12s ease;
+}
+
+.modus-markdown [data-streamdown="mermaid-block-actions"] button:hover,
+.modus-markdown [data-streamdown="mermaid-block-actions"] a:hover {
+  color: var(--color-fg);
+  background: var(--color-hover);
+}
+
+/* The ONE frame: the inner box that directly wraps the diagram. */
+.modus-markdown [data-streamdown="mermaid-block"] > div:has(> [data-streamdown="mermaid"]) {
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-lg);
   background: var(--color-canvas);
+  overflow: hidden;
+}
+
+/* Diagram surface */
+.modus-markdown [data-streamdown="mermaid"] {
+  border-radius: 0;
+  background: transparent;
+  padding: 0.85rem;
+}
+
+/* PanZoom control pill (zoom in / out / reset) — align to tokens. */
+.modus-markdown [data-streamdown="mermaid"] [class*="absolute"][class*="rounded-md"] {
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-sm);
+  background: color-mix(in oklab, var(--color-elevated) 85%, transparent);
+  backdrop-filter: blur(6px);
+}
+
+.modus-markdown [data-streamdown="mermaid"] [class*="absolute"] button {
+  color: var(--color-fg-subtle);
+  border-radius: var(--radius-xs);
+  transition:
+    color 0.12s ease,
+    background 0.12s ease;
+}
+
+.modus-markdown [data-streamdown="mermaid"] [class*="absolute"] button:hover {
+  color: var(--color-fg);
+  background: var(--color-hover);
 }
 
 .modus-markdown :where(.katex) {

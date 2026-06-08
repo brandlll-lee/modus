@@ -1,9 +1,11 @@
 import { app, BrowserWindow, type IpcMainInvokeEvent, ipcMain } from "electron";
 import { listAgentEvents, recordAgentEvent } from "../agent/agent-event-store";
 import { listAgentRuns } from "../agent/agent-run-store";
-import { listAgentSessions } from "../agent/agent-store";
+import { deleteAgentSession, listAgentSessions } from "../agent/agent-store";
 import {
   configureProvider,
+  deleteCustomProvider,
+  getCustomProviderConfig,
   getModelSettings,
   getProviderDetail,
   listModels,
@@ -16,14 +18,22 @@ import { getAgentRuntime } from "../agent/runtime-registry";
 import { resolveContext, searchContext } from "../context/context-service";
 import { addDocSource, indexWorkspaceDocs, listDocSources, searchDocs } from "../docs/docs-service";
 import {
+  checkoutBranch,
   commitChanges,
+  commitOrPush,
+  createBranch,
   createWorktree,
   deleteWorktree,
   discardFile,
+  fetchAll,
+  getStatusSummary,
+  listBranches,
   listChanges,
   listWorktrees,
+  pullCurrentBranch,
   readDiff,
   revertFile,
+  stageAll,
   stageFile,
   unstageFile,
 } from "../git/git-service";
@@ -46,15 +56,18 @@ import {
   agentCycleModelSchema,
   agentPromptSchema,
   agentSetModelSchema,
+  configureProviderSchema,
   contextResolveSchema,
   contextSearchSchema,
-  configureProviderSchema,
   cwdSchema,
+  diffCommitOrPushSchema,
   diffCommitSchema,
   diffPathSchema,
   diffReadSchema,
   docsAddSchema,
   docsSearchSchema,
+  gitCheckoutSchema,
+  gitCreateBranchSchema,
   parseIpcInput,
   permissionDecideSchema,
   reviewStartSchema,
@@ -191,6 +204,14 @@ export function registerAppIpc(): void {
     );
   });
 
+  ipcMain.handle(IPC_CHANNELS.agentDelete, async (event, sessionId: string) => {
+    assertTrustedSender(event);
+    const id = parseIpcInput(sessionIdSchema, sessionId, IPC_CHANNELS.agentDelete);
+    // Tear down any live runtime first, then drop the record (events/runs cascade).
+    await getAgentRuntime().dispose(id);
+    deleteAgentSession(id);
+  });
+
   ipcMain.handle(IPC_CHANNELS.agentSetModel, async (event, input) => {
     assertTrustedSender(event);
     const parsed = parseIpcInput(agentSetModelSchema, input, IPC_CHANNELS.agentSetModel);
@@ -284,6 +305,54 @@ export function registerAppIpc(): void {
     assertTrustedSender(event);
     const parsed = parseIpcInput(diffCommitSchema, input, IPC_CHANNELS.diffCommit);
     return await commitChanges(parsed.cwd, parsed.message);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.diffStatus, async (event, cwd: string) => {
+    assertTrustedSender(event);
+    return await getStatusSummary(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.diffStatus));
+  });
+
+  ipcMain.handle(IPC_CHANNELS.diffStageAll, async (event, cwd: string) => {
+    assertTrustedSender(event);
+    await stageAll(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.diffStageAll));
+  });
+
+  ipcMain.handle(IPC_CHANNELS.diffCommitOrPush, async (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(diffCommitOrPushSchema, input, IPC_CHANNELS.diffCommitOrPush);
+    return await commitOrPush(parsed.cwd, {
+      ...(parsed.message !== undefined ? { message: parsed.message } : {}),
+      ...(parsed.stageAll !== undefined ? { stageAll: parsed.stageAll } : {}),
+      commit: parsed.commit,
+      push: parsed.push,
+    });
+  });
+
+  ipcMain.handle(IPC_CHANNELS.gitBranches, async (event, cwd: string) => {
+    assertTrustedSender(event);
+    return await listBranches(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.gitBranches));
+  });
+
+  ipcMain.handle(IPC_CHANNELS.gitCheckout, async (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(gitCheckoutSchema, input, IPC_CHANNELS.gitCheckout);
+    return { output: await checkoutBranch(parsed.cwd, parsed.name, parsed.remote ?? false) };
+  });
+
+  ipcMain.handle(IPC_CHANNELS.gitCreateBranch, async (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(gitCreateBranchSchema, input, IPC_CHANNELS.gitCreateBranch);
+    return { output: await createBranch(parsed.cwd, parsed.name) };
+  });
+
+  ipcMain.handle(IPC_CHANNELS.gitPull, async (event, cwd: string) => {
+    assertTrustedSender(event);
+    return { output: await pullCurrentBranch(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.gitPull)) };
+  });
+
+  ipcMain.handle(IPC_CHANNELS.gitFetch, async (event, cwd: string) => {
+    assertTrustedSender(event);
+    return { output: await fetchAll(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.gitFetch)) };
   });
 
   ipcMain.handle(IPC_CHANNELS.permissionDecide, (event, input) => {
@@ -413,6 +482,20 @@ export function registerAppIpc(): void {
     assertTrustedSender(event);
     return getProviderDetail(
       parseIpcInput(sessionIdSchema, provider, IPC_CHANNELS.modelProviderDetail),
+    );
+  });
+
+  ipcMain.handle(IPC_CHANNELS.modelCustomProviderConfig, (event, provider: string) => {
+    assertTrustedSender(event);
+    return getCustomProviderConfig(
+      parseIpcInput(sessionIdSchema, provider, IPC_CHANNELS.modelCustomProviderConfig),
+    );
+  });
+
+  ipcMain.handle(IPC_CHANNELS.modelDeleteCustomProvider, (event, provider: string) => {
+    assertTrustedSender(event);
+    deleteCustomProvider(
+      parseIpcInput(sessionIdSchema, provider, IPC_CHANNELS.modelDeleteCustomProvider),
     );
   });
 

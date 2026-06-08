@@ -12,6 +12,7 @@ import {
   IconFilter,
   IconKey,
   IconLoader2,
+  IconMoon,
   IconPalette,
   IconPhoto,
   IconPlugConnected,
@@ -21,6 +22,7 @@ import {
   IconServerCog,
   IconSettings,
   IconShieldCheck,
+  IconSun,
   IconTrash,
   IconVariable,
   IconX,
@@ -28,6 +30,7 @@ import {
 import { AnimatePresence, m } from "motion/react";
 import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
 import type {
+  CustomProviderConfig,
   CustomProviderModelInput,
   ModelInputKind,
   ModelProviderDetail,
@@ -38,6 +41,7 @@ import type {
 } from "../../../../shared/contracts";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
+import { type ThemeMode, useTheme } from "../../lib/theme";
 import { groupProviderModels, modelResultLabel } from "./modelListUtils";
 import { ProviderLogo } from "./ProviderLogo";
 
@@ -57,6 +61,7 @@ export function SettingsPanel({ open, state, onClose, onRefresh }: SettingsPanel
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [customOpen, setCustomOpen] = useState(false);
+  const [customInitial, setCustomInitial] = useState<CustomProviderConfig | undefined>();
   const [providerKeys, setProviderKeys] = useState<Record<string, string>>({});
   const [activeSection, setActiveSection] = useState<SettingsSectionId>("model-provider");
   const [settingsQuery, setSettingsQuery] = useState("");
@@ -148,6 +153,66 @@ export function SettingsPanel({ open, state, onClose, onRefresh }: SettingsPanel
     }
   }
 
+  async function editModel(
+    model: ProviderModelConfig,
+    patch: { thinkingLevel?: ThinkingLevel; contextWindow?: number; maxTokens?: number },
+  ): Promise<void> {
+    if (!detail) {
+      return;
+    }
+    setBusy(true);
+    setError(undefined);
+    try {
+      await window.modus.model.updateConfig({ model: `${detail.id}/${model.id}`, ...patch });
+      onRefresh();
+      setDetail(await window.modus.model.providerDetail(detail.id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function openCustomEditor(providerId: string): Promise<void> {
+    setBusy(true);
+    setError(undefined);
+    try {
+      const config = await window.modus.model.customProviderConfig(providerId);
+      setCustomInitial(config ?? undefined);
+      setActiveSection("model-provider");
+      setCustomOpen(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteProvider(provider: ModelProviderInfo): Promise<void> {
+    const confirmed = window.confirm(
+      `Remove "${provider.name}"? This deletes its local configuration and models from Modus.`,
+    );
+    if (!confirmed) {
+      return;
+    }
+    setBusy(true);
+    setError(undefined);
+    try {
+      await window.modus.model.deleteCustomProvider(provider.id);
+      if (selectedProvider === provider.id) {
+        setSelectedProvider(undefined);
+        setDetail(undefined);
+      }
+      setCustomOpen(false);
+      setCustomInitial(undefined);
+      onRefresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (!open) {
     return null;
   }
@@ -176,6 +241,7 @@ export function SettingsPanel({ open, state, onClose, onRefresh }: SettingsPanel
               busy={busy}
               connected={connected}
               currentProvider={currentProvider}
+              customInitial={customInitial}
               customOpen={customOpen}
               detail={detail}
               detailLoading={detailLoading}
@@ -184,20 +250,26 @@ export function SettingsPanel({ open, state, onClose, onRefresh }: SettingsPanel
               onConnectProvider={(provider, apiKey) => void connectProvider(provider, apiKey)}
               onCustomCancel={() => {
                 setCustomOpen(false);
+                setCustomInitial(undefined);
                 if (activeSection === "custom-provider") {
                   setActiveSection("model-provider");
                 }
               }}
               onCustomComplete={(provider) => {
                 setCustomOpen(false);
+                setCustomInitial(undefined);
                 setSelectedProvider(provider);
                 setActiveSection("model-provider");
                 onRefresh();
               }}
               onCustomOpen={() => {
+                setCustomInitial(undefined);
                 setCustomOpen((value) => !value);
                 setActiveSection("model-provider");
               }}
+              onEditModel={(model, patch) => void editModel(model, patch)}
+              onEditProvider={(providerId) => void openCustomEditor(providerId)}
+              onDeleteProvider={(provider) => void deleteProvider(provider)}
               onError={setError}
               onKeyChange={(apiKey) => {
                 if (!detail) {
@@ -338,6 +410,7 @@ function ModelProviderSettingsPanel({
   busy,
   connected,
   currentProvider,
+  customInitial,
   customOpen,
   detail,
   detailLoading,
@@ -348,6 +421,9 @@ function ModelProviderSettingsPanel({
   onCustomCancel,
   onCustomComplete,
   onCustomOpen,
+  onDeleteProvider,
+  onEditModel,
+  onEditProvider,
   onError,
   onKeyChange,
   onRefresh,
@@ -357,6 +433,7 @@ function ModelProviderSettingsPanel({
   busy: boolean;
   connected: ModelProviderInfo[];
   currentProvider: ModelProviderInfo | undefined;
+  customInitial: CustomProviderConfig | undefined;
   customOpen: boolean;
   detail: ModelProviderDetail | undefined;
   detailLoading: boolean;
@@ -367,6 +444,12 @@ function ModelProviderSettingsPanel({
   onCustomCancel(): void;
   onCustomComplete(provider: string): void;
   onCustomOpen(): void;
+  onDeleteProvider(provider: ModelProviderInfo): void;
+  onEditModel(
+    model: ProviderModelConfig,
+    patch: { thinkingLevel?: ThinkingLevel; contextWindow?: number; maxTokens?: number },
+  ): void;
+  onEditProvider(providerId: string): void;
   onError(message: string | undefined): void;
   onKeyChange(apiKey: string): void;
   onRefresh(): void;
@@ -440,6 +523,8 @@ function ModelProviderSettingsPanel({
             transition={{ duration: 0.16, ease: "easeOut" }}
           >
             <CustomProviderForm
+              initial={customInitial}
+              key={customInitial?.provider ?? "new-custom-provider"}
               onCancel={onCustomCancel}
               onComplete={onCustomComplete}
               onError={onError}
@@ -452,6 +537,7 @@ function ModelProviderSettingsPanel({
         <ProviderCatalog
           connected={connected}
           currentProvider={currentProvider}
+          onDeleteProvider={onDeleteProvider}
           onQueryChange={setProviderQuery}
           onSelectProvider={onSelectProvider}
           popular={popular}
@@ -468,6 +554,8 @@ function ModelProviderSettingsPanel({
               key={detail.id}
               keyValue={keyValue}
               onConnect={(apiKey) => onConnectProvider(detail, apiKey)}
+              onEditModel={onEditModel}
+              onEditProvider={onEditProvider}
               onKeyChange={onKeyChange}
               onToggleModel={onToggleModel}
             />
@@ -485,6 +573,7 @@ function ProviderCatalog({
   currentProvider,
   popular,
   query,
+  onDeleteProvider,
   onQueryChange,
   onSelectProvider,
 }: {
@@ -492,6 +581,7 @@ function ProviderCatalog({
   currentProvider: ModelProviderInfo | undefined;
   popular: ModelProviderInfo[];
   query: string;
+  onDeleteProvider(provider: ModelProviderInfo): void;
   onQueryChange(query: string): void;
   onSelectProvider(provider: ModelProviderInfo): void;
 }) {
@@ -531,10 +621,13 @@ function ProviderCatalog({
             <>
               <ProviderGroup title="Connected">
                 {visibleConnected.map((provider) => (
-                  <ProviderRow
+                  <ProviderCatalogRow
                     active={provider.id === currentProvider?.id}
                     key={provider.id}
                     onClick={() => onSelectProvider(provider)}
+                    onDelete={
+                      provider.source === "custom" ? () => onDeleteProvider(provider) : undefined
+                    }
                     provider={provider}
                   />
                 ))}
@@ -542,10 +635,13 @@ function ProviderCatalog({
 
               <ProviderGroup title="Available">
                 {visiblePopular.map((provider) => (
-                  <ProviderRow
+                  <ProviderCatalogRow
                     active={provider.id === currentProvider?.id}
                     key={provider.id}
                     onClick={() => onSelectProvider(provider)}
+                    onDelete={
+                      provider.source === "custom" ? () => onDeleteProvider(provider) : undefined
+                    }
                     provider={provider}
                   />
                 ))}
@@ -589,6 +685,7 @@ function GeneralSettingsPanel() {
 }
 
 function AppearanceSettingsPanel() {
+  const [theme, setTheme] = useTheme();
   return (
     <>
       <SettingsPageHeader
@@ -598,8 +695,8 @@ function AppearanceSettingsPanel() {
       <SettingsSection title="Theme">
         <SettingsList>
           <SettingsRow
-            control={<ReadOnlyPill>Dark</ReadOnlyPill>}
-            description="The current release uses a dark, low-contrast desktop theme."
+            control={<ThemeToggle onChange={setTheme} value={theme} />}
+            description="Switch between the dark and light desktop palettes."
             title="Color scheme"
           />
           <SettingsRow
@@ -610,6 +707,43 @@ function AppearanceSettingsPanel() {
         </SettingsList>
       </SettingsSection>
     </>
+  );
+}
+
+const THEME_OPTIONS: ReadonlyArray<{ value: ThemeMode; label: string; icon: typeof IconSun }> = [
+  { value: "light", label: "Light", icon: IconSun },
+  { value: "dark", label: "Dark", icon: IconMoon },
+];
+
+function ThemeToggle({
+  value,
+  onChange,
+}: {
+  value: ThemeMode;
+  onChange: (mode: ThemeMode) => void;
+}) {
+  return (
+    <div className="flex items-center gap-0.5 rounded-lg border border-hairline-soft bg-canvas p-0.5">
+      {THEME_OPTIONS.map(({ value: option, label, icon: Icon }) => {
+        const active = option === value;
+        return (
+          <button
+            aria-pressed={active}
+            className={cn(
+              "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs transition-colors",
+              active ? "bg-active text-fg shadow-composer" : "text-fg-subtle hover:text-fg-muted",
+            )}
+            key={option}
+            onClick={() => onChange(option)}
+            title={`${label} theme`}
+            type="button"
+          >
+            <Icon size={14} stroke={1.8} />
+            {label}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -672,7 +806,7 @@ function SettingsRow({
 
 function ReadOnlyPill({ children }: { children: string }) {
   return (
-    <span className="rounded-md bg-white/5 px-2.5 py-1 text-xs text-fg-muted">{children}</span>
+    <span className="rounded-md bg-chip px-2.5 py-1 text-xs text-fg-muted">{children}</span>
   );
 }
 
@@ -690,6 +824,37 @@ function ProviderGroup({ children, title }: { children: ReactNode; title: string
       </div>
       <div className="grid gap-1">{items}</div>
     </section>
+  );
+}
+
+function ProviderCatalogRow({
+  provider,
+  active,
+  onClick,
+  onDelete,
+}: {
+  provider: ModelProviderInfo;
+  active: boolean;
+  onClick(): void;
+  onDelete?: (() => void) | undefined;
+}) {
+  return (
+    <div className="group/row relative">
+      <ProviderRow active={active} onClick={onClick} provider={provider} />
+      {onDelete ? (
+        <button
+          aria-label={`Delete ${provider.name}`}
+          className="absolute top-1/2 right-2 hidden size-7 -translate-y-1/2 items-center justify-center rounded-md bg-canvas/80 text-[#ef4444] transition-colors hover:bg-[#ef4444]/15 hover:text-[#f87171] group-hover/row:flex"
+          onClick={(event) => {
+            event.stopPropagation();
+            onDelete();
+          }}
+          type="button"
+        >
+          <IconTrash size={15} stroke={1.7} />
+        </button>
+      ) : null}
+    </div>
   );
 }
 
@@ -748,6 +913,8 @@ function ProviderDetail({
   busy,
   keyValue,
   onConnect,
+  onEditModel,
+  onEditProvider,
   onKeyChange,
   onToggleModel,
 }: {
@@ -755,6 +922,11 @@ function ProviderDetail({
   busy: boolean;
   keyValue: string;
   onConnect(apiKey: string): void;
+  onEditModel(
+    model: ProviderModelConfig,
+    patch: { thinkingLevel?: ThinkingLevel; contextWindow?: number; maxTokens?: number },
+  ): void;
+  onEditProvider(providerId: string): void;
   onKeyChange(apiKey: string): void;
   onToggleModel(model: ProviderModelConfig, enabled: boolean): void;
 }) {
@@ -822,17 +994,30 @@ function ProviderDetail({
           <div className="min-w-0">
             <h4 className="text-sm font-normal text-fg">Models</h4>
             <p className="mt-1 text-xs text-fg-faint">
-              Choose which models appear in the composer.
+              Choose which models appear in the composer. Expand a model to set its thinking level
+              {detail.source === "custom" ? " or limits" : ""}.
             </p>
           </div>
-          {busy ? (
-            <span className="flex items-center gap-1.5 rounded-md bg-white/5 px-2.5 py-1 text-xs text-fg-muted">
-              <IconLoader2 className="animate-spin" size={13} stroke={1.8} />
-              Saving
-            </span>
-          ) : (
-            <ReadOnlyPill>{modelResultLabel(filteredModels.length)}</ReadOnlyPill>
-          )}
+          <div className="flex items-center gap-2">
+            {busy ? (
+              <span className="flex items-center gap-1.5 rounded-md bg-chip px-2.5 py-1 text-xs text-fg-muted">
+                <IconLoader2 className="animate-spin" size={13} stroke={1.8} />
+                Saving
+              </span>
+            ) : (
+              <ReadOnlyPill>{modelResultLabel(filteredModels.length)}</ReadOnlyPill>
+            )}
+            {detail.source === "custom" ? (
+              <button
+                className="flex h-8 items-center gap-1.5 rounded-md border border-hairline bg-chip-faint px-3 text-sm text-fg-subtle transition-colors hover:bg-hover hover:text-fg"
+                onClick={() => onEditProvider(detail.id)}
+                type="button"
+              >
+                <IconPlus size={14} stroke={1.8} />
+                Add / edit models
+              </button>
+            ) : null}
+          </div>
         </div>
 
         <div className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-center">
@@ -855,8 +1040,10 @@ function ProviderDetail({
             modelGroups.map((group) => (
               <ModelGroupSection
                 busy={busy}
+                editableLimits={detail.source === "custom"}
                 group={group}
                 key={group.id}
+                onEditModel={onEditModel}
                 onToggleModel={onToggleModel}
               />
             ))
@@ -942,10 +1129,17 @@ function ProviderCredentials({
 function ModelGroupSection({
   group,
   busy,
+  editableLimits,
+  onEditModel,
   onToggleModel,
 }: {
   group: ReturnType<typeof groupProviderModels>[number];
   busy: boolean;
+  editableLimits: boolean;
+  onEditModel(
+    model: ProviderModelConfig,
+    patch: { thinkingLevel?: ThinkingLevel; contextWindow?: number; maxTokens?: number },
+  ): void;
   onToggleModel(model: ProviderModelConfig, enabled: boolean): void;
 }) {
   return (
@@ -959,7 +1153,14 @@ function ModelGroupSection({
       </div>
       <AnimatePresence initial={false}>
         {group.models.map((model) => (
-          <ModelRow busy={busy} key={model.id} model={model} onToggleModel={onToggleModel} />
+          <ModelRow
+            busy={busy}
+            editableLimits={editableLimits}
+            key={model.id}
+            model={model}
+            onEditModel={onEditModel}
+            onToggleModel={onToggleModel}
+          />
         ))}
       </AnimatePresence>
     </section>
@@ -969,44 +1170,146 @@ function ModelGroupSection({
 function ModelRow({
   model,
   busy,
+  editableLimits,
+  onEditModel,
   onToggleModel,
 }: {
   model: ProviderModelConfig;
   busy: boolean;
+  editableLimits: boolean;
+  onEditModel(
+    model: ProviderModelConfig,
+    patch: { thinkingLevel?: ThinkingLevel; contextWindow?: number; maxTokens?: number },
+  ): void;
   onToggleModel(model: ProviderModelConfig, enabled: boolean): void;
 }) {
+  const [open, setOpen] = useState(false);
+  const thinkingOptions = useMemo(
+    () => model.thinkingLevels.map((level) => ({ label: level, value: level })),
+    [model.thinkingLevels],
+  );
+  const canEditThinking = model.thinkingLevels.length > 1;
+  const expandable = canEditThinking || editableLimits;
+  const [contextDraft, setContextDraft] = useState(
+    model.contextWindow ? String(model.contextWindow) : "",
+  );
+  const [maxTokensDraft, setMaxTokensDraft] = useState(
+    model.maxTokens ? String(model.maxTokens) : "",
+  );
+
+  function saveLimits(): void {
+    const patch: { contextWindow?: number; maxTokens?: number } = {};
+    const context = parsePositiveInteger(contextDraft);
+    const maxTokens = parsePositiveInteger(maxTokensDraft);
+    if (context !== undefined && context !== model.contextWindow) {
+      patch.contextWindow = context;
+    }
+    if (maxTokens !== undefined && maxTokens !== model.maxTokens) {
+      patch.maxTokens = maxTokens;
+    }
+    if (patch.contextWindow !== undefined || patch.maxTokens !== undefined) {
+      onEditModel(model, patch);
+    }
+  }
+
   return (
     <m.div
       animate={{ opacity: 1, y: 0 }}
       className={cn(
-        "grid min-h-[68px] grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-hairline-soft border-b px-5 py-3 last:border-b-0",
-        model.enabled ? "bg-white/[0.025]" : "hover:bg-hover",
+        "border-hairline-soft border-b px-5 py-3 last:border-b-0",
+        model.enabled ? "bg-chip-faint" : "hover:bg-hover",
       )}
       exit={{ opacity: 0, y: -4 }}
       initial={{ opacity: 0, y: 4 }}
       layout
       transition={{ duration: 0.14, ease: "easeOut" }}
     >
-      <div className="min-w-0">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <span className="truncate text-sm text-fg">{model.name}</span>
-          <ModelKindBadge model={model} />
+      <div className="grid min-h-[44px] grid-cols-[minmax(0,1fr)_auto] items-center gap-4">
+        <div className="min-w-0">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <span className="truncate text-sm text-fg">{model.name}</span>
+            <ModelKindBadge model={model} />
+          </div>
+          <div className="mt-1 flex min-w-0 flex-wrap gap-x-2 gap-y-1 text-xs text-fg-faint">
+            <span className="min-w-0 truncate font-mono">{model.id}</span>
+            {model.contextWindow ? (
+              <span>{`${model.contextWindow.toLocaleString()} ctx`}</span>
+            ) : null}
+            {model.maxTokens ? <span>{`${model.maxTokens.toLocaleString()} out`}</span> : null}
+            {model.thinkingLevel !== "off" ? <span>{model.thinkingLevel}</span> : null}
+          </div>
         </div>
-        <div className="mt-1 flex min-w-0 flex-wrap gap-x-2 gap-y-1 text-xs text-fg-faint">
-          <span className="min-w-0 truncate font-mono">{model.id}</span>
-          {model.contextWindow ? (
-            <span>{`${model.contextWindow.toLocaleString()} ctx`}</span>
+        <div className="flex items-center gap-2">
+          {expandable ? (
+            <button
+              aria-expanded={open}
+              aria-label={`Configure ${model.name}`}
+              className="flex size-8 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-hover hover:text-fg"
+              onClick={() => setOpen((value) => !value)}
+              type="button"
+            >
+              <IconAdjustments size={15} stroke={1.7} />
+            </button>
           ) : null}
-          {model.maxTokens ? <span>{`${model.maxTokens.toLocaleString()} out`}</span> : null}
-          {model.thinkingLevel !== "off" ? <span>{model.thinkingLevel}</span> : null}
+          <SwitchControl
+            ariaLabel={`${model.enabled ? "Disable" : "Enable"} ${model.name}`}
+            checked={model.enabled}
+            disabled={busy}
+            onCheckedChange={(checked) => onToggleModel(model, checked)}
+          />
         </div>
       </div>
-      <SwitchControl
-        ariaLabel={`${model.enabled ? "Disable" : "Enable"} ${model.name}`}
-        checked={model.enabled}
-        disabled={busy}
-        onCheckedChange={(checked) => onToggleModel(model, checked)}
-      />
+
+      <AnimatePresence initial={false}>
+        {open && expandable ? (
+          <m.div
+            animate={{ height: "auto", opacity: 1 }}
+            className="overflow-hidden"
+            exit={{ height: 0, opacity: 0 }}
+            initial={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <div className="mt-3 grid gap-4 border-hairline-soft border-t pt-4">
+              {canEditThinking ? (
+                <div className="grid max-w-xs gap-2">
+                  <SelectField
+                    label="Default thinking level"
+                    onChange={(value) =>
+                      onEditModel(model, { thinkingLevel: value as ThinkingLevel })
+                    }
+                    options={thinkingOptions}
+                    value={model.thinkingLevel}
+                  />
+                </div>
+              ) : null}
+              {editableLimits ? (
+                <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end">
+                  <Field
+                    label="Context window"
+                    onChange={setContextDraft}
+                    placeholder="128000"
+                    value={contextDraft}
+                  />
+                  <Field
+                    label="Max output tokens"
+                    onChange={setMaxTokensDraft}
+                    placeholder="16384"
+                    value={maxTokensDraft}
+                  />
+                  <button
+                    className="flex h-10 items-center justify-center rounded-md bg-fg px-3 text-sm text-canvas transition-colors hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={busy}
+                    onClick={saveLimits}
+                    type="button"
+                  >
+                    Save
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          </m.div>
+        ) : null}
+      </AnimatePresence>
     </m.div>
   );
 }
@@ -1144,9 +1447,9 @@ function SwitchControl({
       aria-label={ariaLabel}
       checked={checked}
       className={cn(
-        "relative flex h-5 w-9 shrink-0 items-center rounded-full border border-hairline bg-white/6 px-0.5 outline-none transition-colors",
+        "relative flex h-5 w-9 shrink-0 items-center rounded-full border border-hairline bg-chip px-0.5 outline-none transition-colors",
         "data-[checked]:border-fg data-[checked]:bg-fg",
-        "data-[unchecked]:hover:bg-white/10",
+        "data-[unchecked]:hover:bg-chip-strong",
         "data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50",
         "focus-visible:border-hairline-strong focus-visible:ring-2 focus-visible:ring-white/10",
       )}
@@ -1180,7 +1483,7 @@ function ProviderStatusPill({ status }: { status: ProviderStatus }) {
     );
   }
 
-  return <span className="rounded-md bg-white/5 px-2 py-1 text-xs text-fg-muted">Setup</span>;
+  return <span className="rounded-md bg-chip px-2 py-1 text-xs text-fg-muted">Setup</span>;
 }
 
 function ModelKindBadge({ model }: { model: ProviderModelConfig }) {
@@ -1188,7 +1491,7 @@ function ModelKindBadge({ model }: { model: ProviderModelConfig }) {
     <span
       className={cn(
         "flex items-center gap-1 rounded-md px-1.5 py-0.5 text-2xs",
-        model.reasoning ? "bg-white/7 text-fg-muted" : "bg-white/5 text-fg-faint",
+        model.reasoning ? "bg-chip-strong text-fg-muted" : "bg-chip text-fg-faint",
       )}
     >
       {model.reasoning ? <IconBrain size={11} stroke={1.8} /> : null}
@@ -1199,7 +1502,7 @@ function ModelKindBadge({ model }: { model: ProviderModelConfig }) {
 
 function TinyBadge({ children }: { children: string }) {
   return (
-    <span className="rounded bg-white/5 px-1.5 py-0.5 text-2xs text-fg-faint">{children}</span>
+    <span className="rounded bg-chip px-1.5 py-0.5 text-2xs text-fg-faint">{children}</span>
   );
 }
 
@@ -1308,25 +1611,49 @@ type KeyValueRow = {
 };
 
 function CustomProviderForm({
+  initial,
   onCancel,
   onComplete,
   onError,
 }: {
+  initial?: CustomProviderConfig | undefined;
   onCancel(): void;
   onComplete(provider: string): void;
   onError(message: string | undefined): void;
 }) {
-  const [rows, setRows] = useState<CustomModelRow[]>(() => [createCustomModelRow()]);
-  const [provider, setProvider] = useState("");
-  const [name, setName] = useState("");
-  const [baseUrl, setBaseUrl] = useState("");
+  const editing = Boolean(initial);
+  const initialCompat = (initial?.compat ?? {}) as Record<string, unknown>;
+  const [rows, setRows] = useState<CustomModelRow[]>(() =>
+    initial && initial.models.length > 0
+      ? initial.models.map(modelConfigToRow)
+      : [createCustomModelRow()],
+  );
+  const [provider, setProvider] = useState(initial?.provider ?? "");
+  const [providerTouched, setProviderTouched] = useState(editing);
+  const [name, setName] = useState(initial?.name ?? "");
+  const [baseUrl, setBaseUrl] = useState(initial?.baseUrl ?? "");
   const [apiKey, setApiKey] = useState("");
-  const [api, setApi] = useState("openai-completions");
-  const [authHeader, setAuthHeader] = useState(true);
-  const [providerHeaders, setProviderHeaders] = useState<KeyValueRow[]>(() => []);
-  const [supportsDeveloperRole, setSupportsDeveloperRole] = useState(false);
-  const [supportsReasoningEffort, setSupportsReasoningEffort] = useState(false);
+  const [api, setApi] = useState(initial?.api ?? "openai-completions");
+  const [authHeader, setAuthHeader] = useState(initial?.authHeader ?? true);
+  const [providerHeaders, setProviderHeaders] = useState<KeyValueRow[]>(() =>
+    recordToKeyValueRows(initial?.headers),
+  );
+  const [supportsDeveloperRole, setSupportsDeveloperRole] = useState(
+    Boolean(initialCompat.supportsDeveloperRole),
+  );
+  const [supportsReasoningEffort, setSupportsReasoningEffort] = useState(
+    Boolean(initialCompat.supportsReasoningEffort),
+  );
   const [busy, setBusy] = useState(false);
+
+  // Auto-derive the provider id from the display name until the user edits it
+  // (or while creating a new provider). Editing an existing provider keeps its id.
+  function changeName(next: string): void {
+    setName(next);
+    if (!providerTouched && !editing) {
+      setProvider(slugifyProviderId(next));
+    }
+  }
 
   function updateRow(rowId: string, patch: Partial<CustomModelRow>): void {
     setRows((current) => current.map((row) => (row.rowId === rowId ? { ...row, ...patch } : row)));
@@ -1397,94 +1724,118 @@ function CustomProviderForm({
       />
 
       <SettingsFormSection
-        description="Define the provider identity, endpoint, credentials, and protocol before enabling models."
+        description="Name the provider, point Modus at its OpenAI-compatible endpoint, and paste a key. Everything else has sensible defaults."
         icon={<IconPlugConnected size={16} stroke={1.7} />}
         title="Connection"
       >
         <div className="grid gap-5 lg:grid-cols-2">
           <Field
-            description="Lowercase id used by Modus configuration."
-            label="Provider id"
-            onChange={setProvider}
-            placeholder="my-relay"
-            value={provider}
-          />
-          <Field
             description="Human-readable name shown in the model picker."
             label="Display name"
-            onChange={setName}
+            onChange={changeName}
             placeholder="My Relay"
             value={name}
           />
           <Field
-            description="OpenAI-compatible endpoint including version path when required."
-            label="Base URL"
-            onChange={setBaseUrl}
-            placeholder="https://api.example.com/v1"
-            type="url"
-            value={baseUrl}
-          />
-          <Field
             autoComplete="off"
-            description="Stored through the provider configuration flow."
+            description={
+              editing ? "Leave blank to keep the stored key." : "Stored securely on this device."
+            }
             label="API key"
             onChange={setApiKey}
-            placeholder="sk-..."
+            placeholder={editing ? "••••••• (unchanged)" : "sk-..."}
             type="password"
             value={apiKey}
           />
-          <SelectField label="API type" onChange={setApi} options={API_TYPE_OPTIONS} value={api} />
-          <ToggleField
-            checked={authHeader}
-            description="Send the API key as an Authorization bearer token."
-            label="Authorization header"
-            onChange={setAuthHeader}
-          />
+          <div className="lg:col-span-2">
+            <Field
+              description="OpenAI-compatible endpoint including version path when required."
+              label="Base URL"
+              onChange={setBaseUrl}
+              placeholder="https://api.example.com/v1"
+              type="url"
+              value={baseUrl}
+            />
+          </div>
         </div>
+
+        <Disclosure label="Advanced connection">
+          <div className="grid gap-5 lg:grid-cols-2">
+            <Field
+              description={
+                editing
+                  ? "Locked while editing an existing provider."
+                  : "Lowercase id used by Modus configuration. Auto-filled from the name."
+              }
+              label="Provider id"
+              onChange={(value) => {
+                setProviderTouched(true);
+                setProvider(value);
+              }}
+              placeholder="my-relay"
+              value={provider}
+            />
+            <SelectField
+              label="API type"
+              onChange={setApi}
+              options={API_TYPE_OPTIONS}
+              value={api}
+            />
+            <div className="lg:col-span-2">
+              <ToggleField
+                checked={authHeader}
+                description="Send the API key as an Authorization bearer token."
+                label="Authorization header"
+                onChange={setAuthHeader}
+              />
+            </div>
+          </div>
+        </Disclosure>
       </SettingsFormSection>
 
       <SettingsFormSection
-        description="Expose only the capabilities the provider actually supports so composer controls stay honest."
+        description="Optional. Expose extra capabilities and request headers only when this provider needs them."
         icon={<IconShieldCheck size={16} stroke={1.7} />}
         title="Provider compatibility"
       >
-        <div className="grid gap-3 md:grid-cols-2">
-          <ToggleField
-            checked={supportsDeveloperRole}
-            description="Allow system/developer instructions when the provider supports them."
-            label="Developer role"
-            onChange={setSupportsDeveloperRole}
+        <Disclosure label="Advanced provider settings">
+          <div className="grid gap-3 md:grid-cols-2">
+            <ToggleField
+              checked={supportsDeveloperRole}
+              description="Allow system/developer instructions when the provider supports them."
+              label="Developer role"
+              onChange={setSupportsDeveloperRole}
+            />
+            <ToggleField
+              checked={supportsReasoningEffort}
+              description="Expose reasoning effort when this provider accepts that option."
+              label="Reasoning effort"
+              onChange={setSupportsReasoningEffort}
+            />
+          </div>
+          <KeyValueEditor
+            addLabel="Add header"
+            description="Optional headers sent with every request to this provider."
+            emptyLabel="No custom provider headers"
+            icon={<IconVariable size={16} stroke={1.7} />}
+            keyPlaceholder="Header"
+            onAdd={() => setProviderHeaders((current) => [...current, createKeyValueRow()])}
+            onChange={updateProviderHeader}
+            onRemove={(rowId) =>
+              setProviderHeaders((current) => current.filter((row) => row.rowId !== rowId))
+            }
+            rows={providerHeaders}
+            title="Provider headers"
+            valuePlaceholder="Value"
+            variant="embedded"
           />
-          <ToggleField
-            checked={supportsReasoningEffort}
-            description="Expose reasoning effort when this provider accepts that option."
-            label="Reasoning effort"
-            onChange={setSupportsReasoningEffort}
-          />
-        </div>
+        </Disclosure>
       </SettingsFormSection>
-
-      <KeyValueEditor
-        addLabel="Add header"
-        description="Optional headers sent with every request to this provider."
-        emptyLabel="No custom provider headers"
-        icon={<IconVariable size={16} stroke={1.7} />}
-        keyPlaceholder="Header"
-        onAdd={() => setProviderHeaders((current) => [...current, createKeyValueRow()])}
-        onChange={updateProviderHeader}
-        onRemove={(rowId) =>
-          setProviderHeaders((current) => current.filter((row) => row.rowId !== rowId))
-        }
-        rows={providerHeaders}
-        title="Provider headers"
-        valuePlaceholder="Value"
-        variant="section"
-      />
 
       <SettingsFormSection
         action={
           <button
-            className="flex h-8 items-center gap-1.5 rounded-md border border-hairline bg-white/3 px-3 text-sm text-fg-subtle transition-colors hover:bg-hover hover:text-fg"
+            className="flex h-8 items-center gap-1.5 rounded-md border border-hairline bg-chip-faint px-3 text-sm text-fg-subtle transition-colors hover:bg-hover hover:text-fg"
             onClick={() => setRows((current) => [...current, createCustomModelRow()])}
             type="button"
           >
@@ -1594,6 +1945,99 @@ const DEFAULT_THINKING_LEVEL_MAP: Partial<Record<ThinkingLevel, string | null>> 
   xhigh: "xhigh",
 };
 
+function Disclosure({
+  label,
+  defaultOpen = false,
+  children,
+}: {
+  label: string;
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="grid gap-3">
+      <button
+        aria-expanded={open}
+        className="flex w-fit items-center gap-1.5 text-xs text-fg-subtle transition-colors hover:text-fg"
+        onClick={() => setOpen((value) => !value)}
+        type="button"
+      >
+        <IconChevronRight
+          className={cn("transition-transform duration-150", open && "rotate-90")}
+          size={13}
+          stroke={1.8}
+        />
+        {label}
+      </button>
+      <AnimatePresence initial={false}>
+        {open ? (
+          <m.div
+            animate={{ height: "auto", opacity: 1 }}
+            className="overflow-hidden"
+            exit={{ height: 0, opacity: 0 }}
+            initial={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <div className="grid gap-5 pt-1">{children}</div>
+          </m.div>
+        ) : null}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+/** Derive a backend-valid provider id (lowercase, dashes) from a display name. */
+function slugifyProviderId(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function recordToKeyValueRows(record: Record<string, string> | undefined): KeyValueRow[] {
+  return Object.entries(record ?? {}).map(([key, value]) => ({
+    rowId: crypto.randomUUID(),
+    key,
+    value,
+  }));
+}
+
+/** Map a stored custom model config back into the editable form row (lossless). */
+function modelConfigToRow(model: CustomProviderConfig["models"][number]): CustomModelRow {
+  const map = model.thinkingLevelMap ?? {};
+  const compat = (model.compat ?? {}) as Record<string, unknown>;
+  const thinkingFormat = compat.thinkingFormat;
+  return {
+    rowId: crypto.randomUUID(),
+    id: model.id,
+    name: model.name,
+    api: model.api ?? "",
+    baseUrl: model.baseUrl ?? "",
+    contextWindow: model.contextWindow != null ? String(model.contextWindow) : "128000",
+    maxTokens: model.maxTokens != null ? String(model.maxTokens) : "16384",
+    reasoning: model.reasoning,
+    imageInput: (model.input ?? []).includes("image"),
+    costInput: model.cost?.input != null ? String(model.cost.input) : "",
+    costOutput: model.cost?.output != null ? String(model.cost.output) : "",
+    costCacheRead: model.cost?.cacheRead != null ? String(model.cost.cacheRead) : "",
+    costCacheWrite: model.cost?.cacheWrite != null ? String(model.cost.cacheWrite) : "",
+    headers: recordToKeyValueRows(model.headers),
+    thinkingFormat:
+      typeof thinkingFormat === "string"
+        ? (thinkingFormat as ModelThinkingFormat)
+        : ("none" as ModelThinkingFormat),
+    supportsUsageInStreaming: Boolean(compat.supportsUsageInStreaming),
+    thinkingOff: map.off ?? "",
+    thinkingMinimal: map.minimal ?? "",
+    thinkingLow: map.low ?? "low",
+    thinkingMedium: map.medium ?? "medium",
+    thinkingHigh: map.high ?? "high",
+    thinkingXHigh: map.xhigh ?? "xhigh",
+  };
+}
+
 function createCustomModelRow(): CustomModelRow {
   return {
     rowId: crypto.randomUUID(),
@@ -1653,7 +2097,7 @@ function CustomModelEditor({
     >
       <div className="flex flex-wrap items-start justify-between gap-4 border-hairline-soft border-b px-5 py-4">
         <div className="flex min-w-0 items-start gap-3">
-          <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-md border border-hairline-soft bg-white/4 text-fg-subtle">
+          <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-md border border-hairline-soft bg-chip text-fg-subtle">
             <IconCodeDots size={16} stroke={1.7} />
           </span>
           <div className="min-w-0">
@@ -1686,7 +2130,7 @@ function CustomModelEditor({
 
       <div className="grid gap-6 px-5 py-5">
         <SettingsSubCard
-          description="The ids that Modus stores and the names users see in the composer."
+          description="The id Modus stores and the name users see in the composer."
           title="Identity"
         >
           <div className="grid gap-5 lg:grid-cols-2">
@@ -1702,183 +2146,193 @@ function CustomModelEditor({
               placeholder="Qwen3 Coder"
               value={row.name}
             />
-            <Field
-              label="Context window"
-              onChange={(value) => onChange({ contextWindow: value })}
-              placeholder="128000"
-              value={row.contextWindow}
-            />
-            <Field
-              label="Max output tokens"
-              onChange={(value) => onChange({ maxTokens: value })}
-              placeholder="16384"
-              value={row.maxTokens}
-            />
           </div>
         </SettingsSubCard>
 
-        <SettingsSubCard
-          description="Leave these blank to inherit the provider-level endpoint and API behavior."
-          title="Routing overrides"
-        >
-          <div className="grid gap-5 lg:grid-cols-2">
-            <Field
-              label="Model API override"
-              onChange={(value) => onChange({ api: value })}
-              placeholder="provider default"
-              value={row.api}
-            />
-            <Field
-              label="Model base URL override"
-              onChange={(value) => onChange({ baseUrl: value })}
-              placeholder="provider default"
-              type="url"
-              value={row.baseUrl}
-            />
-          </div>
-        </SettingsSubCard>
+        <Disclosure label="Advanced model settings">
+          <SettingsSubCard
+            description="Token limits for this model. Defaults suit most OpenAI-compatible models."
+            title="Limits"
+          >
+            <div className="grid gap-5 lg:grid-cols-2">
+              <Field
+                label="Context window"
+                onChange={(value) => onChange({ contextWindow: value })}
+                placeholder="128000"
+                value={row.contextWindow}
+              />
+              <Field
+                label="Max output tokens"
+                onChange={(value) => onChange({ maxTokens: value })}
+                placeholder="16384"
+                value={row.maxTokens}
+              />
+            </div>
+          </SettingsSubCard>
 
-        <SettingsSubCard
-          description="Describe model behavior so Modus can show the right composer affordances."
-          title="Capabilities"
-        >
-          <div className="grid gap-3 md:grid-cols-2">
-            <ToggleField
-              checked={row.reasoning}
-              description="Expose thinking-level controls and optional level mapping."
-              icon={<IconBrain size={15} stroke={1.7} />}
-              label="Supports thinking"
-              onChange={(value) => onChange({ reasoning: value })}
-            />
-            <ToggleField
-              checked={row.imageInput}
-              description="Allow image inputs for this model when the provider supports them."
-              icon={<IconPhoto size={15} stroke={1.7} />}
-              label="Image input"
-              onChange={(value) => onChange({ imageInput: value })}
-            />
-          </div>
-          <div className="grid gap-5 lg:grid-cols-2">
-            <SelectField
-              label="Thinking format"
-              onChange={(value) => onChange({ thinkingFormat: value as ModelThinkingFormat })}
-              options={THINKING_FORMAT_OPTIONS}
-              value={row.thinkingFormat}
-            />
-            <ToggleField
-              checked={row.supportsUsageInStreaming}
-              description="Read token usage from streaming responses when supported."
-              label="Streaming usage"
-              onChange={(value) => onChange({ supportsUsageInStreaming: value })}
-            />
-          </div>
-        </SettingsSubCard>
+          <SettingsSubCard
+            description="Leave these blank to inherit the provider-level endpoint and API behavior."
+            title="Routing overrides"
+          >
+            <div className="grid gap-5 lg:grid-cols-2">
+              <Field
+                label="Model API override"
+                onChange={(value) => onChange({ api: value })}
+                placeholder="provider default"
+                value={row.api}
+              />
+              <Field
+                label="Model base URL override"
+                onChange={(value) => onChange({ baseUrl: value })}
+                placeholder="provider default"
+                type="url"
+                value={row.baseUrl}
+              />
+            </div>
+          </SettingsSubCard>
 
-        <SettingsSubCard
-          description="Optional per-million token prices used for display and budgeting metadata."
-          title="Pricing"
-        >
-          <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
-            <Field
-              label="Input cost"
-              onChange={(value) => onChange({ costInput: value })}
-              placeholder="0"
-              value={row.costInput}
-            />
-            <Field
-              label="Output cost"
-              onChange={(value) => onChange({ costOutput: value })}
-              placeholder="0"
-              value={row.costOutput}
-            />
-            <Field
-              label="Cache read"
-              onChange={(value) => onChange({ costCacheRead: value })}
-              placeholder="0"
-              value={row.costCacheRead}
-            />
-            <Field
-              label="Cache write"
-              onChange={(value) => onChange({ costCacheWrite: value })}
-              placeholder="0"
-              value={row.costCacheWrite}
-            />
-          </div>
-        </SettingsSubCard>
+          <SettingsSubCard
+            description="Describe model behavior so Modus can show the right composer affordances."
+            title="Capabilities"
+          >
+            <div className="grid gap-3 md:grid-cols-2">
+              <ToggleField
+                checked={row.reasoning}
+                description="Expose thinking-level controls and optional level mapping."
+                icon={<IconBrain size={15} stroke={1.7} />}
+                label="Supports thinking"
+                onChange={(value) => onChange({ reasoning: value })}
+              />
+              <ToggleField
+                checked={row.imageInput}
+                description="Allow image inputs for this model when the provider supports them."
+                icon={<IconPhoto size={15} stroke={1.7} />}
+                label="Image input"
+                onChange={(value) => onChange({ imageInput: value })}
+              />
+            </div>
+            <div className="grid gap-5 lg:grid-cols-2">
+              <SelectField
+                label="Thinking format"
+                onChange={(value) => onChange({ thinkingFormat: value as ModelThinkingFormat })}
+                options={THINKING_FORMAT_OPTIONS}
+                value={row.thinkingFormat}
+              />
+              <ToggleField
+                checked={row.supportsUsageInStreaming}
+                description="Read token usage from streaming responses when supported."
+                label="Streaming usage"
+                onChange={(value) => onChange({ supportsUsageInStreaming: value })}
+              />
+            </div>
+          </SettingsSubCard>
 
-        <AnimatePresence initial={false}>
-          {row.reasoning ? (
-            <m.div
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -6 }}
-              initial={{ opacity: 0, y: -6 }}
-              key="thinking-levels"
-              layout
-              transition={{ duration: 0.16, ease: "easeOut" }}
-            >
-              <SettingsSubCard
-                description="Map Modus thinking presets to provider-specific values."
-                title="Thinking levels"
+          <SettingsSubCard
+            description="Optional per-million token prices used for display and budgeting metadata."
+            title="Pricing"
+          >
+            <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
+              <Field
+                label="Input cost"
+                onChange={(value) => onChange({ costInput: value })}
+                placeholder="0"
+                value={row.costInput}
+              />
+              <Field
+                label="Output cost"
+                onChange={(value) => onChange({ costOutput: value })}
+                placeholder="0"
+                value={row.costOutput}
+              />
+              <Field
+                label="Cache read"
+                onChange={(value) => onChange({ costCacheRead: value })}
+                placeholder="0"
+                value={row.costCacheRead}
+              />
+              <Field
+                label="Cache write"
+                onChange={(value) => onChange({ costCacheWrite: value })}
+                placeholder="0"
+                value={row.costCacheWrite}
+              />
+            </div>
+          </SettingsSubCard>
+
+          <AnimatePresence initial={false}>
+            {row.reasoning ? (
+              <m.div
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -6 }}
+                initial={{ opacity: 0, y: -6 }}
+                key="thinking-levels"
+                layout
+                transition={{ duration: 0.16, ease: "easeOut" }}
               >
-                <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-                  <Field
-                    label="Off"
-                    onChange={(value) => onChange({ thinkingOff: value })}
-                    placeholder="leave blank"
-                    value={row.thinkingOff}
-                  />
-                  <Field
-                    label="Minimal"
-                    onChange={(value) => onChange({ thinkingMinimal: value })}
-                    placeholder="leave blank if unsupported"
-                    value={row.thinkingMinimal}
-                  />
-                  <Field
-                    label="Low"
-                    onChange={(value) => onChange({ thinkingLow: value })}
-                    placeholder="low"
-                    value={row.thinkingLow}
-                  />
-                  <Field
-                    label="Medium"
-                    onChange={(value) => onChange({ thinkingMedium: value })}
-                    placeholder="medium"
-                    value={row.thinkingMedium}
-                  />
-                  <Field
-                    label="High"
-                    onChange={(value) => onChange({ thinkingHigh: value })}
-                    placeholder="high"
-                    value={row.thinkingHigh}
-                  />
-                  <Field
-                    label="Extra high"
-                    onChange={(value) => onChange({ thinkingXHigh: value })}
-                    placeholder="xhigh"
-                    value={row.thinkingXHigh}
-                  />
-                </div>
-              </SettingsSubCard>
-            </m.div>
-          ) : null}
-        </AnimatePresence>
+                <SettingsSubCard
+                  description="Map Modus thinking presets to provider-specific values."
+                  title="Thinking levels"
+                >
+                  <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+                    <Field
+                      label="Off"
+                      onChange={(value) => onChange({ thinkingOff: value })}
+                      placeholder="leave blank"
+                      value={row.thinkingOff}
+                    />
+                    <Field
+                      label="Minimal"
+                      onChange={(value) => onChange({ thinkingMinimal: value })}
+                      placeholder="leave blank if unsupported"
+                      value={row.thinkingMinimal}
+                    />
+                    <Field
+                      label="Low"
+                      onChange={(value) => onChange({ thinkingLow: value })}
+                      placeholder="low"
+                      value={row.thinkingLow}
+                    />
+                    <Field
+                      label="Medium"
+                      onChange={(value) => onChange({ thinkingMedium: value })}
+                      placeholder="medium"
+                      value={row.thinkingMedium}
+                    />
+                    <Field
+                      label="High"
+                      onChange={(value) => onChange({ thinkingHigh: value })}
+                      placeholder="high"
+                      value={row.thinkingHigh}
+                    />
+                    <Field
+                      label="Extra high"
+                      onChange={(value) => onChange({ thinkingXHigh: value })}
+                      placeholder="xhigh"
+                      value={row.thinkingXHigh}
+                    />
+                  </div>
+                </SettingsSubCard>
+              </m.div>
+            ) : null}
+          </AnimatePresence>
 
-        <KeyValueEditor
-          addLabel="Add model header"
-          description="Headers here override or extend the provider defaults for this model."
-          emptyLabel="No model-specific headers"
-          icon={<IconVariable size={16} stroke={1.7} />}
-          keyPlaceholder="Header"
-          onAdd={() => onChange({ headers: [...row.headers, createKeyValueRow()] })}
-          onChange={updateHeader}
-          onRemove={(rowId) =>
-            onChange({ headers: row.headers.filter((header) => header.rowId !== rowId) })
-          }
-          rows={row.headers}
-          title="Model headers"
-          valuePlaceholder="Value"
-          variant="embedded"
-        />
+          <KeyValueEditor
+            addLabel="Add model header"
+            description="Headers here override or extend the provider defaults for this model."
+            emptyLabel="No model-specific headers"
+            icon={<IconVariable size={16} stroke={1.7} />}
+            keyPlaceholder="Header"
+            onAdd={() => onChange({ headers: [...row.headers, createKeyValueRow()] })}
+            onChange={updateHeader}
+            onRemove={(rowId) =>
+              onChange({ headers: row.headers.filter((header) => header.rowId !== rowId) })
+            }
+            rows={row.headers}
+            title="Model headers"
+            valuePlaceholder="Value"
+            variant="embedded"
+          />
+        </Disclosure>
       </div>
     </m.section>
   );
@@ -2001,7 +2455,7 @@ function CustomProviderOverview({
     >
       <div className="flex flex-wrap items-start justify-between gap-5">
         <div className="flex min-w-0 items-start gap-3">
-          <span className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-lg border border-hairline-soft bg-white/4 text-fg-subtle">
+          <span className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-lg border border-hairline-soft bg-chip text-fg-subtle">
             <IconAdjustments size={17} stroke={1.7} />
           </span>
           <div className="min-w-0">
@@ -2042,7 +2496,7 @@ function SettingsFormSection({
     >
       <div className="flex flex-wrap items-start justify-between gap-4 border-hairline-soft border-b px-5 py-4">
         <div className="flex min-w-0 items-start gap-3">
-          <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border border-hairline-soft bg-white/4 text-fg-subtle">
+          <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border border-hairline-soft bg-chip text-fg-subtle">
             {icon}
           </span>
           <div className="min-w-0">
@@ -2189,7 +2643,7 @@ function ToggleField({
     <div className="flex min-h-[76px] items-center justify-between gap-4 rounded-md border border-hairline-soft bg-canvas/45 px-4 py-3 transition-colors hover:bg-hover">
       <div className="flex min-w-0 items-start gap-3">
         {icon ? (
-          <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md bg-white/4 text-fg-subtle">
+          <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md bg-chip text-fg-subtle">
             {icon}
           </span>
         ) : null}
@@ -2234,7 +2688,7 @@ function KeyValueEditor({
     <div className="flex flex-wrap items-start justify-between gap-4">
       <div className="flex min-w-0 items-start gap-3">
         {icon ? (
-          <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border border-hairline-soft bg-white/4 text-fg-subtle">
+          <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border border-hairline-soft bg-chip text-fg-subtle">
             {icon}
           </span>
         ) : null}
@@ -2244,7 +2698,7 @@ function KeyValueEditor({
         </div>
       </div>
       <button
-        className="flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-hairline bg-white/3 px-3 text-sm text-fg-subtle transition-colors hover:bg-hover hover:text-fg"
+        className="flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-hairline bg-chip-faint px-3 text-sm text-fg-subtle transition-colors hover:bg-hover hover:text-fg"
         onClick={onAdd}
         type="button"
       >
@@ -2323,7 +2777,7 @@ function KeyValueEditor({
 
 function FormMetaPill({ children }: { children: ReactNode }) {
   return (
-    <span className="rounded-md bg-white/5 px-2.5 py-1 text-xs text-fg-muted">{children}</span>
+    <span className="rounded-md bg-chip px-2.5 py-1 text-xs text-fg-muted">{children}</span>
   );
 }
 

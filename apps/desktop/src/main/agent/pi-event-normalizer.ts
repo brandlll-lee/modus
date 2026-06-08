@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type { AgentEvent } from "../../shared/contracts";
 
@@ -6,6 +7,16 @@ type MessageRole = "assistant" | "user";
 type NormalizerState = {
   nextFallbackId: number;
   activeMessageIds: Partial<Record<MessageRole, string>>;
+  /**
+   * Prefix for synthesized message ids. A normalizer is rebuilt every time a
+   * runtime session is (re)created (e.g. resume after the session was evicted
+   * or the app restarted), which resets `nextFallbackId` to 0. Without a
+   * per-instance prefix, a later run's fallback ids (`assistant:1`, `:2`, …)
+   * collide with an earlier run's within the SAME Modus session, producing
+   * duplicate ids in the event log and clobbered history in the UI. The unique
+   * prefix guarantees ids never repeat across normalizer lifetimes.
+   */
+  idPrefix: string;
 };
 
 function explicitMessageId(message: unknown): string | undefined {
@@ -61,7 +72,7 @@ function messageId(message: unknown, role: MessageRole, state: NormalizerState):
     return active;
   }
 
-  const fallback = `message:${role}:${++state.nextFallbackId}`;
+  const fallback = `${state.idPrefix}${role}:${++state.nextFallbackId}`;
   state.activeMessageIds[role] = fallback;
   return fallback;
 }
@@ -76,14 +87,18 @@ function stringify(value: unknown): string {
 export function createPiEventNormalizer(
   sessionId: string,
 ): (event: AgentSessionEvent) => AgentEvent[] {
-  const state: NormalizerState = { nextFallbackId: 0, activeMessageIds: {} };
+  const state: NormalizerState = {
+    nextFallbackId: 0,
+    activeMessageIds: {},
+    idPrefix: `message:${randomUUID().slice(0, 8)}:`,
+  };
   return (event) => normalizePiEvent(sessionId, event, state);
 }
 
 export function normalizePiEvent(
   sessionId: string,
   event: AgentSessionEvent,
-  state: NormalizerState = { nextFallbackId: 0, activeMessageIds: {} },
+  state: NormalizerState = { nextFallbackId: 0, activeMessageIds: {}, idPrefix: "message:" },
 ): AgentEvent[] {
   switch (event.type) {
     case "agent_start":

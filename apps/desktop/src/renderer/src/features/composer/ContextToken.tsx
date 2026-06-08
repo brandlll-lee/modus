@@ -69,7 +69,7 @@ export function ContextToken({ item, onRemove }: ContextTokenProps) {
 
   return (
     <button
-      className="flex h-6 max-w-[180px] items-center gap-1 rounded-md bg-white/6 px-1.5 text-xs text-fg-subtle transition-colors hover:bg-hover hover:text-fg"
+      className="flex h-6 max-w-[180px] items-center gap-1 rounded-md bg-chip px-1.5 text-xs text-fg-subtle transition-colors hover:bg-hover hover:text-fg"
       onClick={onRemove}
       title="Remove context"
       type="button"

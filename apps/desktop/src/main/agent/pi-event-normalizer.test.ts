@@ -48,21 +48,22 @@ describe("normalizePiEvent", () => {
   it("keeps fallback message ids stable across PI message lifecycle events without message ids", () => {
     const normalize = createPiEventNormalizer("session-1");
 
-    expect(
-      normalize(
-        event({
-          type: "message_start",
-          message: { role: "assistant", content: [] },
-        }),
-      ),
-    ).toEqual([
-      {
-        type: "message.started",
-        sessionId: "session-1",
-        messageId: "message:assistant:1",
-        role: "assistant",
-      },
-    ]);
+    const [start] = normalize(
+      event({
+        type: "message_start",
+        message: { role: "assistant", content: [] },
+      }),
+    );
+    const id = start && "messageId" in start ? start.messageId : "";
+    // Unique per-normalizer prefix so resumed sessions never collide, yet stable
+    // for the whole message lifecycle.
+    expect(id).toMatch(/^message:[0-9a-f]{8}:assistant:1$/);
+    expect(start).toEqual({
+      type: "message.started",
+      sessionId: "session-1",
+      messageId: id,
+      role: "assistant",
+    });
 
     expect(
       normalize(
@@ -72,14 +73,7 @@ describe("normalizePiEvent", () => {
           assistantMessageEvent: { type: "thinking_delta", delta: "plan" },
         }),
       ),
-    ).toEqual([
-      {
-        type: "thinking.delta",
-        sessionId: "session-1",
-        messageId: "message:assistant:1",
-        delta: "plan",
-      },
-    ]);
+    ).toEqual([{ type: "thinking.delta", sessionId: "session-1", messageId: id, delta: "plan" }]);
 
     expect(
       normalize(
@@ -89,14 +83,7 @@ describe("normalizePiEvent", () => {
           assistantMessageEvent: { type: "text_delta", delta: "answer" },
         }),
       ),
-    ).toEqual([
-      {
-        type: "message.delta",
-        sessionId: "session-1",
-        messageId: "message:assistant:1",
-        delta: "answer",
-      },
-    ]);
+    ).toEqual([{ type: "message.delta", sessionId: "session-1", messageId: id, delta: "answer" }]);
 
     expect(
       normalize(
@@ -105,13 +92,21 @@ describe("normalizePiEvent", () => {
           message: { role: "assistant", content: [] },
         }),
       ),
-    ).toEqual([
-      {
-        type: "message.completed",
-        sessionId: "session-1",
-        messageId: "message:assistant:1",
-      },
-    ]);
+    ).toEqual([{ type: "message.completed", sessionId: "session-1", messageId: id }]);
+  });
+
+  it("gives each normalizer instance a distinct fallback id namespace", () => {
+    const a = createPiEventNormalizer("session-1");
+    const b = createPiEventNormalizer("session-1");
+    const startEvent = event({
+      type: "message_start",
+      message: { role: "assistant", content: [] },
+    });
+    const [startA] = a(startEvent);
+    const [startB] = b(startEvent);
+    const idA = startA && "messageId" in startA ? startA.messageId : "a";
+    const idB = startB && "messageId" in startB ? startB.messageId : "b";
+    expect(idA).not.toEqual(idB);
   });
 
   it("ignores PI user lifecycle events because Modus persists user text itself", () => {
@@ -138,12 +133,13 @@ describe("normalizePiEvent", () => {
   it("surfaces assistant message errors from PI message end events", () => {
     const normalize = createPiEventNormalizer("session-1");
 
-    normalize(
+    const [start] = normalize(
       event({
         type: "message_start",
         message: { role: "assistant", content: [] },
       }),
     );
+    const id = start && "messageId" in start ? start.messageId : "";
 
     expect(
       normalize(
@@ -161,7 +157,7 @@ describe("normalizePiEvent", () => {
       {
         type: "message.completed",
         sessionId: "session-1",
-        messageId: "message:assistant:1",
+        messageId: id,
       },
       {
         type: "runtime.error",

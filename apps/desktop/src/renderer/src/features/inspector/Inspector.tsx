@@ -10,7 +10,7 @@ import {
   IconTrash,
   IconVersions,
 } from "@tabler/icons-react";
-import { m } from "motion/react";
+import { animate, m, useMotionValue } from "motion/react";
 import { type PointerEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import type { SecurityState } from "../../../../preload/types";
 import type { WorkspaceInfo, WorktreeInfo } from "../../../../shared/contracts";
@@ -54,66 +54,96 @@ export function Inspector({
   onWidthChange,
 }: InspectorProps) {
   const dragStartRef = useRef<{ x: number; width: number } | null>(null);
+  const latestWidthRef = useRef(width);
   const [contentVisible, setContentVisible] = useState(open);
-  const panelWidth = open ? width : INSPECTOR_COLLAPSED_WIDTH;
+  const [tab, setTab] = useState("changes");
+  // Width is a motion value, not React state: dragging calls `.set()` which
+  // writes straight to the DOM (batched to a frame) WITHOUT re-rendering App and
+  // its heavy Timeline on every pointermove. open/close still animates smoothly;
+  // the drag tracks the cursor 1:1 with no layout-property tween fighting it.
+  const panelWidth = useMotionValue(open ? width : INSPECTOR_COLLAPSED_WIDTH);
 
+  // Drive the open/close animation and keep the motion value in sync when `width`
+  // changes from a committed drag or an external update. We never re-animate while
+  // a drag is in flight (the pointer owns the value then).
   useEffect(() => {
+    if (dragStartRef.current) {
+      return;
+    }
+    latestWidthRef.current = width;
     if (!open) {
       setContentVisible(false);
     }
-  }, [open]);
+    const controls = animate(panelWidth, open ? width : INSPECTOR_COLLAPSED_WIDTH, {
+      ...INSPECTOR_TRANSITION,
+      onComplete: () => {
+        if (open) {
+          setContentVisible(true);
+        }
+      },
+    });
+    return () => controls.stop();
+  }, [open, width, panelWidth]);
 
   function startResize(event: PointerEvent<HTMLButtonElement>): void {
     event.preventDefault();
-    if (!open) {
-      onOpenChange(true);
-      onWidthChange(INSPECTOR_MIN_WIDTH);
-    }
-
-    dragStartRef.current = { x: event.clientX, width: open ? width : INSPECTOR_MIN_WIDTH };
+    dragStartRef.current = { x: event.clientX, width };
+    latestWidthRef.current = width;
     event.currentTarget.setPointerCapture(event.pointerId);
+    // Keep the resize cursor + kill text selection for the whole gesture without
+    // a React state flip.
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
   }
 
   function resize(event: PointerEvent<HTMLButtonElement>): void {
     if (!dragStartRef.current) {
       return;
     }
-
-    const nextWidth = dragStartRef.current.width + dragStartRef.current.x - event.clientX;
-    onWidthChange(Math.min(INSPECTOR_MAX_WIDTH, Math.max(INSPECTOR_MIN_WIDTH, nextWidth)));
+    const nextWidth = Math.min(
+      INSPECTOR_MAX_WIDTH,
+      Math.max(
+        INSPECTOR_MIN_WIDTH,
+        dragStartRef.current.width + dragStartRef.current.x - event.clientX,
+      ),
+    );
+    latestWidthRef.current = nextWidth;
+    panelWidth.set(nextWidth);
   }
 
   function stopResize(): void {
     if (!dragStartRef.current) {
       return;
     }
-
     dragStartRef.current = null;
-    if (width < INSPECTOR_MIN_WIDTH + 24) {
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+    const finalWidth = latestWidthRef.current;
+    // Drag-to-collapse: snapping below the floor closes the panel and keeps the
+    // last good width (so reopening doesn't land on a sliver). Otherwise commit
+    // once — the single App re-render for the entire drag.
+    if (finalWidth < INSPECTOR_MIN_WIDTH + 24) {
+      // Don't commit the sliver width; the effect animates the live value → 0 and
+      // the last good `width` is restored on reopen.
       onOpenChange(false);
+    } else {
+      onWidthChange(finalWidth);
     }
   }
 
   return (
     <m.aside
-      animate={{ width: panelWidth }}
       className={cn(
         "relative flex min-w-0 shrink-0 flex-col overflow-hidden bg-panel",
         open && "border-hairline-strong border-l",
       )}
-      initial={false}
-      onAnimationComplete={() => {
-        if (open) {
-          setContentVisible(true);
-        }
-      }}
-      transition={INSPECTOR_TRANSITION}
+      style={{ width: panelWidth }}
     >
       {open ? (
         <>
           <button
             aria-label="Resize right panel"
-            className="app-no-drag absolute top-0 bottom-0 left-0 z-20 w-1 cursor-col-resize hover:bg-white/8"
+            className="app-no-drag absolute top-0 bottom-0 left-0 z-20 w-1 cursor-col-resize hover:bg-chip-strong"
             onPointerDown={startResize}
             onPointerMove={resize}
             onPointerCancel={stopResize}
@@ -123,12 +153,16 @@ export function Inspector({
           {contentVisible ? (
             <m.div
               animate={{ opacity: 1 }}
-              className="flex min-h-0 shrink-0 flex-col"
+              className="flex min-h-0 flex-1 flex-col"
               initial={{ opacity: 0 }}
-              style={{ width }}
+              style={{ width: panelWidth }}
               transition={{ duration: 0.08, ease: "linear" }}
             >
-              <Tabs.Root className="flex min-h-0 flex-1 flex-col" defaultValue="changes">
+              <Tabs.Root
+                className="flex min-h-0 flex-1 flex-col"
+                onValueChange={(value) => setTab(value as string)}
+                value={tab}
+              >
                 <div className="flex h-9 shrink-0 items-center border-hairline border-b px-2">
                   <Tabs.List className="relative flex min-w-0 flex-1 items-center gap-0.5">
                     {TABS.map((tab) => (
@@ -163,8 +197,13 @@ export function Inspector({
                 <Tabs.Panel className="min-h-0 flex-1 outline-none" value="changes">
                   <DiffPanel cwd={cwd} sessionId={sessionId} workspaceId={activeWorkspace?.id} />
                 </Tabs.Panel>
-                <Tabs.Panel className="min-h-0 flex-1 outline-none" value="terminal">
-                  <TerminalPanel cwd={cwd} workspaceId={activeWorkspace?.id} />
+                <Tabs.Panel className="min-h-0 flex-1 outline-none" keepMounted value="terminal">
+                  <TerminalPanel
+                    active={tab === "terminal"}
+                    cwd={cwd}
+                    key={activeWorkspace?.id ?? "none"}
+                    workspaceId={activeWorkspace?.id}
+                  />
                 </Tabs.Panel>
                 <Tabs.Panel className="min-h-0 flex-1 outline-none" value="worktrees">
                   <WorktreesPanel cwd={activeWorkspace?.rootPath} />

@@ -17,6 +17,7 @@ import type {
   PromptDelivery,
   ThinkingLevel,
 } from "../../../../shared/contracts";
+import { BorderBeam } from "../../components/ui/BorderBeam";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { TypingAnimation } from "../../components/ui/TypingAnimation";
 import { cn } from "../../lib/cn";
@@ -137,7 +138,15 @@ export function Composer({
   }
 
   return (
-    <div className="rounded-[14px] border border-hairline-soft bg-surface shadow-composer transition-colors focus-within:border-hairline">
+    <div
+      className={cn(
+        "relative rounded-[14px] border border-hairline-soft bg-surface shadow-composer transition-[border-color,box-shadow] duration-150",
+        // agent 工作时不再用紫色聚焦描边，改由 Border Beam 光束动画呈现；
+        // 空闲时保留点击聚焦的品牌紫描边 + 发光。
+        !isRunning && "focus-within:border-focus-ring focus-within:shadow-composer-focus",
+      )}
+    >
+      {isRunning ? <BorderBeam /> : null}
       <div className="relative">
         {!hasText ? (
           <div
@@ -216,7 +225,7 @@ export function Composer({
             <m.button
               animate={{ opacity: 1 }}
               aria-label="Send"
-              className="flex size-[26px] items-center justify-center rounded-full bg-fg text-canvas transition-colors hover:bg-white active:scale-[0.94] disabled:bg-white/10 disabled:text-fg-faint"
+              className="flex size-[26px] items-center justify-center rounded-full bg-fg text-canvas transition-colors hover:bg-fg-muted active:scale-[0.94] disabled:bg-chip-strong disabled:text-fg-faint"
               disabled={!canSubmit || models.length === 0 || !model}
               exit={{ opacity: 0 }}
               initial={{ opacity: 0 }}
@@ -245,7 +254,7 @@ export function Composer({
             <m.button
               animate={{ opacity: 1 }}
               aria-label="Dictate"
-              className="flex size-[26px] items-center justify-center rounded-full bg-white/10 text-fg transition-colors hover:bg-white/14 active:scale-[0.94]"
+              className="flex size-[26px] items-center justify-center rounded-full bg-chip-strong text-fg transition-colors hover:bg-active active:scale-[0.94]"
               exit={{ opacity: 0 }}
               initial={{ opacity: 0 }}
               key="mic"
@@ -317,13 +326,11 @@ function ModelSelect({
                 </Select.ItemText>
                 <span className="min-w-0 truncate text-sm text-fg-subtle">{item.name}</span>
                 {!item.available ? (
-                  <span className="ml-1 shrink-0 rounded bg-white/6 px-1 text-2xs text-fg-faint">
+                  <span className="ml-1 shrink-0 rounded bg-chip px-1 text-2xs text-fg-faint">
                     off
                   </span>
                 ) : null}
-                <span className="ml-1 shrink-0 text-2xs text-fg-faint">
-                  {item.thinkingLevel}
-                </span>
+                <span className="ml-1 shrink-0 text-2xs text-fg-faint">{item.thinkingLevel}</span>
                 <button
                   aria-label={`Edit ${item.name}`}
                   className="ml-auto flex size-6 shrink-0 items-center justify-center rounded-md text-fg-faint opacity-0 transition-opacity hover:bg-active hover:text-fg-muted group-hover/model:opacity-100 data-[open=true]:opacity-100"

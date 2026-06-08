@@ -15,21 +15,29 @@ const config: Configuration = {
   files: ["out/**/*", "package.json"],
   extraResources: [
     {
+      from: "resources/icon.png",
+      to: "icon.png",
+    },
+    {
       from: "../../target/release/modus-pty-host.exe",
       to: "bin/modus-pty-host.exe",
     },
   ],
   asar: true,
+  icon: "resources/icon.png",
   mac: {
     category: "public.app-category.developer-tools",
+    icon: "resources/icon.icns",
     target: ["dmg", "zip"],
   },
   win: {
+    icon: "resources/icon.ico",
     target: ["nsis"],
     signAndEditExecutable: false,
   },
   linux: {
     category: "Development",
+    icon: "resources/icon.png",
     target: ["AppImage", "deb"],
   },
 };

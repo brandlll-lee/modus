@@ -1,4 +1,5 @@
 import {
+  IconArchive,
   IconChevronRight,
   IconClock,
   IconDeviceMobile,
@@ -7,6 +8,7 @@ import {
   IconFolderPlus,
   IconGridDots,
   IconGripHorizontal,
+  IconLayoutSidebar,
   IconSearch,
   IconSettings,
 } from "@tabler/icons-react";
@@ -14,18 +16,22 @@ import { AnimatePresence, m } from "motion/react";
 import { type MouseEvent, type ReactNode, useState } from "react";
 import type { AgentSessionInfo, WorkspaceInfo } from "../../../shared/contracts";
 import { cn } from "../lib/cn";
+import { ToolbarButton } from "./ui/ToolbarButton";
 
 type SidebarProps = {
   workspaces: WorkspaceInfo[];
   activeWorkspace: WorkspaceInfo | null;
   agentSession: AgentSessionInfo | null;
   agentSessions: AgentSessionInfo[];
+  collapsed: boolean;
   onOpenWorkspace(): void;
   onSelectWorkspace(workspace: WorkspaceInfo): void;
   onSelectSession(session: AgentSessionInfo): void;
   onNewSession(): void;
   onNewWorkspaceSession(workspace: WorkspaceInfo): void;
+  onArchiveSession(session: AgentSessionInfo): void;
   onOpenSettings(): void;
+  onToggleCollapsed(): void;
   canCreateSession: boolean;
 };
 
@@ -34,102 +40,122 @@ export function Sidebar({
   activeWorkspace,
   agentSession,
   agentSessions,
+  collapsed,
   onOpenWorkspace,
   onSelectWorkspace,
   onSelectSession,
   onNewSession,
   onNewWorkspaceSession,
+  onArchiveSession,
   onOpenSettings,
+  onToggleCollapsed,
   canCreateSession,
 }: SidebarProps) {
   const [projectsExpanded, setProjectsExpanded] = useState(true);
   const sessionsByWorkspace = groupSessionsByWorkspace(agentSessions);
 
   return (
-    <aside className="flex w-[300px] min-w-[300px] flex-col border-hairline-strong border-r bg-panel">
-      <div className="scroll-thin flex-1 overflow-y-auto px-2.5 pt-4 pb-2">
-        <NavRow
-          disabled={!canCreateSession}
-          icon={<IconEdit size={17} stroke={1.75} />}
-          onClick={onNewSession}
-        >
-          New chat
-        </NavRow>
-        <NavRow icon={<IconSearch size={17} stroke={1.75} />}>Search</NavRow>
-        <NavRow icon={<IconGridDots size={17} stroke={1.75} />}>Plugins</NavRow>
-        <NavRow icon={<IconClock size={17} stroke={1.75} />}>Automations</NavRow>
-        <NavRow
-          icon={
-            <span className="relative flex">
-              <IconDeviceMobile size={17} stroke={1.75} />
-              <span className="-right-0.5 -bottom-0.5 absolute size-1.5 rounded-full bg-[#1e8cff]" />
-            </span>
-          }
-        >
-          Remote control
-        </NavRow>
+    // Animate only `width` (a single layout dimension) on the outer wrapper while
+    // the inner panel keeps a fixed 300px width — content clips instead of
+    // reflowing, so the collapse stays buttery. Same easing/duration as the
+    // right Inspector panel for a perfectly symmetric feel.
+    <m.aside
+      animate={{ width: collapsed ? 0 : 300 }}
+      className="shrink-0 overflow-hidden bg-panel"
+      initial={false}
+      transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+    >
+      <div className="flex h-full w-[300px] min-w-[300px] flex-col border-hairline-strong border-r bg-panel">
+        <div className="scroll-thin flex-1 overflow-y-auto px-2.5 pt-4 pb-2">
+          <NavRow
+            disabled={!canCreateSession}
+            icon={<IconEdit size={17} stroke={1.75} />}
+            onClick={onNewSession}
+          >
+            New chat
+          </NavRow>
+          <NavRow icon={<IconSearch size={17} stroke={1.75} />}>Search</NavRow>
+          <NavRow icon={<IconGridDots size={17} stroke={1.75} />}>Plugins</NavRow>
+          <NavRow icon={<IconClock size={17} stroke={1.75} />}>Automations</NavRow>
+          <NavRow
+            icon={
+              <span className="relative flex">
+                <IconDeviceMobile size={17} stroke={1.75} />
+                <span className="-right-0.5 -bottom-0.5 absolute size-1.5 rounded-full bg-focus-ring-soft" />
+              </span>
+            }
+          >
+            Remote control
+          </NavRow>
 
-        <SectionHeader
-          expanded={projectsExpanded}
-          onToggle={() => setProjectsExpanded((expanded) => !expanded)}
-        >
-          Projects
-        </SectionHeader>
+          <SectionHeader
+            expanded={projectsExpanded}
+            onToggle={() => setProjectsExpanded((expanded) => !expanded)}
+          >
+            Projects
+          </SectionHeader>
 
-        <AnimatePresence initial={false}>
-          {projectsExpanded ? (
-            <m.div
-              animate={{ height: "auto", opacity: 1 }}
-              className="overflow-hidden"
-              exit={{ height: 0, opacity: 0 }}
-              initial={{ height: 0, opacity: 0 }}
-              transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-            >
-              {workspaces.length === 0 ? (
-                <NavRow
-                  icon={<IconFolder size={17} stroke={1.6} />}
-                  muted
-                  onClick={onOpenWorkspace}
-                >
-                  Open a repository…
-                </NavRow>
-              ) : (
-                workspaces.map((workspace) => (
-                  <WorkspaceItem
-                    activeSessionId={agentSession?.id}
-                    isActive={activeWorkspace?.id === workspace.id}
-                    key={workspace.id}
-                    onNewSession={() => onNewWorkspaceSession(workspace)}
-                    onSelect={() => onSelectWorkspace(workspace)}
-                    onSelectSession={onSelectSession}
-                    sessions={sessionsByWorkspace.get(workspace.id) ?? []}
-                    workspace={workspace}
-                  />
-                ))
-              )}
+          <AnimatePresence initial={false}>
+            {projectsExpanded ? (
+              <m.div
+                animate={{ height: "auto", opacity: 1 }}
+                className="overflow-hidden"
+                exit={{ height: 0, opacity: 0 }}
+                initial={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+              >
+                {workspaces.length === 0 ? (
+                  <NavRow
+                    icon={<IconFolder size={17} stroke={1.6} />}
+                    muted
+                    onClick={onOpenWorkspace}
+                  >
+                    Open a repository…
+                  </NavRow>
+                ) : (
+                  workspaces.map((workspace) => (
+                    <WorkspaceItem
+                      activeSessionId={agentSession?.id}
+                      isActive={activeWorkspace?.id === workspace.id}
+                      key={workspace.id}
+                      onArchiveSession={onArchiveSession}
+                      onNewSession={() => onNewWorkspaceSession(workspace)}
+                      onSelect={() => onSelectWorkspace(workspace)}
+                      onSelectSession={onSelectSession}
+                      sessions={sessionsByWorkspace.get(workspace.id) ?? []}
+                      workspace={workspace}
+                    />
+                  ))
+                )}
 
-              <div className="mt-1">
-                <NavRow
-                  icon={<IconFolderPlus size={17} stroke={1.6} />}
-                  muted
-                  onClick={onOpenWorkspace}
-                >
-                  Open workspace
-                </NavRow>
-              </div>
-            </m.div>
-          ) : null}
-        </AnimatePresence>
+                <div className="mt-1">
+                  <NavRow
+                    icon={<IconFolderPlus size={17} stroke={1.6} />}
+                    muted
+                    onClick={onOpenWorkspace}
+                  >
+                    Open workspace
+                  </NavRow>
+                </div>
+              </m.div>
+            ) : null}
+          </AnimatePresence>
 
-        <SectionLabel>Chats</SectionLabel>
+          <SectionLabel>Chats</SectionLabel>
+        </div>
+
+        <div className="app-no-drag flex items-center gap-1 px-2.5 pt-2 pb-3">
+          <div className="min-w-0 flex-1">
+            <NavRow icon={<IconSettings size={17} stroke={1.75} />} onClick={onOpenSettings}>
+              Settings
+            </NavRow>
+          </div>
+          <ToolbarButton label="Collapse sidebar" onClick={onToggleCollapsed}>
+            <IconLayoutSidebar size={15} stroke={1.65} />
+          </ToolbarButton>
+        </div>
       </div>
-
-      <div className="app-no-drag px-2.5 pt-2 pb-3">
-        <NavRow icon={<IconSettings size={17} stroke={1.75} />} onClick={onOpenSettings}>
-          Settings
-        </NavRow>
-      </div>
-    </aside>
+    </m.aside>
   );
 }
 
@@ -141,6 +167,7 @@ function WorkspaceItem({
   onSelect,
   onSelectSession,
   onNewSession,
+  onArchiveSession,
 }: {
   workspace: WorkspaceInfo;
   isActive: boolean;
@@ -149,6 +176,7 @@ function WorkspaceItem({
   onSelect(): void;
   onSelectSession(session: AgentSessionInfo): void;
   onNewSession(): void;
+  onArchiveSession(session: AgentSessionInfo): void;
 }) {
   return (
     <>
@@ -167,9 +195,9 @@ function WorkspaceItem({
         <SessionRow
           isActive={activeSessionId === session.id}
           key={session.id}
-          onCreate={(event) => {
+          onArchive={(event) => {
             event.stopPropagation();
-            onNewSession();
+            onArchiveSession(session);
           }}
           onSelect={() => onSelectSession(session)}
           title={session.title}
@@ -185,13 +213,13 @@ function SessionRow({
   updatedAt,
   isActive,
   onSelect,
-  onCreate,
+  onArchive,
 }: {
   title: string;
   updatedAt: string;
   isActive: boolean;
   onSelect(): void;
-  onCreate(event: MouseEvent<HTMLButtonElement>): void;
+  onArchive(event: MouseEvent<HTMLButtonElement>): void;
 }) {
   return (
     <m.div
@@ -208,11 +236,15 @@ function SessionRow({
         type="button"
       >
         <span className="min-w-0 flex-1 truncate">{title}</span>
-        <span className="ml-2 shrink-0 text-xs font-normal text-fg-faint">
+        <span className="ml-2 shrink-0 text-xs font-normal text-fg-faint group-hover:hidden">
           {formatRelativeTime(updatedAt)}
         </span>
       </button>
-      <HoverActions onCreate={onCreate} />
+      <span className="ml-1 hidden shrink-0 items-center group-hover:flex group-focus-within:flex">
+        <IconButton label="Archive" onClick={onArchive}>
+          <IconArchive size={14} stroke={1.8} />
+        </IconButton>
+      </span>
     </m.div>
   );
 }

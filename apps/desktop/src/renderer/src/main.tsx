@@ -5,6 +5,7 @@ import "streamdown/styles.css";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./app/App";
+import { initTheme } from "./lib/theme";
 import "./styles/app.css";
 
 const rootElement = document.getElementById("root");
@@ -12,6 +13,9 @@ const rootElement = document.getElementById("root");
 if (!rootElement) {
   throw new Error("Missing root element.");
 }
+
+// Paint the stored palette before first render (no theme flash).
+initTheme();
 
 createRoot(rootElement).render(
   <StrictMode>

@@ -83,6 +83,32 @@ export const diffCommitSchema = z.object({
   message: nonEmptyString,
 });
 
+export const diffCommitOrPushSchema = z
+  .object({
+    cwd: nonEmptyString,
+    message: optionalNonEmptyString,
+    stageAll: z.boolean().optional(),
+    commit: z.boolean(),
+    push: z.boolean(),
+  })
+  .refine((value) => value.commit || value.push, {
+    message: "At least one of commit or push must be requested.",
+  })
+  .refine((value) => !value.commit || (value.message?.trim().length ?? 0) > 0, {
+    message: "Commit message is required when committing.",
+  });
+
+export const gitCheckoutSchema = z.object({
+  cwd: nonEmptyString,
+  name: nonEmptyString,
+  remote: z.boolean().optional(),
+});
+
+export const gitCreateBranchSchema = z.object({
+  cwd: nonEmptyString,
+  name: nonEmptyString,
+});
+
 export const permissionDecideSchema = z.object({
   requestId: optionalNonEmptyString,
   sessionId: optionalNonEmptyString,

@@ -20,6 +20,7 @@ const api: ModusApi = {
     ensure: (sessionId) => ipcRenderer.invoke("agent:ensure", sessionId),
     prompt: (input) => ipcRenderer.invoke("agent:prompt", input),
     abort: (sessionId) => ipcRenderer.invoke("agent:abort", sessionId),
+    delete: (sessionId) => ipcRenderer.invoke("agent:delete", sessionId),
     setModel: (input) => ipcRenderer.invoke("agent:set-model", input),
     cycleModel: (input) => ipcRenderer.invoke("agent:cycle-model", input),
     onEvent: (callback) => {
@@ -50,6 +51,16 @@ const api: ModusApi = {
     unstage: (input) => ipcRenderer.invoke("diff:unstage", input),
     discard: (input) => ipcRenderer.invoke("diff:discard", input),
     commit: (input) => ipcRenderer.invoke("diff:commit", input),
+    status: (cwd) => ipcRenderer.invoke("diff:status", cwd),
+    stageAll: (cwd) => ipcRenderer.invoke("diff:stage-all", cwd),
+    commitOrPush: (input) => ipcRenderer.invoke("diff:commit-or-push", input),
+  },
+  git: {
+    branches: (cwd) => ipcRenderer.invoke("git:branches", cwd),
+    checkout: (input) => ipcRenderer.invoke("git:checkout", input),
+    createBranch: (input) => ipcRenderer.invoke("git:create-branch", input),
+    pull: (cwd) => ipcRenderer.invoke("git:pull", cwd),
+    fetch: (cwd) => ipcRenderer.invoke("git:fetch", cwd),
   },
   permission: {
     decide: (input) => ipcRenderer.invoke("permission:decide", input),
@@ -74,6 +85,10 @@ const api: ModusApi = {
     setDefault: (model) => ipcRenderer.invoke("model:set-default", model),
     settings: () => ipcRenderer.invoke("model:settings"),
     providerDetail: (provider) => ipcRenderer.invoke("model:provider-detail", provider),
+    customProviderConfig: (provider) =>
+      ipcRenderer.invoke("model:custom-provider-config", provider),
+    deleteCustomProvider: (provider) =>
+      ipcRenderer.invoke("model:delete-custom-provider", provider),
     configureProvider: (input) => ipcRenderer.invoke("model:configure-provider", input),
     upsertCustomProvider: (input) => ipcRenderer.invoke("model:upsert-custom-provider", input),
     updateConfig: (input) => ipcRenderer.invoke("model:update-config", input),

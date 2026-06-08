@@ -5,17 +5,22 @@ import type {
   AgentReviewResult,
   AgentRunInfo,
   AgentSessionInfo,
+  ConfigureProviderInput,
   ContextItem,
   ContextKind,
   ContextSuggestion,
+  CustomProviderConfig,
   DocHit,
   DocSource,
   FileChange,
   FileDiff,
-  ConfigureProviderInput,
+  GitActionResult,
+  GitBranchSummary,
+  GitCommitResult,
+  GitStatusSummary,
+  ModelInfo,
   ModelProviderDetail,
   ModelSettingsState,
-  ModelInfo,
   PermissionAction,
   PermissionDecision,
   PromptDelivery,
@@ -54,7 +59,9 @@ export type ModusApi = {
       worktreeMode?: "auto" | "off";
     }): Promise<AgentSessionInfo>;
     list(): Promise<AgentSessionInfo[]>;
-    listEvents(sessionId: string): Promise<Array<{ id: string; event: AgentEvent; createdAt?: string }>>;
+    listEvents(
+      sessionId: string,
+    ): Promise<Array<{ id: string; event: AgentEvent; createdAt?: string }>>;
     listRuns(sessionId: string): Promise<AgentRunInfo[]>;
     ensure(sessionId: string): Promise<AgentSessionInfo>;
     prompt(input: {
@@ -65,7 +72,12 @@ export type ModusApi = {
       userMessageId?: string;
     }): Promise<void>;
     abort(sessionId: string): Promise<void>;
-    setModel(input: { sessionId: string; model: string; thinkingLevel?: ThinkingLevel }): Promise<AgentSessionInfo>;
+    delete(sessionId: string): Promise<void>;
+    setModel(input: {
+      sessionId: string;
+      model: string;
+      thinkingLevel?: ThinkingLevel;
+    }): Promise<AgentSessionInfo>;
     cycleModel(input: {
       sessionId?: string;
       direction?: "forward" | "backward";
@@ -93,6 +105,22 @@ export type ModusApi = {
     unstage(input: { cwd: string; path: string }): Promise<void>;
     discard(input: { cwd: string; path: string }): Promise<void>;
     commit(input: { cwd: string; message: string }): Promise<string>;
+    status(cwd: string): Promise<GitStatusSummary>;
+    stageAll(cwd: string): Promise<void>;
+    commitOrPush(input: {
+      cwd: string;
+      message?: string;
+      stageAll?: boolean;
+      commit: boolean;
+      push: boolean;
+    }): Promise<GitCommitResult>;
+  };
+  git: {
+    branches(cwd: string): Promise<GitBranchSummary>;
+    checkout(input: { cwd: string; name: string; remote?: boolean }): Promise<GitActionResult>;
+    createBranch(input: { cwd: string; name: string }): Promise<GitActionResult>;
+    pull(cwd: string): Promise<GitActionResult>;
+    fetch(cwd: string): Promise<GitActionResult>;
   };
   permission: {
     decide(input: {
@@ -128,6 +156,8 @@ export type ModusApi = {
     setDefault(model: string): Promise<void>;
     settings(): Promise<ModelSettingsState>;
     providerDetail(provider: string): Promise<ModelProviderDetail | undefined>;
+    customProviderConfig(provider: string): Promise<CustomProviderConfig | undefined>;
+    deleteCustomProvider(provider: string): Promise<void>;
     configureProvider(input: ConfigureProviderInput): Promise<ModelProviderDetail>;
     upsertCustomProvider(input: UpsertCustomProviderInput): Promise<ModelProviderDetail>;
     updateConfig(input: UpdateModelConfigInput): Promise<ModelInfo>;

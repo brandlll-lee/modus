@@ -10,6 +10,7 @@ import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { app } from "electron";
 import type {
   ConfigureProviderInput,
+  CustomProviderConfig,
   CustomProviderModelInput,
   JsonObject,
   ModelCost,
@@ -105,7 +106,11 @@ const DEFAULT_PROVIDER_ORDER = [
   "opencode",
   "opencode-go",
 ];
-const OPENAI_COMPATIBLE_CLIENT_HEADER_OVERRIDES: Record<string, string> = {
+// OpenAI and Anthropic JS SDKs are both Stainless-generated and stamp every
+// request with these fingerprint headers. We blank them (and the SDK User-Agent)
+// so custom relay endpoints receive a clean request without the vendor SDK
+// fingerprint. @google/genai uses a different pair (User-Agent + x-goog-api-client).
+const STAINLESS_CLIENT_HEADER_OVERRIDES: Record<string, string> = {
   "User-Agent": "Modus/0.1.0",
   "X-Stainless-Arch": "",
   "X-Stainless-Lang": "",
@@ -116,6 +121,17 @@ const OPENAI_COMPATIBLE_CLIENT_HEADER_OVERRIDES: Record<string, string> = {
   "X-Stainless-Runtime-Version": "",
   "X-Stainless-Timeout": "",
 };
+
+const GOOGLE_CLIENT_HEADER_OVERRIDES: Record<string, string> = {
+  "User-Agent": "Modus/0.1.0",
+  "x-goog-api-client": "",
+};
+
+/** Every header key Modus manages for fingerprint stripping (union of all protocols). */
+const MANAGED_CLIENT_HEADER_KEYS = new Set<string>([
+  ...Object.keys(STAINLESS_CLIENT_HEADER_OVERRIDES),
+  ...Object.keys(GOOGLE_CLIENT_HEADER_OVERRIDES),
+]);
 
 let registry: ModelRegistry | undefined;
 
@@ -654,7 +670,7 @@ export async function upsertCustomProvider(
   const headers = sanitizeHeaders(input.headers);
   const providerCompat = providerCompatibilityToJson(input);
   const api = input.api?.trim() || DEFAULT_CUSTOM_API;
-  const runtimeHeaders = openAiCompatibleRuntimeHeaders(api, headers);
+  const runtimeHeaders = applyClientHeaderOverrides(api, headers);
   upsertProviderConfig({
     provider,
     displayName: name,
@@ -751,15 +767,33 @@ function sanitizeHeaders(
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
-function openAiCompatibleRuntimeHeaders(
+/** Fingerprint-header overrides for a custom provider protocol, or undefined when none apply. */
+function clientHeaderOverridesFor(api: string | undefined): Record<string, string> | undefined {
+  switch (api) {
+    case "openai-completions":
+    case "anthropic-messages":
+      return STAINLESS_CLIENT_HEADER_OVERRIDES;
+    case "google-generative-ai":
+      return GOOGLE_CLIENT_HEADER_OVERRIDES;
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * Strips the vendor SDK fingerprint for a custom provider by blanking the headers
+ * the official client (openai / @anthropic-ai/sdk / @google/genai) would stamp on
+ * every request, while preserving any user-supplied headers.
+ */
+function applyClientHeaderOverrides(
   api: string | undefined,
   headers: Record<string, string> | undefined,
 ): Record<string, string> | undefined {
-  if (api !== DEFAULT_CUSTOM_API) {
+  const overrides = clientHeaderOverridesFor(api);
+  if (!overrides) {
     return headers;
   }
-
-  return { ...OPENAI_COMPATIBLE_CLIENT_HEADER_OVERRIDES, ...(headers ?? {}) };
+  return { ...overrides, ...(headers ?? {}) };
 }
 
 function normalizeCustomModelInput(input: CustomProviderModelInput): CustomProviderModelInput {
@@ -870,17 +904,15 @@ function migrateCustomProviderRuntimeConfig(): void {
 
   let changed = false;
   for (const provider of Object.values(data.providers)) {
-    if (usesOpenAiCompatibleCompletions(provider)) {
-      const headers = openAiCompatibleRuntimeHeaders(
-        DEFAULT_CUSTOM_API,
-        sanitizeHeaders(provider.headers),
-      );
-      const previousHeaders = JSON.stringify(provider.headers);
-      const nextHeaders = JSON.stringify(headers);
-      if (headers && previousHeaders !== nextHeaders) {
-        provider.headers = headers;
-        changed = true;
-      }
+    const headers = applyClientHeaderOverrides(
+      providerProtocol(provider),
+      sanitizeHeaders(provider.headers),
+    );
+    const previousHeaders = JSON.stringify(provider.headers);
+    const nextHeaders = JSON.stringify(headers);
+    if (headers && previousHeaders !== nextHeaders) {
+      provider.headers = headers;
+      changed = true;
     }
 
     for (const model of provider.models ?? []) {
@@ -907,16 +939,111 @@ function migrateCustomProviderRuntimeConfig(): void {
   }
 }
 
-function usesOpenAiCompatibleCompletions(provider: CustomProviderJson): boolean {
-  if (provider.api === DEFAULT_CUSTOM_API) {
-    return true;
-  }
-
-  return Boolean(provider.models?.some((model) => model.api === DEFAULT_CUSTOM_API));
+/**
+ * The wire protocol a stored custom provider uses: explicit provider-level api,
+ * else the first model-level api override, else the OpenAI-completions default.
+ */
+function providerProtocol(provider: CustomProviderJson): string {
+  return provider.api ?? provider.models?.find((model) => model.api)?.api ?? DEFAULT_CUSTOM_API;
 }
 
 function customProviderApiKeyReference(provider: string): string {
   return `$MODUS_${provider.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY`;
+}
+
+function stripClientHeaderOverrides(
+  headers: Record<string, string> | undefined,
+): Record<string, string> | undefined {
+  if (!headers) {
+    return undefined;
+  }
+  const result = Object.fromEntries(
+    Object.entries(headers).filter(([key]) => !MANAGED_CLIENT_HEADER_KEYS.has(key)),
+  );
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+/**
+ * Returns a custom provider's full stored config so the UI can edit it (add/edit
+ * models, change endpoint) and re-save losslessly via upsertCustomProvider. The
+ * stored api-key reference is intentionally omitted; leaving the key blank on
+ * re-save preserves the existing stored credential.
+ */
+export function getCustomProviderConfig(provider: string): CustomProviderConfig | undefined {
+  const stored = readCustomModelsJson().providers?.[provider];
+  if (!stored) {
+    return undefined;
+  }
+  const providerHeaders = stripClientHeaderOverrides(stored.headers);
+  return {
+    provider,
+    name: stored.name ?? provider,
+    baseUrl: stored.baseUrl ?? "",
+    api: stored.api ?? DEFAULT_CUSTOM_API,
+    authHeader: stored.authHeader ?? true,
+    ...(providerHeaders ? { headers: providerHeaders } : {}),
+    ...(stored.compat ? { compat: stored.compat } : {}),
+    models: (stored.models ?? []).map((model) => {
+      const modelHeaders = stripClientHeaderOverrides(model.headers);
+      return {
+        id: model.id,
+        name: model.name ?? model.id,
+        ...(model.api ? { api: model.api } : {}),
+        ...(model.baseUrl ? { baseUrl: model.baseUrl } : {}),
+        ...(modelHeaders ? { headers: modelHeaders } : {}),
+        reasoning: Boolean(model.reasoning),
+        input: normalizeModelInputKinds(model.input),
+        ...(model.contextWindow !== undefined ? { contextWindow: model.contextWindow } : {}),
+        ...(model.maxTokens !== undefined ? { maxTokens: model.maxTokens } : {}),
+        ...(model.cost ? { cost: model.cost } : {}),
+        ...(model.compat ? { compat: model.compat } : {}),
+        ...(model.thinkingLevelMap ? { thinkingLevelMap: model.thinkingLevelMap } : {}),
+      };
+    }),
+  };
+}
+
+function removeCustomModelsJson(provider: string): void {
+  const path = modelsPath();
+  const data = readCustomModelsJson();
+  if (!data.providers || !(provider in data.providers)) {
+    return;
+  }
+  delete data.providers[provider];
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(data, null, 2)}\n`, "utf-8");
+}
+
+/**
+ * Fully removes a custom provider from local state: the models.json entry, both
+ * DB config tables, the stored API key, and the default-model pointer if it
+ * referenced this provider. Refuses to touch built-in providers.
+ */
+export function deleteCustomProvider(provider: string): void {
+  const id = provider.trim();
+  const config = getProviderConfig(id);
+  const stored = readCustomModelsJson().providers?.[id];
+  if (config?.source !== "custom" && !stored) {
+    throw new Error(`Only custom providers can be removed: ${provider}`);
+  }
+
+  removeCustomModelsJson(id);
+  const db = getDatabase();
+  db.prepare("delete from model_configs where provider_id = ?").run(id);
+  db.prepare("delete from model_provider_configs where provider_id = ?").run(id);
+
+  try {
+    getModelRegistry().authStorage.remove(id);
+  } catch {
+    // No stored credential to remove.
+  }
+
+  const currentDefault = readSetting("model.default");
+  if (currentDefault?.startsWith(`${id}/`)) {
+    writeSetting("model.default", undefined);
+  }
+
+  refreshRegistry();
 }
 
 export function updateModelConfig(input: UpdateModelConfigInput): ModelInfo {

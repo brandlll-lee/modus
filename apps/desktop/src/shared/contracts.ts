@@ -146,6 +146,66 @@ export type WorktreeInfo = {
   head: string;
 };
 
+/** Branch / remote / sync state for the git review panel header + commit dialog. */
+export type GitStatusSummary = {
+  /** Current branch name, or undefined when HEAD is detached. */
+  branch?: string;
+  /** True when at least one remote is configured. */
+  hasRemote: boolean;
+  /** True when the current branch tracks an upstream ref. */
+  hasUpstream: boolean;
+  /** Commits on the current branch not yet on the upstream (push count). */
+  ahead: number;
+  /** Commits on the upstream not yet local (pull count). */
+  behind: number;
+  /** Total +added lines across the working tree (staged + unstaged). */
+  added: number;
+  /** Total -removed lines across the working tree (staged + unstaged). */
+  removed: number;
+  /** Number of staged files. */
+  stagedCount: number;
+  /** Number of unstaged (tracked-modified + untracked) files. */
+  unstagedCount: number;
+};
+
+/** Result of a commit and/or push action surfaced back to the renderer. */
+export type GitCommitResult = {
+  committed: boolean;
+  pushed: boolean;
+  /** Short commit hash when a commit was created. */
+  commit?: string;
+  /** Human-readable git output (commit + push), shown on error or as a toast. */
+  output: string;
+};
+
+/** A single git branch (local head or remote-tracking ref). */
+export type GitBranch = {
+  /** Display + checkout name. Locals are short ("main"); remotes keep the remote prefix ("origin/main"). */
+  name: string;
+  /** True for the currently checked-out local branch. */
+  current: boolean;
+  /** True for remote-tracking refs (refs/remotes/*). */
+  remote: boolean;
+  /** Upstream tracking ref for a local branch, when configured. */
+  upstream?: string;
+};
+
+/** Local + remote branch listing for the commit dialog branch switcher. */
+export type GitBranchSummary = {
+  /** Current branch name, or undefined when HEAD is detached. */
+  current?: string;
+  /** Local branches (refs/heads), current first. */
+  local: GitBranch[];
+  /** Remote-tracking branches (refs/remotes), excluding origin/HEAD. */
+  remote: GitBranch[];
+};
+
+/** Result of a network/branch git action (checkout, pull, fetch, create branch). */
+export type GitActionResult = {
+  /** Human-readable git output, shown on error or as a toast. */
+  output: string;
+};
+
 export type ContextKind =
   | "file"
   | "folder"
@@ -324,6 +384,33 @@ export type UpsertCustomProviderInput = {
   compat?: JsonObject | undefined;
   compatibility?: ProviderCompatibilityInput | undefined;
   models: CustomProviderModelInput[];
+};
+
+/** A custom provider's full stored config, returned for lossless edit round-trips. */
+export type CustomProviderModelConfig = {
+  id: string;
+  name: string;
+  api?: string;
+  baseUrl?: string;
+  headers?: Record<string, string>;
+  reasoning: boolean;
+  input: ModelInputKind[];
+  contextWindow?: number;
+  maxTokens?: number;
+  cost?: ModelCost;
+  compat?: JsonObject;
+  thinkingLevelMap?: Partial<Record<ThinkingLevel, string | null>>;
+};
+
+export type CustomProviderConfig = {
+  provider: string;
+  name: string;
+  baseUrl: string;
+  api: string;
+  authHeader: boolean;
+  headers?: Record<string, string>;
+  compat?: JsonObject;
+  models: CustomProviderModelConfig[];
 };
 
 export type UpdateModelConfigInput = {

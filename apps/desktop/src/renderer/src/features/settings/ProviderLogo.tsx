@@ -81,7 +81,7 @@ export function ProviderLogo({ provider, name, size = "md" }: ProviderLogoProps)
     <span
       aria-label={`${name ?? provider} provider logo`}
       className={cn(
-        "relative flex shrink-0 items-center justify-center overflow-hidden rounded-md border border-hairline bg-white/5 text-fg-muted shadow-composer",
+        "relative flex shrink-0 items-center justify-center overflow-hidden rounded-md border border-hairline bg-chip text-fg-muted shadow-composer",
         "transition-colors group-hover:border-hairline-strong",
         size === "lg" ? "size-10" : "size-8",
       )}
@@ -112,7 +112,7 @@ export function ProviderLogo({ provider, name, size = "md" }: ProviderLogoProps)
         ) : state === "loading" ? (
           <m.span
             animate={{ opacity: 0.7 }}
-            className="size-4 rounded bg-white/8"
+            className="size-4 rounded bg-chip-strong"
             exit={{ opacity: 0 }}
             initial={{ opacity: 0 }}
             key="loading"

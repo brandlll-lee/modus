@@ -48,6 +48,24 @@ import type {
   PromptAgentInput,
 } from "./runtime";
 import { deriveSessionTitle, shouldReplaceSessionTitle } from "./session-title";
+import { describeAgentShellForPrompt, resolveAgentShell } from "./shell-resolver";
+
+/**
+ * Appended to the agent's system prompt so responses render well in Modus's
+ * Markdown UI. PI's default prompt gives no formatting guidance, so models tend
+ * to emit one dense paragraph (single newlines collapse to spaces in Markdown).
+ * This mirrors the structured-output guidance Codex/ChatGPT use.
+ */
+const RESPONSE_FORMAT_GUIDANCE = `<response_formatting>
+Format substantive answers as clean GitHub-flavored Markdown so they render well in the UI:
+- Separate paragraphs with a blank line. Do not write one long wall of text.
+- Use \`##\`/\`###\` headings to label sections of longer answers.
+- Use \`-\` bullet lists for 3+ related points; keep each bullet to one line.
+- Wrap file paths, commands, code identifiers, and values in backticks.
+- Use fenced code blocks with a language tag for code.
+- Prefer short paragraphs and lists over a single dense block.
+Skip heavy formatting for one-line answers, greetings, or simple confirmations.
+</response_formatting>`;
 
 type SdkRuntimeSession = {
   info: AgentSessionInfo;
@@ -116,6 +134,31 @@ export class PiSdkRuntime implements AgentRuntime {
     return runtimeSession.info;
   }
 
+  private async createSessionResources(
+    cwd: string,
+    sessionId: string,
+    emit: EmitAgentEvent,
+    agentDir: string,
+  ): Promise<{ settingsManager: SettingsManager; loader: DefaultResourceLoader }> {
+    // Inject a cross-platform-resolved POSIX shell so the bash tool works out of
+    // the box (notably on Windows, where PI's default picks the broken WSL stub),
+    // and tell the model which shell it's actually driving.
+    const shell = resolveAgentShell();
+    const settingsManager = SettingsManager.inMemory({
+      compaction: { enabled: true },
+      ...(shell.shellPath ? { shellPath: shell.shellPath } : {}),
+    });
+    const loader = new DefaultResourceLoader({
+      cwd,
+      agentDir,
+      extensionFactories: [createModusPermissionExtension(sessionId, emit)],
+      settingsManager,
+      appendSystemPrompt: [describeAgentShellForPrompt(shell), RESPONSE_FORMAT_GUIDANCE],
+    });
+    await loader.reload();
+    return { settingsManager, loader };
+  }
+
   async create(window: BrowserWindow, input: CreateAgentRuntimeInput): Promise<AgentSessionInfo> {
     const emit: EmitAgentEvent = (event) => {
       recordAgentEvent(event);
@@ -154,14 +197,12 @@ export class PiSdkRuntime implements AgentRuntime {
     mkdirSync(agentDir, { recursive: true });
     mkdirSync(sessionDir, { recursive: true });
 
-    const settingsManager = SettingsManager.inMemory({ compaction: { enabled: true } });
-    const loader = new DefaultResourceLoader({
-      cwd: effectiveCwd,
+    const { settingsManager, loader } = await this.createSessionResources(
+      effectiveCwd,
+      info.id,
+      emit,
       agentDir,
-      extensionFactories: [createModusPermissionExtension(info.id, emit)],
-      settingsManager,
-    });
-    await loader.reload();
+    );
 
     const sessionOptions: Parameters<typeof createAgentSession>[0] = {
       cwd: effectiveCwd,
@@ -223,14 +264,12 @@ export class PiSdkRuntime implements AgentRuntime {
     mkdirSync(agentDir, { recursive: true });
     mkdirSync(sessionDir, { recursive: true });
 
-    const settingsManager = SettingsManager.inMemory({ compaction: { enabled: true } });
-    const loader = new DefaultResourceLoader({
-      cwd: info.cwd,
+    const { settingsManager, loader } = await this.createSessionResources(
+      info.cwd,
+      info.id,
+      emit,
       agentDir,
-      extensionFactories: [createModusPermissionExtension(info.id, emit)],
-      settingsManager,
-    });
-    await loader.reload();
+    );
 
     const selectedModel = findModel(info.model) ?? getDefaultModel();
     if (!selectedModel) {

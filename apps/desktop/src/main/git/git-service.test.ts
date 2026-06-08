@@ -5,7 +5,9 @@ import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   commitChanges,
+  commitOrPush,
   discardFile,
+  getStatusSummary,
   listChanges,
   readDiff,
   stageFile,
@@ -80,5 +82,62 @@ describe("git-service", () => {
     await discardFile(repo, "tracked.txt");
 
     expect(await listChanges(repo)).toEqual([]);
+  });
+
+  it("summarizes branch, counts, and stat without an upstream", async () => {
+    await writeFile(join(repo, "tracked.txt"), "changed\n");
+    await stageFile(repo, "tracked.txt");
+    await writeFile(join(repo, "new.txt"), "new\n");
+
+    const summary = await getStatusSummary(repo);
+
+    expect(summary.branch).toBeTruthy();
+    expect(summary.hasUpstream).toBe(false);
+    expect(summary.stagedCount).toBe(1);
+    expect(summary.unstagedCount).toBe(1);
+    expect(summary.added).toBeGreaterThan(0);
+  });
+
+  it("stages all and commits via commitOrPush", async () => {
+    await writeFile(join(repo, "tracked.txt"), "changed\n");
+    await writeFile(join(repo, "new.txt"), "new\n");
+
+    const result = await commitOrPush(repo, {
+      message: "commit everything",
+      stageAll: true,
+      commit: true,
+      push: false,
+    });
+
+    expect(result.committed).toBe(true);
+    expect(result.pushed).toBe(false);
+    expect(result.commit).toMatch(/^[0-9a-f]{7,}$/);
+    expect(await listChanges(repo)).toEqual([]);
+  });
+
+  it("commits and pushes to a configured remote, setting upstream", async () => {
+    const remote = await mkdtemp(join(process.cwd(), "modus-git-remote-"));
+    try {
+      await execFileAsync("git", ["init", "--bare"], { cwd: remote, windowsHide: true });
+      await git(["remote", "add", "origin", remote]);
+
+      await writeFile(join(repo, "tracked.txt"), "changed\n");
+      const result = await commitOrPush(repo, {
+        message: "push me",
+        stageAll: true,
+        commit: true,
+        push: true,
+      });
+
+      expect(result.committed).toBe(true);
+      expect(result.pushed).toBe(true);
+
+      const summary = await getStatusSummary(repo);
+      expect(summary.hasRemote).toBe(true);
+      expect(summary.hasUpstream).toBe(true);
+      expect(summary.ahead).toBe(0);
+    } finally {
+      await rm(remote, { recursive: true, force: true });
+    }
   });
 });

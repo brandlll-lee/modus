@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" shape-rendering="crispEdges" role="img" aria-label="Modus">
+  <!-- Auto-generated from modus-logo.png by scripts/build-logo-sprite.cjs.
+       Parts are segmented from the silhouette's per-row run signature
+       (2 runs = eyes, 1 = body, 3 = legs). Refine groups/anchors by hand,
+       then animate each <g> with motion (transform-only, GPU-composited). -->
+  <g id="modus-bot">
+    <g id="eye-l">
+      <rect x="18" y="11" width="8" height="19" fill="#863ff5"/>
+    </g>
+    <g id="eye-r">
+      <rect x="37" y="11" width="11" height="19" fill="#863ff5"/>
+    </g>
+    <g id="body">
+      <rect x="7" y="30" width="52" height="11" fill="#863ff5"/>
+    </g>
+    <g id="leg-1">
+      <rect x="7" y="41" width="11" height="10" fill="#863ff5"/>
+      <rect x="7" y="51" width="10" height="1" fill="#863ff5"/>
+    </g>
+    <g id="leg-2">
+      <rect x="26" y="41" width="11" height="10" fill="#863ff5"/>
+      <rect x="27" y="51" width="9" height="1" fill="#863ff5"/>
+    </g>
+    <g id="leg-3">
+      <rect x="48" y="41" width="11" height="10" fill="#863ff5"/>
+      <rect x="48" y="51" width="10" height="1" fill="#863ff5"/>
+    </g>
+  </g>
+</svg>

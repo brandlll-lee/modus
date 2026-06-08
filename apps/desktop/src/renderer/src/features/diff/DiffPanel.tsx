@@ -13,7 +13,7 @@ import {
   IconFileTypeSvg,
   IconFileTypeTs,
   IconFileTypeTsx,
-  IconFolder,
+  IconGitBranch,
   IconGitCommit,
   IconJson,
   IconMarkdown,
@@ -25,11 +25,12 @@ import {
   IconTrash,
 } from "@tabler/icons-react";
 import { AnimatePresence, m } from "motion/react";
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
-import type { AgentReviewResult, FileChange } from "../../../../shared/contracts";
+import { memo, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import type { AgentReviewResult, FileChange, GitStatusSummary } from "../../../../shared/contracts";
 import { EmptyState, PanelHeader } from "../../components/ui/Panel";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
+import { CommitDialog } from "./CommitDialog";
 
 type DiffPanelProps = {
   cwd?: string | undefined;
@@ -40,25 +41,30 @@ type DiffPanelProps = {
 export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
   const [changes, setChanges] = useState<FileChange[]>([]);
   const [selectedPath, setSelectedPath] = useState<string | undefined>();
-  const [commitMessage, setCommitMessage] = useState("");
   const [review, setReview] = useState<AgentReviewResult | undefined>();
   const [summaryDiff, setSummaryDiff] = useState("");
   const [selectedDiff, setSelectedDiff] = useState("");
+  const [status, setStatus] = useState<GitStatusSummary | undefined>();
 
   const refreshChanges = useCallback(async (targetCwd: string | undefined): Promise<void> => {
     if (!targetCwd) {
       setChanges([]);
       setSummaryDiff("");
       setSelectedDiff("");
+      setStatus(undefined);
       return;
     }
 
-    const nextChanges = await window.modus.diff.list(targetCwd);
-    const nextSummary = await window.modus.diff.read({ cwd: targetCwd });
-    const reviews = await window.modus.review.list(targetCwd);
+    const [nextChanges, nextSummary, reviews, nextStatus] = await Promise.all([
+      window.modus.diff.list(targetCwd),
+      window.modus.diff.read({ cwd: targetCwd }),
+      window.modus.review.list(targetCwd),
+      window.modus.diff.status(targetCwd).catch(() => undefined),
+    ]);
     setChanges(nextChanges);
     setSummaryDiff(nextSummary.diff);
     setReview(reviews[0]);
+    setStatus(nextStatus);
     setSelectedPath(nextChanges[0]?.path);
   }, []);
 
@@ -82,7 +88,6 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
 
   const selectedTotals = useMemo(() => getDiffTotals(selectedDiff), [selectedDiff]);
   const summaryTotals = useMemo(() => getDiffTotals(summaryDiff), [summaryDiff]);
-  const hasStagedChanges = useMemo(() => changes.some((change) => change.staged), [changes]);
   const groupedChanges = useMemo(
     () => [
       { title: "Staged", items: changes.filter((change) => change.staged) },
@@ -103,17 +108,14 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
     await refreshChanges(cwd);
   }
 
-  async function commit(): Promise<void> {
-    if (!cwd || !commitMessage.trim() || !hasStagedChanges) return;
-    await window.modus.diff.commit({ cwd, message: commitMessage.trim() });
-    setCommitMessage("");
-    await refreshChanges(cwd);
-  }
-
   async function startReview(): Promise<void> {
     if (!cwd) return;
     setReview(await window.modus.review.start({ cwd, sessionId, workspaceId }));
   }
+
+  const cwdLabel = cwd?.split(/[\\/]/).filter(Boolean).at(-1) ?? "workspace";
+  // Stable identity so the memoized launcher only re-renders when cwd actually changes.
+  const onCommitRefresh = useCallback(() => refreshChanges(cwd), [cwd, refreshChanges]);
 
   return (
     <section className="flex h-full min-h-0 flex-col">
@@ -130,21 +132,21 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
       </PanelHeader>
 
       <div className="scroll-thin min-h-0 flex-1 overflow-y-auto">
-        {changes.length === 0 ? (
-          <EmptyState
-            className="h-full"
-            hint={cwd ? "No Local Changes" : "Open a workspace to review changes."}
-            icon={<IconFileDiff size={22} stroke={1.4} />}
-          />
-        ) : (
-          <div>
-            <div className="flex h-10 items-center gap-2 border-hairline border-b px-3 text-sm text-fg">
-              <IconFolder className="text-fg-subtle" size={15} stroke={1.65} />
-              <span>{changes.length} Uncommitted Changes</span>
-              <IconChevronDown className="text-fg-faint" size={13} stroke={1.7} />
-              <span className="font-mono text-success">+{summaryTotals.added}</span>
-              <span className="font-mono text-danger">-{summaryTotals.removed}</span>
-              <div className="ml-auto flex items-center gap-1">
+        {cwd ? (
+          <>
+            {/* Toolbar — branch · counts · stat · Commit or push (对标图1) */}
+            <div className="flex h-11 items-center gap-2 border-hairline border-b px-3">
+              <Tooltip content={cwd} side="bottom" sideOffset={6}>
+                <span className="flex min-w-0 items-center gap-1.5 text-sm text-fg-muted">
+                  <IconGitBranch className="shrink-0 text-fg-subtle" size={14} stroke={1.7} />
+                  <span className="max-w-[120px] truncate">{status?.branch ?? "detached"}</span>
+                </span>
+              </Tooltip>
+              <span className="flex items-center gap-1.5 font-mono text-xs">
+                <span className="text-success">+{summaryTotals.added}</span>
+                <span className="text-danger">-{summaryTotals.removed}</span>
+              </span>
+              <div className="ml-auto flex shrink-0 items-center gap-1">
                 <Tooltip content="Review current diff" side="bottom" sideOffset={6}>
                   <button
                     aria-label="Review current diff"
@@ -155,8 +157,10 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
                     <IconReportSearch size={15} stroke={1.65} />
                   </button>
                 </Tooltip>
+                <CommitLauncher cwd={cwd} onRefresh={onCommitRefresh} status={status} />
               </div>
             </div>
+
             {review ? (
               <div className="border-hairline-soft border-b px-3 py-2 text-xs text-fg-subtle">
                 <div>{review.summary}</div>
@@ -167,26 +171,17 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
                 ))}
               </div>
             ) : null}
-            <div className="flex gap-1 border-hairline-soft border-b p-2">
-              <input
-                className="min-w-0 flex-1 rounded-md border border-hairline bg-transparent px-2 text-xs text-fg outline-none placeholder:text-fg-faint"
-                onChange={(event) => setCommitMessage(event.target.value)}
-                placeholder="Commit message"
-                value={commitMessage}
-              />
-              <button
-                className="flex items-center gap-1 rounded-md border border-hairline px-2 text-xs text-fg-subtle transition-colors hover:bg-hover hover:text-fg disabled:opacity-40"
-                disabled={!commitMessage.trim() || !hasStagedChanges}
-                onClick={() => void commit()}
-                title={
-                  hasStagedChanges ? "Commit staged changes" : "Stage at least one file to commit"
-                }
-                type="button"
-              >
-                <IconGitCommit size={14} stroke={1.65} />
-                Commit
-              </button>
-            </div>
+          </>
+        ) : null}
+
+        {changes.length === 0 ? (
+          <EmptyState
+            className={cwd ? "min-h-[260px]" : "h-full"}
+            hint={cwd ? `No Local Changes in ${cwdLabel}` : "Open a workspace to review changes."}
+            icon={<IconFileDiff size={22} stroke={1.4} />}
+          />
+        ) : (
+          <div>
             {groupedChanges.map((group) =>
               group.items.length > 0 ? (
                 <div key={group.title}>
@@ -205,7 +200,7 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
                           className={cn(
                             "group flex h-10 w-full items-center gap-2 px-3 text-left text-sm transition-colors",
                             selected
-                              ? "bg-white/[0.025] text-fg"
+                              ? "bg-chip-faint text-fg"
                               : "text-fg-muted hover:bg-hover hover:text-fg",
                           )}
                         >
@@ -338,6 +333,49 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
     </section>
   );
 }
+
+/**
+ * Owns the commit dialog's open state in a tiny isolated subtree.
+ *
+ * Why this exists: the dialog open/close was janky on repos with many changed
+ * files. The state used to live in `DiffPanel`, so every open/close re-rendered
+ * the entire change list (hundreds of rows + Base UI tooltips) on the same frame
+ * as the dialog's enter/exit animation. Hoisting the toggle here means flipping
+ * it only re-renders this button + the dialog, never the list. `memo` keeps it
+ * still while the user clicks around the list.
+ */
+const CommitLauncher = memo(function CommitLauncher({
+  cwd,
+  status,
+  onRefresh,
+}: {
+  cwd: string | undefined;
+  status: GitStatusSummary | undefined;
+  onRefresh(): void | Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const ahead = status?.ahead ?? 0;
+  return (
+    <>
+      <button
+        className="flex items-center gap-1.5 rounded-md border border-hairline bg-surface px-2.5 py-1 text-xs text-fg transition-colors hover:bg-hover disabled:opacity-40"
+        disabled={!cwd}
+        onClick={() => setOpen(true)}
+        type="button"
+      >
+        <IconGitCommit size={14} stroke={1.7} />
+        Commit or push{ahead ? ` ${ahead}` : ""}
+      </button>
+      <CommitDialog
+        cwd={cwd}
+        onOpenChange={setOpen}
+        onRefresh={onRefresh}
+        open={open}
+        status={status}
+      />
+    </>
+  );
+});
 
 function FileIcon({ path }: { path: string }) {
   return (

@@ -188,3 +188,12 @@ export function listAgentSessions(): AgentSessionInfo[] {
 
   return rows.map(toSession);
 }
+
+/**
+ * Permanently removes a session and (via `on delete cascade`) its recorded
+ * events and runs. Used by the sidebar "Archive" action, which clears the
+ * conversation from the list.
+ */
+export function deleteAgentSession(sessionId: string): void {
+  getDatabase().prepare("delete from agent_sessions where id = ?").run(sessionId);
+}

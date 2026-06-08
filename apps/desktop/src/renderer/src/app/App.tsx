@@ -7,6 +7,7 @@ import {
   IconDeviceLaptop,
   IconFolder,
   IconGitBranch,
+  IconLayoutSidebar,
   IconLayoutSidebarRight,
   IconListDetails,
   IconSettings,
@@ -29,8 +30,10 @@ import type {
   ThinkingLevel,
   WorkspaceInfo,
 } from "../../../shared/contracts";
+import modusLogo from "../assets/modus-logo.png";
 import { Sidebar } from "../components/Sidebar";
-import { Tooltip, TooltipProvider } from "../components/ui/Tooltip";
+import { ToolbarButton } from "../components/ui/ToolbarButton";
+import { TooltipProvider } from "../components/ui/Tooltip";
 import { Timeline } from "../features/agent/Timeline";
 import { Composer } from "../features/composer/Composer";
 import { Inspector } from "../features/inspector/Inspector";
@@ -38,6 +41,14 @@ import { SettingsPanel } from "../features/settings/SettingsPanel";
 import { cn } from "../lib/cn";
 
 type AgentEventItem = { id: string; event: AgentEvent; createdAt?: string };
+
+/**
+ * Coalesce streamed agent events into one React update every ~40ms (~25fps of
+ * state commits) instead of one per animation frame (~60fps). Per AI SDK
+ * guidance (~50ms throttle), this cuts markdown re-render frequency without a
+ * perceptible lag, which keeps the timeline smooth during fast token streams.
+ */
+const AGENT_EVENT_FLUSH_MS = 40;
 
 export function App() {
   const [securityState, setSecurityState] = useState<SecurityState | null>(null);
@@ -51,7 +62,8 @@ export function App() {
   const [model, setModel] = useState("");
   const [modelSettings, setModelSettings] = useState<ModelSettingsState | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [inspectorOpen, setInspectorOpen] = useState(true);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
   const [inspectorWidth, setInspectorWidth] = useState(384);
   const [environmentStats, setEnvironmentStats] = useState({ added: 0, removed: 0 });
   const [sessionCreateError, setSessionCreateError] = useState<string | undefined>();
@@ -79,7 +91,10 @@ export function App() {
       if (queuedAgentEventsFrameRef.current !== undefined) {
         return;
       }
-      queuedAgentEventsFrameRef.current = requestAnimationFrame(flushQueuedAgentEvents);
+      queuedAgentEventsFrameRef.current = window.setTimeout(
+        flushQueuedAgentEvents,
+        AGENT_EVENT_FLUSH_MS,
+      );
     },
     [flushQueuedAgentEvents],
   );
@@ -87,7 +102,7 @@ export function App() {
   const clearQueuedAgentEvents = useCallback((): void => {
     queuedAgentEventsRef.current = [];
     if (queuedAgentEventsFrameRef.current !== undefined) {
-      cancelAnimationFrame(queuedAgentEventsFrameRef.current);
+      window.clearTimeout(queuedAgentEventsFrameRef.current);
       queuedAgentEventsFrameRef.current = undefined;
     }
   }, []);
@@ -225,6 +240,22 @@ export function App() {
       });
   }
 
+  async function archiveSession(session: AgentSessionInfo): Promise<void> {
+    try {
+      await window.modus.agent.delete(session.id);
+    } catch (error) {
+      setPromptError(error instanceof Error ? error.message : String(error));
+      return;
+    }
+    // If the archived session is the open one, drop back to the empty state.
+    if (agentSession?.id === session.id) {
+      setAgentSession(null);
+      clearQueuedAgentEvents();
+      setAgentEvents([]);
+    }
+    setAgentSessions(await window.modus.agent.list());
+  }
+
   async function submitPrompt(
     message: string,
     context: ContextItem[],
@@ -356,6 +387,28 @@ export function App() {
     });
   });
 
+  // The typewriter grows visible content via component-local state (no App
+  // re-render), so the effect above won't fire on those frames. A ResizeObserver
+  // on the scroll content keeps the view pinned to the bottom while text reveals,
+  // unless the user has scrolled up.
+  useEffect(() => {
+    if (!hasSession) {
+      return;
+    }
+    const container = timelineViewportRef.current;
+    const content = container?.firstElementChild;
+    if (!container || !content) {
+      return;
+    }
+    const observer = new ResizeObserver(() => {
+      if (shouldFollowTimelineRef.current) {
+        container.scrollTop = container.scrollHeight;
+      }
+    });
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [hasSession]);
+
   return (
     // LazyMotion + domAnimation：只加载 transform/opacity 等 DOM 动画 features，bundle 缩减 60%、
     // 减少 SSR/初始化 cost。所有 motion. 改用更轻量的 m. 组件。
@@ -381,18 +434,39 @@ export function App() {
                   agentSession={agentSession}
                   agentSessions={agentSessions}
                   canCreateSession={Boolean(activeWorkspace) && !hasSession && Boolean(model)}
+                  collapsed={sidebarCollapsed}
+                  onArchiveSession={(session) => void archiveSession(session)}
                   onNewSession={() => void ensureSession()}
                   onNewWorkspaceSession={(workspace) => void createSession(workspace)}
                   onOpenWorkspace={() => void openWorkspace()}
                   onOpenSettings={() => setSettingsOpen(true)}
                   onSelectSession={(session) => void selectSession(session)}
                   onSelectWorkspace={setActiveWorkspace}
+                  onToggleCollapsed={() => setSidebarCollapsed((collapsed) => !collapsed)}
                   workspaces={workspaces}
                 />
 
                 <main className="relative flex min-w-0 flex-1 flex-col bg-canvas">
                   <header className="relative flex h-9 shrink-0 items-center px-3">
-                    <div className="flex flex-1 items-center">
+                    <div className="app-no-drag flex flex-1 items-center gap-1.5">
+                      <AnimatePresence initial={false}>
+                        {sidebarCollapsed ? (
+                          <m.div
+                            animate={{ opacity: 1, width: "auto" }}
+                            className="overflow-hidden"
+                            exit={{ opacity: 0, width: 0 }}
+                            initial={{ opacity: 0, width: 0 }}
+                            transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+                          >
+                            <ToolbarButton
+                              label="Show left sidebar"
+                              onClick={() => setSidebarCollapsed(false)}
+                            >
+                              <IconLayoutSidebar size={15} stroke={1.65} />
+                            </ToolbarButton>
+                          </m.div>
+                        ) : null}
+                      </AnimatePresence>
                       {!hasSession ? <ChatTopBar activeWorkspace={activeWorkspace} /> : null}
                     </div>
                     <div className="flex flex-1 items-center justify-end pr-2">
@@ -427,7 +501,7 @@ export function App() {
                         transition={{ duration: 0.12, ease: "easeOut" }}
                       >
                         <div
-                          className="scroll-thin min-h-0 flex-1 overflow-y-auto overscroll-contain"
+                          className="scroll-thin min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable_both-edges]"
                           onScroll={handleTimelineScroll}
                           ref={timelineViewportRef}
                         >
@@ -439,7 +513,7 @@ export function App() {
                           />
                         </div>
                         <div className="shrink-0 px-6 pb-5">
-                          <div className="mx-auto max-w-4xl">
+                          <div className="mx-auto max-w-5xl">
                             <Composer
                               canSubmit={Boolean(activeWorkspace) && Boolean(model)}
                               contextItems={contextItems}
@@ -553,22 +627,8 @@ function MenuBar() {
 
 function BrandMark() {
   return (
-    <div className="mr-1 flex size-7 items-center justify-center text-fg-muted">
-      <svg
-        aria-hidden
-        fill="none"
-        height="15"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="1.7"
-        viewBox="0 0 24 24"
-        width="15"
-      >
-        <title>Modus</title>
-        <path d="M12 2.5l9 5v9l-9 5-9-5v-9z" />
-        <path d="M12 7.5l4.5 2.5v5L12 17.5 7.5 15v-5z" />
-      </svg>
+    <div className="mr-1 flex size-7 items-center justify-center">
+      <img alt="Modus" className="size-[18px] object-contain" src={modusLogo} />
     </div>
   );
 }
@@ -711,13 +771,13 @@ function HeaderActions({
   return (
     <div className="app-no-drag flex h-7 items-center gap-1">
       <EnvironmentPopover activeWorkspace={activeWorkspace} environmentStats={environmentStats} />
-      <HeaderIconButton
+      <ToolbarButton
         active={inspectorOpen}
         label={inspectorOpen ? "Hide right sidebar" : "Show right sidebar"}
         onClick={onToggleInspector}
       >
         <IconLayoutSidebarRight size={15} stroke={1.65} />
-      </HeaderIconButton>
+      </ToolbarButton>
     </div>
   );
 }
@@ -925,34 +985,6 @@ function mergeAdjacentAgentEvent(
   return undefined;
 }
 
-function HeaderIconButton({
-  children,
-  label,
-  active = false,
-  onClick,
-}: {
-  children: ReactNode;
-  label: string;
-  active?: boolean;
-  onClick?: () => void;
-}) {
-  return (
-    <Tooltip content={label}>
-      <button
-        aria-label={label}
-        className={cn(
-          "flex size-7 items-center justify-center rounded-md transition-colors hover:bg-hover hover:text-fg-subtle",
-          active ? "bg-active text-fg-subtle" : "text-fg-faint",
-        )}
-        onClick={onClick}
-        type="button"
-      >
-        {children}
-      </button>
-    </Tooltip>
-  );
-}
-
 function Pill({
   children,
   onClick,
@@ -966,7 +998,7 @@ function Pill({
 }) {
   return (
     <button
-      className="flex items-center gap-1.5 rounded-full border border-hairline bg-white/2.5 px-3 py-[5px] text-xs font-normal text-fg-muted transition-colors hover:bg-white/6 hover:text-fg active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-white/2.5 disabled:hover:text-fg-muted"
+      className="flex items-center gap-1.5 rounded-full border border-hairline bg-chip-faint px-3 py-[5px] text-xs font-normal text-fg-muted transition-colors hover:bg-chip hover:text-fg active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-chip-faint disabled:hover:text-fg-muted"
       disabled={disabled}
       onClick={onClick}
       type="button"

@@ -1,10 +1,13 @@
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { BrowserWindow, shell } from "electron";
+import { app, BrowserWindow, shell } from "electron";
 import { IPC_CHANNELS } from "../ipc/channels";
 
 const currentDir = fileURLToPath(new URL(".", import.meta.url));
 const EXTERNAL_PROTOCOLS = new Set(["https:", "http:"]);
+const appIconPath = app.isPackaged
+  ? join(process.resourcesPath, "icon.png")
+  : join(currentDir, "../../resources/icon.png");
 
 function isExternalUrlAllowed(rawUrl: string): boolean {
   try {
@@ -23,6 +26,7 @@ export function createMainWindow(): BrowserWindow {
     minWidth: 1120,
     minHeight: 720,
     title: "Modus",
+    icon: appIconPath,
     backgroundColor: "#131314",
     show: false,
     // 彻底放弃 Windows native window controls overlay —— 它的 caption buttons 绘制 + hover 命中区
