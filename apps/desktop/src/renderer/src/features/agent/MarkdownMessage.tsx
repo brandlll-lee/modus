@@ -1,4 +1,4 @@
-import { Component, lazy, Suspense, type ErrorInfo, type ReactNode } from "react";
+import { Component, type ErrorInfo, lazy, type ReactNode, Suspense } from "react";
 
 type MarkdownMessageProps = {
   content: string;

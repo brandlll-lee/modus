@@ -18,7 +18,15 @@ function shellLabel(shell: string): string {
   return base.replace(/\.exe$/i, "") || shell;
 }
 
-type TerminalTab = TerminalInfo & { exited?: boolean; exitCode?: number };
+type TerminalTab = TerminalInfo;
+
+/** Agent terminals show their command; user shells show the shell name. */
+function tabLabel(tab: TerminalTab): string {
+  if (tab.origin === "agent") {
+    return tab.title ?? tab.command ?? "agent";
+  }
+  return shellLabel(tab.shell);
+}
 
 /**
  * Per-PTY routing slot owned at the panel level. The panel subscribes to the
@@ -246,10 +254,10 @@ function TerminalView({
       }
       void window.modus.terminal.resize({ terminalId: tab.id, cols: term.cols, rows: term.rows });
       term.scrollToBottom();
-      if (!tab.exited) term.focus();
+      if (tab.status !== "exited") term.focus();
     });
     return () => cancelAnimationFrame(raf);
-  }, [active, tab.id, tab.exited]);
+  }, [active, tab.id, tab.status]);
 
   return (
     <div className={cn("absolute inset-0 px-2.5 py-1.5", !active && "hidden")} ref={hostRef} />
@@ -272,6 +280,14 @@ export function TerminalPanel({ workspaceId, cwd, active = true }: TerminalPanel
   useEffect(() => {
     const registry = registryRef.current;
     const unsubscribe = window.modus.terminal.onEvent((event: TerminalEvent) => {
+      // A terminal opened elsewhere (the agent running a command) — surface it
+      // as a live tab so the user can watch it, deduping against local spawns.
+      if (event.type === "terminal.created") {
+        const info = event.terminal;
+        if (workspaceId && info.workspaceId !== workspaceId) return;
+        setTabs((prev) => (prev.some((item) => item.id === info.id) ? prev : [...prev, info]));
+        return;
+      }
       let entry = registry.get(event.terminalId);
       if (!entry) {
         entry = { buffer: [] };
@@ -287,14 +303,19 @@ export function TerminalPanel({ workspaceId, cwd, active = true }: TerminalPanel
         setTabs((prev) =>
           prev.map((item) =>
             item.id === event.terminalId
-              ? { ...item, exited: true, exitCode: event.exitCode }
+              ? {
+                  ...item,
+                  status: "exited" as const,
+                  exitCode: event.exitCode,
+                  endedAt: new Date().toISOString(),
+                }
               : item,
           ),
         );
       }
     });
     return unsubscribe;
-  }, []);
+  }, [workspaceId]);
 
   const spawn = useCallback(async (): Promise<void> => {
     if (!workspaceId || !cwd || spawning.current) return;
@@ -332,7 +353,7 @@ export function TerminalPanel({ workspaceId, cwd, active = true }: TerminalPanel
   }, [active, workspaceId, cwd, spawn]);
 
   const closeTab = useCallback((id: string): void => {
-    void window.modus.terminal.kill(id).catch(() => {});
+    void window.modus.terminal.remove(id).catch(() => {});
     registryRef.current.delete(id);
     const prev = tabsRef.current;
     const index = prev.findIndex((item) => item.id === id);
@@ -355,8 +376,13 @@ export function TerminalPanel({ workspaceId, cwd, active = true }: TerminalPanel
       <div className="flex h-9 shrink-0 items-center justify-between gap-2 border-hairline border-b px-2">
         <div className="flex min-w-0 items-center gap-2 text-sm text-fg">
           <IconTerminal2 className="shrink-0 text-fg-subtle" size={15} stroke={1.65} />
-          <span className="truncate">{activeTab ? shellLabel(activeTab.shell) : "Terminal"}</span>
-          {activeTab?.exited ? (
+          <span className="truncate">{activeTab ? tabLabel(activeTab) : "Terminal"}</span>
+          {activeTab?.origin === "agent" ? (
+            <span className="shrink-0 rounded bg-accent-soft px-1 py-px font-medium text-2xs text-accent">
+              Agent
+            </span>
+          ) : null}
+          {activeTab?.status === "exited" ? (
             <span className="shrink-0 font-mono text-2xs text-fg-faint">
               exited {activeTab.exitCode}
             </span>
@@ -364,7 +390,7 @@ export function TerminalPanel({ workspaceId, cwd, active = true }: TerminalPanel
         </div>
         <div className="flex shrink-0 items-center gap-0.5">
           <TermAction
-            disabled={!activeTab || activeTab.exited}
+            disabled={!activeTab || activeTab.status === "exited"}
             label="Clear terminal"
             onClick={clearActive}
           >
@@ -440,13 +466,14 @@ function TerminalTabRow({
   onSelect(): void;
   onClose(): void;
 }) {
+  const exited = tab.status === "exited";
   return (
     <m.div
       animate={{ opacity: 1, y: 0 }}
       className={cn(
         "group flex h-7 items-center gap-1 rounded-md pr-1 pl-2 transition-colors",
         active ? "bg-active text-fg" : "text-fg-muted hover:bg-hover hover:text-fg",
-        tab.exited && "opacity-50",
+        exited && "opacity-50",
       )}
       initial={{ opacity: 0, y: 2 }}
       transition={{ duration: 0.14, ease: [0.22, 1, 0.36, 1] }}
@@ -454,10 +481,17 @@ function TerminalTabRow({
       <button
         className="flex min-w-0 flex-1 items-center gap-2 text-left text-sm"
         onClick={onSelect}
+        title={tab.command ?? tabLabel(tab)}
         type="button"
       >
-        <IconTerminal2 className="shrink-0 text-fg-subtle" size={14} stroke={1.65} />
-        <span className="min-w-0 flex-1 truncate">{shellLabel(tab.shell)}</span>
+        <span
+          aria-hidden
+          className={cn(
+            "size-1.5 shrink-0 rounded-full",
+            exited ? "bg-fg-faint" : tab.origin === "agent" ? "bg-accent" : "bg-success",
+          )}
+        />
+        <span className="min-w-0 flex-1 truncate">{tabLabel(tab)}</span>
       </button>
       <button
         aria-label="Close terminal"

@@ -1,5 +1,6 @@
 import { app, BrowserWindow } from "electron";
 import { registerAppIpc } from "./ipc/register-app-ipc";
+import { disposeAllMcp } from "./mcp/mcp-service";
 import { createMainWindow } from "./windows/main-window";
 
 let mainWindow: BrowserWindow | null = null;
@@ -47,5 +48,10 @@ if (!app.requestSingleInstanceLock()) {
     if (process.platform !== "darwin") {
       app.quit();
     }
+  });
+
+  // Close MCP transports on quit so stdio servers never outlive the app.
+  app.on("before-quit", () => {
+    void disposeAllMcp();
   });
 }

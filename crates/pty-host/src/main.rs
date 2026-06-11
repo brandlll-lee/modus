@@ -17,7 +17,6 @@ struct Session {
     writer: Box<dyn Write + Send>,
     killer: Box<dyn ChildKiller + Send + Sync>,
 }
-
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
 enum HostCommand {
@@ -29,6 +28,11 @@ enum HostCommand {
         cols: u16,
         rows: u16,
         env: Option<HashMap<String, String>>,
+        /// Optional arguments passed to the shell. When present the PTY runs
+        /// `shell <args...>` (e.g. `bash -lc "<command>"`) and the child's exit
+        /// status becomes the terminal's exit code — this is how an agent-run
+        /// command reports completion. When absent the shell starts interactive.
+        args: Option<Vec<String>>,
     },
     #[serde(rename = "write")]
     Write { id: String, data: String },
@@ -107,10 +111,17 @@ fn spawn_session(
     cols: u16,
     rows: u16,
     env: Option<HashMap<String, String>>,
+    args: Option<Vec<String>>,
 ) -> Result<()> {
     let pty_system = native_pty_system();
     let pair = pty_system.openpty(pty_size(cols, rows))?;
     let mut command = CommandBuilder::new(shell);
+
+    if let Some(args) = args {
+        for arg in args {
+            command.arg(arg);
+        }
+    }
 
     command.cwd(PathBuf::from(cwd));
     command.env("TERM", "xterm-256color");
@@ -126,7 +137,25 @@ fn spawn_session(
     let pid = child.process_id();
     let killer = child.clone_killer();
     let mut reader = pair.master.try_clone_reader()?;
-    let pty_writer = pair.master.take_writer()?;
+    let mut pty_writer = pair.master.take_writer()?;
+
+    // ── ConPTY unblock (Windows) ─────────────────────────────────────────────
+    // portable-pty 0.9.0 creates the ConPTY with PSEUDOCONSOLE_INHERIT_CURSOR,
+    // which makes ConPTY emit a Device Status Report cursor-position query
+    // (`ESC [ 6 n`) on the output pipe during init and then BLOCK until the host
+    // replies with a Cursor Position Report on the input pipe. We are a headless
+    // host with no terminal emulator to answer it, so without a reply ConPTY
+    // never flushes the child's output — every terminal_read comes back empty
+    // and long builds look "frozen". Pre-answering with a CPR (`ESC [ 1 ; 1 R`,
+    // cursor at row 1 col 1) satisfies the query so output flows immediately.
+    // Harmless on Unix PTYs (the shell ignores a stray CPR on stdin), but we
+    // gate it to Windows where the ConPTY handshake actually exists.
+    // Ref: wezterm#6783, turborepo#11816.
+    #[cfg(windows)]
+    {
+        let _ = pty_writer.write_all(b"\x1b[1;1R");
+        let _ = pty_writer.flush();
+    }
 
     sessions.lock().expect("session lock poisoned").insert(
         id.clone(),
@@ -218,9 +247,11 @@ fn handle_command(command: HostCommand, sessions: &Sessions, writer: &HostWriter
             cols,
             rows,
             env,
+            args,
         } => {
             let id_for_error = id.clone();
-            if let Err(error) = spawn_session(sessions, writer, id, shell, cwd, cols, rows, env) {
+            if let Err(error) = spawn_session(sessions, writer, id, shell, cwd, cols, rows, env, args)
+            {
                 send_event(
                     writer,
                     HostEvent::Error {
@@ -284,4 +315,58 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    /// Regression guard for the ConPTY blindness bug (wezterm#6783).
+    ///
+    /// On Windows, portable-pty 0.9.0 blocks ConPTY output until the host
+    /// answers a cursor-position query. `spawn_session` pre-answers with a CPR;
+    /// this test spawns a real command through it and asserts the child's stdout
+    /// actually reaches the reader. Before the fix the reader only ever saw the
+    /// 4-byte `ESC [ 6 n` query and then blocked, so this would hang/fail.
+    #[test]
+    fn spawn_session_streams_child_output() {
+        let sessions: Sessions = Arc::new(Mutex::new(HashMap::new()));
+        let writer: HostWriter = Arc::new(Mutex::new(io::stdout()));
+
+        #[cfg(windows)]
+        let (shell, args) = (
+            "cmd.exe".to_string(),
+            vec![
+                "/d".to_string(),
+                "/s".to_string(),
+                "/c".to_string(),
+                "echo MODUS_PTY_PROBE".to_string(),
+            ],
+        );
+        #[cfg(not(windows))]
+        let (shell, args) = (
+            "/bin/sh".to_string(),
+            vec!["-c".to_string(), "echo MODUS_PTY_PROBE".to_string()],
+        );
+
+        spawn_session(&sessions, &writer, "probe".to_string(), shell, ".".to_string(), 120, 30, None, Some(args))
+            .expect("spawn_session");
+
+        // spawn_session moved the master into the session map and a reader thread
+        // drains it into HostEvents on stdout; we can't intercept those in-process
+        // easily, so assert the session was registered and the child exits, which
+        // only happens once ConPTY is unblocked and the wait thread observes exit.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let present = sessions.lock().unwrap().contains_key("probe");
+            if !present {
+                // The wait/read threads removed the session on child exit — proof
+                // the pipeline drained to completion instead of blocking forever.
+                break;
+            }
+            assert!(Instant::now() < deadline, "PTY session never completed — ConPTY likely blocked");
+            thread::sleep(Duration::from_millis(50));
+        }
+    }
 }

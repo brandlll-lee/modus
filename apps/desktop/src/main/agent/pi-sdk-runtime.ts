@@ -8,10 +8,20 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { app, type BrowserWindow } from "electron";
-import type { AgentRunInfo, AgentSessionInfo, ModelInfo } from "../../shared/contracts";
+import type {
+  AgentEvent,
+  AgentRunInfo,
+  AgentSessionInfo,
+  ContextUsageInfo,
+  ModelInfo,
+} from "../../shared/contracts";
 import { formatResolvedContext, resolveContext } from "../context/context-service";
-import { createWorktree, isGitRepository } from "../git/git-service";
+import { createWorktree, getChangeStatsSince, isGitRepository } from "../git/git-service";
 import { IPC_CHANNELS } from "../ipc/channels";
+import { maybeNotifyAgentEvent } from "../notifications/agent-notifications";
+import { resolveAlwaysRulesPrompt } from "../rules/rules-service";
+import { resolveSkillsPrompt } from "../skills/skills-service";
+import { summarizeTerminals } from "../terminal/terminal-service";
 import { recordAgentEvent } from "./agent-event-store";
 import {
   createAgentRun,
@@ -27,6 +37,7 @@ import {
   updateAgentSessionStatus,
   updateAgentSessionTitle,
 } from "./agent-store";
+import { createCheckpoint } from "./checkpoint-service";
 import {
   cycleDefaultModel,
   findModel,
@@ -41,6 +52,7 @@ import {
 } from "./model-service";
 import { createPiEventNormalizer } from "./pi-event-normalizer";
 import { createModusPermissionExtension } from "./pi-permission-extension";
+import { PI_ROOT_LEAF } from "./rollback-service";
 import type {
   AgentRuntime,
   CreateAgentRuntimeInput,
@@ -49,6 +61,11 @@ import type {
 } from "./runtime";
 import { deriveSessionTitle, shouldReplaceSessionTitle } from "./session-title";
 import { describeAgentShellForPrompt, resolveAgentShell } from "./shell-resolver";
+import { toolRegistry } from "./tools/registry";
+import { registerTerminalTools } from "./tools/terminal-tools";
+import { registerTodoTools } from "./tools/todo-tools";
+import { setAgentToolContext } from "./tools/tool-context";
+import { registerWebTools } from "./tools/web-tools";
 
 /**
  * Appended to the agent's system prompt so responses render well in Modus's
@@ -72,6 +89,7 @@ type SdkRuntimeSession = {
   session: AgentSession;
   unsubscribe: () => void;
   emit: EmitAgentEvent;
+  emitVolatile: EmitAgentEvent;
 };
 
 type RunOutputTracker = {
@@ -83,6 +101,16 @@ export class PiSdkRuntime implements AgentRuntime {
   private sessions = new Map<string, SdkRuntimeSession>();
   private resumePromises = new Map<string, Promise<SdkRuntimeSession | undefined>>();
   private runOutputTrackers = new Map<string, RunOutputTracker>();
+  private cancellingRuns = new Set<string>();
+
+  constructor() {
+    // Make the agent terminal tools (run/read/list/write/kill), the built-in
+    // web tools (search/fetch), and the live to-do tool available to the chat
+    // profile before any session is assembled.
+    registerTerminalTools();
+    registerWebTools();
+    registerTodoTools();
+  }
 
   private noteAssistantOutput(event: Parameters<EmitAgentEvent>[0]): void {
     const tracker = this.runOutputTrackers.get(event.sessionId);
@@ -102,6 +130,13 @@ export class PiSdkRuntime implements AgentRuntime {
       event.type === "runtime.error"
     ) {
       tracker.hasVisibleOutput = true;
+    }
+  }
+
+  private emitContextUsage(runtimeSession: SdkRuntimeSession): void {
+    const event = createContextUsageEvent(runtimeSession.info.id, runtimeSession.session);
+    if (event) {
+      runtimeSession.emitVolatile(event);
     }
   }
 
@@ -148,20 +183,112 @@ export class PiSdkRuntime implements AgentRuntime {
       compaction: { enabled: true },
       ...(shell.shellPath ? { shellPath: shell.shellPath } : {}),
     });
+    // Project rules (AGENTS.md / .cursor/rules alwaysApply) ride the system
+    // prompt so they apply to every turn without re-paying per-message tokens.
+    const rulesPrompt = resolveAlwaysRulesPrompt(cwd);
     const loader = new DefaultResourceLoader({
       cwd,
       agentDir,
       extensionFactories: [createModusPermissionExtension(sessionId, emit)],
       settingsManager,
-      appendSystemPrompt: [describeAgentShellForPrompt(shell), RESPONSE_FORMAT_GUIDANCE],
+      appendSystemPrompt: [
+        describeAgentShellForPrompt(shell),
+        RESPONSE_FORMAT_GUIDANCE,
+        ...(rulesPrompt ? [rulesPrompt] : []),
+      ],
     });
     await loader.reload();
     return { settingsManager, loader };
   }
 
+  /**
+   * Shared session assembly for both new and resumed sessions: builds session
+   * options (with the chat tool profile + any registered custom tools), wires
+   * event normalization, persists metadata, and caches the runtime session.
+   */
+  private async assembleSession(params: {
+    info: AgentSessionInfo;
+    emit: EmitAgentEvent;
+    emitVolatile: EmitAgentEvent;
+    agentDir: string;
+    loader: DefaultResourceLoader;
+    settingsManager: SettingsManager;
+    sessionManager: SessionManager;
+    model: NonNullable<Parameters<typeof createAgentSession>[0]>["model"];
+    thinkingLevel: NonNullable<Parameters<typeof createAgentSession>[0]>["thinkingLevel"];
+  }): Promise<SdkRuntimeSession> {
+    const sessionOptions: Parameters<typeof createAgentSession>[0] = {
+      cwd: params.info.cwd,
+      agentDir: params.agentDir,
+      authStorage: getModelRegistry().authStorage,
+      modelRegistry: getModelRegistry(),
+      resourceLoader: params.loader,
+      sessionManager: params.sessionManager,
+      settingsManager: params.settingsManager,
+      scopedModels: listScopedModels(),
+      tools: toolRegistry.resolveActiveTools("chat"),
+      customTools: toolRegistry.getCustomToolDefinitions("chat"),
+    };
+    if (params.model !== undefined) {
+      sessionOptions.model = params.model;
+      if (params.thinkingLevel !== undefined) {
+        sessionOptions.thinkingLevel = params.thinkingLevel;
+      }
+    }
+
+    const { session } = await createAgentSession(sessionOptions);
+    const normalizePiEvent = createPiEventNormalizer(params.info.id);
+    const publishContextUsage = () => {
+      const event = createContextUsageEvent(params.info.id, session);
+      if (event) {
+        params.emitVolatile(event);
+      }
+    };
+    const unsubscribe = session.subscribe((event) => {
+      for (const normalized of normalizePiEvent(event)) {
+        this.noteAssistantOutput(normalized);
+        params.emit(normalized);
+      }
+      if (shouldPublishContextUsage(event)) {
+        publishContextUsage();
+      }
+    });
+
+    const metadata: Parameters<typeof updateAgentSessionMetadata>[1] = {
+      piSessionId: session.sessionId,
+    };
+    const nextModelId = session.model
+      ? modelToId(session.model)
+      : params.model
+        ? modelToId(params.model)
+        : params.info.model;
+    if (nextModelId !== undefined) {
+      metadata.model = nextModelId;
+    }
+    if (session.sessionFile !== undefined) {
+      metadata.piSessionFile = session.sessionFile;
+    }
+    const updated = updateAgentSessionMetadata(params.info.id, metadata) ?? params.info;
+    updateAgentSessionStatus(params.info.id, "idle");
+    const runtimeSession: SdkRuntimeSession = {
+      info: updated,
+      session,
+      unsubscribe,
+      emit: params.emit,
+      emitVolatile: params.emitVolatile,
+    };
+    this.sessions.set(params.info.id, runtimeSession);
+    publishContextUsage();
+    return runtimeSession;
+  }
+
   async create(window: BrowserWindow, input: CreateAgentRuntimeInput): Promise<AgentSessionInfo> {
     const emit: EmitAgentEvent = (event) => {
       recordAgentEvent(event);
+      window.webContents.send(IPC_CHANNELS.agentEvent, event);
+      maybeNotifyAgentEvent(window, event);
+    };
+    const emitVolatile: EmitAgentEvent = (event) => {
       window.webContents.send(IPC_CHANNELS.agentEvent, event);
     };
     const selectedModel = findModel(input.model) ?? getDefaultModel();
@@ -204,46 +331,21 @@ export class PiSdkRuntime implements AgentRuntime {
       agentDir,
     );
 
-    const sessionOptions: Parameters<typeof createAgentSession>[0] = {
-      cwd: effectiveCwd,
+    const runtimeSession = await this.assembleSession({
+      info,
+      emit,
+      emitVolatile,
       agentDir,
-      authStorage: getModelRegistry().authStorage,
-      modelRegistry: getModelRegistry(),
-      resourceLoader: loader,
-      sessionManager: SessionManager.create(effectiveCwd, sessionDir),
+      loader,
       settingsManager,
-      scopedModels: listScopedModels(),
-    };
-    if (selectedModel !== undefined) {
-      sessionOptions.model = selectedModel;
-      sessionOptions.thinkingLevel = toPiThinkingLevel(selectedInfo?.thinkingLevel ?? "off");
-    }
-
-    const { session } = await createAgentSession(sessionOptions);
-
-    const normalizePiEvent = createPiEventNormalizer(info.id);
-    const unsubscribe = session.subscribe((event) => {
-      for (const normalized of normalizePiEvent(event)) {
-        this.noteAssistantOutput(normalized);
-        emit(normalized);
-      }
+      sessionManager: SessionManager.create(effectiveCwd, sessionDir),
+      model: selectedModel,
+      thinkingLevel:
+        selectedModel !== undefined
+          ? toPiThinkingLevel(selectedInfo?.thinkingLevel ?? "off")
+          : undefined,
     });
-
-    const metadata: Parameters<typeof updateAgentSessionMetadata>[1] = {
-      piSessionId: session.sessionId,
-    };
-    const nextModelId = session.model ? modelToId(session.model) : modelId;
-    if (nextModelId !== undefined) {
-      metadata.model = nextModelId;
-    }
-    if (session.sessionFile !== undefined) {
-      metadata.piSessionFile = session.sessionFile;
-    }
-    updateAgentSessionMetadata(info.id, metadata);
-    updateAgentSessionStatus(info.id, "idle");
-    const updated = getAgentSession(info.id) ?? info;
-    this.sessions.set(info.id, { info: updated, session, unsubscribe, emit });
-    return updated;
+    return runtimeSession.info;
   }
 
   private async createRuntimeSession(
@@ -257,6 +359,10 @@ export class PiSdkRuntime implements AgentRuntime {
 
     const emit: EmitAgentEvent = (event) => {
       recordAgentEvent(event);
+      window.webContents.send(IPC_CHANNELS.agentEvent, event);
+      maybeNotifyAgentEvent(window, event);
+    };
+    const emitVolatile: EmitAgentEvent = (event) => {
       window.webContents.send(IPC_CHANNELS.agentEvent, event);
     };
     const agentDir = join(app.getPath("userData"), "pi-agent");
@@ -288,49 +394,20 @@ export class PiSdkRuntime implements AgentRuntime {
     } catch {
       sessionManager = SessionManager.create(info.cwd, sessionDir);
     }
-    const sessionOptions: Parameters<typeof createAgentSession>[0] = {
-      cwd: info.cwd,
+    return this.assembleSession({
+      info,
+      emit,
+      emitVolatile,
       agentDir,
-      authStorage: getModelRegistry().authStorage,
-      modelRegistry: getModelRegistry(),
-      resourceLoader: loader,
-      sessionManager,
+      loader,
       settingsManager,
-      scopedModels: listScopedModels(),
-    };
-    if (selectedModel !== undefined) {
-      sessionOptions.model = selectedModel;
-      sessionOptions.thinkingLevel = toPiThinkingLevel(selectedInfo?.thinkingLevel ?? "off");
-    }
-
-    const { session } = await createAgentSession(sessionOptions);
-    const normalizePiEvent = createPiEventNormalizer(info.id);
-    const unsubscribe = session.subscribe((event) => {
-      for (const normalized of normalizePiEvent(event)) {
-        this.noteAssistantOutput(normalized);
-        emit(normalized);
-      }
+      sessionManager,
+      model: selectedModel,
+      thinkingLevel:
+        selectedModel !== undefined
+          ? toPiThinkingLevel(selectedInfo?.thinkingLevel ?? "off")
+          : undefined,
     });
-
-    const metadata: Parameters<typeof updateAgentSessionMetadata>[1] = {
-      piSessionId: session.sessionId,
-    };
-    const nextModelId = session.model
-      ? modelToId(session.model)
-      : selectedModel
-        ? modelToId(selectedModel)
-        : info.model;
-    if (nextModelId !== undefined) {
-      metadata.model = nextModelId;
-    }
-    if (session.sessionFile !== undefined) {
-      metadata.piSessionFile = session.sessionFile;
-    }
-    const updated = updateAgentSessionMetadata(info.id, metadata) ?? info;
-    updateAgentSessionStatus(info.id, "idle");
-    const runtimeSession = { info: updated, session, unsubscribe, emit };
-    this.sessions.set(info.id, runtimeSession);
-    return runtimeSession;
   }
 
   async prompt(window: BrowserWindow, input: PromptAgentInput): Promise<void> {
@@ -338,6 +415,17 @@ export class PiSdkRuntime implements AgentRuntime {
     if (!runtimeSession) {
       throw new Error(`Agent session not running: ${input.sessionId}`);
     }
+
+    // Publish this session's tool context so the (process-wide) custom tools
+    // (terminal, to-dos) resolve the right workspace/session/window/emitter
+    // from their cwd.
+    setAgentToolContext({
+      workspaceId: runtimeSession.info.workspaceId,
+      cwd: runtimeSession.info.cwd,
+      sessionId: runtimeSession.info.id,
+      window,
+      emit: runtimeSession.emit,
+    });
 
     const delivery = input.delivery ?? "normal";
     if (shouldReplaceSessionTitle(runtimeSession.info.title)) {
@@ -352,6 +440,13 @@ export class PiSdkRuntime implements AgentRuntime {
     };
     if (input.userMessageId !== undefined) runInput.userMessageId = input.userMessageId;
     if (runtimeSession.info.model !== undefined) runInput.model = runtimeSession.info.model;
+    // Rollback anchor: the session-tree leaf right before this prompt. Only
+    // captured for normal delivery — steer/follow-up messages are appended at
+    // an unpredictable point of the live stream, so they get no anchor (and no
+    // edit affordance in the timeline).
+    if (delivery === "normal") {
+      runInput.piLeafBefore = runtimeSession.session.sessionManager.getLeafId() ?? PI_ROOT_LEAF;
+    }
     const run = createAgentRun(runInput);
     const outputTracker: RunOutputTracker = { runId: run.id, hasVisibleOutput: false };
     this.runOutputTrackers.set(input.sessionId, outputTracker);
@@ -363,6 +458,9 @@ export class PiSdkRuntime implements AgentRuntime {
       sessionId: input.sessionId,
       messageId: userMessageId,
       role: "user",
+      ...(input.attachments && input.attachments.length > 0
+        ? { attachments: input.attachments }
+        : {}),
     });
     runtimeSession.emit({
       type: "message.delta",
@@ -386,21 +484,76 @@ export class PiSdkRuntime implements AgentRuntime {
         ? { ...startedEvent, userMessageId: input.userMessageId }
         : startedEvent,
     );
+    // Snapshot the working tree before the agent touches anything, so this
+    // message gets a one-click restore point in the timeline. Never blocks
+    // the run: failures (non-git cwd, git missing) degrade to "no checkpoint".
+    let runCheckpoint: Awaited<ReturnType<typeof createCheckpoint>>;
+    try {
+      runCheckpoint = await createCheckpoint({
+        sessionId: input.sessionId,
+        cwd: runtimeSession.info.cwd,
+        runId: run.id,
+        userMessageId,
+      });
+      if (runCheckpoint) {
+        runtimeSession.emit({
+          type: "checkpoint.created",
+          sessionId: input.sessionId,
+          checkpoint: runCheckpoint,
+        });
+      }
+    } catch (error) {
+      console.warn("[modus] checkpoint failed:", error);
+    }
     try {
       const resolved = await resolveContext(runtimeSession.info.cwd, input.context);
       const contextText = formatResolvedContext(resolved);
-      const message = contextText ? `${contextText}\n\n${input.message}` : input.message;
+      // Passive terminal awareness (like Cursor's terminal status): tell the
+      // model what's running so it can decide to read/restart instead of
+      // blindly re-launching.
+      const digest = summarizeTerminals({
+        sessionId: runtimeSession.info.id,
+        workspaceId: runtimeSession.info.workspaceId,
+      });
+      const awareness = digest ? `<active_terminals>\n${digest}\n</active_terminals>` : "";
+      // Manually invoked skills (`/name`) are injected as instruction blocks.
+      const skillsText = resolveSkillsPrompt(runtimeSession.info.cwd, input.skills ?? []);
+      const message = [skillsText, contextText, awareness, input.message]
+        .filter(Boolean)
+        .join("\n\n");
+      const images = (input.attachments ?? []).map((attachment) => ({
+        type: "image" as const,
+        data: attachment.data,
+        mimeType: attachment.mimeType,
+      }));
       await runtimeSession.session.prompt(message, {
         source: "rpc",
+        ...(images.length > 0 ? { images } : {}),
         ...(delivery === "normal"
           ? {}
           : { streamingBehavior: delivery === "follow-up" ? "followUp" : "steer" }),
       });
+      this.emitContextUsage(runtimeSession);
       const currentRun = getAgentRun(run.id);
       if (currentRun?.status === "running") {
         if (outputTracker.hasVisibleOutput) {
           updateAgentRunStatus(run.id, "completed");
-          runtimeSession.emit({ type: "run.completed", sessionId: input.sessionId, runId: run.id });
+          // Per-turn change summary (Codex-style "N files changed" card):
+          // diff the worktree against the pre-run snapshot. Never blocks or
+          // fails the run; sessions without a checkpoint just omit it.
+          let changes: Awaited<ReturnType<typeof getChangeStatsSince>> | undefined;
+          if (runCheckpoint) {
+            changes = await getChangeStatsSince(
+              runtimeSession.info.cwd,
+              runCheckpoint.commitHash,
+            ).catch(() => undefined);
+          }
+          runtimeSession.emit({
+            type: "run.completed",
+            sessionId: input.sessionId,
+            runId: run.id,
+            ...(changes && changes.fileCount > 0 ? { changes } : {}),
+          });
         } else {
           const message =
             "The selected model finished without returning any assistant output. Check the custom provider URL, model id, API type, and reasoning compatibility settings.";
@@ -416,6 +569,13 @@ export class PiSdkRuntime implements AgentRuntime {
         }
       }
     } catch (error) {
+      // A missing run row means a rollback removed this run while it was being
+      // aborted — swallow the rejection instead of resurrecting ghost
+      // run.failed / runtime.error events into the rolled-back timeline.
+      const currentRun = getAgentRun(run.id);
+      if (this.cancellingRuns.has(run.id) || !currentRun || currentRun.status === "cancelled") {
+        return;
+      }
       updateAgentRunStatus(
         run.id,
         "failed",
@@ -448,13 +608,22 @@ export class PiSdkRuntime implements AgentRuntime {
       return;
     }
     const activeRun = getActiveAgentRun(sessionId);
-
-    await runtimeSession.session.abort();
     if (activeRun) {
-      updateAgentRunStatus(activeRun.id, "cancelled");
-      runtimeSession.emit({ type: "run.cancelled", sessionId, runId: activeRun.id });
+      this.cancellingRuns.add(activeRun.id);
     }
-    updateAgentSessionStatus(sessionId, "idle");
+
+    try {
+      await runtimeSession.session.abort();
+    } finally {
+      if (activeRun) {
+        this.cancellingRuns.delete(activeRun.id);
+        if (getAgentRun(activeRun.id)?.status !== "cancelled") {
+          updateAgentRunStatus(activeRun.id, "cancelled");
+          runtimeSession.emit({ type: "run.cancelled", sessionId, runId: activeRun.id });
+        }
+      }
+      updateAgentSessionStatus(sessionId, "idle");
+    }
   }
 
   async listRuns(sessionId: string): Promise<AgentRunInfo[]> {
@@ -462,6 +631,14 @@ export class PiSdkRuntime implements AgentRuntime {
   }
 
   async dispose(sessionId: string): Promise<void> {
+    // Settle any in-flight resume first: it would otherwise re-cache a live
+    // session right after this dispose (and a rollback would then truncate the
+    // session file while a stale in-memory tree keeps answering prompts).
+    const pending = this.resumePromises.get(sessionId);
+    if (pending) {
+      await pending.catch(() => undefined);
+    }
+
     const runtimeSession = this.sessions.get(sessionId);
     if (!runtimeSession) {
       return;
@@ -494,6 +671,7 @@ export class PiSdkRuntime implements AgentRuntime {
     setDefaultModel(modelToId(model));
     const updated = updateAgentSessionMetadata(sessionId, { model: modelToId(model) });
     runtimeSession.info = updated ?? runtimeSession.info;
+    this.emitContextUsage(runtimeSession);
     return runtimeSession.info;
   }
 
@@ -519,8 +697,40 @@ export class PiSdkRuntime implements AgentRuntime {
     await runtimeSession.session.setModel(model);
     runtimeSession.session.setThinkingLevel(toPiThinkingLevel(next.thinkingLevel));
     updateAgentSessionMetadata(sessionId, { model: modelToId(model) });
+    this.emitContextUsage(runtimeSession);
     return next;
   }
+}
+
+function createContextUsageEvent(sessionId: string, session: AgentSession): AgentEvent | undefined {
+  const usage = session.getContextUsage();
+  if (!usage) {
+    return undefined;
+  }
+  return {
+    type: "context.updated",
+    sessionId,
+    usage: toContextUsageInfo(usage),
+  };
+}
+
+function toContextUsageInfo(
+  usage: NonNullable<ReturnType<AgentSession["getContextUsage"]>>,
+): ContextUsageInfo {
+  return {
+    tokens: usage.tokens,
+    contextWindow: usage.contextWindow,
+    percent: usage.percent,
+  };
+}
+
+function shouldPublishContextUsage(event: { type?: unknown }): boolean {
+  return (
+    event.type === "agent_end" ||
+    event.type === "message_end" ||
+    event.type === "tool_execution_end" ||
+    event.type === "compaction_end"
+  );
 }
 
 function getModelThinkingLevelFromInput(value: string): ReturnType<typeof getModelThinkingLevel> {

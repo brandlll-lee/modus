@@ -6,6 +6,7 @@ import type {
   ContextItem,
   ModelInfo,
   PromptDelivery,
+  PromptImageAttachment,
 } from "../../shared/contracts";
 
 export type CreateAgentRuntimeInput = {
@@ -22,6 +23,9 @@ export type PromptAgentInput = {
   context: ContextItem[];
   delivery?: PromptDelivery;
   userMessageId?: string;
+  attachments?: PromptImageAttachment[];
+  /** Skill ids/names invoked with `/name` in the composer for this prompt. */
+  skills?: string[];
 };
 
 export type AgentRuntime = {

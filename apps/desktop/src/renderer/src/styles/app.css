@@ -63,6 +63,15 @@
   --color-success: #3fae87;
   --color-danger: #e5687a;
 
+  /* Diff 行底纹 —— 内联 diff（edit/write 工具卡）的红绿语义层。
+     派生自 success/danger，低 alpha 整行底纹，文字仍清晰可读（对标 Cursor）：
+     - *-bg     变更行整行底纹
+     - *-gutter 行号槽 / 变更标记列（略高 alpha，强调归属） */
+  --color-diff-add-bg: color-mix(in oklab, var(--color-success) 16%, transparent);
+  --color-diff-add-gutter: color-mix(in oklab, var(--color-success) 30%, transparent);
+  --color-diff-del-bg: color-mix(in oklab, var(--color-danger) 16%, transparent);
+  --color-diff-del-gutter: color-mix(in oklab, var(--color-danger) 30%, transparent);
+
   /* 字体：Inter Variable（自托管，CursorGothic 官方替代），代码面 JetBrains Mono Variable。
      CSP font-src 'self' 满足；不联网。 */
   --font-sans:
@@ -181,20 +190,19 @@
   --color-success: #1f9d6b;
   --color-danger: #d63a4f;
 
+  /* Diff line tints — light theme. Slightly higher alpha so the wash survives on
+     the off-white canvas while keeping dark-on-light code fully legible. */
+  --color-diff-add-bg: color-mix(in oklab, var(--color-success) 14%, transparent);
+  --color-diff-add-gutter: color-mix(in oklab, var(--color-success) 26%, transparent);
+  --color-diff-del-bg: color-mix(in oklab, var(--color-danger) 13%, transparent);
+  --color-diff-del-gutter: color-mix(in oklab, var(--color-danger) 24%, transparent);
+
   /* Shadows — visible & soft to carry elevation that dark gets from lightness */
   --shadow-composer: 0 1px 2px rgba(0, 0, 0, 0.07), 0 1px 1px rgba(0, 0, 0, 0.04);
   --shadow-composer-focus:
     0 1px 3px rgba(0, 0, 0, 0.08), 0 0 0 1px var(--color-focus-ring),
     0 0 16px -4px rgba(133, 63, 244, 0.28);
   --shadow-popup: 0 8px 28px -8px rgba(0, 0, 0, 0.18), 0 0 0 1px rgba(0, 0, 0, 0.07);
-}
-
-/* Light-mode scrollbar thumb must be dark to be visible on white. */
-:root[data-theme="light"] .scroll-thin:hover {
-  scrollbar-color: rgba(0, 0, 0, 0.22) transparent;
-}
-:root[data-theme="light"] .scroll-thin:hover::-webkit-scrollbar-thumb {
-  background-color: rgba(0, 0, 0, 0.22);
 }
 
 /*
@@ -285,6 +293,14 @@ input {
   .scroll-thin::-webkit-scrollbar-corner {
     background: transparent;
   }
+}
+
+/* Light-mode scrollbar thumb must be dark to be visible on white. */
+:root[data-theme="light"] .scroll-thin:hover {
+  scrollbar-color: rgba(0, 0, 0, 0.22) transparent;
+}
+:root[data-theme="light"] .scroll-thin:hover::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, 0.22);
 }
 
 /* Magic UI TypingAnimation — cursor blink */

@@ -1,47 +1,54 @@
-import { Select } from "@base-ui/react/select";
+import { Dialog } from "@base-ui/react/dialog";
 import { Switch } from "@base-ui/react/switch";
 import {
   IconAdjustments,
   IconArrowLeft,
   IconBrain,
   IconCheck,
-  IconChevronDown,
   IconChevronRight,
   IconCircleCheck,
   IconCodeDots,
+  IconCube,
+  IconEdit,
   IconFilter,
+  IconGavel,
   IconKey,
   IconLoader2,
   IconMoon,
   IconPalette,
-  IconPhoto,
   IconPlugConnected,
   IconPlus,
   IconRefresh,
   IconSearch,
   IconServerCog,
   IconSettings,
-  IconShieldCheck,
   IconSun,
+  IconTerminal2,
   IconTrash,
-  IconVariable,
+  IconWorld,
   IconX,
 } from "@tabler/icons-react";
 import { AnimatePresence, m } from "motion/react";
 import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
+import { joinCommandLine, splitCommandLine } from "../../../../shared/command-line";
 import type {
   CustomProviderConfig,
-  CustomProviderModelInput,
-  ModelInputKind,
+  McpServerInfo,
   ModelProviderDetail,
   ModelProviderInfo,
   ModelSettingsState,
   ProviderModelConfig,
+  RuleFileInfo,
+  RuleMode,
+  RuleSource,
+  SkillInfo,
   ThinkingLevel,
 } from "../../../../shared/contracts";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
 import { type ThemeMode, useTheme } from "../../lib/theme";
+import { CustomProviderForm } from "./CustomProviderForm";
+import { Field, parsePositiveInteger, SelectField, SwitchControl } from "./form-controls";
 import { groupProviderModels, modelResultLabel } from "./modelListUtils";
 import { ProviderLogo } from "./ProviderLogo";
 
@@ -50,16 +57,25 @@ type SettingsPanelProps = {
   state: ModelSettingsState | null;
   onClose(): void;
   onRefresh(): void;
+  /** Active workspace root — enables the MCP section's config + sync actions. */
+  workspaceCwd?: string | undefined;
 };
 
-type SettingsSectionId = "general" | "model-provider" | "appearance" | "custom-provider";
+type SettingsSectionId = "general" | "model-provider" | "appearance" | "skills" | "mcp" | "rules";
 
-export function SettingsPanel({ open, state, onClose, onRefresh }: SettingsPanelProps) {
+export function SettingsPanel({
+  open,
+  state,
+  onClose,
+  onRefresh,
+  workspaceCwd,
+}: SettingsPanelProps) {
   const [selectedProvider, setSelectedProvider] = useState<string | undefined>();
   const [detail, setDetail] = useState<ModelProviderDetail | undefined>();
   const [detailLoading, setDetailLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
+  const [providerDetailOpen, setProviderDetailOpen] = useState(false);
   const [customOpen, setCustomOpen] = useState(false);
   const [customInitial, setCustomInitial] = useState<CustomProviderConfig | undefined>();
   const [providerKeys, setProviderKeys] = useState<Record<string, string>>({});
@@ -73,17 +89,7 @@ export function SettingsPanel({ open, state, onClose, onRefresh }: SettingsPanel
   const popular = providers.filter(
     (provider) => !connected.some((item) => item.id === provider.id),
   );
-  const currentProvider =
-    providers.find((provider) => provider.id === selectedProvider) ?? connected[0] ?? popular[0];
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-    if (!selectedProvider && currentProvider) {
-      setSelectedProvider(currentProvider.id);
-    }
-  }, [currentProvider, open, selectedProvider]);
+  const currentProvider = providers.find((provider) => provider.id === selectedProvider);
 
   useEffect(() => {
     if (!open || !selectedProvider) {
@@ -180,6 +186,7 @@ export function SettingsPanel({ open, state, onClose, onRefresh }: SettingsPanel
       const config = await window.modus.model.customProviderConfig(providerId);
       setCustomInitial(config ?? undefined);
       setActiveSection("model-provider");
+      setProviderDetailOpen(false);
       setCustomOpen(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -202,6 +209,7 @@ export function SettingsPanel({ open, state, onClose, onRefresh }: SettingsPanel
       if (selectedProvider === provider.id) {
         setSelectedProvider(undefined);
         setDetail(undefined);
+        setProviderDetailOpen(false);
       }
       setCustomOpen(false);
       setCustomInitial(undefined);
@@ -223,12 +231,7 @@ export function SettingsPanel({ open, state, onClose, onRefresh }: SettingsPanel
         activeSection={activeSection}
         onBack={onClose}
         onQueryChange={setSettingsQuery}
-        onSectionChange={(section) => {
-          setActiveSection(section);
-          if (section === "custom-provider") {
-            setCustomOpen(true);
-          }
-        }}
+        onSectionChange={setActiveSection}
         query={settingsQuery}
       />
 
@@ -236,7 +239,10 @@ export function SettingsPanel({ open, state, onClose, onRefresh }: SettingsPanel
         <div className="mx-auto flex w-full max-w-[1080px] flex-col gap-8 px-10 pt-16 pb-12">
           {activeSection === "general" ? <GeneralSettingsPanel /> : null}
           {activeSection === "appearance" ? <AppearanceSettingsPanel /> : null}
-          {activeSection === "model-provider" || activeSection === "custom-provider" ? (
+          {activeSection === "skills" ? <SkillsSettingsPanel cwd={workspaceCwd} /> : null}
+          {activeSection === "mcp" ? <McpSettingsPanel cwd={workspaceCwd} /> : null}
+          {activeSection === "rules" ? <RulesSettingsPanel cwd={workspaceCwd} /> : null}
+          {activeSection === "model-provider" ? (
             <ModelProviderSettingsPanel
               busy={busy}
               connected={connected}
@@ -247,24 +253,26 @@ export function SettingsPanel({ open, state, onClose, onRefresh }: SettingsPanel
               detailLoading={detailLoading}
               error={error}
               keyValue={detail ? (providerKeys[detail.id] ?? "") : ""}
+              providerDetailOpen={providerDetailOpen}
               onConnectProvider={(provider, apiKey) => void connectProvider(provider, apiKey)}
               onCustomCancel={() => {
                 setCustomOpen(false);
                 setCustomInitial(undefined);
-                if (activeSection === "custom-provider") {
-                  setActiveSection("model-provider");
-                }
               }}
               onCustomComplete={(provider) => {
                 setCustomOpen(false);
                 setCustomInitial(undefined);
+                setDetail(undefined);
+                setDetailLoading(true);
                 setSelectedProvider(provider);
+                setProviderDetailOpen(true);
                 setActiveSection("model-provider");
                 onRefresh();
               }}
               onCustomOpen={() => {
                 setCustomInitial(undefined);
-                setCustomOpen((value) => !value);
+                setProviderDetailOpen(false);
+                setCustomOpen(true);
                 setActiveSection("model-provider");
               }}
               onEditModel={(model, patch) => void editModel(model, patch)}
@@ -277,8 +285,20 @@ export function SettingsPanel({ open, state, onClose, onRefresh }: SettingsPanel
                 }
                 setProviderKeys((current) => ({ ...current, [detail.id]: apiKey }));
               }}
+              onProviderDetailClose={() => {
+                setProviderDetailOpen(false);
+                setSelectedProvider(undefined);
+                setDetail(undefined);
+                setDetailLoading(false);
+              }}
               onRefresh={onRefresh}
-              onSelectProvider={(provider) => setSelectedProvider(provider.id)}
+              onSelectProvider={(provider) => {
+                setCustomOpen(false);
+                setDetail(undefined);
+                setDetailLoading(true);
+                setSelectedProvider(provider.id);
+                setProviderDetailOpen(true);
+              }}
               onToggleModel={(model, enabled) => void toggleModel(model, enabled)}
               popular={popular}
             />
@@ -350,15 +370,26 @@ function SettingsSidebar({
           >
             Appearance
           </SettingsNavItem>
-        </SettingsNavGroup>
-
-        <SettingsNavGroup title="Integrations">
           <SettingsNavItem
-            active={activeSection === "custom-provider"}
+            active={activeSection === "mcp"}
             icon={<IconPlugConnected size={16} stroke={1.7} />}
-            onClick={() => onSectionChange("custom-provider")}
+            onClick={() => onSectionChange("mcp")}
           >
-            Custom Provider
+            MCP
+          </SettingsNavItem>
+          <SettingsNavItem
+            active={activeSection === "skills"}
+            icon={<IconCube size={16} stroke={1.7} />}
+            onClick={() => onSectionChange("skills")}
+          >
+            Skills
+          </SettingsNavItem>
+          <SettingsNavItem
+            active={activeSection === "rules"}
+            icon={<IconGavel size={16} stroke={1.7} />}
+            onClick={() => onSectionChange("rules")}
+          >
+            Rules
           </SettingsNavItem>
         </SettingsNavGroup>
       </div>
@@ -417,6 +448,7 @@ function ModelProviderSettingsPanel({
   error,
   keyValue,
   popular,
+  providerDetailOpen,
   onConnectProvider,
   onCustomCancel,
   onCustomComplete,
@@ -426,6 +458,7 @@ function ModelProviderSettingsPanel({
   onEditProvider,
   onError,
   onKeyChange,
+  onProviderDetailClose,
   onRefresh,
   onSelectProvider,
   onToggleModel,
@@ -440,6 +473,7 @@ function ModelProviderSettingsPanel({
   error: string | undefined;
   keyValue: string;
   popular: ModelProviderInfo[];
+  providerDetailOpen: boolean;
   onConnectProvider(provider: ModelProviderInfo, apiKey?: string): void;
   onCustomCancel(): void;
   onCustomComplete(provider: string): void;
@@ -452,6 +486,7 @@ function ModelProviderSettingsPanel({
   onEditProvider(providerId: string): void;
   onError(message: string | undefined): void;
   onKeyChange(apiKey: string): void;
+  onProviderDetailClose(): void;
   onRefresh(): void;
   onSelectProvider(provider: ModelProviderInfo): void;
   onToggleModel(model: ProviderModelConfig, enabled: boolean): void;
@@ -484,7 +519,7 @@ function ModelProviderSettingsPanel({
               type="button"
             >
               <IconPlus size={14} stroke={2.1} />
-              Custom provider
+              Connect custom provider
             </button>
           </>
         }
@@ -513,27 +548,7 @@ function ModelProviderSettingsPanel({
         ) : null}
       </AnimatePresence>
 
-      <AnimatePresence initial={false}>
-        {customOpen ? (
-          <m.div
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -6 }}
-            initial={{ opacity: 0, y: -6 }}
-            key="custom-provider-form"
-            transition={{ duration: 0.16, ease: "easeOut" }}
-          >
-            <CustomProviderForm
-              initial={customInitial}
-              key={customInitial?.provider ?? "new-custom-provider"}
-              onCancel={onCustomCancel}
-              onComplete={onCustomComplete}
-              onError={onError}
-            />
-          </m.div>
-        ) : null}
-      </AnimatePresence>
-
-      <div className="grid items-start gap-6 xl:grid-cols-[360px_minmax(0,1fr)]">
+      <div className="grid gap-5">
         <ProviderCatalog
           connected={connected}
           currentProvider={currentProvider}
@@ -543,27 +558,29 @@ function ModelProviderSettingsPanel({
           popular={popular}
           query={providerQuery}
         />
-
-        <AnimatePresence initial={false} mode="wait">
-          {detailLoading ? (
-            <ProviderDetailLoading key="provider-loading" />
-          ) : detail ? (
-            <ProviderDetail
-              busy={busy}
-              detail={detail}
-              key={detail.id}
-              keyValue={keyValue}
-              onConnect={(apiKey) => onConnectProvider(detail, apiKey)}
-              onEditModel={onEditModel}
-              onEditProvider={onEditProvider}
-              onKeyChange={onKeyChange}
-              onToggleModel={onToggleModel}
-            />
-          ) : (
-            <ProviderDetailEmpty key="provider-empty" />
-          )}
-        </AnimatePresence>
       </div>
+
+      <ProviderDetailDialog
+        busy={busy}
+        detail={detail}
+        detailLoading={detailLoading}
+        keyValue={keyValue}
+        open={providerDetailOpen}
+        onClose={onProviderDetailClose}
+        onConnectProvider={onConnectProvider}
+        onEditModel={onEditModel}
+        onEditProvider={onEditProvider}
+        onKeyChange={onKeyChange}
+        onToggleModel={onToggleModel}
+      />
+
+      <CustomProviderDialog
+        initial={customInitial}
+        open={customOpen}
+        onCancel={onCustomCancel}
+        onComplete={onCustomComplete}
+        onError={onError}
+      />
     </>
   );
 }
@@ -600,8 +617,10 @@ function ProviderCatalog({
     <section className="min-w-0">
       <div className="mb-3 flex items-end justify-between gap-4">
         <div className="min-w-0">
-          <h3 className="text-sm font-normal text-fg">Provider catalog</h3>
-          <p className="mt-1 text-xs text-fg-faint">Select a provider to configure models.</p>
+          <h3 className="text-sm font-normal text-fg">Providers</h3>
+          <p className="mt-1 text-xs text-fg-faint">
+            Connected, available, and custom providers in one place.
+          </p>
         </div>
         <ReadOnlyPill>{`${visibleCount} shown`}</ReadOnlyPill>
       </div>
@@ -616,7 +635,7 @@ function ProviderCatalog({
           />
         </div>
 
-        <div className="scroll-thin max-h-[calc(100vh-280px)] min-h-[320px] overflow-y-auto p-2">
+        <div className="scroll-thin max-h-[min(560px,calc(100vh-280px))] min-h-[320px] overflow-y-auto p-2">
           {visibleCount > 0 ? (
             <>
               <ProviderGroup title="Connected">
@@ -656,6 +675,156 @@ function ProviderCatalog({
         </div>
       </div>
     </section>
+  );
+}
+
+function ProviderConfigDialogShell({
+  children,
+  description,
+  open,
+  title,
+  closeLabel,
+  onClose,
+}: {
+  children: ReactNode;
+  description?: string;
+  open: boolean;
+  title: string;
+  closeLabel: string;
+  onClose(): void;
+}) {
+  return (
+    <Dialog.Root
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) {
+          onClose();
+        }
+      }}
+      open={open}
+    >
+      <Dialog.Portal>
+        <Dialog.Backdrop className="fixed inset-0 z-50 bg-fg/20 backdrop-blur-[1px] transition-opacity duration-150 data-ending-style:opacity-0 data-starting-style:opacity-0" />
+        <Dialog.Viewport className="fixed inset-0 z-50 flex items-center justify-center overflow-hidden px-6 py-6">
+          <Dialog.Popup className="flex h-[min(820px,calc(100vh-48px))] w-full max-w-[760px] flex-col overflow-hidden rounded-lg border border-hairline-soft bg-canvas shadow-popup outline-none transition-[opacity,transform] duration-150 data-ending-style:translate-y-2 data-ending-style:opacity-0 data-starting-style:translate-y-2 data-starting-style:opacity-0">
+            <div className="flex h-[52px] items-center justify-between gap-3 px-5">
+              <Dialog.Close
+                aria-label={`Back from ${title}`}
+                className="flex size-8 shrink-0 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-hover hover:text-fg"
+              >
+                <IconArrowLeft size={16} stroke={1.7} />
+              </Dialog.Close>
+              <Dialog.Close
+                aria-label={closeLabel}
+                className="flex size-8 shrink-0 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-hover hover:text-fg"
+              >
+                <IconX size={16} stroke={1.7} />
+              </Dialog.Close>
+            </div>
+            <div className="sr-only">
+              <Dialog.Title>{title}</Dialog.Title>
+              {description ? <Dialog.Description>{description}</Dialog.Description> : null}
+            </div>
+            <div className="scroll-thin min-h-0 flex-1 overflow-y-auto px-5 pb-5">{children}</div>
+          </Dialog.Popup>
+        </Dialog.Viewport>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
+function ProviderDetailDialog({
+  busy,
+  detail,
+  detailLoading,
+  keyValue,
+  open,
+  onClose,
+  onConnectProvider,
+  onEditModel,
+  onEditProvider,
+  onKeyChange,
+  onToggleModel,
+}: {
+  busy: boolean;
+  detail: ModelProviderDetail | undefined;
+  detailLoading: boolean;
+  keyValue: string;
+  open: boolean;
+  onClose(): void;
+  onConnectProvider(provider: ModelProviderInfo, apiKey?: string): void;
+  onEditModel(
+    model: ProviderModelConfig,
+    patch: { thinkingLevel?: ThinkingLevel; contextWindow?: number; maxTokens?: number },
+  ): void;
+  onEditProvider(providerId: string): void;
+  onKeyChange(apiKey: string): void;
+  onToggleModel(model: ProviderModelConfig, enabled: boolean): void;
+}) {
+  const title = detail ? `Configure ${detail.name}` : "Configure provider";
+
+  return (
+    <ProviderConfigDialogShell
+      closeLabel="Close provider configuration"
+      description="Connect provider credentials and choose which models Modus should expose."
+      open={open}
+      title={title}
+      onClose={onClose}
+    >
+      {detailLoading ? (
+        <ProviderDetailLoading />
+      ) : detail ? (
+        <ProviderDetail
+          busy={busy}
+          detail={detail}
+          key={detail.id}
+          keyValue={keyValue}
+          onConnect={(apiKey) => onConnectProvider(detail, apiKey)}
+          onEditModel={onEditModel}
+          onEditProvider={onEditProvider}
+          onKeyChange={onKeyChange}
+          onToggleModel={onToggleModel}
+        />
+      ) : (
+        <EmptyState
+          description="The selected provider is not available anymore. Close this panel and choose another provider."
+          title="Provider unavailable"
+        />
+      )}
+    </ProviderConfigDialogShell>
+  );
+}
+
+function CustomProviderDialog({
+  initial,
+  open,
+  onCancel,
+  onComplete,
+  onError,
+}: {
+  initial: CustomProviderConfig | undefined;
+  open: boolean;
+  onCancel(): void;
+  onComplete(provider: string): void;
+  onError(message: string | undefined): void;
+}) {
+  const title = initial ? `Edit ${initial.name || initial.provider}` : "Connect custom provider";
+
+  return (
+    <ProviderConfigDialogShell
+      closeLabel="Close custom provider dialog"
+      description="Connect an OpenAI, Anthropic or Gemini compatible endpoint and choose the models Modus should expose."
+      open={open}
+      title={title}
+      onClose={onCancel}
+    >
+      <CustomProviderForm
+        initial={initial}
+        key={initial?.provider ?? "new-custom-provider"}
+        onCancel={onCancel}
+        onComplete={onComplete}
+        onError={onError}
+      />
+    </ProviderConfigDialogShell>
   );
 }
 
@@ -710,6 +879,667 @@ function AppearanceSettingsPanel() {
   );
 }
 
+const MCP_STATUS_STYLE: Record<McpServerInfo["status"], { dot: string; label: string }> = {
+  connected: { dot: "bg-success", label: "Connected" },
+  connecting: { dot: "bg-focus-ring-soft", label: "Connecting" },
+  failed: { dot: "bg-danger", label: "Failed" },
+  disabled: { dot: "bg-fg-faint", label: "Disabled" },
+};
+
+/** One-click starting points so first-time users never face an empty form. */
+const MCP_PRESETS: ReadonlyArray<{ label: string; name: string; command: string }> = [
+  {
+    label: "Filesystem",
+    name: "filesystem",
+    command: "npx -y @modelcontextprotocol/server-filesystem .",
+  },
+  { label: "Fetch", name: "fetch", command: "npx -y @modelcontextprotocol/server-fetch" },
+  { label: "Memory", name: "memory", command: "npx -y @modelcontextprotocol/server-memory" },
+];
+
+type KeyValuePair = { id: string; key: string; value: string };
+
+type McpFormState = {
+  /** undefined = creating; otherwise the server being edited. */
+  originalName: string | undefined;
+  name: string;
+  transport: "stdio" | "http";
+  commandLine: string;
+  url: string;
+  env: KeyValuePair[];
+  headers: KeyValuePair[];
+  enabled: boolean;
+};
+
+const emptyMcpForm = (): McpFormState => ({
+  originalName: undefined,
+  name: "",
+  transport: "stdio",
+  commandLine: "",
+  url: "",
+  env: [],
+  headers: [],
+  enabled: true,
+});
+
+const pair = (key = "", value = ""): KeyValuePair => ({ id: crypto.randomUUID(), key, value });
+
+const pairsToRecord = (pairs: KeyValuePair[]): Record<string, string> =>
+  Object.fromEntries(
+    pairs.filter((item) => item.key.trim()).map((item) => [item.key.trim(), item.value]),
+  );
+
+const recordToPairs = (record: unknown): KeyValuePair[] =>
+  typeof record === "object" && record !== null
+    ? Object.entries(record as Record<string, unknown>)
+        .filter((entry): entry is [string, string] => typeof entry[1] === "string")
+        .map(([key, value]) => pair(key, value))
+    : [];
+
+/**
+ * MCP server management — fully graphical. Add/edit/toggle/delete servers
+ * without touching JSON; Modus writes the Cursor-compatible mcp.json behind
+ * the scenes (the file stays available for power users).
+ */
+function McpSettingsPanel({ cwd }: { cwd: string | undefined }) {
+  const [serverList, setServerList] = useState<McpServerInfo[]>([]);
+  const [syncing, setSyncing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [mcpError, setMcpError] = useState<string | undefined>();
+  const [form, setForm] = useState<McpFormState | undefined>();
+  const [confirmingDelete, setConfirmingDelete] = useState<string | undefined>();
+
+  async function refresh(sync: boolean): Promise<void> {
+    setMcpError(undefined);
+    try {
+      if (sync && cwd) {
+        setSyncing(true);
+        setServerList(await window.modus.mcp.sync(cwd));
+      } else {
+        setServerList(await window.modus.mcp.list());
+      }
+    } catch (err) {
+      setMcpError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: initial load only — refresh is stable per render and sync runs on demand.
+  useEffect(() => {
+    void refresh(false);
+  }, []);
+
+  async function openEdit(server: McpServerInfo): Promise<void> {
+    if (!cwd) return;
+    setMcpError(undefined);
+    try {
+      const raw = await window.modus.mcp.entry({ cwd, name: server.name });
+      const entry = raw?.entry ?? {};
+      const command = typeof entry.command === "string" ? entry.command : "";
+      const args = Array.isArray(entry.args)
+        ? entry.args.filter((item: unknown): item is string => typeof item === "string")
+        : [];
+      setForm({
+        originalName: server.name,
+        name: server.name,
+        transport: typeof entry.url === "string" ? "http" : "stdio",
+        commandLine: command ? joinCommandLine([command, ...args]) : "",
+        url: typeof entry.url === "string" ? entry.url : "",
+        env: recordToPairs(entry.env),
+        headers: recordToPairs(entry.headers),
+        enabled: server.status !== "disabled",
+      });
+    } catch (err) {
+      setMcpError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function saveForm(current: McpFormState): Promise<void> {
+    if (!cwd) return;
+    setSaving(true);
+    setMcpError(undefined);
+    try {
+      const [command, ...args] = splitCommandLine(current.commandLine);
+      setServerList(
+        await window.modus.mcp.upsert({
+          cwd,
+          name: current.name.trim(),
+          originalName: current.originalName,
+          transport: current.transport,
+          enabled: current.enabled,
+          ...(current.transport === "stdio"
+            ? { command: command ?? "", args, env: pairsToRecord(current.env) }
+            : { url: current.url.trim(), headers: pairsToRecord(current.headers) }),
+        }),
+      );
+      setForm(undefined);
+    } catch (err) {
+      setMcpError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function toggleServer(server: McpServerInfo, enabled: boolean): Promise<void> {
+    if (!cwd) return;
+    setMcpError(undefined);
+    try {
+      setServerList(await window.modus.mcp.setEnabled({ cwd, name: server.name, enabled }));
+    } catch (err) {
+      setMcpError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function deleteServer(server: McpServerInfo): Promise<void> {
+    if (!cwd) return;
+    setMcpError(undefined);
+    setConfirmingDelete(undefined);
+    try {
+      setServerList(await window.modus.mcp.delete({ cwd, name: server.name }));
+    } catch (err) {
+      setMcpError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  function sourceBadge(source: string): string {
+    if (cwd && source.startsWith(cwd)) {
+      return source.includes(".cursor") ? "project · .cursor" : "project";
+    }
+    return "user";
+  }
+
+  return (
+    <>
+      <SettingsPageHeader
+        actions={
+          <>
+            <button
+              className="flex h-8 items-center gap-1.5 rounded-md border border-hairline bg-surface px-2.5 text-xs text-fg transition-colors hover:bg-hover disabled:opacity-40"
+              disabled={!cwd || syncing}
+              onClick={() => void refresh(true)}
+              type="button"
+            >
+              {syncing ? (
+                <IconLoader2 className="animate-spin" size={14} stroke={1.7} />
+              ) : (
+                <IconRefresh size={14} stroke={1.7} />
+              )}
+              {syncing ? "Connecting…" : "Reload"}
+            </button>
+            <button
+              className="flex h-8 items-center gap-1.5 rounded-md bg-fg px-2.5 text-canvas text-xs transition-colors hover:bg-fg-muted disabled:opacity-40"
+              disabled={!cwd}
+              onClick={() => {
+                setConfirmingDelete(undefined);
+                setForm((current) => (current ? undefined : emptyMcpForm()));
+              }}
+              type="button"
+            >
+              <IconPlus size={14} stroke={2} />
+              Add server
+            </button>
+          </>
+        }
+        description="Give the agent extra tools — databases, issue trackers, web search and more — by connecting Model Context Protocol servers. No JSON required."
+        title="MCP"
+      />
+
+      {mcpError ? <p className="-mt-4 text-danger text-xs">{mcpError}</p> : null}
+
+      <AnimatePresence initial={false}>
+        {form && cwd ? (
+          <m.div
+            animate={{ height: "auto", opacity: 1 }}
+            className="overflow-hidden"
+            exit={{ height: 0, opacity: 0 }}
+            initial={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <McpServerForm
+              busy={saving}
+              form={form}
+              isNew={form.originalName === undefined}
+              onCancel={() => setForm(undefined)}
+              onChange={setForm}
+              onSubmit={(state) => void saveForm(state)}
+            />
+          </m.div>
+        ) : null}
+      </AnimatePresence>
+
+      <SettingsSection title="Servers">
+        {serverList.length === 0 ? (
+          <div className="flex flex-col items-start gap-3 rounded-lg border border-hairline-soft bg-panel px-5 py-6">
+            <p className="text-sm text-fg-muted">
+              {cwd
+                ? "No MCP servers yet. Add one to unlock extra agent tools — try a starter:"
+                : "Open a workspace to configure MCP servers."}
+            </p>
+            {cwd ? (
+              <div className="flex flex-wrap gap-1.5">
+                {MCP_PRESETS.map((preset) => (
+                  <button
+                    className="flex h-7 items-center gap-1.5 rounded-md border border-hairline bg-surface px-2.5 text-xs text-fg transition-colors hover:bg-hover"
+                    key={preset.name}
+                    onClick={() =>
+                      setForm({
+                        ...emptyMcpForm(),
+                        name: preset.name,
+                        commandLine: preset.command,
+                      })
+                    }
+                    type="button"
+                  >
+                    <IconPlus size={12} stroke={2} />
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <SettingsList>
+            {serverList.map((server) => {
+              const status = MCP_STATUS_STYLE[server.status];
+              const deleting = confirmingDelete === server.name;
+              return (
+                <div
+                  className="group/mcp border-hairline-soft border-b px-4 py-3 last:border-b-0"
+                  key={server.name}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <span aria-hidden className={cn("size-2 shrink-0 rounded-full", status.dot)} />
+                    <span className="min-w-0 truncate text-sm text-fg">{server.name}</span>
+                    <span className="shrink-0 rounded bg-chip px-1.5 py-px font-mono text-2xs text-fg-subtle">
+                      {server.transport === "stdio" ? "local" : "remote"}
+                    </span>
+                    <span className="shrink-0 rounded bg-chip-faint px-1.5 py-px text-2xs text-fg-faint">
+                      {sourceBadge(server.source)}
+                    </span>
+                    <span className="shrink-0 text-2xs text-fg-faint">{status.label}</span>
+                    <span className="ml-auto flex shrink-0 items-center gap-0.5">
+                      {deleting ? (
+                        <button
+                          className="flex h-6 items-center gap-1 rounded-md bg-danger/10 px-1.5 text-2xs text-danger transition-colors hover:bg-danger/20"
+                          onClick={() => void deleteServer(server)}
+                          type="button"
+                        >
+                          <IconTrash size={12} stroke={1.9} />
+                          Delete “{server.name}”?
+                        </button>
+                      ) : (
+                        <>
+                          <span className="text-2xs text-fg-faint">
+                            {server.tools.length > 0
+                              ? `${server.tools.length} tool${server.tools.length === 1 ? "" : "s"}`
+                              : ""}
+                          </span>
+                          <Tooltip content="Edit server" side="bottom" sideOffset={6}>
+                            <button
+                              aria-label={`Edit ${server.name}`}
+                              className="flex size-6 items-center justify-center rounded-md text-fg-faint opacity-0 transition-all hover:bg-hover hover:text-fg-muted group-hover/mcp:opacity-100"
+                              onClick={() => void openEdit(server)}
+                              type="button"
+                            >
+                              <IconEdit size={13} stroke={1.8} />
+                            </button>
+                          </Tooltip>
+                          <Tooltip content="Remove server" side="bottom" sideOffset={6}>
+                            <button
+                              aria-label={`Remove ${server.name}`}
+                              className="flex size-6 items-center justify-center rounded-md text-fg-faint opacity-0 transition-all hover:bg-danger/10 hover:text-danger group-hover/mcp:opacity-100"
+                              onClick={() => setConfirmingDelete(server.name)}
+                              type="button"
+                            >
+                              <IconTrash size={13} stroke={1.8} />
+                            </button>
+                          </Tooltip>
+                          <Switch.Root
+                            checked={server.status !== "disabled"}
+                            className="ml-1 flex h-4.5 w-8 shrink-0 cursor-pointer rounded-full bg-chip-strong p-0.5 transition-colors data-checked:bg-success/70"
+                            onCheckedChange={(checked) => void toggleServer(server, checked)}
+                          >
+                            <Switch.Thumb className="size-3.5 rounded-full bg-fg transition-transform data-checked:translate-x-3.5" />
+                          </Switch.Root>
+                        </>
+                      )}
+                    </span>
+                  </div>
+                  {server.error ? (
+                    <p className="mt-1.5 pl-[18px] text-danger text-xs leading-relaxed">
+                      {server.error}
+                    </p>
+                  ) : null}
+                  {server.tools.length > 0 ? (
+                    <div className="mt-2 flex flex-wrap gap-1 pl-[18px]">
+                      {server.tools.map((tool) => (
+                        <span
+                          className="rounded bg-chip-faint px-1.5 py-0.5 font-mono text-2xs text-fg-subtle"
+                          key={tool.registeredName}
+                          title={tool.description}
+                        >
+                          {tool.name}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </SettingsList>
+        )}
+        <div className="flex items-center justify-between">
+          <p className="text-fg-faint text-xs leading-relaxed">
+            MCP tools always ask for permission first; “Always allow” trusts a tool for this
+            workspace. New servers apply to new chats.
+          </p>
+          <button
+            className="flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-fg-faint text-xs transition-colors hover:bg-hover hover:text-fg-subtle disabled:opacity-40"
+            disabled={!cwd}
+            onClick={() => void window.modus.mcp.openConfig(cwd ?? "")}
+            title="Advanced: edit the underlying mcp.json directly"
+            type="button"
+          >
+            <IconCodeDots size={13} stroke={1.7} />
+            Edit JSON
+          </button>
+        </div>
+      </SettingsSection>
+    </>
+  );
+}
+
+/** The add/edit server form — one paste-friendly command field, no JSON. */
+function McpServerForm({
+  busy,
+  form,
+  isNew,
+  onCancel,
+  onChange,
+  onSubmit,
+}: {
+  busy: boolean;
+  form: McpFormState;
+  isNew: boolean;
+  onCancel(): void;
+  onChange(next: McpFormState): void;
+  onSubmit(state: McpFormState): void;
+}) {
+  const canSave =
+    form.name.trim().length > 0 &&
+    (form.transport === "stdio"
+      ? form.commandLine.trim().length > 0
+      : /^https?:\/\//.test(form.url.trim()));
+
+  const set = (patch: Partial<McpFormState>): void => onChange({ ...form, ...patch });
+
+  return (
+    <form
+      className="flex flex-col gap-4 rounded-lg border border-hairline bg-panel p-5"
+      onSubmit={(event: FormEvent<HTMLFormElement>) => {
+        event.preventDefault();
+        if (canSave && !busy) {
+          onSubmit(form);
+        }
+      }}
+    >
+      <div className="flex items-center justify-between">
+        <h4 className="text-sm text-fg">
+          {isNew ? "Add MCP server" : `Edit “${form.originalName}”`}
+        </h4>
+        {isNew ? (
+          <div className="flex gap-1">
+            {MCP_PRESETS.map((preset) => (
+              <button
+                className="h-6 rounded-md bg-chip px-2 text-2xs text-fg-subtle transition-colors hover:bg-chip-strong hover:text-fg"
+                key={preset.name}
+                onClick={() =>
+                  set({
+                    name: form.name || preset.name,
+                    transport: "stdio",
+                    commandLine: preset.command,
+                  })
+                }
+                type="button"
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <McpTypeCard
+          active={form.transport === "stdio"}
+          description="Runs a command on this machine. Most servers from npm work this way."
+          icon={<IconTerminal2 size={16} stroke={1.7} />}
+          label="Local command"
+          onClick={() => set({ transport: "stdio" })}
+        />
+        <McpTypeCard
+          active={form.transport === "http"}
+          description="Connects to a hosted MCP endpoint over HTTP or SSE."
+          icon={<IconWorld size={16} stroke={1.7} />}
+          label="Remote URL"
+          onClick={() => set({ transport: "http" })}
+        />
+      </div>
+
+      <McpField hint="Shown in tool calls, e.g. “linear”. Letters, numbers, - _ ." label="Name">
+        <input
+          className="h-9 w-full rounded-md border border-hairline-soft bg-surface px-3 font-mono text-sm text-fg outline-none placeholder:text-fg-faint focus:border-focus-ring"
+          onChange={(event) => set({ name: event.target.value })}
+          placeholder="my-server"
+          value={form.name}
+        />
+      </McpField>
+
+      {form.transport === "stdio" ? (
+        <>
+          <McpField
+            hint="Paste the full command from the server's README — Modus splits it for you."
+            label="Command"
+          >
+            <input
+              className="h-9 w-full rounded-md border border-hairline-soft bg-surface px-3 font-mono text-sm text-fg outline-none placeholder:text-fg-faint focus:border-focus-ring"
+              onChange={(event) => set({ commandLine: event.target.value })}
+              placeholder="npx -y @modelcontextprotocol/server-filesystem ."
+              value={form.commandLine}
+            />
+          </McpField>
+          <McpKeyValueRows
+            addLabel="Add variable"
+            hint="Secrets the server needs. Use ${env:NAME} to reference your system environment."
+            label="Environment variables"
+            onChange={(env) => set({ env })}
+            pairs={form.env}
+            placeholderKey="API_KEY"
+            placeholderValue="value or ${env:MY_KEY}"
+          />
+        </>
+      ) : (
+        <>
+          <McpField hint="The server's MCP endpoint." label="URL">
+            <input
+              className="h-9 w-full rounded-md border border-hairline-soft bg-surface px-3 font-mono text-sm text-fg outline-none placeholder:text-fg-faint focus:border-focus-ring"
+              onChange={(event) => set({ url: event.target.value })}
+              placeholder="https://example.com/mcp"
+              value={form.url}
+            />
+          </McpField>
+          <McpKeyValueRows
+            addLabel="Add header"
+            hint="Sent with every request — auth tokens usually go here."
+            label="Headers"
+            onChange={(headers) => set({ headers })}
+            pairs={form.headers}
+            placeholderKey="Authorization"
+            placeholderValue="Bearer ${env:MY_TOKEN}"
+          />
+        </>
+      )}
+
+      <div className="flex items-center justify-between border-hairline-soft border-t pt-4">
+        <div className="flex items-center gap-2 text-fg-muted text-xs">
+          <Switch.Root
+            aria-label="Connect automatically"
+            checked={form.enabled}
+            className="flex h-4.5 w-8 shrink-0 cursor-pointer rounded-full bg-chip-strong p-0.5 transition-colors data-checked:bg-success/70"
+            onCheckedChange={(enabled) => set({ enabled })}
+          >
+            <Switch.Thumb className="size-3.5 rounded-full bg-fg transition-transform data-checked:translate-x-3.5" />
+          </Switch.Root>
+          Connect automatically
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            className="h-8 rounded-md px-3 text-fg-muted text-xs transition-colors hover:bg-hover hover:text-fg"
+            onClick={onCancel}
+            type="button"
+          >
+            Cancel
+          </button>
+          <button
+            className="flex h-8 items-center gap-1.5 rounded-md bg-fg px-3 text-canvas text-xs transition-colors hover:bg-fg-muted disabled:opacity-40"
+            disabled={!canSave || busy}
+            type="submit"
+          >
+            {busy ? <IconLoader2 className="animate-spin" size={13} stroke={1.8} /> : null}
+            {busy ? "Connecting…" : isNew ? "Add server" : "Save changes"}
+          </button>
+        </div>
+      </div>
+    </form>
+  );
+}
+
+function McpTypeCard({
+  active,
+  description,
+  icon,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  description: string;
+  icon: ReactNode;
+  label: string;
+  onClick(): void;
+}) {
+  return (
+    <button
+      aria-pressed={active}
+      className={cn(
+        "flex flex-col items-start gap-1 rounded-lg border p-3 text-left transition-colors",
+        active
+          ? "border-focus-ring bg-chip-faint"
+          : "border-hairline-soft bg-surface/45 hover:border-hairline-strong",
+      )}
+      onClick={onClick}
+      type="button"
+    >
+      <span
+        className={cn("flex items-center gap-1.5 text-sm", active ? "text-fg" : "text-fg-muted")}
+      >
+        {icon}
+        {label}
+      </span>
+      <span className="text-2xs text-fg-faint leading-relaxed">{description}</span>
+    </button>
+  );
+}
+
+function McpField({
+  children,
+  hint,
+  label,
+}: {
+  children: ReactNode;
+  hint?: string;
+  label: string;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className="text-fg-muted text-xs">{label}</span>
+      {children}
+      {hint ? <span className="text-2xs text-fg-faint">{hint}</span> : null}
+    </div>
+  );
+}
+
+function McpKeyValueRows({
+  addLabel,
+  hint,
+  label,
+  onChange,
+  pairs,
+  placeholderKey,
+  placeholderValue,
+}: {
+  addLabel: string;
+  hint: string;
+  label: string;
+  onChange(pairs: KeyValuePair[]): void;
+  pairs: KeyValuePair[];
+  placeholderKey: string;
+  placeholderValue: string;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className="text-fg-muted text-xs">{label}</span>
+      {pairs.map((item) => (
+        <div className="flex items-center gap-1.5" key={item.id}>
+          <input
+            className="h-8 w-2/5 rounded-md border border-hairline-soft bg-surface px-2.5 font-mono text-fg text-xs outline-none placeholder:text-fg-faint focus:border-focus-ring"
+            onChange={(event) =>
+              onChange(
+                pairs.map((existing) =>
+                  existing.id === item.id ? { ...existing, key: event.target.value } : existing,
+                ),
+              )
+            }
+            placeholder={placeholderKey}
+            value={item.key}
+          />
+          <input
+            className="h-8 min-w-0 flex-1 rounded-md border border-hairline-soft bg-surface px-2.5 font-mono text-fg text-xs outline-none placeholder:text-fg-faint focus:border-focus-ring"
+            onChange={(event) =>
+              onChange(
+                pairs.map((existing) =>
+                  existing.id === item.id ? { ...existing, value: event.target.value } : existing,
+                ),
+              )
+            }
+            placeholder={placeholderValue}
+            value={item.value}
+          />
+          <button
+            aria-label="Remove row"
+            className="flex size-7 shrink-0 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-hover hover:text-fg-muted"
+            onClick={() => onChange(pairs.filter((existing) => existing.id !== item.id))}
+            type="button"
+          >
+            <IconX size={13} stroke={1.8} />
+          </button>
+        </div>
+      ))}
+      <div className="flex items-center justify-between">
+        <button
+          className="flex h-7 items-center gap-1 rounded-md px-2 text-fg-subtle text-xs transition-colors hover:bg-hover hover:text-fg"
+          onClick={() => onChange([...pairs, pair()])}
+          type="button"
+        >
+          <IconPlus size={12} stroke={2} />
+          {addLabel}
+        </button>
+        <span className="text-2xs text-fg-faint">{hint}</span>
+      </div>
+    </div>
+  );
+}
+
 const THEME_OPTIONS: ReadonlyArray<{ value: ThemeMode; label: string; icon: typeof IconSun }> = [
   { value: "light", label: "Light", icon: IconSun },
   { value: "dark", label: "Dark", icon: IconMoon },
@@ -744,6 +1574,370 @@ function ThemeToggle({
         );
       })}
     </div>
+  );
+}
+
+function RulesSettingsPanel({ cwd }: { cwd: string | undefined }) {
+  const [rules, setRules] = useState<RuleFileInfo[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [rulesError, setRulesError] = useState<string | undefined>();
+
+  async function refresh(): Promise<void> {
+    if (!cwd) {
+      setRules([]);
+      return;
+    }
+    setLoading(true);
+    setRulesError(undefined);
+    try {
+      setRules(await window.modus.rules.list(cwd));
+    } catch (error) {
+      setRulesError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refresh is recreated each render; cwd is the real trigger.
+  useEffect(() => {
+    void refresh();
+  }, [cwd]);
+
+  async function openRule(rule: RuleFileInfo): Promise<void> {
+    if (!cwd) {
+      return;
+    }
+    try {
+      await window.modus.file.open({ cwd, path: rule.relPath });
+    } catch (error) {
+      setRulesError(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  const autoApplied = rules.filter((rule) => rule.mode === "always");
+
+  return (
+    <>
+      <SettingsPageHeader
+        actions={
+          <button
+            className="flex h-8 items-center gap-1.5 rounded-md border border-hairline bg-surface px-2.5 text-xs text-fg transition-colors hover:bg-hover disabled:opacity-40"
+            disabled={!cwd || loading}
+            onClick={() => void refresh()}
+            type="button"
+          >
+            {loading ? (
+              <IconLoader2 className="animate-spin" size={14} stroke={1.7} />
+            ) : (
+              <IconRefresh size={14} stroke={1.7} />
+            )}
+            Refresh
+          </button>
+        }
+        description="Project rules are injected into every agent session automatically when marked Always Apply (AGENTS.md, CLAUDE.md, .cursorrules, or .cursor/rules/*.mdc with alwaysApply: true). Other rules stay available through the @rules context attachment."
+        title="Rules"
+      />
+
+      {rulesError ? <p className="-mt-4 text-danger text-xs">{rulesError}</p> : null}
+
+      <SettingsSection title="Detected rule files">
+        {!cwd ? (
+          <div className="rounded-lg border border-hairline-soft bg-panel px-5 py-6">
+            <p className="text-sm text-fg-muted">Open a workspace to discover project rules.</p>
+          </div>
+        ) : loading && rules.length === 0 ? (
+          <div className="flex items-center gap-2 rounded-lg border border-hairline-soft bg-panel px-5 py-6 text-sm text-fg-muted">
+            <IconLoader2 className="animate-spin" size={15} stroke={1.7} />
+            Scanning workspace…
+          </div>
+        ) : rules.length === 0 ? (
+          <div className="flex flex-col items-start gap-2 rounded-lg border border-hairline-soft bg-panel px-5 py-6">
+            <p className="text-sm text-fg-muted">
+              No rule files found. Add <span className="font-mono text-xs">AGENTS.md</span> at the
+              workspace root, or create{" "}
+              <span className="font-mono text-xs">.cursor/rules/*.mdc</span> with{" "}
+              <span className="font-mono text-xs">alwaysApply: true</span>.
+            </p>
+          </div>
+        ) : (
+          <SettingsList>
+            {rules.map((rule) => (
+              <button
+                className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-hairline-soft border-b px-4 py-3 text-left transition-colors last:border-b-0 hover:bg-hover"
+                key={rule.path}
+                onClick={() => void openRule(rule)}
+                type="button"
+              >
+                <div className="min-w-0">
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    <span className="flex size-5 shrink-0 items-center justify-center text-fg-faint">
+                      <IconGavel size={15} stroke={1.7} />
+                    </span>
+                    <span className="shrink-0 font-mono text-sm text-fg">{rule.relPath}</span>
+                    <RuleModeBadge mode={rule.mode} />
+                  </div>
+                  {rule.description ? (
+                    <p className="mt-1 truncate pl-7.5 text-xs text-fg-subtle">
+                      {rule.description}
+                    </p>
+                  ) : null}
+                  {rule.globs ? (
+                    <p className="mt-0.5 truncate pl-7.5 font-mono text-2xs text-fg-faint">
+                      globs: {rule.globs}
+                    </p>
+                  ) : null}
+                </div>
+                <span className="shrink-0 rounded bg-chip-faint px-1.5 py-px text-2xs text-fg-faint">
+                  {ruleSourceLabel(rule.source)}
+                </span>
+              </button>
+            ))}
+          </SettingsList>
+        )}
+      </SettingsSection>
+
+      {cwd && autoApplied.length > 0 ? (
+        <SettingsSection title="Auto-applied">
+          <div className="rounded-lg border border-hairline-soft bg-panel px-5 py-4">
+            <p className="text-sm text-fg-muted">
+              {autoApplied.length} rule file{autoApplied.length === 1 ? "" : "s"} injected into the
+              system prompt for every new agent session in this workspace.
+            </p>
+          </div>
+        </SettingsSection>
+      ) : null}
+    </>
+  );
+}
+
+function ruleSourceLabel(source: RuleSource): string {
+  switch (source) {
+    case "agents-md":
+      return "AGENTS.md";
+    case "claude-md":
+      return "CLAUDE.md";
+    case "cursorrules":
+      return ".cursorrules";
+    case "cursor-rule":
+      return ".mdc";
+  }
+}
+
+function RuleModeBadge({ mode }: { mode: RuleMode }) {
+  const label =
+    mode === "always"
+      ? "Always"
+      : mode === "glob"
+        ? "Glob"
+        : mode === "intelligent"
+          ? "Intelligent"
+          : "Manual";
+  const tone =
+    mode === "always"
+      ? "bg-focus-ring-soft/15 text-focus-ring-soft"
+      : "bg-chip-faint text-fg-faint";
+  return <span className={cn("shrink-0 rounded px-1.5 py-px text-2xs", tone)}>{label}</span>;
+}
+
+function SkillsSettingsPanel({ cwd }: { cwd: string | undefined }) {
+  const [skills, setSkills] = useState<SkillInfo[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [skillsError, setSkillsError] = useState<string | undefined>();
+  const [creating, setCreating] = useState(false);
+  const [draftName, setDraftName] = useState("");
+  const [draftDescription, setDraftDescription] = useState("");
+  const [draftBody, setDraftBody] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function refresh(): Promise<void> {
+    if (!cwd) {
+      setSkills([]);
+      return;
+    }
+    setLoading(true);
+    setSkillsError(undefined);
+    try {
+      setSkills(await window.modus.skills.list(cwd));
+    } catch (error) {
+      setSkillsError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refresh is recreated each render; cwd is the real trigger.
+  useEffect(() => {
+    void refresh();
+  }, [cwd]);
+
+  async function saveSkill(): Promise<void> {
+    if (!cwd || !draftName.trim()) {
+      return;
+    }
+    setSaving(true);
+    setSkillsError(undefined);
+    try {
+      await window.modus.skills.create({
+        cwd,
+        name: draftName.trim(),
+        description: draftDescription.trim(),
+        body: draftBody.trim(),
+      });
+      setCreating(false);
+      setDraftName("");
+      setDraftDescription("");
+      setDraftBody("");
+      await refresh();
+    } catch (error) {
+      setSkillsError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function scopeBadge(skill: SkillInfo): string {
+    return skill.scope === "user" ? `user · ${skill.source}` : `project · ${skill.source}`;
+  }
+
+  return (
+    <>
+      <SettingsPageHeader
+        actions={
+          <>
+            <button
+              className="flex h-8 items-center gap-1.5 rounded-md border border-hairline bg-surface px-2.5 text-xs text-fg transition-colors hover:bg-hover disabled:opacity-40"
+              disabled={!cwd}
+              onClick={() => void window.modus.skills.openDir(cwd as string)}
+              type="button"
+            >
+              <IconWorld size={14} stroke={1.7} />
+              Open folder
+            </button>
+            <button
+              className="flex h-8 items-center gap-1.5 rounded-md bg-fg px-2.5 text-canvas text-xs transition-colors hover:bg-fg-muted disabled:opacity-40"
+              disabled={!cwd}
+              onClick={() => setCreating((value) => !value)}
+              type="button"
+            >
+              <IconPlus size={14} stroke={2} />
+              New
+            </button>
+          </>
+        }
+        description="Skills are specialized capabilities that help the agent accomplish specific tasks. Skills are invoked by the agent when relevant, or triggered manually with / in chat."
+        title="Skills"
+      />
+
+      {skillsError ? <p className="-mt-4 text-danger text-xs">{skillsError}</p> : null}
+
+      <AnimatePresence initial={false}>
+        {creating && cwd ? (
+          <m.div
+            animate={{ height: "auto", opacity: 1 }}
+            className="overflow-hidden"
+            exit={{ height: 0, opacity: 0 }}
+            initial={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <div className="flex flex-col gap-3 rounded-lg border border-hairline-soft bg-panel px-5 py-4">
+              <label className="flex flex-col gap-1.5">
+                <span className="text-xs text-fg-subtle">Name</span>
+                <input
+                  className="h-8 rounded-md border border-hairline bg-surface px-2.5 text-sm text-fg outline-none focus:border-focus-ring"
+                  onChange={(event) => setDraftName(event.target.value)}
+                  placeholder="code-review"
+                  value={draftName}
+                />
+              </label>
+              <label className="flex flex-col gap-1.5">
+                <span className="text-xs text-fg-subtle">Description</span>
+                <textarea
+                  className="scroll-thin min-h-[68px] resize-none rounded-md border border-hairline bg-surface px-2.5 py-2 text-sm text-fg leading-5 outline-none focus:border-focus-ring"
+                  maxLength={280}
+                  onChange={(event) => setDraftDescription(event.target.value)}
+                  placeholder="Review a diff for correctness and security"
+                  value={draftDescription}
+                />
+              </label>
+              <label className="flex flex-col gap-1.5">
+                <span className="text-xs text-fg-subtle">Instructions</span>
+                <textarea
+                  className="scroll-thin min-h-48 resize-y rounded-md border border-hairline bg-surface px-3 py-2 font-mono text-xs text-fg leading-5 outline-none placeholder:text-fg-faint focus:border-focus-ring"
+                  onChange={(event) => setDraftBody(event.target.value)}
+                  placeholder={
+                    "# code-review\n\nUse this skill when reviewing code.\n\n## Steps\n\n1. Read the diff.\n2. Find correctness risks.\n3. Return concise findings first."
+                  }
+                  value={draftBody}
+                />
+              </label>
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  className="flex h-8 items-center rounded-md border border-hairline bg-surface px-3 text-xs text-fg-muted transition-colors hover:bg-hover"
+                  onClick={() => setCreating(false)}
+                  type="button"
+                >
+                  Cancel
+                </button>
+                <button
+                  className="flex h-8 items-center gap-1.5 rounded-md bg-fg px-3 text-canvas text-xs transition-colors hover:bg-fg-muted disabled:opacity-40"
+                  disabled={!draftName.trim() || !draftBody.trim() || saving}
+                  onClick={() => void saveSkill()}
+                  type="button"
+                >
+                  {saving ? <IconLoader2 className="animate-spin" size={14} stroke={1.7} /> : null}
+                  Create skill
+                </button>
+              </div>
+            </div>
+          </m.div>
+        ) : null}
+      </AnimatePresence>
+
+      <SettingsSection title="Available skills">
+        {!cwd ? (
+          <div className="rounded-lg border border-hairline-soft bg-panel px-5 py-6">
+            <p className="text-sm text-fg-muted">Open a workspace to discover and create skills.</p>
+          </div>
+        ) : loading && skills.length === 0 ? (
+          <div className="flex items-center gap-2 rounded-lg border border-hairline-soft bg-panel px-5 py-6 text-sm text-fg-muted">
+            <IconLoader2 className="animate-spin" size={15} stroke={1.7} />
+            Discovering skills…
+          </div>
+        ) : skills.length === 0 ? (
+          <div className="flex flex-col items-start gap-2 rounded-lg border border-hairline-soft bg-panel px-5 py-6">
+            <p className="text-sm text-fg-muted">
+              No skills yet. Create one, or drop a{" "}
+              <span className="font-mono text-xs">SKILL.md</span> into{" "}
+              <span className="font-mono text-xs">.modus/skills/&lt;name&gt;/</span>.
+            </p>
+          </div>
+        ) : (
+          <SettingsList>
+            {skills.map((skill) => (
+              <div
+                className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-hairline-soft border-b px-4 py-3 last:border-b-0"
+                key={skill.id}
+              >
+                <div className="flex min-w-0 items-center gap-2.5">
+                  <span className="flex size-5 shrink-0 items-center justify-center text-fg-faint">
+                    <IconCube size={15} stroke={1.7} />
+                  </span>
+                  <span className="shrink-0 font-mono text-sm text-fg">/{skill.name}</span>
+                  {skill.description ? (
+                    <span className="min-w-0 truncate text-xs text-fg-subtle">
+                      {skill.description}
+                    </span>
+                  ) : null}
+                </div>
+                <span className="shrink-0 rounded bg-chip-faint px-1.5 py-px text-2xs text-fg-faint">
+                  {scopeBadge(skill)}
+                </span>
+              </div>
+            ))}
+          </SettingsList>
+        )}
+      </SettingsSection>
+    </>
   );
 }
 
@@ -805,9 +1999,7 @@ function SettingsRow({
 }
 
 function ReadOnlyPill({ children }: { children: string }) {
-  return (
-    <span className="rounded-md bg-chip px-2.5 py-1 text-xs text-fg-muted">{children}</span>
-  );
+  return <span className="rounded-md bg-chip px-2.5 py-1 text-xs text-fg-muted">{children}</span>;
 }
 
 function ProviderGroup({ children, title }: { children: ReactNode; title: string }) {
@@ -954,12 +2146,12 @@ function ProviderDetail({
   return (
     <m.section
       animate={{ opacity: 1, y: 0 }}
-      className="flex min-w-0 flex-col overflow-hidden rounded-lg border border-hairline-soft bg-panel"
+      className="flex min-w-0 flex-col"
       exit={{ opacity: 0, y: 8 }}
       initial={{ opacity: 0, y: 8 }}
       transition={{ duration: 0.16, ease: "easeOut" }}
     >
-      <div className="border-hairline-soft border-b px-5 py-5">
+      <div className="pb-5">
         <div className="flex items-start justify-between gap-4">
           <div className="flex min-w-0 items-start gap-3">
             <ProviderLogo name={detail.name} provider={detail.id} size="lg" />
@@ -989,7 +2181,7 @@ function ProviderDetail({
         onKeyChange={onKeyChange}
       />
 
-      <div className="px-5 py-5">
+      <div className="pt-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
             <h4 className="text-sm font-normal text-fg">Models</h4>
@@ -1035,7 +2227,7 @@ function ProviderDetail({
           />
         </div>
 
-        <div className="scroll-thin mt-4 -mx-5 max-h-[clamp(300px,calc(100vh-520px),520px)] overflow-y-auto border-hairline-soft border-t">
+        <div className="mt-4 overflow-hidden rounded-lg border border-hairline-soft bg-panel">
           {filteredModels.length > 0 ? (
             modelGroups.map((group) => (
               <ModelGroupSection
@@ -1074,7 +2266,7 @@ function ProviderCredentials({
 }) {
   return (
     <form
-      className="border-hairline-soft border-b px-5 py-5"
+      className="border-hairline-soft border-y py-5"
       onSubmit={(event) => {
         event.preventDefault();
         onConnect(keyValue);
@@ -1361,7 +2553,7 @@ function ProviderDetailLoading() {
   return (
     <m.section
       animate={{ opacity: 1, y: 0 }}
-      className="flex min-h-[420px] min-w-0 items-center justify-center rounded-lg border border-hairline-soft bg-panel px-5 py-10"
+      className="flex min-h-[320px] min-w-0 items-center justify-center px-5 py-10"
       exit={{ opacity: 0, y: 8 }}
       initial={{ opacity: 0, y: 8 }}
       transition={{ duration: 0.16, ease: "easeOut" }}
@@ -1370,23 +2562,6 @@ function ProviderDetailLoading() {
         <IconLoader2 className="animate-spin text-fg-faint" size={16} stroke={1.8} />
         Loading provider
       </div>
-    </m.section>
-  );
-}
-
-function ProviderDetailEmpty() {
-  return (
-    <m.section
-      animate={{ opacity: 1, y: 0 }}
-      className="flex min-h-[420px] min-w-0 items-center justify-center rounded-lg border border-hairline-soft bg-panel px-5 py-10"
-      exit={{ opacity: 0, y: 8 }}
-      initial={{ opacity: 0, y: 8 }}
-      transition={{ duration: 0.16, ease: "easeOut" }}
-    >
-      <EmptyState
-        description="Choose a provider from the catalog to inspect credentials and model availability."
-        title="No provider selected"
-      />
     </m.section>
   );
 }
@@ -1431,42 +2606,6 @@ function SearchField({
   );
 }
 
-function SwitchControl({
-  ariaLabel,
-  checked,
-  disabled,
-  onCheckedChange,
-}: {
-  ariaLabel: string;
-  checked: boolean;
-  disabled?: boolean;
-  onCheckedChange(checked: boolean): void;
-}) {
-  return (
-    <Switch.Root
-      aria-label={ariaLabel}
-      checked={checked}
-      className={cn(
-        "relative flex h-5 w-9 shrink-0 items-center rounded-full border border-hairline bg-chip px-0.5 outline-none transition-colors",
-        "data-[checked]:border-fg data-[checked]:bg-fg",
-        "data-[unchecked]:hover:bg-chip-strong",
-        "data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50",
-        "focus-visible:border-hairline-strong focus-visible:ring-2 focus-visible:ring-white/10",
-      )}
-      disabled={disabled}
-      onCheckedChange={(nextChecked) => onCheckedChange(nextChecked)}
-    >
-      <Switch.Thumb
-        className={cn(
-          "block size-4 rounded-full bg-fg-muted transition-transform duration-150 ease-out",
-          "data-[checked]:translate-x-4 data-[checked]:bg-canvas",
-          "data-[unchecked]:translate-x-0",
-        )}
-      />
-    </Switch.Root>
-  );
-}
-
 function ProviderStatusPill({ status }: { status: ProviderStatus }) {
   if (status === "error") {
     return (
@@ -1501,9 +2640,7 @@ function ModelKindBadge({ model }: { model: ProviderModelConfig }) {
 }
 
 function TinyBadge({ children }: { children: string }) {
-  return (
-    <span className="rounded bg-chip px-1.5 py-0.5 text-2xs text-fg-faint">{children}</span>
-  );
+  return <span className="rounded bg-chip px-1.5 py-0.5 text-2xs text-fg-faint">{children}</span>;
 }
 
 function EmptyState({ description, title }: { description: string; title: string }) {
@@ -1602,1188 +2739,4 @@ function modelMatchesQuery(model: ProviderModelConfig, query: string): boolean {
     .join(" ")
     .toLowerCase();
   return haystack.includes(query);
-}
-
-type KeyValueRow = {
-  rowId: string;
-  key: string;
-  value: string;
-};
-
-function CustomProviderForm({
-  initial,
-  onCancel,
-  onComplete,
-  onError,
-}: {
-  initial?: CustomProviderConfig | undefined;
-  onCancel(): void;
-  onComplete(provider: string): void;
-  onError(message: string | undefined): void;
-}) {
-  const editing = Boolean(initial);
-  const initialCompat = (initial?.compat ?? {}) as Record<string, unknown>;
-  const [rows, setRows] = useState<CustomModelRow[]>(() =>
-    initial && initial.models.length > 0
-      ? initial.models.map(modelConfigToRow)
-      : [createCustomModelRow()],
-  );
-  const [provider, setProvider] = useState(initial?.provider ?? "");
-  const [providerTouched, setProviderTouched] = useState(editing);
-  const [name, setName] = useState(initial?.name ?? "");
-  const [baseUrl, setBaseUrl] = useState(initial?.baseUrl ?? "");
-  const [apiKey, setApiKey] = useState("");
-  const [api, setApi] = useState(initial?.api ?? "openai-completions");
-  const [authHeader, setAuthHeader] = useState(initial?.authHeader ?? true);
-  const [providerHeaders, setProviderHeaders] = useState<KeyValueRow[]>(() =>
-    recordToKeyValueRows(initial?.headers),
-  );
-  const [supportsDeveloperRole, setSupportsDeveloperRole] = useState(
-    Boolean(initialCompat.supportsDeveloperRole),
-  );
-  const [supportsReasoningEffort, setSupportsReasoningEffort] = useState(
-    Boolean(initialCompat.supportsReasoningEffort),
-  );
-  const [busy, setBusy] = useState(false);
-
-  // Auto-derive the provider id from the display name until the user edits it
-  // (or while creating a new provider). Editing an existing provider keeps its id.
-  function changeName(next: string): void {
-    setName(next);
-    if (!providerTouched && !editing) {
-      setProvider(slugifyProviderId(next));
-    }
-  }
-
-  function updateRow(rowId: string, patch: Partial<CustomModelRow>): void {
-    setRows((current) => current.map((row) => (row.rowId === rowId ? { ...row, ...patch } : row)));
-  }
-
-  function removeRow(rowId: string): void {
-    setRows((current) =>
-      current.length === 1 ? current : current.filter((row) => row.rowId !== rowId),
-    );
-  }
-
-  function updateProviderHeader(rowId: string, patch: Partial<KeyValueRow>): void {
-    setProviderHeaders((current) =>
-      current.map((row) => (row.rowId === rowId ? { ...row, ...patch } : row)),
-    );
-  }
-
-  async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
-    setBusy(true);
-    onError(undefined);
-    try {
-      const modelInputs = rows.map(rowToModelInput);
-      await window.modus.model.upsertCustomProvider({
-        provider,
-        name,
-        baseUrl,
-        apiKey,
-        api,
-        authHeader,
-        headers: keyValueRowsToRecord(providerHeaders),
-        compatibility: {
-          supportsDeveloperRole,
-          supportsReasoningEffort,
-        },
-        models: modelInputs,
-      });
-      onComplete(provider.trim().toLowerCase());
-    } catch (err) {
-      onError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const providerTitle = name.trim() || provider.trim() || "Custom OpenAI-compatible provider";
-  const providerId = provider.trim() || "new-provider";
-  const configuredHeaderCount = providerHeaders.filter(
-    (row) => row.key.trim() || row.value.trim(),
-  ).length;
-  const thinkingModelCount = rows.filter((row) => row.reasoning).length;
-
-  return (
-    <m.form
-      className="grid gap-6"
-      layout
-      onSubmit={(event) => void submit(event)}
-      transition={{ duration: 0.18, ease: "easeOut" }}
-    >
-      <CustomProviderOverview
-        api={api}
-        authHeader={authHeader}
-        headerCount={configuredHeaderCount}
-        modelCount={rows.length}
-        providerId={providerId}
-        thinkingModelCount={thinkingModelCount}
-        title={providerTitle}
-      />
-
-      <SettingsFormSection
-        description="Name the provider, point Modus at its OpenAI-compatible endpoint, and paste a key. Everything else has sensible defaults."
-        icon={<IconPlugConnected size={16} stroke={1.7} />}
-        title="Connection"
-      >
-        <div className="grid gap-5 lg:grid-cols-2">
-          <Field
-            description="Human-readable name shown in the model picker."
-            label="Display name"
-            onChange={changeName}
-            placeholder="My Relay"
-            value={name}
-          />
-          <Field
-            autoComplete="off"
-            description={
-              editing ? "Leave blank to keep the stored key." : "Stored securely on this device."
-            }
-            label="API key"
-            onChange={setApiKey}
-            placeholder={editing ? "••••••• (unchanged)" : "sk-..."}
-            type="password"
-            value={apiKey}
-          />
-          <div className="lg:col-span-2">
-            <Field
-              description="OpenAI-compatible endpoint including version path when required."
-              label="Base URL"
-              onChange={setBaseUrl}
-              placeholder="https://api.example.com/v1"
-              type="url"
-              value={baseUrl}
-            />
-          </div>
-        </div>
-
-        <Disclosure label="Advanced connection">
-          <div className="grid gap-5 lg:grid-cols-2">
-            <Field
-              description={
-                editing
-                  ? "Locked while editing an existing provider."
-                  : "Lowercase id used by Modus configuration. Auto-filled from the name."
-              }
-              label="Provider id"
-              onChange={(value) => {
-                setProviderTouched(true);
-                setProvider(value);
-              }}
-              placeholder="my-relay"
-              value={provider}
-            />
-            <SelectField
-              label="API type"
-              onChange={setApi}
-              options={API_TYPE_OPTIONS}
-              value={api}
-            />
-            <div className="lg:col-span-2">
-              <ToggleField
-                checked={authHeader}
-                description="Send the API key as an Authorization bearer token."
-                label="Authorization header"
-                onChange={setAuthHeader}
-              />
-            </div>
-          </div>
-        </Disclosure>
-      </SettingsFormSection>
-
-      <SettingsFormSection
-        description="Optional. Expose extra capabilities and request headers only when this provider needs them."
-        icon={<IconShieldCheck size={16} stroke={1.7} />}
-        title="Provider compatibility"
-      >
-        <Disclosure label="Advanced provider settings">
-          <div className="grid gap-3 md:grid-cols-2">
-            <ToggleField
-              checked={supportsDeveloperRole}
-              description="Allow system/developer instructions when the provider supports them."
-              label="Developer role"
-              onChange={setSupportsDeveloperRole}
-            />
-            <ToggleField
-              checked={supportsReasoningEffort}
-              description="Expose reasoning effort when this provider accepts that option."
-              label="Reasoning effort"
-              onChange={setSupportsReasoningEffort}
-            />
-          </div>
-          <KeyValueEditor
-            addLabel="Add header"
-            description="Optional headers sent with every request to this provider."
-            emptyLabel="No custom provider headers"
-            icon={<IconVariable size={16} stroke={1.7} />}
-            keyPlaceholder="Header"
-            onAdd={() => setProviderHeaders((current) => [...current, createKeyValueRow()])}
-            onChange={updateProviderHeader}
-            onRemove={(rowId) =>
-              setProviderHeaders((current) => current.filter((row) => row.rowId !== rowId))
-            }
-            rows={providerHeaders}
-            title="Provider headers"
-            valuePlaceholder="Value"
-            variant="embedded"
-          />
-        </Disclosure>
-      </SettingsFormSection>
-
-      <SettingsFormSection
-        action={
-          <button
-            className="flex h-8 items-center gap-1.5 rounded-md border border-hairline bg-chip-faint px-3 text-sm text-fg-subtle transition-colors hover:bg-hover hover:text-fg"
-            onClick={() => setRows((current) => [...current, createCustomModelRow()])}
-            type="button"
-          >
-            <IconPlus size={14} stroke={1.8} />
-            Add model
-          </button>
-        }
-        description="Add the concrete model ids exposed by this custom endpoint, plus optional routing and capability overrides."
-        icon={<IconCodeDots size={16} stroke={1.7} />}
-        title="Custom models"
-      >
-        <AnimatePresence initial={false}>
-          {rows.map((row, index) => (
-            <CustomModelEditor
-              index={index}
-              key={row.rowId}
-              onChange={(patch) => updateRow(row.rowId, patch)}
-              onRemove={() => removeRow(row.rowId)}
-              removable={rows.length > 1}
-              row={row}
-            />
-          ))}
-        </AnimatePresence>
-      </SettingsFormSection>
-
-      <m.div
-        className="sticky bottom-0 z-10 flex justify-end gap-2 border-hairline-soft border-t bg-canvas/95 pt-4 pb-1 backdrop-blur"
-        layout
-      >
-        <button
-          className="h-9 rounded-md px-3 text-sm text-fg-subtle transition-colors hover:bg-hover hover:text-fg"
-          onClick={onCancel}
-          type="button"
-        >
-          Cancel
-        </button>
-        <button
-          className="flex h-9 items-center gap-2 rounded-md bg-fg px-3 text-sm text-canvas transition-colors hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
-          disabled={busy}
-          type="submit"
-        >
-          {busy ? <IconLoader2 className="animate-spin" size={13} stroke={1.8} /> : null}
-          Save provider
-        </button>
-      </m.div>
-    </m.form>
-  );
-}
-
-type CustomModelRow = {
-  rowId: string;
-  id: string;
-  name: string;
-  api: string;
-  baseUrl: string;
-  contextWindow: string;
-  maxTokens: string;
-  reasoning: boolean;
-  imageInput: boolean;
-  costInput: string;
-  costOutput: string;
-  costCacheRead: string;
-  costCacheWrite: string;
-  headers: KeyValueRow[];
-  thinkingFormat: ModelThinkingFormat;
-  supportsUsageInStreaming: boolean;
-  thinkingOff: string;
-  thinkingMinimal: string;
-  thinkingLow: string;
-  thinkingMedium: string;
-  thinkingHigh: string;
-  thinkingXHigh: string;
-};
-
-type ModelThinkingFormat =
-  | "none"
-  | "openai"
-  | "openrouter"
-  | "deepseek"
-  | "together"
-  | "zai"
-  | "qwen"
-  | "qwen-chat-template";
-
-const API_TYPE_OPTIONS = [
-  { label: "OpenAI chat completions", value: "openai-completions" },
-  { label: "Anthropic messages", value: "anthropic-messages" },
-  { label: "Google Gemini", value: "google-generative-ai" },
-] as const;
-
-const THINKING_FORMAT_OPTIONS = [
-  { label: "None", value: "none" },
-  { label: "OpenAI reasoning effort", value: "openai" },
-  { label: "OpenRouter reasoning", value: "openrouter" },
-  { label: "DeepSeek thinking", value: "deepseek" },
-  { label: "Together reasoning", value: "together" },
-  { label: "zAI enable thinking", value: "zai" },
-  { label: "Qwen enable thinking", value: "qwen" },
-  { label: "Qwen chat template", value: "qwen-chat-template" },
-] as const;
-
-const DEFAULT_THINKING_LEVEL_MAP: Partial<Record<ThinkingLevel, string | null>> = {
-  minimal: null,
-  low: "low",
-  medium: "medium",
-  high: "high",
-  xhigh: "xhigh",
-};
-
-function Disclosure({
-  label,
-  defaultOpen = false,
-  children,
-}: {
-  label: string;
-  defaultOpen?: boolean;
-  children: ReactNode;
-}) {
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <div className="grid gap-3">
-      <button
-        aria-expanded={open}
-        className="flex w-fit items-center gap-1.5 text-xs text-fg-subtle transition-colors hover:text-fg"
-        onClick={() => setOpen((value) => !value)}
-        type="button"
-      >
-        <IconChevronRight
-          className={cn("transition-transform duration-150", open && "rotate-90")}
-          size={13}
-          stroke={1.8}
-        />
-        {label}
-      </button>
-      <AnimatePresence initial={false}>
-        {open ? (
-          <m.div
-            animate={{ height: "auto", opacity: 1 }}
-            className="overflow-hidden"
-            exit={{ height: 0, opacity: 0 }}
-            initial={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
-          >
-            <div className="grid gap-5 pt-1">{children}</div>
-          </m.div>
-        ) : null}
-      </AnimatePresence>
-    </div>
-  );
-}
-
-/** Derive a backend-valid provider id (lowercase, dashes) from a display name. */
-function slugifyProviderId(name: string): string {
-  return name
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
-
-function recordToKeyValueRows(record: Record<string, string> | undefined): KeyValueRow[] {
-  return Object.entries(record ?? {}).map(([key, value]) => ({
-    rowId: crypto.randomUUID(),
-    key,
-    value,
-  }));
-}
-
-/** Map a stored custom model config back into the editable form row (lossless). */
-function modelConfigToRow(model: CustomProviderConfig["models"][number]): CustomModelRow {
-  const map = model.thinkingLevelMap ?? {};
-  const compat = (model.compat ?? {}) as Record<string, unknown>;
-  const thinkingFormat = compat.thinkingFormat;
-  return {
-    rowId: crypto.randomUUID(),
-    id: model.id,
-    name: model.name,
-    api: model.api ?? "",
-    baseUrl: model.baseUrl ?? "",
-    contextWindow: model.contextWindow != null ? String(model.contextWindow) : "128000",
-    maxTokens: model.maxTokens != null ? String(model.maxTokens) : "16384",
-    reasoning: model.reasoning,
-    imageInput: (model.input ?? []).includes("image"),
-    costInput: model.cost?.input != null ? String(model.cost.input) : "",
-    costOutput: model.cost?.output != null ? String(model.cost.output) : "",
-    costCacheRead: model.cost?.cacheRead != null ? String(model.cost.cacheRead) : "",
-    costCacheWrite: model.cost?.cacheWrite != null ? String(model.cost.cacheWrite) : "",
-    headers: recordToKeyValueRows(model.headers),
-    thinkingFormat:
-      typeof thinkingFormat === "string"
-        ? (thinkingFormat as ModelThinkingFormat)
-        : ("none" as ModelThinkingFormat),
-    supportsUsageInStreaming: Boolean(compat.supportsUsageInStreaming),
-    thinkingOff: map.off ?? "",
-    thinkingMinimal: map.minimal ?? "",
-    thinkingLow: map.low ?? "low",
-    thinkingMedium: map.medium ?? "medium",
-    thinkingHigh: map.high ?? "high",
-    thinkingXHigh: map.xhigh ?? "xhigh",
-  };
-}
-
-function createCustomModelRow(): CustomModelRow {
-  return {
-    rowId: crypto.randomUUID(),
-    id: "",
-    name: "",
-    api: "",
-    baseUrl: "",
-    contextWindow: "128000",
-    maxTokens: "16384",
-    reasoning: false,
-    imageInput: false,
-    costInput: "",
-    costOutput: "",
-    costCacheRead: "",
-    costCacheWrite: "",
-    headers: [],
-    thinkingFormat: "none",
-    supportsUsageInStreaming: false,
-    thinkingOff: "",
-    thinkingMinimal: "",
-    thinkingLow: "low",
-    thinkingMedium: "medium",
-    thinkingHigh: "high",
-    thinkingXHigh: "xhigh",
-  };
-}
-
-function CustomModelEditor({
-  row,
-  index,
-  removable,
-  onChange,
-  onRemove,
-}: {
-  row: CustomModelRow;
-  index: number;
-  removable: boolean;
-  onChange(patch: Partial<CustomModelRow>): void;
-  onRemove(): void;
-}) {
-  function updateHeader(rowId: string, patch: Partial<KeyValueRow>): void {
-    onChange({
-      headers: row.headers.map((header) =>
-        header.rowId === rowId ? { ...header, ...patch } : header,
-      ),
-    });
-  }
-
-  return (
-    <m.section
-      animate={{ opacity: 1, y: 0 }}
-      className="overflow-hidden rounded-lg border border-hairline-soft bg-panel"
-      exit={{ opacity: 0, y: -6 }}
-      initial={{ opacity: 0, y: 6 }}
-      layout
-      transition={{ duration: 0.16, ease: "easeOut" }}
-    >
-      <div className="flex flex-wrap items-start justify-between gap-4 border-hairline-soft border-b px-5 py-4">
-        <div className="flex min-w-0 items-start gap-3">
-          <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-md border border-hairline-soft bg-chip text-fg-subtle">
-            <IconCodeDots size={16} stroke={1.7} />
-          </span>
-          <div className="min-w-0">
-            <h4 className="truncate text-sm font-normal text-fg">
-              {row.name.trim() || row.id.trim() || `Model ${index + 1}`}
-            </h4>
-            <p className="mt-1 truncate font-mono text-xs text-fg-faint">
-              {row.id.trim() || "model-id"}
-            </p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <FormMetaPill>{row.reasoning ? "thinking" : "standard"}</FormMetaPill>
-              <FormMetaPill>{row.imageInput ? "text + image" : "text only"}</FormMetaPill>
-              <FormMetaPill>
-                {row.headers.filter((header) => header.key.trim() || header.value.trim()).length}{" "}
-                headers
-              </FormMetaPill>
-            </div>
-          </div>
-        </div>
-        <button
-          aria-label="Remove model"
-          className="flex size-8 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-hover hover:text-fg disabled:cursor-not-allowed disabled:opacity-35"
-          disabled={!removable}
-          onClick={onRemove}
-          type="button"
-        >
-          <IconTrash size={14} stroke={1.7} />
-        </button>
-      </div>
-
-      <div className="grid gap-6 px-5 py-5">
-        <SettingsSubCard
-          description="The id Modus stores and the name users see in the composer."
-          title="Identity"
-        >
-          <div className="grid gap-5 lg:grid-cols-2">
-            <Field
-              label="Model id"
-              onChange={(value) => onChange({ id: value })}
-              placeholder="qwen3-coder"
-              value={row.id}
-            />
-            <Field
-              label="Display name"
-              onChange={(value) => onChange({ name: value })}
-              placeholder="Qwen3 Coder"
-              value={row.name}
-            />
-          </div>
-        </SettingsSubCard>
-
-        <Disclosure label="Advanced model settings">
-          <SettingsSubCard
-            description="Token limits for this model. Defaults suit most OpenAI-compatible models."
-            title="Limits"
-          >
-            <div className="grid gap-5 lg:grid-cols-2">
-              <Field
-                label="Context window"
-                onChange={(value) => onChange({ contextWindow: value })}
-                placeholder="128000"
-                value={row.contextWindow}
-              />
-              <Field
-                label="Max output tokens"
-                onChange={(value) => onChange({ maxTokens: value })}
-                placeholder="16384"
-                value={row.maxTokens}
-              />
-            </div>
-          </SettingsSubCard>
-
-          <SettingsSubCard
-            description="Leave these blank to inherit the provider-level endpoint and API behavior."
-            title="Routing overrides"
-          >
-            <div className="grid gap-5 lg:grid-cols-2">
-              <Field
-                label="Model API override"
-                onChange={(value) => onChange({ api: value })}
-                placeholder="provider default"
-                value={row.api}
-              />
-              <Field
-                label="Model base URL override"
-                onChange={(value) => onChange({ baseUrl: value })}
-                placeholder="provider default"
-                type="url"
-                value={row.baseUrl}
-              />
-            </div>
-          </SettingsSubCard>
-
-          <SettingsSubCard
-            description="Describe model behavior so Modus can show the right composer affordances."
-            title="Capabilities"
-          >
-            <div className="grid gap-3 md:grid-cols-2">
-              <ToggleField
-                checked={row.reasoning}
-                description="Expose thinking-level controls and optional level mapping."
-                icon={<IconBrain size={15} stroke={1.7} />}
-                label="Supports thinking"
-                onChange={(value) => onChange({ reasoning: value })}
-              />
-              <ToggleField
-                checked={row.imageInput}
-                description="Allow image inputs for this model when the provider supports them."
-                icon={<IconPhoto size={15} stroke={1.7} />}
-                label="Image input"
-                onChange={(value) => onChange({ imageInput: value })}
-              />
-            </div>
-            <div className="grid gap-5 lg:grid-cols-2">
-              <SelectField
-                label="Thinking format"
-                onChange={(value) => onChange({ thinkingFormat: value as ModelThinkingFormat })}
-                options={THINKING_FORMAT_OPTIONS}
-                value={row.thinkingFormat}
-              />
-              <ToggleField
-                checked={row.supportsUsageInStreaming}
-                description="Read token usage from streaming responses when supported."
-                label="Streaming usage"
-                onChange={(value) => onChange({ supportsUsageInStreaming: value })}
-              />
-            </div>
-          </SettingsSubCard>
-
-          <SettingsSubCard
-            description="Optional per-million token prices used for display and budgeting metadata."
-            title="Pricing"
-          >
-            <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
-              <Field
-                label="Input cost"
-                onChange={(value) => onChange({ costInput: value })}
-                placeholder="0"
-                value={row.costInput}
-              />
-              <Field
-                label="Output cost"
-                onChange={(value) => onChange({ costOutput: value })}
-                placeholder="0"
-                value={row.costOutput}
-              />
-              <Field
-                label="Cache read"
-                onChange={(value) => onChange({ costCacheRead: value })}
-                placeholder="0"
-                value={row.costCacheRead}
-              />
-              <Field
-                label="Cache write"
-                onChange={(value) => onChange({ costCacheWrite: value })}
-                placeholder="0"
-                value={row.costCacheWrite}
-              />
-            </div>
-          </SettingsSubCard>
-
-          <AnimatePresence initial={false}>
-            {row.reasoning ? (
-              <m.div
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -6 }}
-                initial={{ opacity: 0, y: -6 }}
-                key="thinking-levels"
-                layout
-                transition={{ duration: 0.16, ease: "easeOut" }}
-              >
-                <SettingsSubCard
-                  description="Map Modus thinking presets to provider-specific values."
-                  title="Thinking levels"
-                >
-                  <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-                    <Field
-                      label="Off"
-                      onChange={(value) => onChange({ thinkingOff: value })}
-                      placeholder="leave blank"
-                      value={row.thinkingOff}
-                    />
-                    <Field
-                      label="Minimal"
-                      onChange={(value) => onChange({ thinkingMinimal: value })}
-                      placeholder="leave blank if unsupported"
-                      value={row.thinkingMinimal}
-                    />
-                    <Field
-                      label="Low"
-                      onChange={(value) => onChange({ thinkingLow: value })}
-                      placeholder="low"
-                      value={row.thinkingLow}
-                    />
-                    <Field
-                      label="Medium"
-                      onChange={(value) => onChange({ thinkingMedium: value })}
-                      placeholder="medium"
-                      value={row.thinkingMedium}
-                    />
-                    <Field
-                      label="High"
-                      onChange={(value) => onChange({ thinkingHigh: value })}
-                      placeholder="high"
-                      value={row.thinkingHigh}
-                    />
-                    <Field
-                      label="Extra high"
-                      onChange={(value) => onChange({ thinkingXHigh: value })}
-                      placeholder="xhigh"
-                      value={row.thinkingXHigh}
-                    />
-                  </div>
-                </SettingsSubCard>
-              </m.div>
-            ) : null}
-          </AnimatePresence>
-
-          <KeyValueEditor
-            addLabel="Add model header"
-            description="Headers here override or extend the provider defaults for this model."
-            emptyLabel="No model-specific headers"
-            icon={<IconVariable size={16} stroke={1.7} />}
-            keyPlaceholder="Header"
-            onAdd={() => onChange({ headers: [...row.headers, createKeyValueRow()] })}
-            onChange={updateHeader}
-            onRemove={(rowId) =>
-              onChange({ headers: row.headers.filter((header) => header.rowId !== rowId) })
-            }
-            rows={row.headers}
-            title="Model headers"
-            valuePlaceholder="Value"
-            variant="embedded"
-          />
-        </Disclosure>
-      </div>
-    </m.section>
-  );
-}
-
-function parsePositiveInteger(value: string | undefined): number | undefined {
-  if (!value) {
-    return undefined;
-  }
-  const next = Number(value.replaceAll(",", ""));
-  return Number.isInteger(next) && next > 0 ? next : undefined;
-}
-
-function parseOptionalNumber(value: string): number | undefined {
-  if (!value.trim()) {
-    return undefined;
-  }
-  const next = Number(value.replaceAll(",", ""));
-  if (!Number.isFinite(next) || next < 0) {
-    throw new Error(`Invalid number: ${value}`);
-  }
-  return next;
-}
-
-function rowToModelInput(row: CustomModelRow): CustomProviderModelInput {
-  const id = row.id.trim();
-  if (!id) {
-    throw new Error("Every custom model needs a model id.");
-  }
-
-  const input: ModelInputKind[] = row.imageInput ? ["text", "image"] : ["text"];
-  const thinkingLevelMap = row.reasoning ? customThinkingLevelMap(row) : undefined;
-  const cost = {
-    input: parseOptionalNumber(row.costInput),
-    output: parseOptionalNumber(row.costOutput),
-    cacheRead: parseOptionalNumber(row.costCacheRead),
-    cacheWrite: parseOptionalNumber(row.costCacheWrite),
-  };
-
-  return {
-    id,
-    name: row.name.trim() || id,
-    ...(row.api.trim() ? { api: row.api.trim() } : {}),
-    ...(row.baseUrl.trim() ? { baseUrl: row.baseUrl.trim() } : {}),
-    ...(parsePositiveInteger(row.contextWindow)
-      ? { contextWindow: parsePositiveInteger(row.contextWindow) }
-      : {}),
-    ...(parsePositiveInteger(row.maxTokens)
-      ? { maxTokens: parsePositiveInteger(row.maxTokens) }
-      : {}),
-    reasoning: row.reasoning,
-    input,
-    ...(hasDefinedCost(cost) ? { cost } : {}),
-    ...(keyValueRowsToRecord(row.headers) ? { headers: keyValueRowsToRecord(row.headers) } : {}),
-    ...(thinkingLevelMap ? { thinkingLevelMap } : {}),
-    compatibility: {
-      thinkingFormat: row.thinkingFormat,
-      supportsUsageInStreaming: row.supportsUsageInStreaming,
-    },
-  };
-}
-
-function hasDefinedCost(cost: {
-  input?: number | undefined;
-  output?: number | undefined;
-  cacheRead?: number | undefined;
-  cacheWrite?: number | undefined;
-}): boolean {
-  return Object.values(cost).some((value) => value !== undefined);
-}
-
-function customThinkingLevelMap(
-  row: CustomModelRow,
-): Partial<Record<ThinkingLevel, string | null>> {
-  const values: Partial<Record<ThinkingLevel, string | null>> = {};
-  if (row.thinkingOff.trim()) values.off = row.thinkingOff.trim();
-  values.minimal = row.thinkingMinimal.trim() || null;
-  if (row.thinkingLow.trim()) values.low = row.thinkingLow.trim();
-  if (row.thinkingMedium.trim()) values.medium = row.thinkingMedium.trim();
-  if (row.thinkingHigh.trim()) values.high = row.thinkingHigh.trim();
-  if (row.thinkingXHigh.trim()) values.xhigh = row.thinkingXHigh.trim();
-  return Object.keys(values).length > 1 ? values : DEFAULT_THINKING_LEVEL_MAP;
-}
-
-function createKeyValueRow(): KeyValueRow {
-  return { rowId: crypto.randomUUID(), key: "", value: "" };
-}
-
-function keyValueRowsToRecord(rows: KeyValueRow[]): Record<string, string> | undefined {
-  const result = Object.fromEntries(
-    rows
-      .map((row) => [row.key.trim(), row.value.trim()] as const)
-      .filter(([key, value]) => key && value),
-  );
-  return Object.keys(result).length > 0 ? result : undefined;
-}
-
-function CustomProviderOverview({
-  api,
-  authHeader,
-  headerCount,
-  modelCount,
-  providerId,
-  thinkingModelCount,
-  title,
-}: {
-  api: string;
-  authHeader: boolean;
-  headerCount: number;
-  modelCount: number;
-  providerId: string;
-  thinkingModelCount: number;
-  title: string;
-}) {
-  return (
-    <m.section
-      className="rounded-lg border border-hairline-soft bg-panel px-5 py-5"
-      layout
-      transition={{ duration: 0.18, ease: "easeOut" }}
-    >
-      <div className="flex flex-wrap items-start justify-between gap-5">
-        <div className="flex min-w-0 items-start gap-3">
-          <span className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-lg border border-hairline-soft bg-chip text-fg-subtle">
-            <IconAdjustments size={17} stroke={1.7} />
-          </span>
-          <div className="min-w-0">
-            <h3 className="truncate text-sm font-normal text-fg">{title}</h3>
-            <p className="mt-1 truncate font-mono text-xs text-fg-faint">{providerId}</p>
-            <div className="mt-4 flex flex-wrap gap-2">
-              <FormMetaPill>{optionLabel(API_TYPE_OPTIONS, api)}</FormMetaPill>
-              <FormMetaPill>{modelCount} models</FormMetaPill>
-              <FormMetaPill>{thinkingModelCount} thinking</FormMetaPill>
-              <FormMetaPill>{headerCount} headers</FormMetaPill>
-              <FormMetaPill>{authHeader ? "bearer auth" : "manual auth"}</FormMetaPill>
-            </div>
-          </div>
-        </div>
-      </div>
-    </m.section>
-  );
-}
-
-function SettingsFormSection({
-  action,
-  children,
-  description,
-  icon,
-  title,
-}: {
-  action?: ReactNode;
-  children: ReactNode;
-  description: string;
-  icon: ReactNode;
-  title: string;
-}) {
-  return (
-    <m.section
-      className="overflow-hidden rounded-lg border border-hairline-soft bg-panel"
-      layout
-      transition={{ duration: 0.18, ease: "easeOut" }}
-    >
-      <div className="flex flex-wrap items-start justify-between gap-4 border-hairline-soft border-b px-5 py-4">
-        <div className="flex min-w-0 items-start gap-3">
-          <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border border-hairline-soft bg-chip text-fg-subtle">
-            {icon}
-          </span>
-          <div className="min-w-0">
-            <h3 className="text-sm font-normal text-fg">{title}</h3>
-            <p className="mt-1 max-w-[640px] text-xs leading-5 text-fg-faint">{description}</p>
-          </div>
-        </div>
-        {action ? <div className="shrink-0">{action}</div> : null}
-      </div>
-      <div className="grid gap-6 px-5 py-5">{children}</div>
-    </m.section>
-  );
-}
-
-function SettingsSubCard({
-  children,
-  description,
-  title,
-}: {
-  children: ReactNode;
-  description: string;
-  title: string;
-}) {
-  return (
-    <section className="grid gap-4 border-hairline-soft border-t pt-5 first:border-t-0 first:pt-0">
-      <div>
-        <h4 className="text-xs font-normal text-fg-muted">{title}</h4>
-        <p className="mt-1 max-w-[620px] text-xs leading-5 text-fg-faint">{description}</p>
-      </div>
-      <div className="grid gap-4">{children}</div>
-    </section>
-  );
-}
-
-function Field({
-  autoComplete,
-  description,
-  label,
-  value,
-  onChange,
-  placeholder,
-  type = "text",
-}: {
-  autoComplete?: string;
-  description?: string;
-  label: string;
-  value: string;
-  onChange(value: string): void;
-  placeholder: string;
-  type?: string;
-}) {
-  return (
-    <label className="grid gap-2">
-      <span className="text-xs text-fg-muted">{label}</span>
-      <input
-        autoComplete={autoComplete}
-        className="h-10 w-full rounded-md border border-hairline bg-canvas px-3 text-sm text-fg outline-none placeholder:text-fg-faint transition-colors hover:border-hairline-strong focus:border-hairline-strong focus:ring-2 focus:ring-white/5"
-        onChange={(event) => onChange(event.target.value)}
-        placeholder={placeholder}
-        type={type}
-        value={value}
-      />
-      {description ? <span className="text-xs leading-5 text-fg-faint">{description}</span> : null}
-    </label>
-  );
-}
-
-function SelectField<T extends string>({
-  label,
-  value,
-  options,
-  onChange,
-}: {
-  label: string;
-  value: T;
-  options: readonly { label: string; value: T }[];
-  onChange(value: T): void;
-}) {
-  return (
-    <div className="grid gap-2">
-      <span className="text-xs text-fg-muted">{label}</span>
-      <Select.Root
-        onValueChange={(next) => {
-          if (typeof next === "string") {
-            onChange(next as T);
-          }
-        }}
-        value={value}
-      >
-        <Select.Trigger
-          aria-label={label}
-          className="flex h-10 w-full items-center justify-between gap-3 rounded-md border border-hairline bg-canvas px-3 text-sm text-fg outline-none transition-colors hover:border-hairline-strong focus-visible:border-hairline-strong focus-visible:ring-2 focus-visible:ring-white/5 data-popup-open:border-hairline-strong"
-        >
-          <Select.Value>{(selected) => optionLabel(options, String(selected))}</Select.Value>
-          <Select.Icon>
-            <IconChevronDown className="text-fg-faint" size={14} stroke={1.8} />
-          </Select.Icon>
-        </Select.Trigger>
-        <Select.Portal>
-          <Select.Positioner
-            align="start"
-            alignItemWithTrigger={false}
-            collisionAvoidance={{ side: "flip", align: "shift", fallbackAxisSide: "none" }}
-            side="bottom"
-            sideOffset={5}
-          >
-            <Select.Popup className="scroll-thin origin-(--transform-origin) min-w-[var(--anchor-width)] overflow-y-auto rounded-lg border border-hairline bg-elevated p-1 shadow-popup transition-[transform,opacity] duration-100 data-[side=bottom]:data-ending-style:translate-y-[-4px] data-[side=bottom]:data-starting-style:translate-y-[-4px] data-[side=top]:data-ending-style:translate-y-[4px] data-[side=top]:data-starting-style:translate-y-[4px] data-ending-style:opacity-0 data-starting-style:opacity-0">
-              {options.map((option) => (
-                <Select.Item
-                  className="grid h-8 cursor-default grid-cols-[minmax(0,1fr)_16px] items-center gap-2 rounded-md px-2 text-sm text-fg-muted outline-none select-none data-highlighted:bg-hover data-highlighted:text-fg"
-                  key={option.value}
-                  value={option.value}
-                >
-                  <Select.ItemText className="min-w-0 truncate">{option.label}</Select.ItemText>
-                  <span className="flex justify-center text-fg">
-                    <Select.ItemIndicator>
-                      <IconCheck size={13} stroke={2} />
-                    </Select.ItemIndicator>
-                  </span>
-                </Select.Item>
-              ))}
-            </Select.Popup>
-          </Select.Positioner>
-        </Select.Portal>
-      </Select.Root>
-    </div>
-  );
-}
-
-function ToggleField({
-  checked,
-  description,
-  icon,
-  label,
-  onChange,
-}: {
-  checked: boolean;
-  description: string;
-  icon?: ReactNode;
-  label: string;
-  onChange(value: boolean): void;
-}) {
-  return (
-    <div className="flex min-h-[76px] items-center justify-between gap-4 rounded-md border border-hairline-soft bg-canvas/45 px-4 py-3 transition-colors hover:bg-hover">
-      <div className="flex min-w-0 items-start gap-3">
-        {icon ? (
-          <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md bg-chip text-fg-subtle">
-            {icon}
-          </span>
-        ) : null}
-        <span className="min-w-0">
-          <span className="block text-sm text-fg">{label}</span>
-          <span className="mt-1 block text-xs leading-5 text-fg-faint">{description}</span>
-        </span>
-      </div>
-      <SwitchControl ariaLabel={label} checked={checked} onCheckedChange={onChange} />
-    </div>
-  );
-}
-
-function KeyValueEditor({
-  addLabel,
-  description,
-  emptyLabel,
-  icon,
-  keyPlaceholder,
-  rows,
-  title,
-  valuePlaceholder,
-  variant,
-  onAdd,
-  onChange,
-  onRemove,
-}: {
-  addLabel: string;
-  description: string;
-  emptyLabel: string;
-  icon?: ReactNode;
-  keyPlaceholder: string;
-  rows: KeyValueRow[];
-  title: string;
-  valuePlaceholder: string;
-  variant: "section" | "embedded";
-  onAdd(): void;
-  onChange(rowId: string, patch: Partial<KeyValueRow>): void;
-  onRemove(rowId: string): void;
-}) {
-  const header = (
-    <div className="flex flex-wrap items-start justify-between gap-4">
-      <div className="flex min-w-0 items-start gap-3">
-        {icon ? (
-          <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border border-hairline-soft bg-chip text-fg-subtle">
-            {icon}
-          </span>
-        ) : null}
-        <div className="min-w-0">
-          <h3 className="text-sm font-normal text-fg">{title}</h3>
-          <p className="mt-1 max-w-[620px] text-xs leading-5 text-fg-faint">{description}</p>
-        </div>
-      </div>
-      <button
-        className="flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-hairline bg-chip-faint px-3 text-sm text-fg-subtle transition-colors hover:bg-hover hover:text-fg"
-        onClick={onAdd}
-        type="button"
-      >
-        <IconPlus size={14} stroke={1.8} />
-        {addLabel}
-      </button>
-    </div>
-  );
-
-  const body = (
-    <div className="grid gap-3">
-      <AnimatePresence initial={false}>
-        {rows.map((row) => (
-          <m.div
-            animate={{ opacity: 1, y: 0 }}
-            className="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_40px]"
-            exit={{ opacity: 0, y: -4 }}
-            initial={{ opacity: 0, y: 4 }}
-            key={row.rowId}
-            layout
-            transition={{ duration: 0.14, ease: "easeOut" }}
-          >
-            <input
-              aria-label={`${title} key`}
-              className="h-10 rounded-md border border-hairline bg-canvas px-3 text-sm text-fg outline-none placeholder:text-fg-faint transition-colors hover:border-hairline-strong focus:border-hairline-strong focus:ring-2 focus:ring-white/5"
-              onChange={(event) => onChange(row.rowId, { key: event.target.value })}
-              placeholder={keyPlaceholder}
-              value={row.key}
-            />
-            <input
-              aria-label={`${title} value`}
-              className="h-10 rounded-md border border-hairline bg-canvas px-3 text-sm text-fg outline-none placeholder:text-fg-faint transition-colors hover:border-hairline-strong focus:border-hairline-strong focus:ring-2 focus:ring-white/5"
-              onChange={(event) => onChange(row.rowId, { value: event.target.value })}
-              placeholder={valuePlaceholder}
-              value={row.value}
-            />
-            <button
-              aria-label="Remove row"
-              className="flex size-10 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-hover hover:text-fg"
-              onClick={() => onRemove(row.rowId)}
-              type="button"
-            >
-              <IconTrash size={14} stroke={1.7} />
-            </button>
-          </m.div>
-        ))}
-      </AnimatePresence>
-      {rows.length === 0 ? (
-        <div className="rounded-md border border-dashed border-hairline-soft bg-canvas/35 px-4 py-4 text-sm text-fg-faint">
-          {emptyLabel}
-        </div>
-      ) : null}
-    </div>
-  );
-
-  if (variant === "section") {
-    return (
-      <m.section
-        className="overflow-hidden rounded-lg border border-hairline-soft bg-panel"
-        layout
-        transition={{ duration: 0.18, ease: "easeOut" }}
-      >
-        <div className="border-hairline-soft border-b px-5 py-4">{header}</div>
-        <div className="px-5 py-5">{body}</div>
-      </m.section>
-    );
-  }
-
-  return (
-    <section className="grid gap-4 border-hairline-soft border-t pt-5">
-      {header}
-      {body}
-    </section>
-  );
-}
-
-function FormMetaPill({ children }: { children: ReactNode }) {
-  return (
-    <span className="rounded-md bg-chip px-2.5 py-1 text-xs text-fg-muted">{children}</span>
-  );
-}
-
-function optionLabel<T extends string>(
-  options: readonly { label: string; value: T }[],
-  value: string,
-): string {
-  return options.find((option) => option.value === value)?.label ?? value;
 }

@@ -85,24 +85,40 @@ export function resolvePermissionRequest(
 
 export function denyPendingPermissionRequests(reason = "Window closed"): void {
   for (const [requestId, entry] of pending) {
-    clearTimeout(entry.timeout);
-    pending.delete(requestId);
-    const result = {
-      ...recordPermissionDecision(
-        entry.request.action,
-        `${entry.request.target} (${reason})`,
-        "deny",
-      ),
-      requestId,
-    };
-    if (entry.request.sessionId) {
-      entry.emit({
-        type: "permission.resolved",
-        sessionId: entry.request.sessionId,
-        requestId,
-        decision: "deny",
-      });
-    }
-    entry.resolve(result);
+    denyPendingPermissionRequest(requestId, entry, reason);
   }
+}
+
+export function denyPendingPermissionRequestsForSession(sessionId: string, reason: string): void {
+  for (const [requestId, entry] of pending) {
+    if (entry.request.sessionId === sessionId) {
+      denyPendingPermissionRequest(requestId, entry, reason);
+    }
+  }
+}
+
+function denyPendingPermissionRequest(
+  requestId: string,
+  entry: PendingPermission,
+  reason: string,
+): void {
+  clearTimeout(entry.timeout);
+  pending.delete(requestId);
+  const result = {
+    ...recordPermissionDecision(
+      entry.request.action,
+      `${entry.request.target} (${reason})`,
+      "deny",
+    ),
+    requestId,
+  };
+  if (entry.request.sessionId) {
+    entry.emit({
+      type: "permission.resolved",
+      sessionId: entry.request.sessionId,
+      requestId,
+      decision: "deny",
+    });
+  }
+  entry.resolve(result);
 }

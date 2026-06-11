@@ -4,6 +4,7 @@ import {
   IconCheck,
   IconChevronDown,
   IconCircles,
+  IconColumns,
   IconDeviceLaptop,
   IconFolder,
   IconGitBranch,
@@ -15,18 +16,18 @@ import {
   IconVersions,
 } from "@tabler/icons-react";
 import { AnimatePresence, domAnimation, LazyMotion, m } from "motion/react";
-import { type ReactNode, type UIEvent, useCallback, useEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SecurityState } from "../../../preload/types";
 import type {
   AgentEvent,
   AgentSessionInfo,
   ContextItem,
+  ContextUsageInfo,
   FileDiff,
   ModelInfo,
   ModelSettingsState,
-  PermissionDecision,
-  PermissionRequest,
   PromptDelivery,
+  PromptImageAttachment,
   ThinkingLevel,
   WorkspaceInfo,
 } from "../../../shared/contracts";
@@ -34,30 +35,33 @@ import modusLogo from "../assets/modus-logo.png";
 import { Sidebar } from "../components/Sidebar";
 import { ToolbarButton } from "../components/ui/ToolbarButton";
 import { TooltipProvider } from "../components/ui/Tooltip";
-import { Timeline } from "../features/agent/Timeline";
+import {
+  AgentEventHub,
+  affectsActivity,
+  reduceActivity,
+  type SessionActivity,
+} from "../features/agent/agentEventHub";
+import { ChatPane } from "../features/agent/ChatPane";
 import { Composer } from "../features/composer/Composer";
 import { Inspector } from "../features/inspector/Inspector";
 import { SettingsPanel } from "../features/settings/SettingsPanel";
 import { cn } from "../lib/cn";
 
-type AgentEventItem = { id: string; event: AgentEvent; createdAt?: string };
-
-/**
- * Coalesce streamed agent events into one React update every ~40ms (~25fps of
- * state commits) instead of one per animation frame (~60fps). Per AI SDK
- * guidance (~50ms throttle), this cuts markdown re-render frequency without a
- * perceptible lag, which keeps the timeline smooth during fast token streams.
- */
-const AGENT_EVENT_FLUSH_MS = 40;
+/** Side-by-side agent columns (Agents-Window style). 3 keeps panes readable at the app's min width. */
+const MAX_PANES = 3;
 
 export function App() {
   const [securityState, setSecurityState] = useState<SecurityState | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([]);
   const [activeWorkspace, setActiveWorkspace] = useState<WorkspaceInfo | null>(null);
-  const [agentSession, setAgentSession] = useState<AgentSessionInfo | null>(null);
   const [agentSessions, setAgentSessions] = useState<AgentSessionInfo[]>([]);
-  const [agentEvents, setAgentEvents] = useState<AgentEventItem[]>([]);
-  const [contextItems, setContextItems] = useState<ContextItem[]>([]);
+  const [paneSessionIds, setPaneSessionIds] = useState<string[]>([]);
+  const [focusedPane, setFocusedPane] = useState(0);
+  const [activityBySession, setActivityBySession] = useState<Record<string, SessionActivity>>({});
+  const [contextUsageBySession, setContextUsageBySession] = useState<
+    Record<string, ContextUsageInfo>
+  >({});
+  const [heroContextItems, setHeroContextItems] = useState<ContextItem[]>([]);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [model, setModel] = useState("");
   const [modelSettings, setModelSettings] = useState<ModelSettingsState | null>(null);
@@ -68,49 +72,17 @@ export function App() {
   const [inspectorWidth, setInspectorWidth] = useState(384);
   const [environmentStats, setEnvironmentStats] = useState({ added: 0, removed: 0 });
   const [sessionCreateError, setSessionCreateError] = useState<string | undefined>();
-  const [promptError, setPromptError] = useState<string | undefined>();
-  const [pendingPrompt, setPendingPrompt] = useState(false);
-  const activeSessionIdRef = useRef<string | undefined>(undefined);
-  const queuedAgentEventsRef = useRef<AgentEventItem[]>([]);
-  const queuedAgentEventsFrameRef = useRef<number | undefined>(undefined);
-  const timelineViewportRef = useRef<HTMLDivElement | null>(null);
-  const shouldFollowTimelineRef = useRef(true);
 
-  const flushQueuedAgentEvents = useCallback((): void => {
-    queuedAgentEventsFrameRef.current = undefined;
-    const queued = queuedAgentEventsRef.current;
-    if (queued.length === 0) {
-      return;
-    }
-    queuedAgentEventsRef.current = [];
-    setAgentEvents((events) => appendAgentEvents(events, queued));
-  }, []);
-
-  const enqueueAgentEvent = useCallback(
-    (item: AgentEventItem): void => {
-      queuedAgentEventsRef.current.push(item);
-      if (queuedAgentEventsFrameRef.current !== undefined) {
-        return;
-      }
-      queuedAgentEventsFrameRef.current = window.setTimeout(
-        flushQueuedAgentEvents,
-        AGENT_EVENT_FLUSH_MS,
-      );
-    },
-    [flushQueuedAgentEvents],
-  );
-
-  const clearQueuedAgentEvents = useCallback((): void => {
-    queuedAgentEventsRef.current = [];
-    if (queuedAgentEventsFrameRef.current !== undefined) {
-      window.clearTimeout(queuedAgentEventsFrameRef.current);
-      queuedAgentEventsFrameRef.current = undefined;
-    }
-  }, []);
+  const hubRef = useRef(new AgentEventHub());
+  const paneSessionIdsRef = useRef<string[]>([]);
 
   useEffect(() => {
-    activeSessionIdRef.current = agentSession?.id;
-  }, [agentSession?.id]);
+    paneSessionIdsRef.current = paneSessionIds;
+  }, [paneSessionIds]);
+
+  const refreshSessions = useCallback(async (): Promise<void> => {
+    setAgentSessions(await window.modus.agent.list());
+  }, []);
 
   const refreshModelSettings = useCallback(async (): Promise<void> => {
     const settings = await window.modus.model.settings();
@@ -124,6 +96,11 @@ export function App() {
     });
   }, []);
 
+  /* ── Global event intake: one IPC listener feeds every pane + the sidebar ──
+   * Mount-once wiring: openSessionInPane works off setState callbacks/refs, so
+   * subscribing it as a dependency would only churn the IPC listener.
+   */
+  // biome-ignore lint/correctness/useExhaustiveDependencies: see above.
   useEffect(() => {
     if (!window.modus) {
       return;
@@ -133,16 +110,35 @@ export function App() {
       setWorkspaces(items);
       setActiveWorkspace(items[0] ?? null);
     });
-    void window.modus.agent.list().then(setAgentSessions);
+    void refreshSessions();
     void refreshModelSettings();
+
     const unsubscribe = window.modus.agent.onEvent((event: AgentEvent) => {
-      if (event.sessionId === activeSessionIdRef.current) {
-        enqueueAgentEvent({
-          id: `${Date.now()}:${crypto.randomUUID()}`,
-          event,
-          createdAt: new Date().toISOString(),
+      if (event.type === "context.updated") {
+        setContextUsageBySession((current) => ({
+          ...current,
+          [event.sessionId]: event.usage,
+        }));
+        return;
+      }
+
+      hubRef.current.publish({
+        id: `${Date.now()}:${crypto.randomUUID()}`,
+        event,
+        createdAt: new Date().toISOString(),
+      });
+
+      if (affectsActivity(event)) {
+        const watched = paneSessionIdsRef.current.includes(event.sessionId);
+        setActivityBySession((current) => {
+          const next = reduceActivity(current[event.sessionId], event, watched);
+          if (next === current[event.sessionId]) {
+            return current;
+          }
+          return { ...current, [event.sessionId]: next };
         });
       }
+
       if (
         event.type === "agent.started" ||
         event.type === "agent.ended" ||
@@ -153,24 +149,96 @@ export function App() {
         event.type === "run.blocked" ||
         event.type === "runtime.error"
       ) {
-        void window.modus.agent.list().then(setAgentSessions);
-      }
-      if (
-        event.sessionId === activeSessionIdRef.current &&
-        (event.type === "run.completed" ||
-          event.type === "run.failed" ||
-          event.type === "run.cancelled" ||
-          event.type === "run.blocked" ||
-          event.type === "runtime.error")
-      ) {
-        setPendingPrompt(false);
+        void refreshSessions();
       }
     });
+
+    // System notification click → surface that session in the focused pane.
+    const unsubscribeFocus = window.modus.agent.onFocusSession((sessionId: string) => {
+      openSessionInPane(sessionId, "focus");
+    });
+
     return () => {
-      clearQueuedAgentEvents();
       unsubscribe();
+      unsubscribeFocus();
     };
-  }, [clearQueuedAgentEvents, enqueueAgentEvent, refreshModelSettings]);
+  }, [refreshModelSettings, refreshSessions]);
+
+  /* ── Pane management ──────────────────────────────────────────────────── */
+
+  /**
+   * Bring a session on screen. "replace" swaps it into the focused pane (the
+   * classic single-chat behavior); "split" opens a new column (up to
+   * MAX_PANES, falling back to replace); "focus" prefers an existing pane.
+   */
+  function openSessionInPane(sessionId: string, mode: "replace" | "split" | "focus"): void {
+    setPaneSessionIds((current) => {
+      const existingIndex = current.indexOf(sessionId);
+      if (existingIndex >= 0) {
+        setFocusedPane(existingIndex);
+        return current;
+      }
+      if (current.length === 0) {
+        setFocusedPane(0);
+        return [sessionId];
+      }
+      if (mode === "split" && current.length < MAX_PANES) {
+        setFocusedPane(current.length);
+        return [...current, sessionId];
+      }
+      const target =
+        mode === "split" ? current.length - 1 : Math.min(focusedPane, current.length - 1);
+      const next = current.slice();
+      next[target] = sessionId;
+      setFocusedPane(target);
+      return next;
+    });
+  }
+
+  function closePane(index: number): void {
+    setPaneSessionIds((current) => {
+      const next = current.filter((_, paneIndex) => paneIndex !== index);
+      setFocusedPane((focus) =>
+        Math.max(0, Math.min(focus > index ? focus - 1 : focus, next.length - 1)),
+      );
+      return next;
+    });
+  }
+
+  // Sessions opened in a pane are "watched": their unread flag clears.
+  useEffect(() => {
+    setActivityBySession((current) => {
+      let changed = false;
+      const next = { ...current };
+      for (const sessionId of paneSessionIds) {
+        const activity = next[sessionId];
+        if (activity?.unread) {
+          next[sessionId] = { ...activity, unread: false };
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [paneSessionIds]);
+
+  // Drop panes whose sessions were archived elsewhere.
+  useEffect(() => {
+    setPaneSessionIds((current) => {
+      const next = current.filter((id) => agentSessions.some((session) => session.id === id));
+      return next.length === current.length ? current : next;
+    });
+  }, [agentSessions]);
+
+  const paneSessions = useMemo(
+    () =>
+      paneSessionIds
+        .map((id) => agentSessions.find((session) => session.id === id))
+        .filter((session): session is AgentSessionInfo => Boolean(session)),
+    [paneSessionIds, agentSessions],
+  );
+  const focusedSession = paneSessions[Math.min(focusedPane, paneSessions.length - 1)];
+
+  /* ── Session lifecycle ───────────────────────────────────────────────── */
 
   async function openWorkspace(): Promise<void> {
     const workspace = await window.modus.workspace.open();
@@ -179,10 +247,13 @@ export function App() {
     }
     setActiveWorkspace(workspace);
     setWorkspaces(await window.modus.workspace.list());
-    setAgentSessions(await window.modus.agent.list());
+    await refreshSessions();
   }
 
-  async function createSession(workspace: WorkspaceInfo | null): Promise<AgentSessionInfo | null> {
+  async function createSession(
+    workspace: WorkspaceInfo | null,
+    mode: "replace" | "split",
+  ): Promise<AgentSessionInfo | null> {
     if (!workspace) {
       return null;
     }
@@ -199,12 +270,9 @@ export function App() {
         title: "New chat",
       });
       setSessionCreateError(undefined);
-      setPromptError(undefined);
       setActiveWorkspace(workspace);
-      setAgentSession(session);
-      clearQueuedAgentEvents();
-      setAgentEvents([]);
-      setAgentSessions(await window.modus.agent.list());
+      await refreshSessions();
+      openSessionInPane(session.id, mode);
       return session;
     } catch (error) {
       setSessionCreateError(error instanceof Error ? error.message : String(error));
@@ -212,134 +280,81 @@ export function App() {
     }
   }
 
-  async function ensureSession(): Promise<AgentSessionInfo | null> {
-    if (agentSession) {
-      return agentSession;
-    }
-    return await createSession(activeWorkspace);
-  }
-
-  async function selectSession(session: AgentSessionInfo): Promise<void> {
+  function selectSession(session: AgentSessionInfo, mode: "replace" | "split" = "replace"): void {
     setSessionCreateError(undefined);
-    setPromptError(undefined);
-    setAgentSession(session);
-    clearQueuedAgentEvents();
-    shouldFollowTimelineRef.current = true;
     setActiveWorkspace(
       workspaces.find((workspace) => workspace.id === session.workspaceId) ?? activeWorkspace,
     );
-    setAgentEvents(await window.modus.agent.listEvents(session.id));
-    void window.modus.agent
-      .ensure(session.id)
-      .then((resumed: AgentSessionInfo) => {
-        setAgentSession(resumed);
-        return window.modus.agent.list();
-      })
-      .then(setAgentSessions)
-      .catch((error: unknown) => {
-        setPromptError(error instanceof Error ? error.message : String(error));
-      });
+    openSessionInPane(session.id, mode);
   }
 
   async function archiveSession(session: AgentSessionInfo): Promise<void> {
     try {
       await window.modus.agent.delete(session.id);
     } catch (error) {
-      setPromptError(error instanceof Error ? error.message : String(error));
+      setSessionCreateError(error instanceof Error ? error.message : String(error));
       return;
     }
-    // If the archived session is the open one, drop back to the empty state.
-    if (agentSession?.id === session.id) {
-      setAgentSession(null);
-      clearQueuedAgentEvents();
-      setAgentEvents([]);
-    }
-    setAgentSessions(await window.modus.agent.list());
+    await refreshSessions();
   }
 
-  async function submitPrompt(
+  /** Hero composer: create the session, open its pane, fire the first prompt. */
+  async function submitHeroPrompt(
     message: string,
     context: ContextItem[],
-    delivery: PromptDelivery = "normal",
+    _delivery?: PromptDelivery,
+    attachments?: PromptImageAttachment[],
+    skills?: string[],
   ): Promise<void> {
     if (!message.trim()) {
       return;
     }
-    if (!model) {
-      setSettingsOpen(true);
-      setPromptError("No model is configured. Connect a provider in Settings first.");
-      return;
-    }
-    const session = await ensureSession();
+    const session = await createSession(activeWorkspace, "replace");
     if (!session) {
       return;
     }
-    shouldFollowTimelineRef.current = true;
-    const messageId = `local-user:${crypto.randomUUID()}`;
-    setPromptError(undefined);
-    setPendingPrompt(true);
+    setHeroContextItems([]);
     void window.modus.agent
-      .prompt({ context, delivery, sessionId: session.id, message, userMessageId: messageId })
-      .then(() => window.modus.agent.list())
-      .then(setAgentSessions)
+      .prompt({
+        context,
+        delivery: "normal",
+        sessionId: session.id,
+        message,
+        userMessageId: `local-user:${crypto.randomUUID()}`,
+        ...(attachments && attachments.length > 0 ? { attachments } : {}),
+        ...(skills && skills.length > 0 ? { skills } : {}),
+      })
+      .then(() => refreshSessions())
       .catch((error: unknown) => {
-        setPendingPrompt(false);
-        setPromptError(error instanceof Error ? error.message : String(error));
+        setSessionCreateError(error instanceof Error ? error.message : String(error));
       });
   }
 
-  async function decidePermission(
-    request: PermissionRequest,
-    decision: PermissionDecision["decision"],
-  ): Promise<void> {
-    await window.modus.permission.decide({
-      requestId: request.id,
-      sessionId: request.sessionId,
-      action: request.action,
-      target: request.target,
-      decision,
-    });
-  }
-
-  async function changeModel(nextModel: string): Promise<void> {
+  async function changeDefaultModel(nextModel: string): Promise<void> {
     if (!nextModel) {
       return;
     }
     setModel(nextModel);
     await window.modus.model.setDefault(nextModel);
-    if (agentSession) {
-      const nextSession = await window.modus.agent.setModel({
-        sessionId: agentSession.id,
-        model: nextModel,
-      });
-      setAgentSession(nextSession);
-    }
   }
 
   async function updateModelThinking(modelId: string, thinkingLevel: ThinkingLevel): Promise<void> {
-    const updated = await window.modus.model.updateConfig({ model: modelId, thinkingLevel });
+    await window.modus.model.updateConfig({ model: modelId, thinkingLevel });
     await window.modus.model.setDefault(modelId);
     await refreshModelSettings();
     setModel(modelId);
-    if (agentSession) {
-      const nextSession = await window.modus.agent.setModel({
-        sessionId: agentSession.id,
-        model: modelId,
-        thinkingLevel: updated.thinkingLevel,
-      });
-      setAgentSession(nextSession);
-    }
   }
 
   const cycleModel = useCallback(
     async (direction: "forward" | "backward"): Promise<void> => {
       const next = await window.modus.agent.cycleModel({
         direction,
-        sessionId: agentSession?.id,
+        sessionId: focusedSession?.id,
       });
       setModel(next.id);
+      void refreshSessions();
     },
-    [agentSession],
+    [focusedSession?.id, refreshSessions],
   );
 
   useEffect(() => {
@@ -354,72 +369,46 @@ export function App() {
     return () => window.removeEventListener("keydown", handleModelCycle);
   }, [cycleModel]);
 
-  const hasSession = Boolean(agentSession);
-  const activeCwd = agentSession?.worktreePath ?? agentSession?.cwd ?? activeWorkspace?.rootPath;
-  const activeRunStatus = latestRunStatus(agentEvents);
-  const isRunning = pendingPrompt || activeRunStatus === "running" || activeRunStatus === "blocked";
+  const hasPanes = paneSessions.length > 0;
+  const activeCwd =
+    focusedSession?.worktreePath ?? focusedSession?.cwd ?? activeWorkspace?.rootPath;
+  const focusedRunning = focusedSession
+    ? (activityBySession[focusedSession.id]?.running ?? false)
+    : false;
 
   useEffect(() => {
+    // focusedRunning gates nothing but re-runs the poll whenever the focused
+    // agent starts/stops — its edits have just landed when it stops.
+    void focusedRunning;
     if (!activeCwd) {
       setEnvironmentStats({ added: 0, removed: 0 });
       return;
     }
-
     void window.modus.diff.read({ cwd: activeCwd }).then((fileDiff: FileDiff) => {
       setEnvironmentStats(getDiffTotals(fileDiff.diff));
     });
-  }, [activeCwd]);
+  }, [activeCwd, focusedRunning]);
 
-  function handleTimelineScroll(event: UIEvent<HTMLDivElement>): void {
-    const container = event.currentTarget;
-    const distanceFromBottom =
-      container.scrollHeight - container.scrollTop - container.clientHeight;
-    shouldFollowTimelineRef.current = distanceFromBottom < 96;
-  }
-
+  const workspaceRoot = activeWorkspace?.rootPath;
   useEffect(() => {
-    const container = timelineViewportRef.current;
-    if (!container || !shouldFollowTimelineRef.current) {
+    if (!workspaceRoot) {
       return;
     }
+    void window.modus.mcp.sync(workspaceRoot).catch(() => {});
+  }, [workspaceRoot]);
 
-    requestAnimationFrame(() => {
-      container.scrollTop = container.scrollHeight;
-    });
-  });
-
-  // The typewriter grows visible content via component-local state (no App
-  // re-render), so the effect above won't fire on those frames. A ResizeObserver
-  // on the scroll content keeps the view pinned to the bottom while text reveals,
-  // unless the user has scrolled up.
-  useEffect(() => {
-    if (!hasSession) {
-      return;
-    }
-    const container = timelineViewportRef.current;
-    const content = container?.firstElementChild;
-    if (!container || !content) {
-      return;
-    }
-    const observer = new ResizeObserver(() => {
-      if (shouldFollowTimelineRef.current) {
-        container.scrollTop = container.scrollHeight;
-      }
-    });
-    observer.observe(content);
-    return () => observer.disconnect();
-  }, [hasSession]);
+  const canCreateSession = Boolean(activeWorkspace) && Boolean(model);
+  const workspaceById = useMemo(
+    () => new Map(workspaces.map((workspace) => [workspace.id, workspace])),
+    [workspaces],
+  );
 
   return (
-    // LazyMotion + domAnimation：只加载 transform/opacity 等 DOM 动画 features，bundle 缩减 60%、
-    // 减少 SSR/初始化 cost。所有 motion. 改用更轻量的 m. 组件。
     <LazyMotion features={domAnimation} strict>
       <TooltipProvider>
         <div className="app-root flex h-screen flex-col bg-canvas text-fg">
-          {/* Row 1: Cursor 风格 menubar（32px）—— 品牌 + File/Edit/View/Help + 右侧给 window controls 留位 */}
           <MenuBar />
 
-          {/* Row 2: app content or full-window settings */}
           <div className="flex min-h-0 flex-1">
             {settingsOpen ? (
               <SettingsPanel
@@ -427,24 +416,26 @@ export function App() {
                 onRefresh={() => void refreshModelSettings()}
                 open
                 state={modelSettings}
+                workspaceCwd={activeWorkspace?.rootPath}
               />
             ) : (
               <>
                 <Sidebar
                   activeWorkspace={activeWorkspace}
-                  agentSession={agentSession}
+                  activityBySession={activityBySession}
                   agentSessions={agentSessions}
-                  canCreateSession={Boolean(activeWorkspace) && !hasSession && Boolean(model)}
+                  canCreateSession={canCreateSession}
                   onArchiveSession={(session) => void archiveSession(session)}
-                  onNewSession={() => void ensureSession()}
-                  onNewWorkspaceSession={(workspace) => void createSession(workspace)}
+                  onNewSession={() => void createSession(activeWorkspace, "replace")}
+                  onNewWorkspaceSession={(workspace) => void createSession(workspace, "replace")}
                   onOpenChange={setSidebarOpen}
                   onOpenWorkspace={() => void openWorkspace()}
                   onOpenSettings={() => setSettingsOpen(true)}
-                  onSelectSession={(session) => void selectSession(session)}
+                  onSelectSession={(session, mode) => selectSession(session, mode)}
                   onSelectWorkspace={setActiveWorkspace}
                   onWidthChange={setSidebarWidth}
                   open={sidebarOpen}
+                  paneSessionIds={paneSessionIds}
                   width={sidebarWidth}
                   workspaces={workspaces}
                 />
@@ -470,14 +461,17 @@ export function App() {
                           </m.div>
                         ) : null}
                       </AnimatePresence>
-                      {!hasSession ? <ChatTopBar activeWorkspace={activeWorkspace} /> : null}
+                      {!hasPanes ? <ChatTopBar activeWorkspace={activeWorkspace} /> : null}
                     </div>
                     <div className="flex flex-1 items-center justify-end pr-2">
                       <HeaderActions
                         activeWorkspace={activeWorkspace}
+                        canSplit={canCreateSession && paneSessions.length < MAX_PANES}
                         environmentStats={environmentStats}
                         inspectorOpen={inspectorOpen}
+                        onNewParallelTask={() => void createSession(activeWorkspace, "split")}
                         onToggleInspector={() => setInspectorOpen((open) => !open)}
+                        showParallel={hasPanes}
                       />
                     </div>
                   </header>
@@ -487,59 +481,42 @@ export function App() {
                       {sessionCreateError}
                     </div>
                   ) : null}
-                  {promptError ? (
-                    <div className="mx-6 mb-2 rounded-md border border-danger/30 bg-danger/8 px-3 py-2 text-xs text-danger">
-                      {promptError}
-                    </div>
-                  ) : null}
 
                   <AnimatePresence initial={false} mode="wait">
-                    {hasSession ? (
+                    {hasPanes ? (
                       <m.div
                         animate={{ opacity: 1 }}
-                        className="flex min-h-0 flex-1 flex-col"
+                        className="flex min-h-0 flex-1"
                         exit={{ opacity: 0 }}
                         initial={{ opacity: 0 }}
                         key="conversation"
                         transition={{ duration: 0.12, ease: "easeOut" }}
                       >
-                        <div
-                          className="scroll-thin min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable_both-edges]"
-                          onScroll={handleTimelineScroll}
-                          ref={timelineViewportRef}
-                        >
-                          <Timeline
-                            agentEvents={agentEvents}
-                            onPermissionDecision={(request, decision) =>
-                              void decidePermission(request, decision)
+                        {paneSessions.map((session, index) => (
+                          <ChatPane
+                            activity={activityBySession[session.id]}
+                            contextUsage={contextUsageBySession[session.id]}
+                            defaultModel={model}
+                            focused={index === focusedPane}
+                            hub={hubRef.current}
+                            key={session.id}
+                            models={models}
+                            onClose={paneSessions.length > 1 ? () => closePane(index) : undefined}
+                            onFocus={() => setFocusedPane(index)}
+                            onModelChange={setModel}
+                            onModelConfigChange={(next, thinkingLevel) =>
+                              void updateModelThinking(next, thinkingLevel)
                             }
+                            onOpenReview={() => {
+                              setFocusedPane(index);
+                              setInspectorOpen(true);
+                            }}
+                            onSessionsChanged={() => void refreshSessions()}
+                            session={session}
+                            showHeader={paneSessions.length > 1}
+                            workspace={workspaceById.get(session.workspaceId) ?? activeWorkspace}
                           />
-                        </div>
-                        <div className="shrink-0 px-6 pb-5">
-                          <div className="mx-auto max-w-5xl">
-                            <Composer
-                              canSubmit={Boolean(activeWorkspace) && Boolean(model)}
-                              contextItems={contextItems}
-                              cwd={activeCwd}
-                              hasSession
-                              isRunning={isRunning}
-                              model={model}
-                              models={models}
-                              onAbort={() =>
-                                agentSession
-                                  ? void window.modus.agent.abort(agentSession.id)
-                                  : undefined
-                              }
-                              onContextChange={setContextItems}
-                              onModelChange={(next) => void changeModel(next)}
-                              onModelConfigChange={(next, thinkingLevel) =>
-                                void updateModelThinking(next, thinkingLevel)
-                              }
-                              onSubmit={(message, context) => void submitPrompt(message, context)}
-                              workspaceId={activeWorkspace?.id}
-                            />
-                          </div>
-                        </div>
+                        ))}
                       </m.div>
                     ) : (
                       <m.div
@@ -552,24 +529,26 @@ export function App() {
                       >
                         <div className="w-full max-w-[680px] -translate-y-8">
                           <Composer
-                            canSubmit={Boolean(activeWorkspace) && Boolean(model)}
-                            contextItems={contextItems}
-                            cwd={activeCwd}
+                            canSubmit={canCreateSession}
+                            contextItems={heroContextItems}
+                            cwd={activeWorkspace?.rootPath}
                             hasSession={false}
                             model={model}
                             models={models}
-                            onContextChange={setContextItems}
-                            onModelChange={(next) => void changeModel(next)}
+                            onContextChange={setHeroContextItems}
+                            onModelChange={(next) => void changeDefaultModel(next)}
                             onModelConfigChange={(next, thinkingLevel) =>
                               void updateModelThinking(next, thinkingLevel)
                             }
-                            onSubmit={(message, context) => void submitPrompt(message, context)}
+                            onSubmit={(message, context, delivery, attachments, skills) =>
+                              void submitHeroPrompt(message, context, delivery, attachments, skills)
+                            }
                             workspaceId={activeWorkspace?.id}
                           />
                           <div className="mt-4 flex items-center justify-center gap-2">
                             <Pill
                               disabled={!activeWorkspace}
-                              onClick={() => void ensureSession()}
+                              onClick={() => void createSession(activeWorkspace, "replace")}
                               shortcut="⌥Tab"
                             >
                               Plan New Idea
@@ -586,11 +565,11 @@ export function App() {
                   </AnimatePresence>
                 </main>
 
-                {hasSession ? (
+                {hasPanes ? (
                   <Inspector
                     activeWorkspace={activeWorkspace}
                     cwd={activeCwd}
-                    sessionId={agentSession?.id}
+                    sessionId={focusedSession?.id}
                     onOpenChange={setInspectorOpen}
                     onWidthChange={setInspectorWidth}
                     open={inspectorOpen}
@@ -762,17 +741,32 @@ function TopBarItem({ children, icon }: { children: string; icon: ReactNode }) {
 
 function HeaderActions({
   activeWorkspace,
+  canSplit,
   environmentStats,
   inspectorOpen,
+  onNewParallelTask,
   onToggleInspector,
+  showParallel,
 }: {
   activeWorkspace: WorkspaceInfo | null;
+  canSplit: boolean;
   environmentStats: { added: number; removed: number };
   inspectorOpen: boolean;
+  onNewParallelTask(): void;
   onToggleInspector(): void;
+  showParallel: boolean;
 }) {
   return (
     <div className="app-no-drag flex h-7 items-center gap-1">
+      {showParallel ? (
+        <ToolbarButton
+          disabled={!canSplit}
+          label={canSplit ? "New parallel agent (own worktree)" : "Pane limit reached"}
+          onClick={onNewParallelTask}
+        >
+          <IconColumns size={15} stroke={1.65} />
+        </ToolbarButton>
+      ) : null}
       <EnvironmentPopover activeWorkspace={activeWorkspace} environmentStats={environmentStats} />
       <ToolbarButton
         active={inspectorOpen}
@@ -919,73 +913,6 @@ function getDiffTotals(diff: string): { added: number; removed: number } {
     },
     { added: 0, removed: 0 },
   );
-}
-
-function latestRunStatus(events: Array<{ event: AgentEvent }>): string | undefined {
-  return events
-    .map(({ event }) => event)
-    .reverse()
-    .find((event) => event.type.startsWith("run."))
-    ?.type.replace("run.", "");
-}
-
-function appendAgentEvents(
-  events: AgentEventItem[],
-  nextItems: AgentEventItem[],
-): AgentEventItem[] {
-  const result = events.slice();
-  for (const item of nextItems) {
-    const previous = result.at(-1);
-    const merged = previous ? mergeAdjacentAgentEvent(previous, item) : undefined;
-    if (merged) {
-      result[result.length - 1] = merged;
-      continue;
-    }
-    result.push(item);
-  }
-  return result;
-}
-
-function mergeAdjacentAgentEvent(
-  previous: AgentEventItem,
-  next: AgentEventItem,
-): AgentEventItem | undefined {
-  const previousEvent = previous.event;
-  const nextEvent = next.event;
-  if (
-    previousEvent.type === "message.delta" &&
-    nextEvent.type === "message.delta" &&
-    previousEvent.sessionId === nextEvent.sessionId &&
-    previousEvent.messageId === nextEvent.messageId
-  ) {
-    return {
-      ...previous,
-      event: { ...previousEvent, delta: previousEvent.delta + nextEvent.delta },
-    };
-  }
-  if (
-    previousEvent.type === "thinking.delta" &&
-    nextEvent.type === "thinking.delta" &&
-    previousEvent.sessionId === nextEvent.sessionId &&
-    previousEvent.messageId === nextEvent.messageId
-  ) {
-    return {
-      ...previous,
-      event: { ...previousEvent, delta: previousEvent.delta + nextEvent.delta },
-    };
-  }
-  if (
-    previousEvent.type === "tool.output" &&
-    nextEvent.type === "tool.output" &&
-    previousEvent.sessionId === nextEvent.sessionId &&
-    previousEvent.toolCallId === nextEvent.toolCallId
-  ) {
-    return {
-      ...previous,
-      event: { ...previousEvent, output: previousEvent.output + nextEvent.output },
-    };
-  }
-  return undefined;
 }
 
 function Pill({

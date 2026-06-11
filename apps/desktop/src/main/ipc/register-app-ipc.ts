@@ -1,7 +1,13 @@
-import { app, BrowserWindow, type IpcMainInvokeEvent, ipcMain } from "electron";
+import { isAbsolute, resolve, sep } from "node:path";
+import { app, BrowserWindow, type IpcMainInvokeEvent, ipcMain, shell } from "electron";
 import { listAgentEvents, recordAgentEvent } from "../agent/agent-event-store";
 import { listAgentRuns } from "../agent/agent-run-store";
-import { deleteAgentSession, listAgentSessions } from "../agent/agent-store";
+import { deleteAgentSession, getAgentSession, listAgentSessions } from "../agent/agent-store";
+import {
+  deleteSessionCheckpoints,
+  listCheckpoints,
+  restoreCheckpoint,
+} from "../agent/checkpoint-service";
 import {
   configureProvider,
   deleteCustomProvider,
@@ -10,14 +16,17 @@ import {
   getProviderDetail,
   listModels,
   setDefaultModel,
+  testCustomProvider,
   updateModelConfig,
   upsertCustomProvider,
 } from "../agent/model-service";
 import { listAgentReviews, startAgentReview } from "../agent/review-service";
+import { rollbackToUserMessage } from "../agent/rollback-service";
 import { getAgentRuntime } from "../agent/runtime-registry";
 import { resolveContext, searchContext } from "../context/context-service";
 import { addDocSource, indexWorkspaceDocs, listDocSources, searchDocs } from "../docs/docs-service";
 import {
+  applyWorktreeChanges,
   checkoutBranch,
   commitChanges,
   commitOrPush,
@@ -27,25 +36,40 @@ import {
   discardFile,
   fetchAll,
   getStatusSummary,
+  getWorkingChangeStats,
   listBranches,
   listChanges,
   listWorktrees,
   pullCurrentBranch,
   readDiff,
+  readFileVersions,
   revertFile,
   stageAll,
   stageFile,
   unstageFile,
 } from "../git/git-service";
 import {
+  deleteMcpServer,
+  ensureMcpConfigFile,
+  getMcpServerEntry,
+  listMcpServers,
+  setMcpServerEnabled,
+  syncWorkspaceMcp,
+  upsertMcpServer,
+} from "../mcp/mcp-service";
+import {
   denyPendingPermissionRequests,
+  denyPendingPermissionRequestsForSession,
   resolvePermissionRequest,
 } from "../permissions/permission-broker";
 import { listPermissionDecisions, recordPermissionDecision } from "../permissions/permission-store";
+import { listRuleFiles } from "../rules/rules-service";
+import { createSkill, ensureSkillsDir, getSkill, listSkills } from "../skills/skills-service";
 import {
   createTerminal,
   killTerminal,
   listTerminals,
+  removeTerminal,
   resizeTerminal,
   writeTerminal,
 } from "../terminal/terminal-service";
@@ -55,26 +79,36 @@ import {
   agentCreateSchema,
   agentCycleModelSchema,
   agentPromptSchema,
+  agentRollbackSchema,
   agentSetModelSchema,
+  checkpointRestoreSchema,
   configureProviderSchema,
   contextResolveSchema,
   contextSearchSchema,
   cwdSchema,
   diffCommitOrPushSchema,
   diffCommitSchema,
+  diffFileVersionsSchema,
   diffPathSchema,
   diffReadSchema,
   docsAddSchema,
   docsSearchSchema,
+  fileOpenSchema,
   gitCheckoutSchema,
   gitCreateBranchSchema,
+  mcpServerNameSchema,
+  mcpSetEnabledSchema,
+  mcpUpsertSchema,
   parseIpcInput,
   permissionDecideSchema,
   reviewStartSchema,
   sessionIdSchema,
+  skillsCreateSchema,
+  skillsGetSchema,
   terminalCreateSchema,
   terminalResizeSchema,
   terminalWriteSchema,
+  testCustomProviderSchema,
   updateModelConfigSchema,
   upsertCustomProviderSchema,
   worktreeCreateSchema,
@@ -150,6 +184,23 @@ export function registerAppIpc(): void {
     return getRecentWorkspaces();
   });
 
+  // Open a file the agent touched in the OS default app. The path is sandboxed
+  // to the session cwd so a compromised renderer can't coax the main process
+  // into launching arbitrary files outside the workspace.
+  ipcMain.handle(IPC_CHANNELS.fileOpen, async (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(fileOpenSchema, input, IPC_CHANNELS.fileOpen);
+    const root = resolve(parsed.cwd);
+    const target = isAbsolute(parsed.path) ? resolve(parsed.path) : resolve(root, parsed.path);
+    if (target !== root && !target.startsWith(root + sep)) {
+      throw new Error("Refusing to open a path outside the workspace.");
+    }
+    const failure = await shell.openPath(target);
+    if (failure) {
+      throw new Error(failure);
+    }
+  });
+
   ipcMain.handle(IPC_CHANNELS.agentCreate, async (event, input) => {
     assertTrustedSender(event);
     const parsed = parseIpcInput(agentCreateSchema, input, IPC_CHANNELS.agentCreate);
@@ -194,6 +245,8 @@ export function registerAppIpc(): void {
       context: parsed.context ?? [],
       ...(parsed.delivery !== undefined ? { delivery: parsed.delivery } : {}),
       ...(parsed.userMessageId !== undefined ? { userMessageId: parsed.userMessageId } : {}),
+      ...(parsed.attachments !== undefined ? { attachments: parsed.attachments } : {}),
+      ...(parsed.skills !== undefined ? { skills: parsed.skills } : {}),
     });
   });
 
@@ -204,11 +257,25 @@ export function registerAppIpc(): void {
     );
   });
 
+  // Cursor-style "edit & resend": rewind conversation + workspace files to
+  // just before a user message. The renderer refetches events afterwards and
+  // re-prompts with the edited text, so no event is emitted here.
+  ipcMain.handle(IPC_CHANNELS.agentRollback, async (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(agentRollbackSchema, input, IPC_CHANNELS.agentRollback);
+    return await rollbackToUserMessage(getAgentRuntime(), parsed);
+  });
+
   ipcMain.handle(IPC_CHANNELS.agentDelete, async (event, sessionId: string) => {
     assertTrustedSender(event);
     const id = parseIpcInput(sessionIdSchema, sessionId, IPC_CHANNELS.agentDelete);
     // Tear down any live runtime first, then drop the record (events/runs cascade).
     await getAgentRuntime().dispose(id);
+    const session = getAgentSession(id);
+    if (session) {
+      await deleteSessionCheckpoints(id, session.cwd).catch(() => {});
+    }
+    denyPendingPermissionRequestsForSession(id, "Session archived");
     deleteAgentSession(id);
   });
 
@@ -261,6 +328,11 @@ export function registerAppIpc(): void {
     killTerminal(parseIpcInput(sessionIdSchema, terminalId, IPC_CHANNELS.terminalKill));
   });
 
+  ipcMain.handle(IPC_CHANNELS.terminalRemove, (event, terminalId: string) => {
+    assertTrustedSender(event);
+    removeTerminal(parseIpcInput(sessionIdSchema, terminalId, IPC_CHANNELS.terminalRemove));
+  });
+
   ipcMain.handle(IPC_CHANNELS.terminalList, (event) => {
     assertTrustedSender(event);
     return listTerminals();
@@ -275,6 +347,12 @@ export function registerAppIpc(): void {
     assertTrustedSender(event);
     const parsed = parseIpcInput(diffReadSchema, input, IPC_CHANNELS.diffRead);
     return await readDiff(parsed.cwd, parsed.path, parsed.mode);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.diffFileVersions, async (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(diffFileVersionsSchema, input, IPC_CHANNELS.diffFileVersions);
+    return await readFileVersions(parsed.cwd, parsed.path, parsed.mode, parsed.originalPath);
   });
 
   ipcMain.handle(IPC_CHANNELS.diffRevert, async (event, input) => {
@@ -310,6 +388,13 @@ export function registerAppIpc(): void {
   ipcMain.handle(IPC_CHANNELS.diffStatus, async (event, cwd: string) => {
     assertTrustedSender(event);
     return await getStatusSummary(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.diffStatus));
+  });
+
+  // Working-tree change summary (file list + ± line counts) for the composer
+  // changes strip and the worktree apply review.
+  ipcMain.handle(IPC_CHANNELS.diffStats, async (event, cwd: string) => {
+    assertTrustedSender(event);
+    return await getWorkingChangeStats(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.diffStats));
   });
 
   ipcMain.handle(IPC_CHANNELS.diffStageAll, async (event, cwd: string) => {
@@ -463,6 +548,98 @@ export function registerAppIpc(): void {
     return listAgentReviews(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.reviewList));
   });
 
+  ipcMain.handle(IPC_CHANNELS.checkpointList, (event, sessionId: string) => {
+    assertTrustedSender(event);
+    return listCheckpoints(parseIpcInput(sessionIdSchema, sessionId, IPC_CHANNELS.checkpointList));
+  });
+
+  ipcMain.handle(IPC_CHANNELS.checkpointRestore, async (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(checkpointRestoreSchema, input, IPC_CHANNELS.checkpointRestore);
+    const checkpoint = await restoreCheckpoint(parsed.checkpointId);
+    const restoredEvent = {
+      type: "checkpoint.restored",
+      sessionId: checkpoint.sessionId,
+      checkpointId: checkpoint.id,
+    } as const;
+    recordAgentEvent(restoredEvent);
+    getSenderWindow(event).webContents.send(IPC_CHANNELS.agentEvent, restoredEvent);
+    return checkpoint;
+  });
+
+  ipcMain.handle(IPC_CHANNELS.mcpList, (event) => {
+    assertTrustedSender(event);
+    return listMcpServers();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.mcpSync, async (event, cwd: string) => {
+    assertTrustedSender(event);
+    return await syncWorkspaceMcp(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.mcpSync));
+  });
+
+  ipcMain.handle(IPC_CHANNELS.mcpOpenConfig, async (event, cwd: string) => {
+    assertTrustedSender(event);
+    const path = ensureMcpConfigFile(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.mcpOpenConfig));
+    await shell.openPath(path);
+    return path;
+  });
+
+  ipcMain.handle(IPC_CHANNELS.mcpUpsert, async (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(mcpUpsertSchema, input, IPC_CHANNELS.mcpUpsert);
+    const { cwd, ...server } = parsed;
+    return await upsertMcpServer(cwd, server);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.mcpDelete, async (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(mcpServerNameSchema, input, IPC_CHANNELS.mcpDelete);
+    return await deleteMcpServer(parsed.cwd, parsed.name);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.mcpSetEnabled, async (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(mcpSetEnabledSchema, input, IPC_CHANNELS.mcpSetEnabled);
+    return await setMcpServerEnabled(parsed.cwd, parsed.name, parsed.enabled);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.mcpEntry, (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(mcpServerNameSchema, input, IPC_CHANNELS.mcpEntry);
+    return getMcpServerEntry(parsed.cwd, parsed.name);
+  });
+
+  // Detected project rule files (AGENTS.md / CLAUDE.md / .cursorrules /
+  // .cursor/rules/*.mdc) with their apply mode, for the Settings panel.
+  ipcMain.handle(IPC_CHANNELS.rulesList, (event, cwd: string) => {
+    assertTrustedSender(event);
+    return listRuleFiles(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.rulesList));
+  });
+
+  ipcMain.handle(IPC_CHANNELS.skillsList, (event, cwd: string) => {
+    assertTrustedSender(event);
+    return listSkills(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.skillsList));
+  });
+
+  ipcMain.handle(IPC_CHANNELS.skillsGet, (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(skillsGetSchema, input, IPC_CHANNELS.skillsGet);
+    return getSkill(parsed.cwd, parsed.id);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.skillsCreate, (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(skillsCreateSchema, input, IPC_CHANNELS.skillsCreate);
+    return createSkill(parsed);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.skillsOpenDir, async (event, cwd: string) => {
+    assertTrustedSender(event);
+    const dir = ensureSkillsDir(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.skillsOpenDir));
+    await shell.openPath(dir);
+    return dir;
+  });
+
   ipcMain.handle(IPC_CHANNELS.modelList, (event) => {
     assertTrustedSender(event);
     return listModels();
@@ -519,6 +696,16 @@ export function registerAppIpc(): void {
     return await upsertCustomProvider(parsed);
   });
 
+  ipcMain.handle(IPC_CHANNELS.modelTestCustomProvider, async (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(
+      testCustomProviderSchema,
+      input,
+      IPC_CHANNELS.modelTestCustomProvider,
+    );
+    return await testCustomProvider(parsed);
+  });
+
   ipcMain.handle(IPC_CHANNELS.modelUpdateConfig, (event, input) => {
     assertTrustedSender(event);
     const parsed = parseIpcInput(updateModelConfigSchema, input, IPC_CHANNELS.modelUpdateConfig);
@@ -540,6 +727,14 @@ export function registerAppIpc(): void {
     assertTrustedSender(event);
     const parsed = parseIpcInput(worktreeDeleteSchema, input, IPC_CHANNELS.worktreeDelete);
     await deleteWorktree(parsed.cwd, parsed.path);
+  });
+
+  // Cursor "/apply-worktree" equivalent: land a worktree session's changes in
+  // the main checkout via a snapshot diff + three-way apply.
+  ipcMain.handle(IPC_CHANNELS.worktreeApply, async (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(worktreeDeleteSchema, input, IPC_CHANNELS.worktreeApply);
+    return await applyWorktreeChanges(parsed.cwd, parsed.path);
   });
 
   // 自绘 titlebar 的窗口控制 IPC —— 走 sender-validated 通道，不暴露原始 ipcRenderer

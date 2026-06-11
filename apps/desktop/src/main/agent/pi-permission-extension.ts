@@ -1,60 +1,11 @@
-import type { ExtensionFactory, ToolCallEvent } from "@earendil-works/pi-coding-agent";
-import type { AgentEvent, PermissionAction } from "../../shared/contracts";
+import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
+import type { AgentEvent } from "../../shared/contracts";
 import { requestPermission } from "../permissions/permission-broker";
 import { findWorkspaceAllowDecision } from "../permissions/permission-store";
 import { getActiveAgentRun, updateAgentRunStatus } from "./agent-run-store";
+import { getToolTarget, toolRegistry } from "./tools/registry";
 
 type PermissionEmitter = (event: AgentEvent) => void;
-
-function getTarget(event: ToolCallEvent): string {
-  if ("command" in event.input && typeof event.input.command === "string") {
-    return event.input.command;
-  }
-  if ("path" in event.input && typeof event.input.path === "string") {
-    return event.input.path;
-  }
-  return JSON.stringify(event.input);
-}
-
-function isGitWriteCommand(command: string): boolean {
-  return /\bgit\s+(commit|push|reset|clean|checkout\s+--|restore\b|branch\s+-D|worktree\s+remove|stash\s+(drop|clear))\b/i.test(
-    command,
-  );
-}
-
-function isMutatingShellCommand(command: string): boolean {
-  return /\b(rm|mv|touch|chmod|chown)\b|(^|\s)(>|>>|<<)\s*|\b(npm|pnpm|yarn)\s+(i|install|add)\b/i.test(
-    command,
-  );
-}
-
-function actionForTool(event: ToolCallEvent): PermissionAction {
-  if (event.toolName === "bash") {
-    return isGitWriteCommand(getTarget(event)) ? "git.write" : "shell.execute";
-  }
-  if (event.toolName === "write" || event.toolName === "edit") {
-    return "file.write";
-  }
-  if (/delete|remove/i.test(event.toolName)) {
-    return "file.delete";
-  }
-  return "mcp.call";
-}
-
-function isDangerous(event: ToolCallEvent): boolean {
-  const target = getTarget(event);
-  if (event.toolName === "bash") {
-    return isGitWriteCommand(target) || isMutatingShellCommand(target);
-  }
-  if (
-    event.toolName === "write" ||
-    event.toolName === "edit" ||
-    /delete|remove/i.test(event.toolName)
-  ) {
-    return true;
-  }
-  return false;
-}
 
 export function createModusPermissionExtension(
   sessionId: string,
@@ -62,12 +13,12 @@ export function createModusPermissionExtension(
 ): ExtensionFactory {
   return (pi) => {
     pi.on("tool_call", async (event) => {
-      if (!isDangerous(event)) {
+      const { action, dangerous } = toolRegistry.classify(event);
+      if (!dangerous) {
         return undefined;
       }
 
-      const action = actionForTool(event);
-      const target = getTarget(event);
+      const target = getToolTarget(event);
       if (findWorkspaceAllowDecision(action, target)) {
         return undefined;
       }

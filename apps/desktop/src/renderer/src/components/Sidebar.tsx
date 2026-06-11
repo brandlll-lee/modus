@@ -2,6 +2,7 @@ import {
   IconArchive,
   IconChevronRight,
   IconClock,
+  IconColumns,
   IconDeviceMobile,
   IconEdit,
   IconFolder,
@@ -22,6 +23,8 @@ import {
   useState,
 } from "react";
 import type { AgentSessionInfo, WorkspaceInfo } from "../../../shared/contracts";
+import type { SessionActivity } from "../features/agent/agentEventHub";
+import { SessionStatusDot } from "../features/agent/SessionStatusDot";
 import { cn } from "../lib/cn";
 import { ToolbarButton } from "./ui/ToolbarButton";
 
@@ -32,13 +35,17 @@ const SIDEBAR_TRANSITION = { duration: 0.18, ease: [0.22, 1, 0.36, 1] } as const
 type SidebarProps = {
   workspaces: WorkspaceInfo[];
   activeWorkspace: WorkspaceInfo | null;
-  agentSession: AgentSessionInfo | null;
   agentSessions: AgentSessionInfo[];
+  /** Sessions currently open as panes — highlighted as active rows. */
+  paneSessionIds: string[];
+  /** Live run/needs-input/unread state per session for the status dots. */
+  activityBySession: Record<string, SessionActivity>;
   open: boolean;
   width: number;
   onOpenWorkspace(): void;
   onSelectWorkspace(workspace: WorkspaceInfo): void;
-  onSelectSession(session: AgentSessionInfo): void;
+  /** mode "split" opens the session in a new pane (Ctrl/Cmd+click or split icon). */
+  onSelectSession(session: AgentSessionInfo, mode: "replace" | "split"): void;
   onNewSession(): void;
   onNewWorkspaceSession(workspace: WorkspaceInfo): void;
   onArchiveSession(session: AgentSessionInfo): void;
@@ -51,8 +58,9 @@ type SidebarProps = {
 export function Sidebar({
   workspaces,
   activeWorkspace,
-  agentSession,
   agentSessions,
+  paneSessionIds,
+  activityBySession,
   open,
   width,
   onOpenWorkspace,
@@ -199,13 +207,14 @@ export function Sidebar({
                 ) : (
                   workspaces.map((workspace) => (
                     <WorkspaceItem
-                      activeSessionId={agentSession?.id}
+                      activityBySession={activityBySession}
                       isActive={activeWorkspace?.id === workspace.id}
                       key={workspace.id}
                       onArchiveSession={onArchiveSession}
                       onNewSession={() => onNewWorkspaceSession(workspace)}
                       onSelect={() => onSelectWorkspace(workspace)}
                       onSelectSession={onSelectSession}
+                      paneSessionIds={paneSessionIds}
                       sessions={sessionsByWorkspace.get(workspace.id) ?? []}
                       workspace={workspace}
                     />
@@ -257,7 +266,8 @@ export function Sidebar({
 function WorkspaceItem({
   workspace,
   isActive,
-  activeSessionId,
+  paneSessionIds,
+  activityBySession,
   sessions,
   onSelect,
   onSelectSession,
@@ -266,10 +276,11 @@ function WorkspaceItem({
 }: {
   workspace: WorkspaceInfo;
   isActive: boolean;
-  activeSessionId: string | undefined;
+  paneSessionIds: string[];
+  activityBySession: Record<string, SessionActivity>;
   sessions: AgentSessionInfo[];
   onSelect(): void;
-  onSelectSession(session: AgentSessionInfo): void;
+  onSelectSession(session: AgentSessionInfo, mode: "replace" | "split"): void;
   onNewSession(): void;
   onArchiveSession(session: AgentSessionInfo): void;
 }) {
@@ -288,13 +299,20 @@ function WorkspaceItem({
       </ProjectRow>
       {sessions.map((session) => (
         <SessionRow
-          isActive={activeSessionId === session.id}
+          activity={activityBySession[session.id]}
+          isActive={paneSessionIds.includes(session.id)}
           key={session.id}
           onArchive={(event) => {
             event.stopPropagation();
             onArchiveSession(session);
           }}
-          onSelect={() => onSelectSession(session)}
+          onSelect={(event) =>
+            onSelectSession(session, event.ctrlKey || event.metaKey ? "split" : "replace")
+          }
+          onSplit={(event) => {
+            event.stopPropagation();
+            onSelectSession(session, "split");
+          }}
           title={session.title}
           updatedAt={session.updatedAt}
         />
@@ -307,15 +325,22 @@ function SessionRow({
   title,
   updatedAt,
   isActive,
+  activity,
   onSelect,
+  onSplit,
   onArchive,
 }: {
   title: string;
   updatedAt: string;
   isActive: boolean;
-  onSelect(): void;
+  activity: SessionActivity | undefined;
+  onSelect(event: MouseEvent<HTMLButtonElement>): void;
+  onSplit(event: MouseEvent<HTMLButtonElement>): void;
   onArchive(event: MouseEvent<HTMLButtonElement>): void;
 }) {
+  const hasStatus = Boolean(
+    activity && (activity.running || activity.needsInput || activity.unread || activity.failed),
+  );
   return (
     <m.div
       className={cn(
@@ -326,16 +351,26 @@ function SessionRow({
       transition={{ duration: 0.14, ease: "easeOut" }}
     >
       <button
-        className="flex min-w-0 flex-1 items-center py-2 pr-1 pl-3 text-left"
+        className="flex min-w-0 flex-1 items-center gap-2 py-2 pr-1 pl-3 text-left"
         onClick={onSelect}
+        title="Open · Ctrl+click to open in a split"
         type="button"
       >
         <span className="min-w-0 flex-1 truncate">{title}</span>
-        <span className="ml-2 shrink-0 text-xs font-normal text-fg-faint group-hover:hidden">
+        {hasStatus ? <SessionStatusDot activity={activity} className="ml-1" /> : null}
+        <span
+          className={cn(
+            "shrink-0 text-xs font-normal text-fg-faint group-hover:hidden",
+            hasStatus ? "ml-1" : "ml-2",
+          )}
+        >
           {formatRelativeTime(updatedAt)}
         </span>
       </button>
       <span className="ml-1 hidden shrink-0 items-center group-hover:flex group-focus-within:flex">
+        <IconButton label="Open in split pane" onClick={onSplit}>
+          <IconColumns size={14} stroke={1.8} />
+        </IconButton>
         <IconButton label="Archive" onClick={onArchive}>
           <IconArchive size={14} stroke={1.8} />
         </IconButton>

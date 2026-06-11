@@ -21,7 +21,9 @@ export function deriveSessionTitle(prompt: string): string {
     return "New chat";
   }
 
-  const withoutPolitePrefix = singleLine.replace(/^(你好|您好|hello|hi|hey)[，,!！\s]+/i, "").trim();
+  const withoutPolitePrefix = singleLine
+    .replace(/^(你好|您好|hello|hi|hey)[，,!！\s]+/i, "")
+    .trim();
   const candidate = withoutPolitePrefix || singleLine;
   if (candidate.length <= MAX_TITLE_LENGTH) {
     return stripTrailingPunctuation(candidate);

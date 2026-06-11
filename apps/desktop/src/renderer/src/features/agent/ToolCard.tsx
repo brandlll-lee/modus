@@ -1,19 +1,12 @@
-import {
-  IconAlertTriangle,
-  IconChevronRight,
-  IconFile,
-  IconFilePlus,
-  IconFileSearch,
-  IconFolder,
-  IconLoader2,
-  IconPencil,
-  IconSearch,
-  IconTerminal2,
-  IconTool,
-} from "@tabler/icons-react";
+import { IconAlertTriangle, IconChevronRight, IconLoader2 } from "@tabler/icons-react";
 import { AnimatePresence, m } from "motion/react";
 import { memo, type ReactNode, useState } from "react";
+import { getToolUiMeta, type ToolUiMeta } from "../../../../shared/tools";
 import { cn } from "../../lib/cn";
+import { DiffToolCard } from "./diff/DiffToolCard";
+import { TERMINAL_CARD_TOOLS } from "./terminal/parseTerminal";
+import { TerminalToolCard } from "./terminal/TerminalToolCard";
+import { toolIcon } from "./toolIcons";
 
 type ToolCardProps = {
   name: string;
@@ -21,7 +14,12 @@ type ToolCardProps = {
   output: string;
   isError?: boolean;
   isComplete?: boolean;
+  /** Session cwd, threaded to the diff card so it can open the edited file. */
+  cwd?: string | undefined;
 };
+
+/** Tools that render as a rich Cursor-style diff card instead of a flat row. */
+const DIFF_TOOLS = new Set(["edit", "write"]);
 
 /** Cap how much tool output we drop into the DOM at once. */
 const MAX_DETAIL_CHARS = 12_000;
@@ -36,90 +34,43 @@ type ToolView = {
 };
 
 export const ToolCard = memo(
-  function ToolCard({ name, args, output, isComplete = false, isError = false }: ToolCardProps) {
-    const [open, setOpen] = useState(false);
-    const view = describeTool(name, args);
-    const detail = toolDetail(name, args, output);
-    const expandable = detail.trim().length > 0;
+  function ToolCard({
+    name,
+    args,
+    output,
+    isComplete = false,
+    isError = false,
+    cwd,
+  }: ToolCardProps) {
+    // edit/write get the rich diff treatment; every other tool stays a flat row.
+    if (DIFF_TOOLS.has(name)) {
+      return (
+        <DiffToolCard args={args} cwd={cwd} isComplete={isComplete} isError={isError} name={name} />
+      );
+    }
 
-    const body = (
-      <>
-        <span className="shrink-0 text-fg-faint">
-          {isError ? (
-            <IconAlertTriangle className="text-danger" size={14} stroke={1.7} />
-          ) : isComplete ? (
-            view.icon
-          ) : (
-            <IconLoader2
-              className="animate-spin text-fg-subtle will-change-transform"
-              size={14}
-              stroke={1.7}
-            />
-          )}
-        </span>
-        <span className={cn("shrink-0", isError ? "text-danger" : "text-fg-muted")}>
-          {view.verb}
-        </span>
-        <span
-          className={cn(
-            "min-w-0 flex-1 truncate text-fg-faint",
-            view.mono && "font-mono text-[12px]",
-          )}
-          title={view.target}
-        >
-          {view.target}
-        </span>
-        {isError ? <span className="shrink-0 text-2xs text-danger">failed</span> : null}
-        {expandable ? (
-          <IconChevronRight
-            className={cn(
-              "shrink-0 text-fg-faint transition-transform duration-150",
-              open && "rotate-90",
-            )}
-            size={13}
-            stroke={1.7}
-          />
-        ) : null}
-      </>
-    );
+    // bash / terminal_run / terminal_read get a Cursor-style terminal card with
+    // a live output preview that expands to the full log.
+    if (TERMINAL_CARD_TOOLS.has(name)) {
+      return (
+        <TerminalToolCard
+          args={args}
+          isComplete={isComplete}
+          isError={isError}
+          name={name}
+          output={output}
+        />
+      );
+    }
 
     return (
-      <div className="min-w-0 text-sm">
-        {expandable ? (
-          <button
-            aria-expanded={open}
-            className="flex w-full min-w-0 items-center gap-2 rounded-md py-0.5 text-left transition-colors hover:text-fg"
-            onClick={() => setOpen((value) => !value)}
-            type="button"
-          >
-            {body}
-          </button>
-        ) : (
-          <div className="flex w-full min-w-0 items-center gap-2 py-0.5">{body}</div>
-        )}
-
-        <AnimatePresence initial={false}>
-          {open && expandable ? (
-            <m.div
-              animate={{ height: "auto", opacity: 1 }}
-              className="overflow-hidden"
-              exit={{ height: 0, opacity: 0 }}
-              initial={{ height: 0, opacity: 0 }}
-              transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
-            >
-              <pre
-                className={cn(
-                  "scroll-thin mt-1 max-h-72 overflow-auto rounded-md border border-hairline bg-canvas px-3 py-2",
-                  "whitespace-pre-wrap wrap-break-word font-mono text-[12px] text-fg-faint leading-relaxed",
-                  isError && "border-danger/25 text-danger/90",
-                )}
-              >
-                {clampDetail(detail)}
-              </pre>
-            </m.div>
-          ) : null}
-        </AnimatePresence>
-      </div>
+      <FlatToolRow
+        args={args}
+        isComplete={isComplete}
+        isError={isError}
+        name={name}
+        output={output}
+      />
     );
   },
   (prev, next) =>
@@ -127,72 +78,146 @@ export const ToolCard = memo(
     prev.output === next.output &&
     prev.isComplete === next.isComplete &&
     prev.isError === next.isError &&
+    prev.cwd === next.cwd &&
     argsEqual(prev.args, next.args),
 );
 
+type FlatToolRowProps = Omit<ToolCardProps, "cwd">;
+
+function FlatToolRow({
+  name,
+  args,
+  output,
+  isComplete = false,
+  isError = false,
+}: FlatToolRowProps) {
+  const [open, setOpen] = useState(false);
+  const view = describeTool(name, args);
+  const detail = toolDetail(name, args, output);
+  const expandable = detail.trim().length > 0;
+
+  const body = (
+    <>
+      <span className="shrink-0 text-fg-faint">
+        {isError ? (
+          <IconAlertTriangle className="text-danger" size={14} stroke={1.7} />
+        ) : isComplete ? (
+          view.icon
+        ) : (
+          <IconLoader2
+            className="animate-spin text-fg-subtle will-change-transform"
+            size={14}
+            stroke={1.7}
+          />
+        )}
+      </span>
+      <span className={cn("shrink-0", isError ? "text-danger" : "text-fg-muted")}>{view.verb}</span>
+      <span
+        className={cn(
+          "min-w-0 flex-1 truncate text-fg-faint",
+          view.mono && "font-mono text-[12px]",
+        )}
+        title={view.target}
+      >
+        {view.target}
+      </span>
+      {isError ? <span className="shrink-0 text-2xs text-danger">failed</span> : null}
+      {expandable ? (
+        <IconChevronRight
+          className={cn(
+            "shrink-0 text-fg-faint transition-transform duration-150",
+            open && "rotate-90",
+          )}
+          size={13}
+          stroke={1.7}
+        />
+      ) : null}
+    </>
+  );
+
+  return (
+    <div className="min-w-0 text-sm">
+      {expandable ? (
+        <button
+          aria-expanded={open}
+          className="flex w-full min-w-0 items-center gap-2 rounded-md py-0.5 text-left transition-colors hover:text-fg"
+          onClick={() => setOpen((value) => !value)}
+          type="button"
+        >
+          {body}
+        </button>
+      ) : (
+        <div className="flex w-full min-w-0 items-center gap-2 py-0.5">{body}</div>
+      )}
+
+      <AnimatePresence initial={false}>
+        {open && expandable ? (
+          <m.div
+            animate={{ height: "auto", opacity: 1 }}
+            className="overflow-hidden"
+            exit={{ height: 0, opacity: 0 }}
+            initial={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <pre
+              className={cn(
+                "scroll-thin mt-1 max-h-72 overflow-auto rounded-md border border-hairline bg-canvas px-3 py-2",
+                "whitespace-pre-wrap wrap-break-word font-mono text-[12px] text-fg-faint leading-relaxed",
+                isError && "border-danger/25 text-danger/90",
+              )}
+            >
+              {clampDetail(detail)}
+            </pre>
+          </m.div>
+        ) : null}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 function describeTool(name: string, args: unknown): ToolView {
   const a = (args && typeof args === "object" ? args : {}) as Record<string, unknown>;
+  const meta = getToolUiMeta(name);
+  if (!meta) {
+    return { icon: toolIcon("tool"), verb: humanize(name), target: bestEffortArg(a), mono: true };
+  }
+  const base: ToolView = {
+    icon: toolIcon(meta.iconName),
+    verb: meta.verb,
+    target: primaryTarget(meta, a),
+    mono: meta.mono,
+  };
   switch (name) {
-    case "read": {
-      const path = shortenPath(str(a.path));
-      const range = lineRange(a.offset, a.limit);
-      return { icon: icon(IconFile), verb: "Read", target: `${path}${range}`, mono: false };
-    }
-    case "bash": {
-      return { icon: icon(IconTerminal2), verb: "Ran", target: str(a.command), mono: true };
-    }
+    case "read":
+      return { ...base, target: `${shortenPath(str(a.path))}${lineRange(a.offset, a.limit)}` };
     case "edit": {
       const count = Array.isArray(a.edits) ? a.edits.length : 0;
-      const suffix = count > 1 ? ` (${count} edits)` : "";
-      return {
-        icon: icon(IconPencil),
-        verb: "Edited",
-        target: `${shortenPath(str(a.path))}${suffix}`,
-        mono: false,
-      };
-    }
-    case "write": {
-      return {
-        icon: icon(IconFilePlus),
-        verb: "Wrote",
-        target: shortenPath(str(a.path)),
-        mono: false,
-      };
+      return count > 1 ? { ...base, target: `${shortenPath(str(a.path))} (${count} edits)` } : base;
     }
     case "grep": {
       const where = a.path ? ` in ${shortenPath(str(a.path))}` : a.glob ? ` in ${str(a.glob)}` : "";
-      return {
-        icon: icon(IconSearch),
-        verb: "Grepped",
-        target: `${str(a.pattern)}${where}`,
-        mono: true,
-      };
+      return { ...base, target: `${str(a.pattern)}${where}` };
     }
     case "find": {
       const where = a.path ? ` in ${shortenPath(str(a.path))}` : "";
-      return {
-        icon: icon(IconFileSearch),
-        verb: "Searched",
-        target: `${str(a.pattern)}${where}`,
-        mono: true,
-      };
-    }
-    case "ls": {
-      return {
-        icon: icon(IconFolder),
-        verb: "Listed",
-        target: a.path ? shortenPath(str(a.path)) : ".",
-        mono: false,
-      };
+      return { ...base, target: `${str(a.pattern)}${where}` };
     }
     default:
-      return { icon: icon(IconTool), verb: humanize(name), target: bestEffortArg(a), mono: true };
+      return base;
   }
+}
+
+/** Default target label derived from the tool's declared primary argument. */
+function primaryTarget(meta: ToolUiMeta, a: Record<string, unknown>): string {
+  if (!meta.primaryArgKey) return bestEffortArg(a);
+  const value = str(a[meta.primaryArgKey]);
+  if (meta.primaryArgKey === "path") return value ? shortenPath(value) : ".";
+  return value;
 }
 
 function toolDetail(name: string, args: unknown, output: string): string {
   const a = (args && typeof args === "object" ? args : {}) as Record<string, unknown>;
-  if (name === "bash") {
+  if (name === "bash" || name === "terminal_run") {
     const command = str(a.command);
     return output.trim() ? `$ ${command}\n\n${output}` : `$ ${command}`;
   }
@@ -207,10 +232,6 @@ function clampDetail(detail: string): string {
   return trimmed.length > MAX_DETAIL_CHARS
     ? `${trimmed.slice(0, MAX_DETAIL_CHARS)}\n…(truncated)`
     : trimmed;
-}
-
-function icon(Glyph: typeof IconFile): ReactNode {
-  return <Glyph size={14} stroke={1.7} />;
 }
 
 function str(value: unknown): string {

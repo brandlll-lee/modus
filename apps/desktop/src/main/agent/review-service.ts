@@ -13,6 +13,7 @@ import type { AgentReviewDepth, AgentReviewIssue, AgentReviewResult } from "../.
 import { getDatabase } from "../db/database";
 import { readDiff } from "../git/git-service";
 import { getDefaultModel, getModelRegistry } from "./model-service";
+import { toolRegistry } from "./tools/registry";
 
 const reviewIssueSchema = z.object({
   severity: z.enum(["low", "medium", "high"]),
@@ -174,7 +175,8 @@ async function runPiReview(cwd: string, diff: string, depth: AgentReviewDepth): 
     resourceLoader: loader,
     sessionManager: SessionManager.inMemory(),
     settingsManager,
-    tools: ["read", "grep", "find", "ls"],
+    tools: toolRegistry.resolveActiveTools("review"),
+    customTools: toolRegistry.getCustomToolDefinitions("review"),
   };
   if (selectedModel !== undefined) {
     sessionOptions.model = selectedModel;

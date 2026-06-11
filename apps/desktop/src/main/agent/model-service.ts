@@ -5,6 +5,7 @@ import {
   getSupportedThinkingLevels,
   type Model,
   type ModelThinkingLevel,
+  streamSimple,
 } from "@earendil-works/pi-ai";
 import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { app } from "electron";
@@ -20,6 +21,8 @@ import type {
   ModelProviderInfo,
   ModelSettingsState,
   ProviderModelConfig,
+  TestCustomProviderInput,
+  TestCustomProviderResult,
   ThinkingLevel,
   UpdateModelConfigInput,
   UpsertCustomProviderInput,
@@ -250,6 +253,10 @@ function modelCompatibilityToJson(input: CustomProviderModelInput): JsonObject |
     ...(compatibility?.supportsUsageInStreaming !== undefined
       ? { supportsUsageInStreaming: compatibility.supportsUsageInStreaming }
       : {}),
+    // Anthropic-protocol switches are persisted only when set, keeping the
+    // stored compat JSON free of noise for OpenAI-style endpoints.
+    ...(compatibility?.forceAdaptiveThinking ? { forceAdaptiveThinking: true } : {}),
+    ...(compatibility?.allowEmptySignature ? { allowEmptySignature: true } : {}),
   };
   return mergeJsonObjects(input.compat, structured);
 }
@@ -771,6 +778,7 @@ function sanitizeHeaders(
 function clientHeaderOverridesFor(api: string | undefined): Record<string, string> | undefined {
   switch (api) {
     case "openai-completions":
+    case "openai-responses":
     case "anthropic-messages":
       return STAINLESS_CLIENT_HEADER_OVERRIDES;
     case "google-generative-ai":
@@ -1187,4 +1195,134 @@ export function cycleDefaultModel(direction: "forward" | "backward" = "forward")
 
 export function toPiThinkingLevel(level: ThinkingLevel): ModelThinkingLevel {
   return level as ModelThinkingLevel;
+}
+
+/** Probe request timeout — generous enough for slow relays, short enough for a dialog. */
+const TEST_PROVIDER_TIMEOUT_MS = 30_000;
+
+/**
+ * Live connectivity probe for the custom provider form. Builds a transient
+ * pi-ai Model from the (unsaved) form values and streams one tiny prompt
+ * through the exact driver Modus chats would use — validating endpoint,
+ * credentials, protocol choice and, for reasoning models, whether thinking
+ * deltas actually come back. Nothing is persisted.
+ */
+export async function testCustomProvider(
+  input: TestCustomProviderInput,
+): Promise<TestCustomProviderResult> {
+  const api = (input.model.api?.trim() || input.api?.trim() || DEFAULT_CUSTOM_API) as Api;
+  const baseUrl = (input.model.baseUrl?.trim() || input.baseUrl.trim()).replace(/\/+$/, "");
+  if (!/^https?:\/\//.test(baseUrl)) {
+    throw new Error("Base URL must start with http:// or https://.");
+  }
+  const modelId = input.model.id.trim();
+  if (!modelId) {
+    throw new Error("Add a model id before testing the connection.");
+  }
+
+  // Prefer the key typed into the form; fall back to the stored credential
+  // when editing an existing provider with the key field left blank.
+  let apiKey = input.apiKey?.trim() || undefined;
+  if (!apiKey && input.provider) {
+    apiKey = await getModelRegistry()
+      .getApiKeyForProvider(input.provider.trim())
+      .catch(() => undefined);
+  }
+  if (!apiKey) {
+    throw new Error("Enter an API key to test this provider.");
+  }
+
+  const reasoning = Boolean(input.model.reasoning);
+  const compat = mergeJsonObjects(
+    input.model.compat,
+    modelCompatibilityToJson({ id: modelId, compatibility: input.model.compatibility }),
+  );
+  const thinkingLevelMap = normalizeThinkingLevelMap(input.model.thinkingLevelMap);
+  const headers = applyClientHeaderOverrides(
+    api,
+    sanitizeHeaders({ ...(input.headers ?? {}), ...(input.model.headers ?? {}) }),
+  );
+
+  const model: Model<Api> = {
+    id: modelId,
+    name: modelId,
+    api,
+    provider: input.provider?.trim() || "modus-connection-test",
+    baseUrl,
+    reasoning,
+    input: ["text"],
+    cost: DEFAULT_COST,
+    contextWindow: input.model.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
+    maxTokens: input.model.maxTokens ?? DEFAULT_MAX_TOKENS,
+    ...(headers ? { headers } : {}),
+    ...(compat ? { compat: compat as NonNullable<Model<Api>["compat"]> } : {}),
+    ...(thinkingLevelMap ? { thinkingLevelMap } : {}),
+  };
+
+  // Mirror ModelRegistry.getApiKeyAndHeaders: the bearer toggle layers an
+  // explicit Authorization header on top of the protocol's native key header.
+  const requestHeaders = input.authHeader ? { Authorization: `Bearer ${apiKey}` } : undefined;
+
+  const startedAt = Date.now();
+  try {
+    const stream = streamSimple(
+      model,
+      {
+        messages: [
+          {
+            role: "user",
+            content: "Connection test - reply with the single word: ok",
+            timestamp: Date.now(),
+          },
+        ],
+      },
+      {
+        apiKey,
+        ...(requestHeaders ? { headers: requestHeaders } : {}),
+        // Exercise the real thinking path so a misconfigured budget/effort
+        // setup fails here instead of mid-conversation.
+        ...(reasoning ? { reasoning: "low" as const } : {}),
+        timeoutMs: TEST_PROVIDER_TIMEOUT_MS,
+        maxRetries: 0,
+      },
+    );
+
+    let sawThinking = false;
+    for await (const event of stream) {
+      if (event.type === "thinking_delta" && event.delta.trim()) {
+        sawThinking = true;
+      }
+    }
+    const message = await stream.result();
+    const latencyMs = Date.now() - startedAt;
+
+    if (message.stopReason === "error" || message.stopReason === "aborted") {
+      return {
+        ok: false,
+        latencyMs,
+        message: message.errorMessage ?? "The provider returned an error.",
+        sawThinking,
+      };
+    }
+
+    const text = message.content
+      .filter((item): item is Extract<(typeof message.content)[number], { type: "text" }> =>
+        Boolean(item.type === "text" && item.text.trim()),
+      )
+      .map((item) => item.text.trim())
+      .join(" ");
+    return {
+      ok: true,
+      latencyMs,
+      message: text || "Connected - the model returned an empty reply.",
+      sawThinking,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      latencyMs: Date.now() - startedAt,
+      message: error instanceof Error ? error.message : String(error),
+      sawThinking: false,
+    };
+  }
 }

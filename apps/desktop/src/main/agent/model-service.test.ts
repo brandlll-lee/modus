@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 let userData: string;
 let getDatabase: typeof import("../db/database").getDatabase;
+let getCustomProviderConfig: typeof import("./model-service").getCustomProviderConfig;
 let updateModelConfig: typeof import("./model-service").updateModelConfig;
 let upsertCustomProvider: typeof import("./model-service").upsertCustomProvider;
 
@@ -17,7 +18,9 @@ vi.mock("electron", () => ({
 beforeAll(async () => {
   userData = await mkdtemp(join(tmpdir(), "modus-model-service-test-"));
   ({ getDatabase } = await import("../db/database"));
-  ({ updateModelConfig, upsertCustomProvider } = await import("./model-service"));
+  ({ getCustomProviderConfig, updateModelConfig, upsertCustomProvider } = await import(
+    "./model-service"
+  ));
 }, 60_000);
 
 afterAll(async () => {
@@ -154,6 +157,92 @@ describe("model-service custom provider config", () => {
       api: "openai-completions",
       auth_header: 1,
       headers_json: JSON.stringify({ "X-Relay-App": "modus" }),
+    });
+  });
+
+  it("persists anthropic thinking compat switches and round-trips them for editing", async () => {
+    const provider = `relay-${crypto.randomUUID().slice(0, 8)}`;
+
+    await upsertCustomProvider({
+      provider,
+      name: "Claude Relay",
+      baseUrl: "https://claude-relay.example.test",
+      apiKey: "sk-claude-secret",
+      api: "anthropic-messages",
+      authHeader: false,
+      models: [
+        {
+          id: "claude-opus-4-7",
+          name: "Claude Opus 4.7",
+          reasoning: true,
+          compatibility: {
+            thinkingFormat: "none",
+            supportsUsageInStreaming: false,
+            forceAdaptiveThinking: true,
+            allowEmptySignature: true,
+          },
+          thinkingLevelMap: {
+            minimal: null,
+            low: "low",
+            medium: "medium",
+            high: "high",
+            xhigh: "max",
+          },
+        },
+      ],
+    });
+
+    const modelsJson = JSON.parse(
+      await readFile(join(userData, "pi-agent", "models.json"), "utf-8"),
+    );
+    const stored = modelsJson.providers[provider].models[0];
+    expect(stored.compat).toEqual({
+      supportsUsageInStreaming: false,
+      forceAdaptiveThinking: true,
+      allowEmptySignature: true,
+    });
+    expect(stored.compat).not.toHaveProperty("thinkingFormat");
+    expect(stored.thinkingLevelMap).toEqual({
+      minimal: null,
+      low: "low",
+      medium: "medium",
+      high: "high",
+      xhigh: "max",
+    });
+
+    const roundTrip = getCustomProviderConfig(provider);
+    expect(roundTrip?.api).toBe("anthropic-messages");
+    expect(roundTrip?.models[0]?.compat).toMatchObject({
+      forceAdaptiveThinking: true,
+      allowEmptySignature: true,
+    });
+    expect(roundTrip?.models[0]?.thinkingLevelMap).toMatchObject({ xhigh: "max" });
+  });
+
+  it("accepts the string-thinking format for OpenAI-compatible relays", async () => {
+    const provider = `relay-${crypto.randomUUID().slice(0, 8)}`;
+
+    await upsertCustomProvider({
+      provider,
+      name: "String Thinking Relay",
+      baseUrl: "https://string-relay.example.test/v1",
+      apiKey: "sk-string-secret",
+      api: "openai-completions",
+      models: [
+        {
+          id: "kimi-k3",
+          reasoning: true,
+          compatibility: { thinkingFormat: "string-thinking", supportsUsageInStreaming: true },
+        },
+      ],
+    });
+
+    const modelsJson = JSON.parse(
+      await readFile(join(userData, "pi-agent", "models.json"), "utf-8"),
+    );
+    expect(modelsJson.providers[provider].models[0].compat).toEqual({
+      thinkingFormat: "string-thinking",
+      supportsUsageInStreaming: true,
     });
   });
 

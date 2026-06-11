@@ -35,7 +35,8 @@
       "!**/.modus-cache",
       "!package-lock.json",
       "!.cursor",
-      "!MODUS_V0.1.0_EXECUTION_PLAN.md"
+      "!MODUS_V0.1.0_EXECUTION_PLAN.md",
+      "!reference"
     ]
   }
 }

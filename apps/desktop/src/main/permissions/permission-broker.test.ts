@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentEvent } from "../../shared/contracts";
 import {
   denyPendingPermissionRequests,
+  denyPendingPermissionRequestsForSession,
   requestPermission,
   resolvePermissionRequest,
 } from "./permission-broker";
@@ -61,6 +62,38 @@ describe("permission-broker", () => {
     expect(
       events.some((event) => event.type === "permission.resolved" && event.decision === "deny"),
     ).toBe(true);
+  });
+
+  it("denies only pending requests for an archived session", async () => {
+    vi.useFakeTimers();
+    const archivedEvents: AgentEvent[] = [];
+    const otherEvents: AgentEvent[] = [];
+    const archived = requestPermission({
+      sessionId: "session-1",
+      action: "shell.execute",
+      target: "rm -rf tmp",
+      reason: "dangerous",
+      emit: (event) => archivedEvents.push(event),
+    });
+    const other = requestPermission({
+      sessionId: "session-2",
+      action: "git.write",
+      target: "git clean -f",
+      reason: "dangerous",
+      emit: (event) => otherEvents.push(event),
+    });
+
+    denyPendingPermissionRequestsForSession("session-1", "Session archived");
+
+    await expect(archived).resolves.toMatchObject({ decision: "deny" });
+    expect(archivedEvents.filter((event) => event.type === "permission.resolved")).toHaveLength(1);
+    expect(otherEvents.some((event) => event.type === "permission.resolved")).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(120_000);
+
+    await expect(other).resolves.toMatchObject({ decision: "deny" });
+    expect(otherEvents.filter((event) => event.type === "permission.resolved")).toHaveLength(1);
+    expect(archivedEvents.filter((event) => event.type === "permission.resolved")).toHaveLength(1);
   });
 
   it("times out as deny", async () => {

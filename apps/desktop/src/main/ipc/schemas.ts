@@ -23,6 +23,16 @@ export const agentCreateSchema = z.object({
   worktreeMode: z.enum(["auto", "off"]).optional(),
 });
 
+/** ~10 MB of raw image bytes once base64-decoded. */
+const MAX_ATTACHMENT_BASE64_CHARS = 14_000_000;
+
+const promptImageAttachmentSchema = z.object({
+  type: z.literal("image"),
+  data: z.string().min(1).max(MAX_ATTACHMENT_BASE64_CHARS),
+  mimeType: z.string().regex(/^image\/[\w.+-]+$/),
+  name: z.string().max(256).optional(),
+});
+
 export const agentPromptSchema = z.object({
   sessionId: nonEmptyString,
   message: nonEmptyString,
@@ -32,9 +42,16 @@ export const agentPromptSchema = z.object({
     .optional(),
   delivery: z.enum(["normal", "steer", "follow-up"]).optional(),
   userMessageId: optionalNonEmptyString,
+  attachments: z.array(promptImageAttachmentSchema).max(6).optional(),
+  skills: z.array(nonEmptyString).max(10).optional(),
 });
 
 export const sessionIdSchema = nonEmptyString;
+
+export const agentRollbackSchema = z.object({
+  sessionId: nonEmptyString,
+  userMessageId: nonEmptyString,
+});
 
 export const agentSetModelSchema = z.object({
   sessionId: nonEmptyString,
@@ -67,6 +84,18 @@ export const terminalResizeSchema = z.object({
 
 export const cwdSchema = nonEmptyString;
 
+export const skillsGetSchema = z.object({
+  cwd: nonEmptyString,
+  id: nonEmptyString,
+});
+
+export const skillsCreateSchema = z.object({
+  cwd: nonEmptyString,
+  name: nonEmptyString.max(64),
+  description: z.string().trim().max(280),
+  body: z.string().trim().min(1).max(20_000),
+});
+
 export const diffReadSchema = z.object({
   cwd: nonEmptyString,
   path: optionalNonEmptyString,
@@ -76,6 +105,22 @@ export const diffReadSchema = z.object({
 export const diffPathSchema = z.object({
   cwd: nonEmptyString,
   path: nonEmptyString,
+});
+
+/**
+ * Open a workspace file in the OS default app. `path` is the tool's reported
+ * path (relative to cwd or absolute); the handler resolves + sandboxes it.
+ */
+export const fileOpenSchema = z.object({
+  cwd: nonEmptyString,
+  path: nonEmptyString,
+});
+
+export const diffFileVersionsSchema = z.object({
+  cwd: nonEmptyString,
+  path: nonEmptyString,
+  mode: z.enum(["unstaged", "staged"]).optional(),
+  originalPath: optionalNonEmptyString,
 });
 
 export const diffCommitSchema = z.object({
@@ -160,6 +205,50 @@ export const docsSearchSchema = z.object({
   query: z.string(),
 });
 
+export const checkpointRestoreSchema = z.object({
+  checkpointId: nonEmptyString,
+});
+
+const stringRecordSchema = z.record(z.string(), z.string());
+
+export const mcpUpsertSchema = z
+  .object({
+    cwd: nonEmptyString,
+    name: z
+      .string()
+      .trim()
+      .min(1)
+      .max(64)
+      .regex(/^[\w.-]+$/, "Server names may use letters, numbers, dot, dash and underscore."),
+    originalName: optionalNonEmptyString,
+    transport: z.enum(["stdio", "http"]),
+    command: z.string().trim().optional(),
+    args: z.array(z.string()).max(64).optional(),
+    env: stringRecordSchema.optional(),
+    url: z.string().trim().optional(),
+    headers: stringRecordSchema.optional(),
+    enabled: z.boolean(),
+  })
+  .refine((value) => (value.transport === "stdio" ? Boolean(value.command?.trim()) : true), {
+    message: "Local servers need a command.",
+  })
+  .refine(
+    (value) =>
+      value.transport === "http" ? Boolean(value.url && /^https?:\/\//.test(value.url)) : true,
+    { message: "Remote servers need an http(s) URL." },
+  );
+
+export const mcpServerNameSchema = z.object({
+  cwd: nonEmptyString,
+  name: nonEmptyString,
+});
+
+export const mcpSetEnabledSchema = z.object({
+  cwd: nonEmptyString,
+  name: nonEmptyString,
+  enabled: z.boolean(),
+});
+
 export const reviewStartSchema = z.object({
   cwd: nonEmptyString,
   sessionId: optionalNonEmptyString,
@@ -189,9 +278,12 @@ const modelCompatibilitySchema = z.object({
       "zai",
       "qwen",
       "qwen-chat-template",
+      "string-thinking",
     ])
     .optional(),
   supportsUsageInStreaming: z.boolean().optional(),
+  forceAdaptiveThinking: z.boolean().optional(),
+  allowEmptySignature: z.boolean().optional(),
 });
 
 export const customProviderModelSchema = z.object({
@@ -224,6 +316,27 @@ export const upsertCustomProviderSchema = z.object({
   compat: jsonObjectSchema.optional(),
   compatibility: providerCompatibilitySchema.optional(),
   models: z.array(customProviderModelSchema).min(1),
+});
+
+export const testCustomProviderSchema = z.object({
+  provider: optionalNonEmptyString,
+  baseUrl: z.string().trim().url(),
+  api: z.string().trim().min(1).optional(),
+  apiKey: z.string().optional(),
+  authHeader: z.boolean().optional(),
+  headers: optionalHeadersSchema,
+  model: z.object({
+    id: nonEmptyString,
+    api: z.string().trim().min(1).optional(),
+    baseUrl: z.string().trim().url().optional(),
+    headers: optionalHeadersSchema,
+    reasoning: z.boolean().optional(),
+    contextWindow: z.number().int().min(1_000).max(10_000_000).optional(),
+    maxTokens: z.number().int().min(1).max(1_000_000).optional(),
+    compat: jsonObjectSchema.optional(),
+    compatibility: modelCompatibilitySchema.optional(),
+    thinkingLevelMap: z.partialRecord(thinkingLevelSchema, z.string().nullable()).optional(),
+  }),
 });
 
 export const updateModelConfigSchema = z.object({

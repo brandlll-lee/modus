@@ -1,21 +1,39 @@
-import { IconAlertTriangle, IconChevronRight, IconFile, IconTerminal2 } from "@tabler/icons-react";
+import { IconAlertTriangle, IconChevronRight } from "@tabler/icons-react";
 import { m, useReducedMotion } from "motion/react";
 import { memo, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type {
   AgentEvent,
   PermissionDecision,
   PermissionRequest,
+  PromptImageAttachment,
+  TodoItem,
+  WorkingChangeStats,
 } from "../../../../shared/contracts";
 import { ModusBot } from "../../components/ui/ModusBot";
 import { cn } from "../../lib/cn";
+import { TurnChangesCard } from "./changes/ChangeStats";
 import { MessageBlock } from "./MessageBlock";
 import { PermissionCard } from "./PermissionCard";
 import { ShinyText } from "./TextEffects";
+import { TodosCard } from "./TodosCard";
 import { ToolCard } from "./ToolCard";
 
 type TimelineProps = {
   agentEvents: Array<{ id: string; event: AgentEvent; createdAt?: string }>;
+  /** Session cwd, threaded to diff tool cards so they can open edited files. */
+  cwd?: string | undefined;
   onPermissionDecision?(request: PermissionRequest, decision: PermissionDecision["decision"]): void;
+  onRestoreCheckpoint?(checkpointId: string): Promise<void> | void;
+  /**
+   * Cursor-style edit & resend: rolls the session back to just before the
+   * message, then re-prompts with the edited text. Rejections surface inline
+   * in the message editor.
+   */
+  onEditResend?(
+    messageId: string,
+    message: string,
+    attachments?: PromptImageAttachment[],
+  ): Promise<void>;
 };
 
 type MessageBlockItem = {
@@ -33,6 +51,16 @@ type MessageBlockItem = {
    * single copy/timestamp footer at its bottom (not one per message segment).
    */
   actions?: { content: string; createdAt?: number };
+  /** User only: pre-run snapshot this message can roll the files back to. */
+  checkpointId?: string;
+  /** User only: images attached to the prompt. */
+  attachments?: PromptImageAttachment[];
+  /**
+   * User only: this message anchored a normal-delivery run, so it can be
+   * edited & resent (rolling the session back to this point). Steered and
+   * queued follow-up messages have no stable rollback anchor.
+   */
+  editable?: boolean;
 };
 
 type ToolBlockItem = {
@@ -77,11 +105,28 @@ type ThinkingBlockItem = {
   runId: string;
 };
 
+type ChangesBlockItem = {
+  id: string;
+  type: "changes";
+  runId: string;
+  stats: WorkingChangeStats;
+  /** Pre-run snapshot — powers the card's Undo. */
+  checkpointId?: string;
+};
+
+type TodosBlockItem = {
+  id: string;
+  type: "todos";
+  todos: TodoItem[];
+  /** A todo_write call is in flight — the card shows "Updating to-dos…". */
+  updating: boolean;
+};
+
 type ToolGroupBlockItem = {
   id: string;
   type: "tool-group";
-  /** Tool name shared by every member of the group (e.g. "read", "bash"). */
-  name: string;
+  /** Cursor-style digest of the folded run, e.g. "Explored 4 files, 6 searches". */
+  summary: string;
   tools: ToolBlockItem[];
   isError?: boolean;
 };
@@ -93,20 +138,32 @@ type TimelineBlock =
   | RunBlockItem
   | NoticeBlockItem
   | ThinkingBlockItem
-  | ToolGroupBlockItem;
+  | ToolGroupBlockItem
+  | ChangesBlockItem
+  | TodosBlockItem;
 
 export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): TimelineBlock[] {
   const blocks: TimelineBlock[] = [];
   const blockById = new Map<string, TimelineBlock>();
+  const checkpointByRun = new Map<string, string>();
+  /** todo_write tool calls render through the TodosCard, not as tool rows. */
+  const todoToolCallIds = new Set<string>();
+  let latestTodosBlock: TodosBlockItem | undefined;
+  let todoLifecycleOpen = false;
+  let hasRenderedAnyTodoBlock = false;
+  let todoUpdatesInFlight = 0;
   let order = 0;
   let activeAssistantMessageId: string | undefined;
   let activeRunId: string | undefined;
+  let lastUserMessageBlock: MessageBlockItem | undefined;
 
   function appendMessageBlock(block: MessageBlockItem): MessageBlockItem {
     blocks.push(block);
     blockById.set(block.id, block);
     if (block.role === "assistant") {
       activeAssistantMessageId = block.id;
+    } else {
+      lastUserMessageBlock = block;
     }
     return block;
   }
@@ -144,6 +201,14 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
       blocks.push(block);
       blockById.set(event.runId, block);
       activeRunId = event.runId;
+      // Mark the user message this run answers as editable (edit & resend
+      // rolls back to it). Only normal-delivery runs have a rollback anchor.
+      const anchorBlock = event.userMessageId
+        ? blockById.get(event.userMessageId)
+        : lastUserMessageBlock;
+      if (anchorBlock?.type === "message" && anchorBlock.role === "user") {
+        anchorBlock.editable = event.delivery === "normal";
+      }
       continue;
     }
 
@@ -170,6 +235,17 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
           completedBlock.body = event.summary;
         }
         blocks.push(completedBlock);
+      }
+      // End-of-turn changes card (Codex-style "N files changed").
+      if (event.changes && event.changes.fileCount > 0) {
+        const checkpointId = checkpointByRun.get(event.runId);
+        blocks.push({
+          id: `changes:${event.runId}`,
+          type: "changes",
+          runId: event.runId,
+          stats: event.changes,
+          ...(checkpointId !== undefined ? { checkpointId } : {}),
+        });
       }
       if (activeRunId === event.runId) {
         activeRunId = undefined;
@@ -260,6 +336,9 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
         content: "",
         thinking: "",
         createdAt: eventAt,
+        ...(event.attachments && event.attachments.length > 0
+          ? { attachments: event.attachments }
+          : {}),
       };
       appendMessageBlock(block);
       continue;
@@ -307,6 +386,12 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
     }
 
     if (event.type === "tool.started") {
+      // todo_write surfaces through TodosCard snapshots instead of a tool row.
+      if (event.toolName === "todo_write") {
+        todoToolCallIds.add(event.toolCallId);
+        todoUpdatesInFlight += 1;
+        continue;
+      }
       const block: ToolBlockItem = {
         id: event.toolCallId,
         type: "tool",
@@ -320,6 +405,9 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
     }
 
     if (event.type === "tool.output") {
+      if (todoToolCallIds.has(event.toolCallId)) {
+        continue;
+      }
       const block = blockById.get(event.toolCallId);
       if (block?.type === "tool") {
         block.output += event.output;
@@ -328,10 +416,39 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
     }
 
     if (event.type === "tool.ended") {
+      if (todoToolCallIds.has(event.toolCallId)) {
+        todoToolCallIds.delete(event.toolCallId);
+        todoUpdatesInFlight = Math.max(0, todoUpdatesInFlight - 1);
+        if (latestTodosBlock) {
+          latestTodosBlock.updating = todoUpdatesInFlight > 0;
+        }
+        continue;
+      }
       const block = blockById.get(event.toolCallId);
       if (block?.type === "tool") {
         block.isComplete = true;
         block.isError = event.isError;
+      }
+      continue;
+    }
+
+    if (event.type === "todos.updated") {
+      const allComplete =
+        event.todos.length > 0 && event.todos.every((todo) => todo.status === "completed");
+      const shouldRenderTodos = todoLifecycleOpen
+        ? allComplete
+        : !allComplete || !hasRenderedAnyTodoBlock;
+
+      if (shouldRenderTodos) {
+        latestTodosBlock = {
+          id: `todos:${id}`,
+          type: "todos",
+          todos: event.todos,
+          updating: todoUpdatesInFlight > 0,
+        };
+        blocks.push(latestTodosBlock);
+        hasRenderedAnyTodoBlock = true;
+        todoLifecycleOpen = !allComplete;
       }
       continue;
     }
@@ -398,6 +515,32 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
       continue;
     }
 
+    if (event.type === "checkpoint.created") {
+      // Auto checkpoints anchor a restore action on the user message they
+      // precede; restore backups never surface in the timeline.
+      const anchorId = event.checkpoint.userMessageId;
+      if (event.checkpoint.kind === "auto" && anchorId) {
+        const block = blockById.get(anchorId);
+        if (block?.type === "message" && block.role === "user") {
+          block.checkpointId = event.checkpoint.id;
+        }
+      }
+      if (event.checkpoint.kind === "auto" && event.checkpoint.runId) {
+        checkpointByRun.set(event.checkpoint.runId, event.checkpoint.id);
+      }
+      continue;
+    }
+
+    if (event.type === "checkpoint.restored") {
+      blocks.push({
+        body: "Files rolled back to the snapshot taken before this point.",
+        id,
+        title: "checkpoint restored",
+        type: "notice",
+      });
+      continue;
+    }
+
     if (event.type === "queue.updated") {
       blocks.push({
         body: [...event.steering, ...event.followUp].join("\n"),
@@ -447,9 +590,74 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
   return blocks;
 }
 
-/** Tools that collapse into a single summary row when ≥2 run back-to-back. */
-const GROUPABLE_TOOLS = new Set(["read", "bash"]);
+/**
+ * Read-only exploration tools fold into one Cursor-style summary row when ≥2
+ * run back-to-back — mixed names included ("Explored 4 files, 6 searches").
+ * Tools with side effects (bash, edit, write, terminal_run, MCP…) never fold.
+ */
+const EXPLORE_TOOLS = new Set([
+  "read",
+  "grep",
+  "find",
+  "ls",
+  "terminal_read",
+  "terminal_list",
+  "web_search",
+  "web_fetch",
+]);
 const TOOL_GROUP_MIN = 2;
+
+/** Build the folded run's digest from its members. Exported for tests. */
+export function buildExploreSummary(tools: ToolBlockItem[]): string {
+  const readPaths = new Set<string>();
+  let reads = 0;
+  let searches = 0;
+  let listings = 0;
+  let terminalChecks = 0;
+  let webLookups = 0;
+
+  for (const tool of tools) {
+    const args = (tool.args && typeof tool.args === "object" ? tool.args : {}) as Record<
+      string,
+      unknown
+    >;
+    switch (tool.name) {
+      case "read": {
+        reads += 1;
+        const path = typeof args.path === "string" ? args.path : `#${reads}`;
+        readPaths.add(path);
+        break;
+      }
+      case "grep":
+      case "find":
+        searches += 1;
+        break;
+      case "ls":
+        listings += 1;
+        break;
+      case "terminal_read":
+      case "terminal_list":
+        terminalChecks += 1;
+        break;
+      case "web_search":
+      case "web_fetch":
+        webLookups += 1;
+        break;
+      default:
+        break;
+    }
+  }
+
+  const plural = (count: number, singular: string, pluralForm = `${singular}s`): string =>
+    `${count} ${count === 1 ? singular : pluralForm}`;
+  const parts: string[] = [];
+  if (reads > 0) parts.push(plural(readPaths.size, "file"));
+  if (searches > 0) parts.push(plural(searches, "search", "searches"));
+  if (listings > 0) parts.push(plural(listings, "listing"));
+  if (terminalChecks > 0) parts.push(plural(terminalChecks, "terminal check"));
+  if (webLookups > 0) parts.push(plural(webLookups, "web lookup"));
+  return parts.length > 0 ? `Explored ${parts.join(", ")}` : `Explored ${tools.length} steps`;
+}
 
 /**
  * A single agent turn (one run) can produce SEVERAL assistant message segments
@@ -508,22 +716,13 @@ export function blockRenderKeys(blocks: TimelineBlock[]): string[] {
   });
 }
 
-function toolGroupLabel(name: string, count: number): string {
-  if (name === "read") {
-    return `Read ${count} files`;
-  }
-  if (name === "bash") {
-    return `Ran ${count} commands`;
-  }
-  return `${count} ${name} calls`;
-}
-
 /**
- * Collapse maximal runs of ≥2 strictly-adjacent same-name tool blocks (read,
- * bash) into a single `tool-group` block — but only once the run is "sealed":
- * every member complete AND (a real non-thinking block follows OR no run is
- * active). While a batch is still streaming or sits at the live tail, the tools
- * stay as individual rows so progress is visible; sealing triggers the fold.
+ * Collapse maximal runs of ≥2 adjacent EXPLORATION tool blocks (read/grep/
+ * find/ls/terminal peeks/web lookups — mixed names welcome) into a single
+ * `tool-group` digest row — but only once the run is "sealed": every member
+ * complete AND (a real non-thinking block follows OR no run is active). While
+ * a batch is still streaming or sits at the live tail, the tools stay as
+ * individual rows so progress is visible; sealing triggers the fold.
  */
 export function groupToolBlocks(blocks: TimelineBlock[]): TimelineBlock[] {
   const hasActiveRun = blocks.some((block) => block.type === "run" && block.status === "running");
@@ -537,18 +736,18 @@ export function groupToolBlocks(blocks: TimelineBlock[]): TimelineBlock[] {
       continue;
     }
 
-    if (block.type !== "tool" || !GROUPABLE_TOOLS.has(block.name)) {
+    if (block.type !== "tool" || !EXPLORE_TOOLS.has(block.name)) {
       result.push(block);
       index += 1;
       continue;
     }
 
-    // Collect the maximal run of consecutive same-name tool blocks.
+    // Collect the maximal run of consecutive exploration tool blocks.
     const run: ToolBlockItem[] = [];
     let cursor = index;
     while (cursor < blocks.length) {
       const candidate = blocks[cursor];
-      if (candidate?.type === "tool" && candidate.name === block.name) {
+      if (candidate?.type === "tool" && EXPLORE_TOOLS.has(candidate.name)) {
         run.push(candidate);
         cursor += 1;
       } else {
@@ -567,7 +766,7 @@ export function groupToolBlocks(blocks: TimelineBlock[]): TimelineBlock[] {
       result.push({
         id: `tool-group:${first.id}`,
         type: "tool-group",
-        name: block.name,
+        summary: buildExploreSummary(run),
         tools: run,
         isError: run.some((tool) => tool.isError),
       });
@@ -633,18 +832,18 @@ const ThinkingRow = memo(function ThinkingRow() {
 });
 
 /**
- * Collapsible summary for a sealed run of same-name tools. Mounts in the
- * expanded state so the individual rows the user was already watching stay put,
- * then folds into a single "Read N files" / "Ran N commands" line on the next
- * frame (height + opacity, domAnimation-only). Reduced motion starts collapsed.
- * Once the user toggles, their choice wins and the auto-fold is cancelled.
+ * Cursor-style digest row for a sealed exploration run ("Explored 4 files,
+ * 6 searches ›"). Mounts in the expanded state so the rows the user was
+ * already watching stay put, then folds into the one-line summary on the next
+ * frame (height + opacity, domAnimation-only). Reduced motion starts
+ * collapsed. Once the user toggles, their choice wins and auto-fold stops.
  */
 const ToolGroup = memo(function ToolGroup({
-  name,
+  summary,
   tools,
   isError = false,
 }: {
-  name: string;
+  summary: string;
   tools: ToolBlockItem[];
   isError?: boolean;
 }) {
@@ -669,27 +868,25 @@ const ToolGroup = memo(function ToolGroup({
     setExpanded((value) => !value);
   }
 
-  const Glyph = name === "bash" ? IconTerminal2 : IconFile;
-
   return (
     <div className="min-w-0 text-sm">
       <button
         aria-expanded={expanded}
-        className="flex w-full min-w-0 items-center gap-2 rounded-md py-0.5 text-left transition-colors hover:text-fg"
+        className="group/explore flex w-fit min-w-0 max-w-full items-center gap-1.5 rounded-md py-0.5 text-left transition-colors"
         onClick={toggle}
         type="button"
       >
-        <span className="shrink-0 text-fg-faint">
-          {isError ? (
-            <IconAlertTriangle className="text-danger" size={14} stroke={1.7} />
-          ) : (
-            <Glyph size={14} stroke={1.7} />
+        {isError ? (
+          <IconAlertTriangle className="shrink-0 text-danger" size={14} stroke={1.7} />
+        ) : null}
+        <span
+          className={cn(
+            "min-w-0 truncate transition-colors",
+            isError ? "text-danger" : "text-fg-muted group-hover/explore:text-fg",
           )}
+        >
+          {summary}
         </span>
-        <span className={cn("shrink-0", isError ? "text-danger" : "text-fg-muted")}>
-          {toolGroupLabel(name, tools.length)}
-        </span>
-        <span className="min-w-0 flex-1" />
         <IconChevronRight
           className={cn(
             "shrink-0 text-fg-faint transition-transform duration-150",
@@ -738,7 +935,13 @@ function Notice({ body, isError = false, title }: NoticeBlockItem) {
   );
 }
 
-export function Timeline({ agentEvents, onPermissionDecision }: TimelineProps) {
+export function Timeline({
+  agentEvents,
+  cwd,
+  onPermissionDecision,
+  onRestoreCheckpoint,
+  onEditResend,
+}: TimelineProps) {
   const blocks = useMemo(
     () => groupToolBlocks(attachTurnActions(buildBlocks(agentEvents))),
     [agentEvents],
@@ -787,8 +990,14 @@ export function Timeline({ agentEvents, onPermissionDecision }: TimelineProps) {
             {block.type === "message" ? (
               <MessageBlock
                 {...(block.actions ? { actions: block.actions } : {})}
+                {...(block.attachments ? { attachments: block.attachments } : {})}
+                {...(block.checkpointId !== undefined ? { checkpointId: block.checkpointId } : {})}
+                {...(onRestoreCheckpoint ? { onRestoreCheckpoint } : {})}
                 content={block.content}
                 {...(block.createdAt !== undefined ? { createdAt: block.createdAt } : {})}
+                editable={block.editable ?? false}
+                messageId={block.id}
+                {...(onEditResend ? { onEditResend } : {})}
                 messageRole={block.role}
                 streaming={block.streaming ?? false}
                 thinking={block.thinking}
@@ -797,6 +1006,7 @@ export function Timeline({ agentEvents, onPermissionDecision }: TimelineProps) {
             {block.type === "tool" ? (
               <ToolCard
                 args={block.args}
+                cwd={cwd}
                 isComplete={block.isComplete ?? false}
                 isError={block.isError ?? false}
                 name={block.name}
@@ -804,7 +1014,11 @@ export function Timeline({ agentEvents, onPermissionDecision }: TimelineProps) {
               />
             ) : null}
             {block.type === "tool-group" ? (
-              <ToolGroup isError={block.isError ?? false} name={block.name} tools={block.tools} />
+              <ToolGroup
+                isError={block.isError ?? false}
+                summary={block.summary}
+                tools={block.tools}
+              />
             ) : null}
             {block.type === "permission" ? (
               <PermissionCard
@@ -816,6 +1030,24 @@ export function Timeline({ agentEvents, onPermissionDecision }: TimelineProps) {
             {block.type === "run" ? <RunRow block={block} /> : null}
             {block.type === "notice" ? <Notice {...block} /> : null}
             {block.type === "thinking" ? <ThinkingRow /> : null}
+            {block.type === "todos" ? (
+              <TodosCard todos={block.todos} updating={block.updating} />
+            ) : null}
+            {block.type === "changes" ? (
+              <TurnChangesCard
+                {...(block.checkpointId !== undefined ? { checkpointId: block.checkpointId } : {})}
+                {...(onRestoreCheckpoint
+                  ? { onUndo: (checkpointId) => onRestoreCheckpoint(checkpointId) }
+                  : {})}
+                {...(cwd
+                  ? {
+                      onOpenFile: (path: string) =>
+                        void window.modus.file.open({ cwd, path }).catch(() => {}),
+                    }
+                  : {})}
+                stats={block.stats}
+              />
+            ) : null}
           </m.div>
         ))}
       </div>

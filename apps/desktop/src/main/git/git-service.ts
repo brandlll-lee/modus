@@ -1,22 +1,30 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
 import type {
+  DiffFileVersions,
   DiffMode,
   FileChange,
+  FileChangeStat,
   FileDiff,
   GitBranch,
   GitBranchSummary,
   GitCommitResult,
   GitStatusSummary,
+  WorkingChangeStats,
+  WorktreeApplyResult,
   WorktreeInfo,
 } from "../../shared/contracts";
 
 const execFileAsync = promisify(execFile);
 
-async function git(cwd: string, args: string[]): Promise<string> {
+async function git(
+  cwd: string,
+  args: string[],
+  extraEnv?: Record<string, string>,
+): Promise<string> {
   try {
     const { stdout } = await execFileAsync("git", args, {
       cwd,
@@ -29,6 +37,7 @@ async function git(cwd: string, args: string[]): Promise<string> {
         GIT_TERMINAL_PROMPT: "0",
         GIT_OPTIONAL_LOCKS: "0",
         GIT_EDITOR: "true",
+        ...extraEnv,
       },
     });
 
@@ -119,6 +128,78 @@ export async function readDiff(
   };
 }
 
+/** Byte cap per side of a file-versions read; keeps IPC payloads bounded. */
+const MAX_VERSION_BYTES = 4 * 1024 * 1024;
+
+/** Read a blob from the object database ("" when the spec doesn't resolve, e.g. new files). */
+async function gitShowBlob(cwd: string, spec: string): Promise<string> {
+  return await gitSafeRaw(cwd, ["show", spec]);
+}
+
+/** Like gitSafe but preserves trailing whitespace (blob contents are not trimmed). */
+async function gitSafeRaw(cwd: string, args: string[]): Promise<string> {
+  try {
+    return await git(cwd, args);
+  } catch {
+    return "";
+  }
+}
+
+function capVersion(text: string): { text: string; truncated: boolean } {
+  if (Buffer.byteLength(text, "utf8") <= MAX_VERSION_BYTES) {
+    return { text, truncated: false };
+  }
+  return {
+    text: Buffer.from(text, "utf8").subarray(0, MAX_VERSION_BYTES).toString("utf8"),
+    truncated: true,
+  };
+}
+
+/**
+ * Full before/after contents of one changed file for the side-by-side viewer.
+ *
+ * The two sides mirror what `git diff` compares in each mode:
+ * - `unstaged`: index (`:0:path`) vs the working tree file
+ * - `staged`:   `HEAD:path` vs the index (`:0:path`)
+ * Untracked files resolve to an empty original; deleted files to an empty
+ * modified side. `originalPath` supports renames (status R) where the old
+ * content lives under the previous path.
+ */
+export async function readFileVersions(
+  cwd: string,
+  filePath: string,
+  mode: "unstaged" | "staged" = "unstaged",
+  originalPath?: string,
+): Promise<DiffFileVersions> {
+  assertSafeRelativePath(filePath);
+  const fromPath = originalPath ?? filePath;
+
+  const original =
+    mode === "staged"
+      ? await gitShowBlob(cwd, `HEAD:${fromPath}`)
+      : await gitShowBlob(cwd, `:0:${fromPath}`);
+
+  let modified: string;
+  if (mode === "staged") {
+    modified = await gitShowBlob(cwd, `:0:${filePath}`);
+  } else {
+    modified = await readFile(join(cwd, filePath), "utf8").catch(() => "");
+  }
+
+  const binary = original.includes("\u0000") || modified.includes("\u0000");
+  const cappedOriginal = capVersion(binary ? "" : original);
+  const cappedModified = capVersion(binary ? "" : modified);
+
+  return {
+    path: filePath,
+    mode,
+    original: cappedOriginal.text,
+    modified: cappedModified.text,
+    binary,
+    truncated: cappedOriginal.truncated || cappedModified.truncated,
+  };
+}
+
 export async function revertFile(cwd: string, filePath: string): Promise<void> {
   await git(cwd, ["restore", "--source=HEAD", "--", filePath]);
 }
@@ -176,6 +257,122 @@ export async function commitChanges(cwd: string, message: string): Promise<strin
     throw new Error("No staged changes to commit.");
   }
   return await git(cwd, ["commit", "-m", trimmed]);
+}
+
+/* ── Change stats (numstat summaries for the changes card / composer strip) ─ */
+
+/** Cap the per-file list so IPC payloads stay bounded; totals stay exact. */
+const MAX_STAT_FILES = 500;
+/** Cap reads when counting lines of new untracked files. */
+const MAX_COUNT_BYTES = 4 * 1024 * 1024;
+
+function parseNumstat(output: string): FileChangeStat[] {
+  const stats: FileChangeStat[] = [];
+  for (const line of output.split("\n")) {
+    if (!line.trim()) {
+      continue;
+    }
+    const [addedRaw, removedRaw, ...pathParts] = line.split("\t");
+    const path = pathParts.join("\t");
+    if (!path) {
+      continue;
+    }
+    const binary = addedRaw === "-" || removedRaw === "-";
+    stats.push({
+      path,
+      added: binary ? 0 : Number.parseInt(addedRaw ?? "0", 10) || 0,
+      removed: binary ? 0 : Number.parseInt(removedRaw ?? "0", 10) || 0,
+      untracked: false,
+      binary,
+    });
+  }
+  return stats;
+}
+
+/** Count a new file's lines for +N display; binary (NUL) counts as 0/binary. */
+async function countNewFileLines(
+  cwd: string,
+  path: string,
+): Promise<{ lines: number; binary: boolean }> {
+  try {
+    const { open } = await import("node:fs/promises");
+    const handle = await open(join(cwd, path), "r");
+    try {
+      const { size } = await handle.stat();
+      const length = Math.min(Number(size), MAX_COUNT_BYTES);
+      const buffer = Buffer.alloc(length);
+      await handle.read(buffer, 0, length, 0);
+      if (buffer.includes(0)) {
+        return { lines: 0, binary: true };
+      }
+      if (length === 0) {
+        return { lines: 0, binary: false };
+      }
+      let lines = 0;
+      for (const byte of buffer) {
+        if (byte === 10) lines += 1;
+      }
+      if (buffer.at(-1) !== 10) {
+        lines += 1;
+      }
+      return { lines, binary: false };
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    return { lines: 0, binary: false };
+  }
+}
+
+/**
+ * Change summary of the working tree relative to `base` (a commit-ish):
+ * numstat for tracked paths plus +line counts for NEW untracked files (files
+ * that were already untracked at `base` — i.e. present in its snapshot tree —
+ * are not double-reported). Powers the composer changes strip (base = HEAD)
+ * and per-turn cards (base = the run's pre-checkpoint snapshot).
+ */
+export async function getChangeStatsSince(cwd: string, base: string): Promise<WorkingChangeStats> {
+  const hasBase = Boolean(await gitSafe(cwd, ["rev-parse", "--verify", `${base}^{commit}`]));
+  const tracked = hasBase
+    ? parseNumstat(await gitSafe(cwd, ["diff", "--numstat", base, "--"]))
+    : [];
+
+  const basePaths = hasBase
+    ? new Set(
+        (await gitSafe(cwd, ["ls-tree", "-r", "--name-only", "-z", base]))
+          .split("\0")
+          .filter(Boolean),
+      )
+    : new Set<string>();
+  const untrackedNow = (await gitSafe(cwd, ["ls-files", "--others", "--exclude-standard", "-z"]))
+    .split("\0")
+    .filter(Boolean);
+
+  const files: FileChangeStat[] = [...tracked];
+  for (const path of untrackedNow) {
+    if (basePaths.has(path)) {
+      continue;
+    }
+    const { lines, binary } = await countNewFileLines(cwd, path);
+    files.push({ path, added: lines, removed: 0, untracked: true, binary });
+  }
+
+  files.sort((a, b) => a.path.localeCompare(b.path));
+  const added = files.reduce((total, file) => total + file.added, 0);
+  const removed = files.reduce((total, file) => total + file.removed, 0);
+  const truncated = files.length > MAX_STAT_FILES;
+  return {
+    files: truncated ? files.slice(0, MAX_STAT_FILES) : files,
+    added,
+    removed,
+    fileCount: files.length,
+    truncated,
+  };
+}
+
+/** Working-tree change summary vs HEAD — the composer strip / apply review payload. */
+export async function getWorkingChangeStats(cwd: string): Promise<WorkingChangeStats> {
+  return await getChangeStatsSince(cwd, "HEAD");
 }
 
 function countDiffLines(diff: string): { added: number; removed: number } {
@@ -498,7 +695,7 @@ export async function createWorktree(cwd: string, taskId: string): Promise<Workt
     try {
       await mkdir(dirname(path), { recursive: true });
       await git(cwd, ["worktree", "add", "-b", branch, path]);
-      const head = (await git(path, ["rev-parse", "HEAD"])).trim();
+      const head = await gitSafe(path, ["rev-parse", "--verify", "HEAD"]);
       return {
         path,
         branch,
@@ -515,4 +712,181 @@ export async function createWorktree(cwd: string, taskId: string): Promise<Workt
 
 export async function deleteWorktree(cwd: string, worktreePath: string): Promise<void> {
   await git(cwd, ["worktree", "remove", worktreePath]);
+}
+
+/**
+ * Apply a worktree session's changes onto the main checkout — the local
+ * equivalent of Cursor's `/apply-worktree` / Codex's Handoff.
+ *
+ * The whole worktree state (commits made since the fork point + uncommitted +
+ * untracked files) is captured as a snapshot commit in the SHARED object store,
+ * diffed against the fork point, and applied to the main checkout with a
+ * three-way merge. Conflicts land as standard conflict markers so they can be
+ * resolved in place; the worktree itself is never modified.
+ */
+export async function applyWorktreeChanges(
+  cwd: string,
+  worktreePath: string,
+): Promise<WorktreeApplyResult> {
+  const { mkdtemp, rm, writeFile } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+
+  const refName = `refs/modus/apply/${Date.now().toString(36)}`;
+  const snapshot = await captureWorktreeSnapshot(worktreePath, {
+    refName,
+    message: "modus worktree apply snapshot",
+  });
+
+  try {
+    // Fork point between the main checkout and the worktree branch. Falls back
+    // to the worktree HEAD itself when histories are degenerate (fresh repo).
+    const worktreeHead = (await git(worktreePath, ["rev-parse", "HEAD"])).trim();
+    const mergeBase = (await gitSafe(cwd, ["merge-base", "HEAD", worktreeHead])) || worktreeHead;
+
+    const fileList = (await git(cwd, ["diff", "--name-only", "-z", mergeBase, snapshot.commit]))
+      .split("\0")
+      .filter(Boolean);
+    if (fileList.length === 0) {
+      return {
+        applied: false,
+        conflicted: false,
+        fileCount: 0,
+        output: "The worktree has no changes to apply.",
+      };
+    }
+
+    const diff = await git(cwd, ["diff", "--binary", mergeBase, snapshot.commit]);
+    const patchDir = await mkdtemp(join(tmpdir(), "modus-apply-"));
+    const patchFile = join(patchDir, "worktree.patch");
+    try {
+      await writeFile(patchFile, diff, "utf8");
+      // Pass 1: plain worktree apply — works even on a dirty checkout as long
+      // as the touched files still match the patch context.
+      try {
+        await git(cwd, ["apply", "--whitespace=nowarn", patchFile]);
+        return {
+          applied: true,
+          conflicted: false,
+          fileCount: fileList.length,
+          output: `Applied ${fileList.length} file(s) to the main checkout.`,
+        };
+      } catch {
+        // Pass 2 below handles drifted files via three-way merge.
+      }
+      try {
+        const output = await git(cwd, ["apply", "--3way", "--whitespace=nowarn", patchFile]);
+        return {
+          applied: true,
+          conflicted: false,
+          fileCount: fileList.length,
+          output: output.trim() || `Applied ${fileList.length} file(s) to the main checkout.`,
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        // Three-way fallback leaves standard conflict markers and reports
+        // "Applied patch ... with conflicts" — the patch landed, user resolves.
+        if (/with conflicts/i.test(message)) {
+          return {
+            applied: true,
+            conflicted: true,
+            fileCount: fileList.length,
+            output: message,
+          };
+        }
+        // Typical: uncommitted local edits on the same files ("does not match
+        // index"). Nothing was modified — surface git's reason untouched.
+        return {
+          applied: false,
+          conflicted: false,
+          fileCount: fileList.length,
+          output: message,
+        };
+      }
+    } finally {
+      await rm(patchDir, { recursive: true, force: true }).catch(() => {});
+    }
+  } finally {
+    await deleteSnapshotRef(worktreePath, refName);
+  }
+}
+
+/* ── Worktree snapshots (agent checkpoints) ──────────────────────────────
+ * A snapshot is a dangling commit of the ENTIRE working tree (tracked +
+ * untracked, .gitignore respected) built through a TEMPORARY index file, so
+ * HEAD, the user's real index, and the worktree are never touched. A ref under
+ * refs/modus/ keeps the chain reachable so `git gc` cannot prune it.
+ */
+
+export type WorktreeSnapshot = {
+  commit: string;
+  tree: string;
+};
+
+export async function captureWorktreeSnapshot(
+  cwd: string,
+  options: { refName: string; message: string; parent?: string | undefined },
+): Promise<WorktreeSnapshot> {
+  const { mkdtemp, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const indexDir = await mkdtemp(join(tmpdir(), "modus-snapshot-"));
+  const indexFile = join(indexDir, "index");
+  const env = { GIT_INDEX_FILE: indexFile };
+
+  try {
+    await git(cwd, ["add", "-A", "--", "."], env);
+    const tree = (await git(cwd, ["write-tree"], env)).trim();
+    const commitArgs = ["commit-tree", tree, "-m", options.message];
+    if (options.parent) {
+      commitArgs.push("-p", options.parent);
+    }
+    const commit = (
+      await git(cwd, commitArgs, {
+        ...env,
+        // commit-tree requires an identity even when the user never set one.
+        GIT_AUTHOR_NAME: "Modus",
+        GIT_AUTHOR_EMAIL: "checkpoint@modus.local",
+        GIT_COMMITTER_NAME: "Modus",
+        GIT_COMMITTER_EMAIL: "checkpoint@modus.local",
+      })
+    ).trim();
+    await git(cwd, ["update-ref", options.refName, commit]);
+    return { commit, tree };
+  } finally {
+    await rm(indexDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/**
+ * Make the working tree match a snapshot exactly: restore every file recorded
+ * in the snapshot (index + worktree) and delete files that were created since.
+ * Ignored files are left alone.
+ */
+export async function restoreWorktreeSnapshot(cwd: string, commit: string): Promise<void> {
+  const { rm } = await import("node:fs/promises");
+
+  const snapshotFiles = new Set(
+    (await git(cwd, ["ls-tree", "-r", "--name-only", "-z", commit])).split("\0").filter(Boolean),
+  );
+  const currentFiles = (
+    await git(cwd, ["ls-files", "--cached", "--others", "--exclude-standard", "-z"])
+  )
+    .split("\0")
+    .filter(Boolean);
+
+  for (const file of currentFiles) {
+    if (!snapshotFiles.has(file)) {
+      assertSafeRelativePath(file);
+      await rm(join(cwd, file), { force: true }).catch(() => {});
+      await git(cwd, ["rm", "--cached", "--ignore-unmatch", "--quiet", "--", file]).catch(() => {});
+    }
+  }
+
+  if (snapshotFiles.size > 0) {
+    await git(cwd, ["restore", "--source", commit, "--staged", "--worktree", "--", ":/"]);
+  }
+}
+
+/** Drop the ref that keeps a session's checkpoint chain alive (cleanup on delete). */
+export async function deleteSnapshotRef(cwd: string, refName: string): Promise<void> {
+  await gitSafe(cwd, ["update-ref", "-d", refName]);
 }

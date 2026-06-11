@@ -31,6 +31,7 @@ import { EmptyState, PanelHeader } from "../../components/ui/Panel";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
 import { CommitDialog } from "./CommitDialog";
+import { FileDiffPreview } from "./FileDiffPreview";
 
 type DiffPanelProps = {
   cwd?: string | undefined;
@@ -45,6 +46,8 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
   const [summaryDiff, setSummaryDiff] = useState("");
   const [selectedDiff, setSelectedDiff] = useState("");
   const [status, setStatus] = useState<GitStatusSummary | undefined>();
+  // Bumped on every refresh so mounted file previews refetch their contents.
+  const [refreshToken, setRefreshToken] = useState(0);
 
   const refreshChanges = useCallback(async (targetCwd: string | undefined): Promise<void> => {
     if (!targetCwd) {
@@ -66,6 +69,7 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
     setReview(reviews[0]);
     setStatus(nextStatus);
     setSelectedPath(nextChanges[0]?.path);
+    setRefreshToken((token) => token + 1);
   }, []);
 
   useEffect(() => {
@@ -190,7 +194,6 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
                   </div>
                   {group.items.map((change) => {
                     const selected = selectedPath === change.path;
-                    const previewLines = selected ? getPreviewLines(selectedDiff) : [];
                     return (
                       <div
                         className="border-hairline-soft border-b"
@@ -224,9 +227,12 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
                             )}
                             <FileIcon path={change.path} />
                             <span className="min-w-0 flex-1 truncate">{change.path}</span>
-                            <span className="shrink-0 font-mono text-xs text-success">
-                              {selected ? `+${selectedTotals.added}` : ""}
-                            </span>
+                            {selected ? (
+                              <span className="flex shrink-0 items-center gap-1 font-mono text-xs">
+                                <span className="text-success">+{selectedTotals.added}</span>
+                                <span className="text-danger">-{selectedTotals.removed}</span>
+                              </span>
+                            ) : null}
                           </button>
                           <Tooltip content="Revert file" side="bottom" sideOffset={6}>
                             <button
@@ -294,30 +300,11 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
                               initial={{ height: 0, opacity: 0 }}
                               transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
                             >
-                              <div className="max-h-[520px] overflow-hidden border-success/35 border-l bg-success/10 font-mono text-2xs leading-6">
-                                {previewLines.length === 0 ? (
-                                  <div className="px-6 py-3 text-fg-faint">No unstaged diff.</div>
-                                ) : (
-                                  previewLines.map((line) => (
-                                    <div
-                                      className={cn(
-                                        "flex min-w-0",
-                                        line.kind === "add" && "bg-success/12 text-fg",
-                                        line.kind === "remove" && "bg-danger/18 text-fg",
-                                        line.kind === "meta" && "text-fg-faint",
-                                      )}
-                                      key={line.key}
-                                    >
-                                      <span className="w-10 shrink-0 select-none px-2 text-right text-fg-faint">
-                                        {line.number}
-                                      </span>
-                                      <span className="min-w-0 flex-1 truncate whitespace-pre px-2">
-                                        {line.text}
-                                      </span>
-                                    </div>
-                                  ))
-                                )}
-                              </div>
+                              <FileDiffPreview
+                                change={change}
+                                cwd={cwd ?? ""}
+                                refreshToken={refreshToken}
+                              />
                             </m.div>
                           ) : null}
                         </AnimatePresence>
@@ -421,32 +408,4 @@ function getDiffTotals(diff: string): { added: number; removed: number } {
     },
     { added: 0, removed: 0 },
   );
-}
-
-function getPreviewLines(diff: string): Array<{
-  kind: "add" | "remove" | "meta" | "context";
-  key: string;
-  number: string;
-  text: string;
-}> {
-  let lineNumber = 0;
-  return diff
-    .split("\n")
-    .filter((line) => line && !line.startsWith("diff --git") && !line.startsWith("index "))
-    .slice(0, 120)
-    .map((line) => {
-      if (line.startsWith("@@")) {
-        lineNumber = Number(line.match(/\+(\d+)/)?.[1] ?? 0);
-        return { key: `meta:${line}`, kind: "meta", number: "", text: line };
-      }
-      if (line.startsWith("+") && !line.startsWith("+++")) {
-        const number = String(lineNumber++);
-        return { key: `add:${number}:${line}`, kind: "add", number, text: line };
-      }
-      if (line.startsWith("-") && !line.startsWith("---")) {
-        return { key: `remove:${lineNumber}:${line}`, kind: "remove", number: "", text: line };
-      }
-      const number = lineNumber ? String(lineNumber++) : "";
-      return { key: `context:${number}:${line}`, kind: "context", number, text: line };
-    });
 }

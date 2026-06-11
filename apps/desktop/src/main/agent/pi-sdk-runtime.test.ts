@@ -26,10 +26,28 @@ vi.mock("electron", () => ({
   app: {
     getPath: () => userData,
   },
+  Notification: class {
+    static isSupported(): boolean {
+      return false;
+    }
+    on(): void {}
+    show(): void {}
+  },
 }));
+
+/** Window stub: focused + alive, so background notifications never fire in tests. */
+function createWindowStub(): BrowserWindow {
+  return {
+    webContents: { send: vi.fn() },
+    isDestroyed: () => false,
+    isFocused: () => true,
+    isMinimized: () => false,
+  } as unknown as BrowserWindow;
+}
 
 vi.mock("@earendil-works/pi-coding-agent", () => ({
   createAgentSession: mocks.createAgentSession,
+  defineTool: <T>(tool: T): T => tool,
   DefaultResourceLoader: class {
     async reload(): Promise<void> {}
   },
@@ -80,6 +98,32 @@ vi.mock("./model-service", () => ({
 const { getDatabase } = await import("../db/database");
 const { PiSdkRuntime } = await import("./pi-sdk-runtime");
 
+function createMockPiSession(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    abort: vi.fn(async () => undefined),
+    cycleModel: vi.fn(async () => ({ model: mocks.model })),
+    dispose: vi.fn(),
+    getContextUsage: vi.fn(() => ({
+      contextWindow: 1000,
+      percent: 24,
+      tokens: 240,
+    })),
+    model: mocks.model,
+    prompt: vi.fn(async () => undefined),
+    sessionFile: join(userData, "pi-sessions", "resumed.jsonl"),
+    sessionId: "pi-resumed",
+    // Rollback anchor source: an empty tree reads as the "root" sentinel.
+    sessionManager: { getLeafId: vi.fn(() => null) },
+    setModel: vi.fn(async () => undefined),
+    setThinkingLevel: vi.fn(),
+    subscribe: vi.fn((callback) => {
+      mocks.setPiSubscriber(callback);
+      return vi.fn();
+    }),
+    ...overrides,
+  };
+}
+
 function insertSession(
   sessionId: string,
   workspaceId: string,
@@ -122,21 +166,7 @@ beforeEach(async () => {
   mocks.sessionManagerCreate.mockClear();
   mocks.sessionManagerOpen.mockClear();
   mocks.createAgentSession.mockImplementation(async () => ({
-    session: {
-      abort: vi.fn(async () => undefined),
-      cycleModel: vi.fn(async () => ({ model: mocks.model })),
-      dispose: vi.fn(),
-      model: mocks.model,
-      prompt: vi.fn(async () => undefined),
-      sessionFile: join(userData, "pi-sessions", "resumed.jsonl"),
-      sessionId: "pi-resumed",
-      setModel: vi.fn(async () => undefined),
-      setThinkingLevel: vi.fn(),
-      subscribe: vi.fn((callback) => {
-        mocks.setPiSubscriber(callback);
-        return vi.fn();
-      }),
-    },
+    session: createMockPiSession(),
   }));
 });
 
@@ -152,7 +182,7 @@ describe("PiSdkRuntime", () => {
     insertSession(sessionId, workspaceId, join(userData, "missing.jsonl"));
 
     const runtime = new PiSdkRuntime();
-    const window = { webContents: { send: vi.fn() } } as unknown as BrowserWindow;
+    const window = createWindowStub();
 
     const resumed = await runtime.ensure(window, sessionId);
 
@@ -170,7 +200,7 @@ describe("PiSdkRuntime", () => {
     const workspaceId = `workspace-${crypto.randomUUID()}`;
     insertSession(sessionId, workspaceId, join(userData, "missing.jsonl"), "New chat");
     const runtime = new PiSdkRuntime();
-    const window = { webContents: { send: vi.fn() } } as unknown as BrowserWindow;
+    const window = createWindowStub();
 
     await runtime.prompt(window, {
       context: [],
@@ -207,12 +237,36 @@ describe("PiSdkRuntime", () => {
     expect(session.title).toBe("介绍一下你自己");
   });
 
+  it("publishes context usage snapshots without persisting them to the timeline", async () => {
+    const sessionId = `session-${crypto.randomUUID()}`;
+    const workspaceId = `workspace-${crypto.randomUUID()}`;
+    insertSession(sessionId, workspaceId, join(userData, "missing.jsonl"));
+    const runtime = new PiSdkRuntime();
+    const window = createWindowStub();
+
+    await runtime.ensure(window, sessionId);
+
+    expect(window.webContents.send).toHaveBeenCalledWith("agent:event", {
+      type: "context.updated",
+      sessionId,
+      usage: {
+        contextWindow: 1000,
+        percent: 24,
+        tokens: 240,
+      },
+    });
+    const rows = getDatabase()
+      .prepare("select type from agent_events where session_id = ?")
+      .all(sessionId) as Array<{ type: string }>;
+    expect(rows.map((row) => row.type)).not.toContain("context.updated");
+  });
+
   it("marks a run as failed when PI completes without visible output", async () => {
     const sessionId = `session-${crypto.randomUUID()}`;
     const workspaceId = `workspace-${crypto.randomUUID()}`;
     insertSession(sessionId, workspaceId, join(userData, "missing.jsonl"), "New chat");
     const runtime = new PiSdkRuntime();
-    const window = { webContents: { send: vi.fn() } } as unknown as BrowserWindow;
+    const window = createWindowStub();
 
     await runtime.prompt(window, {
       context: [],
@@ -244,11 +298,7 @@ describe("PiSdkRuntime", () => {
     const workspaceId = `workspace-${crypto.randomUUID()}`;
     insertSession(sessionId, workspaceId, join(userData, "missing.jsonl"), "New chat");
     mocks.createAgentSession.mockImplementationOnce(async () => ({
-      session: {
-        abort: vi.fn(async () => undefined),
-        cycleModel: vi.fn(async () => ({ model: mocks.model })),
-        dispose: vi.fn(),
-        model: mocks.model,
+      session: createMockPiSession({
         prompt: vi.fn(async () => {
           mocks.emitPiEvent({
             type: "message_start",
@@ -264,18 +314,10 @@ describe("PiSdkRuntime", () => {
             message: { role: "assistant" },
           });
         }),
-        sessionFile: join(userData, "pi-sessions", "resumed.jsonl"),
-        sessionId: "pi-resumed",
-        setModel: vi.fn(async () => undefined),
-        setThinkingLevel: vi.fn(),
-        subscribe: vi.fn((callback) => {
-          mocks.setPiSubscriber(callback);
-          return vi.fn();
-        }),
-      },
+      }),
     }));
     const runtime = new PiSdkRuntime();
-    const window = { webContents: { send: vi.fn() } } as unknown as BrowserWindow;
+    const window = createWindowStub();
 
     await runtime.prompt(window, {
       context: [],
@@ -299,5 +341,63 @@ describe("PiSdkRuntime", () => {
     expect(run).toEqual({ status: "completed", error: null });
     expect(events.map((event) => event.type)).toContain("message.delta");
     expect(events.map((event) => event.type)).toContain("run.completed");
+  });
+
+  it("keeps an aborted in-flight run cancelled instead of failed", async () => {
+    const sessionId = `session-${crypto.randomUUID()}`;
+    const workspaceId = `workspace-${crypto.randomUUID()}`;
+    insertSession(sessionId, workspaceId, join(userData, "missing.jsonl"), "New chat");
+    let rejectPrompt: ((error: Error) => void) | undefined;
+    const abort = vi.fn(async () => {
+      rejectPrompt?.(new Error("Aborted"));
+    });
+    mocks.createAgentSession.mockImplementationOnce(async () => ({
+      session: createMockPiSession({
+        abort,
+        prompt: vi.fn(
+          () =>
+            new Promise<void>((_resolve, reject) => {
+              rejectPrompt = reject;
+            }),
+        ),
+      }),
+    }));
+    const runtime = new PiSdkRuntime();
+    const window = createWindowStub();
+
+    const promptTask = runtime.prompt(window, {
+      context: [],
+      delivery: "normal",
+      message: "stop me",
+      sessionId,
+      userMessageId: "local-user-abort",
+    });
+
+    await vi.waitFor(() => {
+      expect(
+        getDatabase()
+          .prepare("select count(*) as count from agent_runs where session_id = ?")
+          .get(sessionId),
+      ).toEqual({ count: 1 });
+    });
+    await runtime.abort(sessionId);
+    await promptTask;
+
+    const run = getDatabase()
+      .prepare(
+        "select status, error from agent_runs where session_id = ? order by started_at desc limit 1",
+      )
+      .get(sessionId) as { status: string; error: string | null };
+    const events = getDatabase()
+      .prepare(
+        "select type from agent_events where session_id = ? order by created_at asc, rowid asc",
+      )
+      .all(sessionId) as Array<{ type: string }>;
+
+    expect(abort).toHaveBeenCalledOnce();
+    expect(run).toEqual({ status: "cancelled", error: null });
+    expect(events.map((event) => event.type)).toContain("run.cancelled");
+    expect(events.map((event) => event.type)).not.toContain("run.failed");
+    expect(events.map((event) => event.type)).not.toContain("runtime.error");
   });
 });

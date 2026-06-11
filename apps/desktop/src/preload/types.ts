@@ -3,13 +3,16 @@ import type {
   AgentEvent,
   AgentReviewDepth,
   AgentReviewResult,
+  AgentRollbackResult,
   AgentRunInfo,
   AgentSessionInfo,
+  CheckpointInfo,
   ConfigureProviderInput,
   ContextItem,
   ContextKind,
   ContextSuggestion,
   CustomProviderConfig,
+  DiffFileVersions,
   DocHit,
   DocSource,
   FileChange,
@@ -18,19 +21,30 @@ import type {
   GitBranchSummary,
   GitCommitResult,
   GitStatusSummary,
+  McpServerInfo,
+  McpServerUpsertInput,
   ModelInfo,
   ModelProviderDetail,
   ModelSettingsState,
   PermissionAction,
   PermissionDecision,
   PromptDelivery,
+  PromptImageAttachment,
+  RawMcpEntry,
   ResolvedContext,
+  RuleFileInfo,
+  SkillDetail,
+  SkillInfo,
   TerminalEvent,
   TerminalInfo,
+  TestCustomProviderInput,
+  TestCustomProviderResult,
   ThinkingLevel,
   UpdateModelConfigInput,
   UpsertCustomProviderInput,
+  WorkingChangeStats,
   WorkspaceInfo,
+  WorktreeApplyResult,
   WorktreeInfo,
 } from "../shared/contracts";
 
@@ -49,6 +63,10 @@ export type ModusApi = {
   workspace: {
     open(): Promise<WorkspaceInfo | undefined>;
     list(): Promise<WorkspaceInfo[]>;
+  };
+  file: {
+    /** Open a workspace file in the OS default app. Path may be relative to cwd or absolute. */
+    open(input: { cwd: string; path: string }): Promise<void>;
   };
   agent: {
     create(input: {
@@ -70,8 +88,16 @@ export type ModusApi = {
       context?: ContextItem[];
       delivery?: PromptDelivery;
       userMessageId?: string;
+      attachments?: PromptImageAttachment[];
+      skills?: string[];
     }): Promise<void>;
     abort(sessionId: string): Promise<void>;
+    /**
+     * Rewind the session to just before one of its user messages: restores
+     * workspace files from the pre-run snapshot and removes the conversation
+     * from that message onward. Used by the timeline's "edit & resend".
+     */
+    rollback(input: { sessionId: string; userMessageId: string }): Promise<AgentRollbackResult>;
     delete(sessionId: string): Promise<void>;
     setModel(input: {
       sessionId: string;
@@ -83,6 +109,8 @@ export type ModusApi = {
       direction?: "forward" | "backward";
     }): Promise<ModelInfo>;
     onEvent(callback: (event: AgentEvent) => void): () => void;
+    /** Notification click → bring this session into the focused pane. */
+    onFocusSession(callback: (sessionId: string) => void): () => void;
   };
   terminal: {
     create(input: {
@@ -94,18 +122,27 @@ export type ModusApi = {
     write(input: { terminalId: string; data: string }): Promise<void>;
     resize(input: { terminalId: string; cols: number; rows: number }): Promise<void>;
     kill(terminalId: string): Promise<void>;
+    remove(terminalId: string): Promise<void>;
     list(): Promise<TerminalInfo[]>;
     onEvent(callback: (event: TerminalEvent) => void): () => void;
   };
   diff: {
     list(cwd: string): Promise<FileChange[]>;
     read(input: { cwd: string; path?: string; mode?: FileDiff["mode"] }): Promise<FileDiff>;
+    fileVersions(input: {
+      cwd: string;
+      path: string;
+      mode?: "unstaged" | "staged";
+      originalPath?: string;
+    }): Promise<DiffFileVersions>;
     revert(input: { cwd: string; path: string }): Promise<void>;
     stage(input: { cwd: string; path: string }): Promise<void>;
     unstage(input: { cwd: string; path: string }): Promise<void>;
     discard(input: { cwd: string; path: string }): Promise<void>;
     commit(input: { cwd: string; message: string }): Promise<string>;
     status(cwd: string): Promise<GitStatusSummary>;
+    /** File list + ± line counters for the changes strip / apply review. */
+    stats(cwd: string): Promise<WorkingChangeStats>;
     stageAll(cwd: string): Promise<void>;
     commitOrPush(input: {
       cwd: string;
@@ -136,6 +173,8 @@ export type ModusApi = {
     list(cwd: string): Promise<WorktreeInfo[]>;
     create(input: { cwd: string; taskId: string }): Promise<WorktreeInfo>;
     delete(input: { cwd: string; path: string }): Promise<void>;
+    /** Apply a worktree session's changes onto the main checkout (3-way merge). */
+    apply(input: { cwd: string; path: string }): Promise<WorktreeApplyResult>;
   };
   context: {
     search(input: {
@@ -160,6 +199,8 @@ export type ModusApi = {
     deleteCustomProvider(provider: string): Promise<void>;
     configureProvider(input: ConfigureProviderInput): Promise<ModelProviderDetail>;
     upsertCustomProvider(input: UpsertCustomProviderInput): Promise<ModelProviderDetail>;
+    /** Live connectivity probe for the custom provider form (nothing is saved). */
+    testCustomProvider(input: TestCustomProviderInput): Promise<TestCustomProviderResult>;
     updateConfig(input: UpdateModelConfigInput): Promise<ModelInfo>;
   };
   review: {
@@ -170,6 +211,34 @@ export type ModusApi = {
       depth?: AgentReviewDepth;
     }): Promise<AgentReviewResult>;
     list(cwd: string): Promise<AgentReviewResult[]>;
+  };
+  checkpoint: {
+    list(sessionId: string): Promise<CheckpointInfo[]>;
+    restore(input: { checkpointId: string }): Promise<CheckpointInfo>;
+  };
+  mcp: {
+    list(): Promise<McpServerInfo[]>;
+    sync(cwd: string): Promise<McpServerInfo[]>;
+    openConfig(cwd: string): Promise<string>;
+    upsert(input: { cwd: string } & McpServerUpsertInput): Promise<McpServerInfo[]>;
+    delete(input: { cwd: string; name: string }): Promise<McpServerInfo[]>;
+    setEnabled(input: { cwd: string; name: string; enabled: boolean }): Promise<McpServerInfo[]>;
+    entry(input: { cwd: string; name: string }): Promise<RawMcpEntry | undefined>;
+  };
+  rules: {
+    /** Detected project rule files (AGENTS.md, .cursor/rules…) with apply modes. */
+    list(cwd: string): Promise<RuleFileInfo[]>;
+  };
+  skills: {
+    list(cwd: string): Promise<SkillInfo[]>;
+    get(input: { cwd: string; id: string }): Promise<SkillDetail | undefined>;
+    create(input: {
+      cwd: string;
+      name: string;
+      description: string;
+      body: string;
+    }): Promise<SkillInfo>;
+    openDir(cwd: string): Promise<string>;
   };
   window: {
     minimize(): Promise<void>;

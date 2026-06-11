@@ -34,6 +34,12 @@ export function createAgentRun(input: {
   prompt: string;
   userMessageId?: string;
   model?: string;
+  /**
+   * PI session-tree leaf id captured right before this prompt ("root" when the
+   * tree was empty). Anchors `agent:rollback` so editing the message can rewind
+   * the conversation context to exactly this point.
+   */
+  piLeafBefore?: string;
 }): AgentRunInfo {
   const run: AgentRunInfo = {
     id: randomUUID(),
@@ -48,9 +54,10 @@ export function createAgentRun(input: {
   getDatabase()
     .prepare(
       `insert into agent_runs (
-        id, session_id, user_message_id, prompt, status, model, started_at, completed_at, error
+        id, session_id, user_message_id, prompt, status, model, started_at, completed_at, error,
+        pi_leaf_before
        )
-       values (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       run.id,
@@ -62,6 +69,7 @@ export function createAgentRun(input: {
       run.startedAt,
       null,
       null,
+      input.piLeafBefore ?? null,
     );
 
   return run;

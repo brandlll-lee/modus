@@ -137,6 +137,20 @@ function migrate(db: DatabaseSync): void {
       updated_at text not null,
       unique(provider_id, model_id)
     );
+
+    create table if not exists agent_checkpoints (
+      id text primary key,
+      session_id text not null references agent_sessions(id) on delete cascade,
+      run_id text,
+      user_message_id text,
+      cwd text not null,
+      commit_hash text not null,
+      kind text not null default 'auto',
+      created_at text not null
+    );
+
+    create index if not exists idx_agent_checkpoints_session
+      on agent_checkpoints(session_id);
   `);
 
   addColumn(db, "agent_sessions", "runtime", "text not null default 'pi-sdk'");
@@ -144,6 +158,10 @@ function migrate(db: DatabaseSync): void {
   addColumn(db, "agent_sessions", "pi_session_id", "text");
   addColumn(db, "agent_sessions", "pi_session_file", "text");
   addColumn(db, "agent_sessions", "worktree_path", "text");
+  // PI session-tree leaf id captured right before each prompt — the exact
+  // branch point used to rewind the conversation when the message is edited.
+  // "root" marks an empty tree (first message); NULL marks legacy runs.
+  addColumn(db, "agent_runs", "pi_leaf_before", "text");
 }
 
 export function getDatabase(): DatabaseSync {

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { AgentEvent } from "../../shared/contracts";
+import type { AgentEvent, TodoItem } from "../../shared/contracts";
 import { getDatabase } from "../db/database";
 
 type AgentEventRow = {
@@ -30,6 +30,27 @@ export function recordAgentEvent(event: AgentEvent): void {
       JSON.stringify(event),
       new Date().toISOString(),
     );
+}
+
+/** Latest persisted to-do list of a session (rehydrates the todo tool store). */
+export function getLatestSessionTodos(sessionId: string): TodoItem[] | undefined {
+  const row = getDatabase()
+    .prepare(
+      `select payload_json from agent_events
+       where session_id = ? and type = 'todos.updated'
+       order by rowid desc
+       limit 1`,
+    )
+    .get(sessionId) as { payload_json: string } | undefined;
+  if (!row) {
+    return undefined;
+  }
+  try {
+    const event = JSON.parse(row.payload_json) as Extract<AgentEvent, { type: "todos.updated" }>;
+    return Array.isArray(event.todos) ? event.todos : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export function listAgentEvents(
