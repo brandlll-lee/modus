@@ -2,17 +2,17 @@ import { randomUUID } from "node:crypto";
 import type { CheckpointInfo } from "../../shared/contracts";
 import { getDatabase } from "../db/database";
 import {
-  captureWorktreeSnapshot,
+  captureCheckoutSnapshot,
   deleteSnapshotRef,
   isGitRepository,
-  restoreWorktreeSnapshot,
+  restoreCheckoutSnapshot,
 } from "../git/git-service";
 
 /**
  * Agent checkpoints — Cursor-style safety net.
  *
  * Before every run the session's working tree is snapshotted as a dangling
- * commit (HEAD / index / worktree untouched, see git-service). Restoring puts
+ * commit (HEAD, index, and checkout files untouched, see git-service). Restoring puts
  * the tree back exactly as it was, and always takes a `restore-backup`
  * snapshot first so a restore is itself undoable.
  */
@@ -78,7 +78,7 @@ export async function createCheckpoint(
   }
 
   const previous = getLastCheckpoint(input.sessionId);
-  const snapshot = await captureWorktreeSnapshot(input.cwd, {
+  const snapshot = await captureCheckoutSnapshot(input.cwd, {
     refName: checkpointRef(input.sessionId),
     message: `modus checkpoint (${input.kind ?? "auto"})`,
     parent: previous?.commitHash,
@@ -148,7 +148,7 @@ export async function restoreCheckpoint(checkpointId: string): Promise<Checkpoin
     cwd: checkpoint.cwd,
     kind: "restore-backup",
   });
-  await restoreWorktreeSnapshot(checkpoint.cwd, checkpoint.commitHash);
+  await restoreCheckoutSnapshot(checkpoint.cwd, checkpoint.commitHash);
   return checkpoint;
 }
 

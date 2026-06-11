@@ -1,13 +1,13 @@
 import type { AgentEvent } from "../../../../shared/contracts";
 
 /**
- * Multi-session event plumbing for parallel agents.
+ * Multi-session event plumbing.
  *
  * The app keeps ONE `agent.onEvent` IPC listener; every event is pushed
- * through this hub, which (a) fans the full stream out to whichever ChatPanes
- * currently display that session and (b) folds a tiny per-session activity
+ * through this hub, which (a) fans the full stream out to the ChatPane for the
+ * active session and (b) folds a tiny per-session activity
  * summary (running / needs-input / unread / failed) that powers the sidebar
- * status indicators — for every session, including ones with no open pane.
+ * status indicators.
  */
 
 export type AgentEventItem = { id: string; event: AgentEvent; createdAt?: string };

@@ -16,7 +16,6 @@ export type AgentSessionInfo = {
   model?: string;
   piSessionId?: string;
   piSessionFile?: string;
-  worktreePath?: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -306,27 +305,6 @@ export type PermissionDecision = {
   target: string;
   decision: "allow-once" | "allow-workspace" | "deny";
   createdAt: string;
-};
-
-export type WorktreeInfo = {
-  path: string;
-  branch: string;
-  head: string;
-};
-
-/**
- * Result of applying a worktree session's changes back onto the main checkout
- * (Cursor "/apply-worktree" / Codex "Handoff" equivalent).
- */
-export type WorktreeApplyResult = {
-  /** True when the patch (fully or partially) landed in the main checkout. */
-  applied: boolean;
-  /** True when three-way merge left conflict markers to resolve manually. */
-  conflicted: boolean;
-  /** Number of files the patch touches. */
-  fileCount: number;
-  /** Human-readable git output for toasts/diagnostics. */
-  output: string;
 };
 
 /** Branch / remote / sync state for the git review panel header + commit dialog. */

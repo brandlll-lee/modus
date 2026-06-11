@@ -2,7 +2,6 @@ import {
   IconArchive,
   IconChevronRight,
   IconClock,
-  IconColumns,
   IconDeviceMobile,
   IconEdit,
   IconFolder,
@@ -37,16 +36,14 @@ type SidebarProps = {
   workspaces: WorkspaceInfo[];
   activeWorkspace: WorkspaceInfo | null;
   agentSessions: AgentSessionInfo[];
-  /** Sessions currently open as panes — highlighted as active rows. */
-  paneSessionIds: string[];
+  activeSessionId?: string | undefined;
   /** Live run/needs-input/unread state per session for the status dots. */
   activityBySession: Record<string, SessionActivity>;
   open: boolean;
   width: number;
   onOpenWorkspace(): void;
   onSelectWorkspace(workspace: WorkspaceInfo): void;
-  /** mode "split" opens the session in a new pane (Ctrl/Cmd+click or split icon). */
-  onSelectSession(session: AgentSessionInfo, mode: "replace" | "split"): void;
+  onSelectSession(session: AgentSessionInfo): void;
   onNewSession(): void;
   onNewWorkspaceSession(workspace: WorkspaceInfo): void;
   onArchiveSession(session: AgentSessionInfo): void;
@@ -60,7 +57,7 @@ export function Sidebar({
   workspaces,
   activeWorkspace,
   agentSessions,
-  paneSessionIds,
+  activeSessionId,
   activityBySession,
   open,
   width,
@@ -203,7 +200,7 @@ export function Sidebar({
                   onNewSession={() => onNewWorkspaceSession(workspace)}
                   onSelect={() => onSelectWorkspace(workspace)}
                   onSelectSession={onSelectSession}
-                  paneSessionIds={paneSessionIds}
+                  activeSessionId={activeSessionId}
                   sessions={sessionsByWorkspace.get(workspace.id) ?? []}
                   workspace={workspace}
                 />
@@ -253,7 +250,7 @@ export function Sidebar({
 function WorkspaceItem({
   workspace,
   isActive,
-  paneSessionIds,
+  activeSessionId,
   activityBySession,
   sessions,
   onSelect,
@@ -263,11 +260,11 @@ function WorkspaceItem({
 }: {
   workspace: WorkspaceInfo;
   isActive: boolean;
-  paneSessionIds: string[];
+  activeSessionId?: string | undefined;
   activityBySession: Record<string, SessionActivity>;
   sessions: AgentSessionInfo[];
   onSelect(): void;
-  onSelectSession(session: AgentSessionInfo, mode: "replace" | "split"): void;
+  onSelectSession(session: AgentSessionInfo): void;
   onNewSession(): void;
   onArchiveSession(session: AgentSessionInfo): void;
 }) {
@@ -287,19 +284,13 @@ function WorkspaceItem({
       {sessions.map((session) => (
         <SessionRow
           activity={activityBySession[session.id]}
-          isActive={paneSessionIds.includes(session.id)}
+          isActive={activeSessionId === session.id}
           key={session.id}
           onArchive={(event) => {
             event.stopPropagation();
             onArchiveSession(session);
           }}
-          onSelect={(event) =>
-            onSelectSession(session, event.ctrlKey || event.metaKey ? "split" : "replace")
-          }
-          onSplit={(event) => {
-            event.stopPropagation();
-            onSelectSession(session, "split");
-          }}
+          onSelect={() => onSelectSession(session)}
           title={session.title}
           updatedAt={session.updatedAt}
         />
@@ -314,15 +305,13 @@ function SessionRow({
   isActive,
   activity,
   onSelect,
-  onSplit,
   onArchive,
 }: {
   title: string;
   updatedAt: string;
   isActive: boolean;
   activity: SessionActivity | undefined;
-  onSelect(event: MouseEvent<HTMLButtonElement>): void;
-  onSplit(event: MouseEvent<HTMLButtonElement>): void;
+  onSelect(): void;
   onArchive(event: MouseEvent<HTMLButtonElement>): void;
 }) {
   const hasStatus = Boolean(
@@ -340,7 +329,7 @@ function SessionRow({
       <button
         className="flex min-w-0 flex-1 items-center gap-2 py-2 pr-1 pl-3 text-left"
         onClick={onSelect}
-        title="Open · Ctrl+click to open in a split"
+        title="Open"
         type="button"
       >
         <span className="min-w-0 flex-1 truncate">{title}</span>
@@ -355,9 +344,6 @@ function SessionRow({
         </span>
       </button>
       <span className="ml-1 hidden shrink-0 items-center group-hover:flex group-focus-within:flex">
-        <IconButton label="Open in split pane" onClick={onSplit}>
-          <IconColumns size={14} stroke={1.8} />
-        </IconButton>
         <IconButton label="Archive" onClick={onArchive}>
           <IconArchive size={14} stroke={1.8} />
         </IconButton>

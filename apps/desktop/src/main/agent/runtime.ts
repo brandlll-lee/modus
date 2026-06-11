@@ -14,7 +14,6 @@ export type CreateAgentRuntimeInput = {
   cwd: string;
   title: string;
   model?: string;
-  worktreeMode?: "auto" | "off";
 };
 
 export type PromptAgentInput = {

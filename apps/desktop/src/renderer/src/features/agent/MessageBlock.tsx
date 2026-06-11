@@ -73,8 +73,8 @@ export const MessageBlock = memo(function MessageBlock({
     }
 
     return (
-      <div className="group flex flex-col items-end gap-1">
-        <div className="max-w-[78%] rounded-xl border border-hairline bg-surface/95 px-4 py-2.5 text-sm text-fg leading-relaxed shadow-composer">
+      <div className="group flex min-w-0 max-w-full flex-col items-end gap-1">
+        <div className="min-w-0 max-w-[78%] rounded-xl border border-hairline bg-surface/95 px-4 py-2.5 text-sm text-fg leading-relaxed shadow-composer">
           {attachments && attachments.length > 0 ? (
             <div className="mb-2 flex flex-wrap justify-end gap-1.5">
               {attachments.map((attachment, index) => (
@@ -90,7 +90,7 @@ export const MessageBlock = memo(function MessageBlock({
           ) : null}
           <div className="whitespace-pre-wrap">{content}</div>
         </div>
-        <div className="flex h-6 items-center gap-1 pr-0.5 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
+        <div className="flex h-6 max-w-full items-center gap-1 pr-0.5 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
           <span className="text-2xs text-fg-faint tabular-nums">{formatClock(createdAt)}</span>
           {checkpointId && onRestoreCheckpoint ? (
             <CheckpointRestoreButton checkpointId={checkpointId} onRestore={onRestoreCheckpoint} />
@@ -114,7 +114,7 @@ export const MessageBlock = memo(function MessageBlock({
   }
 
   return (
-    <div className="group min-w-0 text-sm leading-relaxed">
+    <div className="group min-w-0 max-w-full text-sm leading-relaxed">
       {thinking ? (
         <div className="mb-1.5">
           <button
@@ -132,7 +132,7 @@ export const MessageBlock = memo(function MessageBlock({
             <span>{`Thought for ${estimateThinkingSeconds(thinking)}s`}</span>
           </button>
           <CollapsibleMotion open={thinkingOpen} preset="timeline">
-            <pre className="scroll-thin mt-1 max-h-44 overflow-y-auto whitespace-pre-wrap pl-4 font-mono text-2xs text-fg-faint leading-relaxed">
+            <pre className="scroll-thin mt-1 max-h-44 max-w-full overflow-y-auto overflow-x-auto whitespace-pre-wrap pl-4 font-mono text-2xs text-fg-faint leading-relaxed">
               {thinking}
             </pre>
           </CollapsibleMotion>

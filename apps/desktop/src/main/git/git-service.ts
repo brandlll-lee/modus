@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, readFile } from "node:fs/promises";
-import { dirname, isAbsolute, join } from "node:path";
+import { readFile } from "node:fs/promises";
+import { isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
 import type {
   DiffFileVersions,
@@ -14,8 +14,6 @@ import type {
   GitCommitResult,
   GitStatusSummary,
   WorkingChangeStats,
-  WorktreeApplyResult,
-  WorktreeInfo,
 } from "../../shared/contracts";
 
 const execFileAsync = promisify(execFile);
@@ -650,182 +648,22 @@ export async function fetchAll(cwd: string): Promise<string> {
   return `${stdout}${stderr}`.trim();
 }
 
-export async function listWorktrees(cwd: string): Promise<WorktreeInfo[]> {
-  const output = await git(cwd, ["worktree", "list", "--porcelain"]);
-  const chunks = output.split("\n\n").filter(Boolean);
-
-  return chunks.map((chunk) => {
-    const fields = Object.fromEntries(
-      chunk.split("\n").map((line) => {
-        const [key, ...rest] = line.split(" ");
-        return [key, rest.join(" ")];
-      }),
-    );
-
-    return {
-      path: fields.worktree ?? "",
-      head: fields.HEAD ?? "",
-      branch: fields.branch ?? "detached",
-    };
-  });
-}
-
-export async function createWorktree(cwd: string, taskId: string): Promise<WorktreeInfo> {
-  const baseTaskId = taskId.replace(/[^a-zA-Z0-9._-]/g, "-").replace(/^-+|-+$/g, "") || "task";
-  let lastError: unknown;
-
-  for (let attempt = 1; attempt <= 10; attempt += 1) {
-    const normalizedTaskId = attempt === 1 ? baseTaskId : `${baseTaskId}-${attempt}`;
-    const path = join(cwd, ".modus", "worktrees", normalizedTaskId);
-    const branch = `modus/${normalizedTaskId}`;
-
-    if (existsSync(path)) {
-      lastError = new Error(`Worktree path already exists: ${path}`);
-      continue;
-    }
-
-    try {
-      await git(cwd, ["rev-parse", "--verify", branch]);
-      lastError = new Error(`Worktree branch already exists: ${branch}`);
-      continue;
-    } catch {
-      // Branch does not exist; safe to try this suffix.
-    }
-
-    try {
-      await mkdir(dirname(path), { recursive: true });
-      await git(cwd, ["worktree", "add", "-b", branch, path]);
-      const head = await gitSafe(path, ["rev-parse", "--verify", "HEAD"]);
-      return {
-        path,
-        branch,
-        head,
-      };
-    } catch (error) {
-      lastError = error;
-    }
-  }
-
-  const message = lastError instanceof Error ? lastError.message : String(lastError);
-  throw new Error(`Unable to create an isolated worktree after 10 attempts. ${message}`);
-}
-
-export async function deleteWorktree(cwd: string, worktreePath: string): Promise<void> {
-  await git(cwd, ["worktree", "remove", worktreePath]);
-}
-
-/**
- * Apply a worktree session's changes onto the main checkout — the local
- * equivalent of Cursor's `/apply-worktree` / Codex's Handoff.
- *
- * The whole worktree state (commits made since the fork point + uncommitted +
- * untracked files) is captured as a snapshot commit in the SHARED object store,
- * diffed against the fork point, and applied to the main checkout with a
- * three-way merge. Conflicts land as standard conflict markers so they can be
- * resolved in place; the worktree itself is never modified.
- */
-export async function applyWorktreeChanges(
-  cwd: string,
-  worktreePath: string,
-): Promise<WorktreeApplyResult> {
-  const { mkdtemp, rm, writeFile } = await import("node:fs/promises");
-  const { tmpdir } = await import("node:os");
-
-  const refName = `refs/modus/apply/${Date.now().toString(36)}`;
-  const snapshot = await captureWorktreeSnapshot(worktreePath, {
-    refName,
-    message: "modus worktree apply snapshot",
-  });
-
-  try {
-    // Fork point between the main checkout and the worktree branch. Falls back
-    // to the worktree HEAD itself when histories are degenerate (fresh repo).
-    const worktreeHead = (await git(worktreePath, ["rev-parse", "HEAD"])).trim();
-    const mergeBase = (await gitSafe(cwd, ["merge-base", "HEAD", worktreeHead])) || worktreeHead;
-
-    const fileList = (await git(cwd, ["diff", "--name-only", "-z", mergeBase, snapshot.commit]))
-      .split("\0")
-      .filter(Boolean);
-    if (fileList.length === 0) {
-      return {
-        applied: false,
-        conflicted: false,
-        fileCount: 0,
-        output: "The worktree has no changes to apply.",
-      };
-    }
-
-    const diff = await git(cwd, ["diff", "--binary", mergeBase, snapshot.commit]);
-    const patchDir = await mkdtemp(join(tmpdir(), "modus-apply-"));
-    const patchFile = join(patchDir, "worktree.patch");
-    try {
-      await writeFile(patchFile, diff, "utf8");
-      // Pass 1: plain worktree apply — works even on a dirty checkout as long
-      // as the touched files still match the patch context.
-      try {
-        await git(cwd, ["apply", "--whitespace=nowarn", patchFile]);
-        return {
-          applied: true,
-          conflicted: false,
-          fileCount: fileList.length,
-          output: `Applied ${fileList.length} file(s) to the main checkout.`,
-        };
-      } catch {
-        // Pass 2 below handles drifted files via three-way merge.
-      }
-      try {
-        const output = await git(cwd, ["apply", "--3way", "--whitespace=nowarn", patchFile]);
-        return {
-          applied: true,
-          conflicted: false,
-          fileCount: fileList.length,
-          output: output.trim() || `Applied ${fileList.length} file(s) to the main checkout.`,
-        };
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        // Three-way fallback leaves standard conflict markers and reports
-        // "Applied patch ... with conflicts" — the patch landed, user resolves.
-        if (/with conflicts/i.test(message)) {
-          return {
-            applied: true,
-            conflicted: true,
-            fileCount: fileList.length,
-            output: message,
-          };
-        }
-        // Typical: uncommitted local edits on the same files ("does not match
-        // index"). Nothing was modified — surface git's reason untouched.
-        return {
-          applied: false,
-          conflicted: false,
-          fileCount: fileList.length,
-          output: message,
-        };
-      }
-    } finally {
-      await rm(patchDir, { recursive: true, force: true }).catch(() => {});
-    }
-  } finally {
-    await deleteSnapshotRef(worktreePath, refName);
-  }
-}
-
-/* ── Worktree snapshots (agent checkpoints) ──────────────────────────────
+/* ── Agent checkpoints ───────────────────────────────────────────────────
  * A snapshot is a dangling commit of the ENTIRE working tree (tracked +
  * untracked, .gitignore respected) built through a TEMPORARY index file, so
- * HEAD, the user's real index, and the worktree are never touched. A ref under
+ * HEAD, the user's real index, and checkout files are never touched. A ref under
  * refs/modus/ keeps the chain reachable so `git gc` cannot prune it.
  */
 
-export type WorktreeSnapshot = {
+export type CheckoutSnapshot = {
   commit: string;
   tree: string;
 };
 
-export async function captureWorktreeSnapshot(
+export async function captureCheckoutSnapshot(
   cwd: string,
   options: { refName: string; message: string; parent?: string | undefined },
-): Promise<WorktreeSnapshot> {
+): Promise<CheckoutSnapshot> {
   const { mkdtemp, rm } = await import("node:fs/promises");
   const { tmpdir } = await import("node:os");
   const indexDir = await mkdtemp(join(tmpdir(), "modus-snapshot-"));
@@ -857,11 +695,11 @@ export async function captureWorktreeSnapshot(
 }
 
 /**
- * Make the working tree match a snapshot exactly: restore every file recorded
- * in the snapshot (index + worktree) and delete files that were created since.
+ * Make the checkout match a snapshot exactly: restore every file recorded
+ * in the snapshot (index + working tree) and delete files that were created since.
  * Ignored files are left alone.
  */
-export async function restoreWorktreeSnapshot(cwd: string, commit: string): Promise<void> {
+export async function restoreCheckoutSnapshot(cwd: string, commit: string): Promise<void> {
   const { rm } = await import("node:fs/promises");
 
   const snapshotFiles = new Set(

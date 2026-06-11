@@ -4,10 +4,9 @@ import { getAgentSession } from "../agent/agent-store";
 import { IPC_CHANNELS } from "../ipc/channels";
 
 /**
- * Background-completion notifications for parallel agents (Codex-app
- * behavior: notify when a task finishes or needs approval while the app is in
- * the background). Clicking a notification focuses the window and asks the
- * renderer to bring that session into the focused pane.
+ * Background-completion notifications for agent sessions. Notify when a task
+ * finishes or needs approval while the app is in the background. Clicking a
+ * notification focuses the window and asks the renderer to show that session.
  */
 
 function notify(window: BrowserWindow, sessionId: string, title: string, body: string): void {

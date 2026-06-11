@@ -139,9 +139,9 @@ function insertSession(
   db.prepare(
     `insert into agent_sessions (
       id, workspace_id, title, cwd, status, runtime, model, pi_session_id, pi_session_file,
-      worktree_path, created_at, updated_at
+      created_at, updated_at
      )
-     values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     sessionId,
     workspaceId,
@@ -152,7 +152,6 @@ function insertSession(
     "mock/model",
     "old-pi-session",
     missingSessionFile,
-    null,
     now,
     now,
   );
@@ -176,6 +175,33 @@ afterAll(async () => {
 });
 
 describe("PiSdkRuntime", () => {
+  it("creates new sessions directly in the workspace checkout", async () => {
+    const workspaceId = `workspace-${crypto.randomUUID()}`;
+    const now = new Date().toISOString();
+    getDatabase()
+      .prepare(
+        `insert into workspaces (id, root_path, display_name, is_git_repository, last_opened_at, created_at)
+         values (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(workspaceId, cwd, "repo", 1, now, now);
+    const runtime = new PiSdkRuntime();
+    const window = createWindowStub();
+
+    const session = await runtime.create(window, {
+      workspaceId,
+      cwd,
+      title: "New chat",
+      model: "mock/model",
+    });
+
+    expect(session.cwd).toBe(cwd);
+    expect(mocks.sessionManagerCreate).toHaveBeenCalledWith(cwd, expect.any(String));
+    const row = getDatabase()
+      .prepare("select cwd from agent_sessions where id = ?")
+      .get(session.id) as { cwd: string };
+    expect(row.cwd).toBe(cwd);
+  });
+
   it("creates a fresh PI backing session when a persisted session is no longer in memory and its PI file is missing", async () => {
     const sessionId = `session-${crypto.randomUUID()}`;
     const workspaceId = `workspace-${crypto.randomUUID()}`;

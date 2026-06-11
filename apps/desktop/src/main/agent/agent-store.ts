@@ -12,7 +12,6 @@ type AgentSessionRow = {
   model: string | null;
   pi_session_id: string | null;
   pi_session_file: string | null;
-  worktree_path: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -38,10 +37,6 @@ function toSession(row: AgentSessionRow): AgentSessionInfo {
   if (row.pi_session_file !== null) {
     session.piSessionFile = row.pi_session_file;
   }
-  if (row.worktree_path !== null) {
-    session.worktreePath = row.worktree_path;
-  }
-
   return session;
 }
 
@@ -53,7 +48,6 @@ export function createAgentSessionRecord(input: {
   model?: string;
   piSessionId?: string;
   piSessionFile?: string;
-  worktreePath?: string;
 }): AgentSessionInfo {
   const now = new Date().toISOString();
   const runtime = input.runtime ?? "pi-sdk";
@@ -77,17 +71,13 @@ export function createAgentSessionRecord(input: {
   if (input.piSessionFile !== undefined) {
     session.piSessionFile = input.piSessionFile;
   }
-  if (input.worktreePath !== undefined) {
-    session.worktreePath = input.worktreePath;
-  }
-
   getDatabase()
     .prepare(
       `insert into agent_sessions (
         id, workspace_id, title, cwd, status, runtime, model, pi_session_id, pi_session_file,
-        worktree_path, created_at, updated_at
+        created_at, updated_at
        )
-       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       session.id,
@@ -99,7 +89,6 @@ export function createAgentSessionRecord(input: {
       session.model ?? null,
       session.piSessionId ?? null,
       session.piSessionFile ?? null,
-      session.worktreePath ?? null,
       session.createdAt,
       session.updatedAt,
     );
@@ -118,9 +107,7 @@ export function updateAgentSessionStatus(
 
 export function updateAgentSessionMetadata(
   sessionId: string,
-  metadata: Partial<
-    Pick<AgentSessionInfo, "model" | "piSessionId" | "piSessionFile" | "worktreePath">
-  >,
+  metadata: Partial<Pick<AgentSessionInfo, "model" | "piSessionId" | "piSessionFile">>,
 ): AgentSessionInfo | undefined {
   const existing = getAgentSession(sessionId);
   if (!existing) {
@@ -131,14 +118,13 @@ export function updateAgentSessionMetadata(
   getDatabase()
     .prepare(
       `update agent_sessions
-       set model = ?, pi_session_id = ?, pi_session_file = ?, worktree_path = ?, updated_at = ?
+       set model = ?, pi_session_id = ?, pi_session_file = ?, updated_at = ?
        where id = ?`,
     )
     .run(
       next.model ?? null,
       next.piSessionId ?? null,
       next.piSessionFile ?? null,
-      next.worktreePath ?? null,
       next.updatedAt,
       sessionId,
     );
@@ -167,7 +153,7 @@ export function getAgentSession(sessionId: string): AgentSessionInfo | undefined
   const row = getDatabase()
     .prepare(
       `select id, workspace_id, title, cwd, status, runtime, model, pi_session_id,
-        pi_session_file, worktree_path, created_at, updated_at
+        pi_session_file, created_at, updated_at
        from agent_sessions
        where id = ?`,
     )
@@ -180,7 +166,7 @@ export function listAgentSessions(): AgentSessionInfo[] {
   const rows = getDatabase()
     .prepare(
       `select id, workspace_id, title, cwd, status, runtime, model, pi_session_id,
-        pi_session_file, worktree_path, created_at, updated_at
+        pi_session_file, created_at, updated_at
        from agent_sessions
        order by updated_at desc`,
     )

@@ -16,7 +16,7 @@ import type {
   ModelInfo,
 } from "../../shared/contracts";
 import { formatResolvedContext, resolveContext } from "../context/context-service";
-import { createWorktree, getChangeStatsSince, isGitRepository } from "../git/git-service";
+import { getChangeStatsSince } from "../git/git-service";
 import { IPC_CHANNELS } from "../ipc/channels";
 import { maybeNotifyAgentEvent } from "../notifications/agent-notifications";
 import { resolveAlwaysRulesPrompt } from "../rules/rules-service";
@@ -299,23 +299,13 @@ export class PiSdkRuntime implements AgentRuntime {
     }
     const modelId = selectedModel ? modelToId(selectedModel) : input.model;
     const selectedInfo = getModelInfo(modelId);
-    let effectiveCwd = input.cwd;
-    let worktreePath: string | undefined;
-    if ((input.worktreeMode ?? "auto") === "auto" && (await isGitRepository(input.cwd))) {
-      const worktree = await createWorktree(input.cwd, `session-${Date.now().toString(36)}`);
-      effectiveCwd = worktree.path;
-      worktreePath = worktree.path;
-    }
     const recordInput: Parameters<typeof createAgentSessionRecord>[0] = {
       ...input,
-      cwd: effectiveCwd,
+      cwd: input.cwd,
       runtime: "pi-sdk",
     };
     if (modelId !== undefined) {
       recordInput.model = modelId;
-    }
-    if (worktreePath !== undefined) {
-      recordInput.worktreePath = worktreePath;
     }
     const info = createAgentSessionRecord(recordInput);
 
@@ -325,7 +315,7 @@ export class PiSdkRuntime implements AgentRuntime {
     mkdirSync(sessionDir, { recursive: true });
 
     const { settingsManager, loader } = await this.createSessionResources(
-      effectiveCwd,
+      input.cwd,
       info.id,
       emit,
       agentDir,
@@ -338,7 +328,7 @@ export class PiSdkRuntime implements AgentRuntime {
       agentDir,
       loader,
       settingsManager,
-      sessionManager: SessionManager.create(effectiveCwd, sessionDir),
+      sessionManager: SessionManager.create(input.cwd, sessionDir),
       model: selectedModel,
       thinkingLevel:
         selectedModel !== undefined
@@ -539,7 +529,7 @@ export class PiSdkRuntime implements AgentRuntime {
         if (outputTracker.hasVisibleOutput) {
           updateAgentRunStatus(run.id, "completed");
           // Per-turn change summary (Codex-style "N files changed" card):
-          // diff the worktree against the pre-run snapshot. Never blocks or
+          // diff the checkout against the pre-run snapshot. Never blocks or
           // fails the run; sessions without a checkpoint just omit it.
           let changes: Awaited<ReturnType<typeof getChangeStatsSince>> | undefined;
           if (runCheckpoint) {

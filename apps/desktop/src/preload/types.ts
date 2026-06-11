@@ -44,8 +44,6 @@ import type {
   UpsertCustomProviderInput,
   WorkingChangeStats,
   WorkspaceInfo,
-  WorktreeApplyResult,
-  WorktreeInfo,
 } from "../shared/contracts";
 
 export type SecurityState = {
@@ -74,7 +72,6 @@ export type ModusApi = {
       cwd: string;
       title: string;
       model?: string;
-      worktreeMode?: "auto" | "off";
     }): Promise<AgentSessionInfo>;
     list(): Promise<AgentSessionInfo[]>;
     listEvents(
@@ -168,13 +165,6 @@ export type ModusApi = {
       decision: PermissionDecision["decision"];
     }): Promise<PermissionDecision>;
     list(): Promise<PermissionDecision[]>;
-  };
-  worktree: {
-    list(cwd: string): Promise<WorktreeInfo[]>;
-    create(input: { cwd: string; taskId: string }): Promise<WorktreeInfo>;
-    delete(input: { cwd: string; path: string }): Promise<void>;
-    /** Apply a worktree session's changes onto the main checkout (3-way merge). */
-    apply(input: { cwd: string; path: string }): Promise<WorktreeApplyResult>;
   };
   context: {
     search(input: {

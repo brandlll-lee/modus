@@ -26,20 +26,16 @@ import { getAgentRuntime } from "../agent/runtime-registry";
 import { resolveContext, searchContext } from "../context/context-service";
 import { addDocSource, indexWorkspaceDocs, listDocSources, searchDocs } from "../docs/docs-service";
 import {
-  applyWorktreeChanges,
   checkoutBranch,
   commitChanges,
   commitOrPush,
   createBranch,
-  createWorktree,
-  deleteWorktree,
   discardFile,
   fetchAll,
   getStatusSummary,
   getWorkingChangeStats,
   listBranches,
   listChanges,
-  listWorktrees,
   pullCurrentBranch,
   readDiff,
   readFileVersions,
@@ -111,8 +107,6 @@ import {
   testCustomProviderSchema,
   updateModelConfigSchema,
   upsertCustomProviderSchema,
-  worktreeCreateSchema,
-  worktreeDeleteSchema,
 } from "./schemas";
 
 const TRUSTED_DEV_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
@@ -209,7 +203,6 @@ export function registerAppIpc(): void {
       cwd: parsed.cwd,
       title: parsed.title,
       ...(parsed.model !== undefined ? { model: parsed.model } : {}),
-      ...(parsed.worktreeMode !== undefined ? { worktreeMode: parsed.worktreeMode } : {}),
     });
   });
 
@@ -390,8 +383,7 @@ export function registerAppIpc(): void {
     return await getStatusSummary(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.diffStatus));
   });
 
-  // Working-tree change summary (file list + ± line counts) for the composer
-  // changes strip and the worktree apply review.
+  // Working-tree change summary (file list + ± line counts) for the composer changes strip.
   ipcMain.handle(IPC_CHANNELS.diffStats, async (event, cwd: string) => {
     assertTrustedSender(event);
     return await getWorkingChangeStats(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.diffStats));
@@ -710,31 +702,6 @@ export function registerAppIpc(): void {
     assertTrustedSender(event);
     const parsed = parseIpcInput(updateModelConfigSchema, input, IPC_CHANNELS.modelUpdateConfig);
     return updateModelConfig(parsed);
-  });
-
-  ipcMain.handle(IPC_CHANNELS.worktreeList, async (event, cwd: string) => {
-    assertTrustedSender(event);
-    return await listWorktrees(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.worktreeList));
-  });
-
-  ipcMain.handle(IPC_CHANNELS.worktreeCreate, async (event, input) => {
-    assertTrustedSender(event);
-    const parsed = parseIpcInput(worktreeCreateSchema, input, IPC_CHANNELS.worktreeCreate);
-    return await createWorktree(parsed.cwd, parsed.taskId);
-  });
-
-  ipcMain.handle(IPC_CHANNELS.worktreeDelete, async (event, input) => {
-    assertTrustedSender(event);
-    const parsed = parseIpcInput(worktreeDeleteSchema, input, IPC_CHANNELS.worktreeDelete);
-    await deleteWorktree(parsed.cwd, parsed.path);
-  });
-
-  // Cursor "/apply-worktree" equivalent: land a worktree session's changes in
-  // the main checkout via a snapshot diff + three-way apply.
-  ipcMain.handle(IPC_CHANNELS.worktreeApply, async (event, input) => {
-    assertTrustedSender(event);
-    const parsed = parseIpcInput(worktreeDeleteSchema, input, IPC_CHANNELS.worktreeApply);
-    return await applyWorktreeChanges(parsed.cwd, parsed.path);
   });
 
   // 自绘 titlebar 的窗口控制 IPC —— 走 sender-validated 通道，不暴露原始 ipcRenderer

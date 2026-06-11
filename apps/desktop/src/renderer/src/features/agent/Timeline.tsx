@@ -959,7 +959,7 @@ export function Timeline({
 
   if (visibleBlocks.length === 0) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-6 px-6 text-center">
+      <div className="flex h-full min-w-0 max-w-full flex-col items-center justify-center gap-6 px-6 text-center">
         <ModusBot className="size-24" />
         <div className="space-y-2">
           <p className="text-[17px] font-normal tracking-tight text-fg-muted">
@@ -974,11 +974,12 @@ export function Timeline({
   }
 
   return (
-    <div className="relative mx-auto w-full max-w-5xl px-6 pt-8 pb-24">
-      <div className="space-y-4">
+    <div className="relative mx-auto min-w-0 max-w-5xl px-6 pt-8 pb-24">
+      <div className="min-w-0 max-w-full space-y-4">
         {visibleBlocks.map((block, index) => (
           <m.div
             animate={{ opacity: 1 }}
+            className="min-w-0 max-w-full"
             initial={{ opacity: 0 }}
             key={renderKeys[index]}
             transition={{ duration: 0.15, ease: "easeOut" }}

@@ -157,7 +157,18 @@ function migrate(db: DatabaseSync): void {
   addColumn(db, "agent_sessions", "model", "text");
   addColumn(db, "agent_sessions", "pi_session_id", "text");
   addColumn(db, "agent_sessions", "pi_session_file", "text");
-  addColumn(db, "agent_sessions", "worktree_path", "text");
+  if (hasColumn(db, "agent_sessions", "worktree_path")) {
+    db.exec(`
+      update agent_sessions
+      set
+        cwd = coalesce(
+          (select root_path from workspaces where workspaces.id = agent_sessions.workspace_id),
+          cwd
+        ),
+        worktree_path = null
+      where worktree_path is not null
+    `);
+  }
   // PI session-tree leaf id captured right before each prompt — the exact
   // branch point used to rewind the conversation when the message is edited.
   // "root" marks an empty tree (first message); NULL marks legacy runs.

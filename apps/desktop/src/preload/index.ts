@@ -78,12 +78,6 @@ const api: ModusApi = {
     decide: (input) => ipcRenderer.invoke("permission:decide", input),
     list: () => ipcRenderer.invoke("permission:list"),
   },
-  worktree: {
-    list: (cwd) => ipcRenderer.invoke("worktree:list", cwd),
-    create: (input) => ipcRenderer.invoke("worktree:create", input),
-    delete: (input) => ipcRenderer.invoke("worktree:delete", input),
-    apply: (input) => ipcRenderer.invoke("worktree:apply", input),
-  },
   context: {
     search: (input) => ipcRenderer.invoke("context:search", input),
     resolve: (input) => ipcRenderer.invoke("context:resolve", input),

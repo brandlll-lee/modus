@@ -20,7 +20,6 @@ export const agentCreateSchema = z.object({
   cwd: nonEmptyString,
   title: nonEmptyString,
   model: optionalNonEmptyString,
-  worktreeMode: z.enum(["auto", "off"]).optional(),
 });
 
 /** ~10 MB of raw image bytes once base64-decoded. */
@@ -345,16 +344,6 @@ export const updateModelConfigSchema = z.object({
   thinkingLevel: thinkingLevelSchema.optional(),
   contextWindow: z.number().int().min(1_000).max(10_000_000).optional(),
   maxTokens: z.number().int().min(1).max(1_000_000).optional(),
-});
-
-export const worktreeCreateSchema = z.object({
-  cwd: nonEmptyString,
-  taskId: nonEmptyString,
-});
-
-export const worktreeDeleteSchema = z.object({
-  cwd: nonEmptyString,
-  path: nonEmptyString,
 });
 
 export function parseIpcInput<T>(schema: z.ZodType<T>, value: unknown, channel: string): T {

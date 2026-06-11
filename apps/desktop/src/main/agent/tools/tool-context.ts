@@ -6,9 +6,9 @@ import type { EmitAgentEvent } from "../runtime";
  *
  * Custom tools are registered once and shared across every agent session, so a
  * tool's `execute` has no Modus session identity of its own. Before each
- * prompt, the runtime publishes the session's context keyed by its cwd; tools
- * resolve it from `ctx.cwd`. Worktree-per-session makes cwd unique, so this is
- * an exact lookup; `lastContext` is a safe fallback for degenerate setups.
+ * prompt, the runtime publishes the session's context keyed by its cwd. Tools
+ * resolve it from `ctx.cwd`; `lastContext` is a safe fallback when multiple
+ * sessions share the same project checkout.
  */
 export type AgentToolContext = {
   workspaceId: string;

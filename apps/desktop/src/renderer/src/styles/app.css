@@ -370,6 +370,8 @@ input {
   color: var(--color-fg);
   font-size: var(--text-md); /* 14px — 比 13px 更易读，留白更舒展 */
   line-height: 1.7;
+  max-width: 100%;
+  min-width: 0;
   overflow-wrap: anywhere;
 }
 
@@ -519,6 +521,8 @@ input {
 .modus-markdown [data-streamdown="table-wrapper"] {
   position: relative;
   margin: 1rem 0;
+  max-width: 100%;
+  min-width: 0;
   gap: 0.35rem;
   padding: 0;
   border: 0;
@@ -536,10 +540,13 @@ input {
 /* The ONE frame: the inner box that directly wraps the table. */
 .modus-markdown [data-streamdown="table-wrapper"] > div:has(> table) {
   margin: 0;
+  max-width: 100%;
+  min-width: 0;
   border: 1px solid var(--color-hairline);
   border-radius: var(--radius-lg);
   background: transparent;
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 /*
@@ -633,6 +640,8 @@ input {
 .modus-markdown [data-streamdown="code-block"] {
   position: relative;
   margin: 1rem 0;
+  max-width: 100%;
+  min-width: 0;
   padding: 0;
   gap: 0;
   border: 1px solid var(--color-hairline);
@@ -652,6 +661,8 @@ input {
   border: 0;
   border-radius: 0;
   background: transparent;
+  max-width: 100%;
+  min-width: 0;
   padding: 0.8rem 1rem;
   font-size: var(--text-xs);
   line-height: 1.7;

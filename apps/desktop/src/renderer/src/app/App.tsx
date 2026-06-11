@@ -4,7 +4,6 @@ import {
   IconCheck,
   IconChevronDown,
   IconCircles,
-  IconColumns,
   IconDeviceLaptop,
   IconFolder,
   IconGitBranch,
@@ -47,16 +46,12 @@ import { Inspector } from "../features/inspector/Inspector";
 import { SettingsPanel } from "../features/settings/SettingsPanel";
 import { cn } from "../lib/cn";
 
-/** Side-by-side agent columns (Agents-Window style). 3 keeps panes readable at the app's min width. */
-const MAX_PANES = 3;
-
 export function App() {
   const [securityState, setSecurityState] = useState<SecurityState | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([]);
   const [activeWorkspace, setActiveWorkspace] = useState<WorkspaceInfo | null>(null);
   const [agentSessions, setAgentSessions] = useState<AgentSessionInfo[]>([]);
-  const [paneSessionIds, setPaneSessionIds] = useState<string[]>([]);
-  const [focusedPane, setFocusedPane] = useState(0);
+  const [activeSessionId, setActiveSessionId] = useState<string | undefined>();
   const [activityBySession, setActivityBySession] = useState<Record<string, SessionActivity>>({});
   const [contextUsageBySession, setContextUsageBySession] = useState<
     Record<string, ContextUsageInfo>
@@ -74,11 +69,11 @@ export function App() {
   const [sessionCreateError, setSessionCreateError] = useState<string | undefined>();
 
   const hubRef = useRef(new AgentEventHub());
-  const paneSessionIdsRef = useRef<string[]>([]);
+  const activeSessionIdRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
-    paneSessionIdsRef.current = paneSessionIds;
-  }, [paneSessionIds]);
+    activeSessionIdRef.current = activeSessionId;
+  }, [activeSessionId]);
 
   const refreshSessions = useCallback(async (): Promise<void> => {
     setAgentSessions(await window.modus.agent.list());
@@ -96,11 +91,7 @@ export function App() {
     });
   }, []);
 
-  /* ── Global event intake: one IPC listener feeds every pane + the sidebar ──
-   * Mount-once wiring: openSessionInPane works off setState callbacks/refs, so
-   * subscribing it as a dependency would only churn the IPC listener.
-   */
-  // biome-ignore lint/correctness/useExhaustiveDependencies: see above.
+  /* ── Global event intake: one IPC listener feeds the active chat + sidebar ── */
   useEffect(() => {
     if (!window.modus) {
       return;
@@ -129,7 +120,7 @@ export function App() {
       });
 
       if (affectsActivity(event)) {
-        const watched = paneSessionIdsRef.current.includes(event.sessionId);
+        const watched = activeSessionIdRef.current === event.sessionId;
         setActivityBySession((current) => {
           const next = reduceActivity(current[event.sessionId], event, watched);
           if (next === current[event.sessionId]) {
@@ -153,9 +144,9 @@ export function App() {
       }
     });
 
-    // System notification click → surface that session in the focused pane.
+    // System notification click → surface that session in the chat view.
     const unsubscribeFocus = window.modus.agent.onFocusSession((sessionId: string) => {
-      openSessionInPane(sessionId, "focus");
+      setActiveSessionId(sessionId);
     });
 
     return () => {
@@ -164,79 +155,31 @@ export function App() {
     };
   }, [refreshModelSettings, refreshSessions]);
 
-  /* ── Pane management ──────────────────────────────────────────────────── */
-
-  /**
-   * Bring a session on screen. "replace" swaps it into the focused pane (the
-   * classic single-chat behavior); "split" opens a new column (up to
-   * MAX_PANES, falling back to replace); "focus" prefers an existing pane.
-   */
-  function openSessionInPane(sessionId: string, mode: "replace" | "split" | "focus"): void {
-    setPaneSessionIds((current) => {
-      const existingIndex = current.indexOf(sessionId);
-      if (existingIndex >= 0) {
-        setFocusedPane(existingIndex);
+  // The open session is "watched": its unread flag clears.
+  useEffect(() => {
+    if (!activeSessionId) {
+      return;
+    }
+    setActivityBySession((current) => {
+      const activity = current[activeSessionId];
+      if (!activity?.unread) {
         return current;
       }
-      if (current.length === 0) {
-        setFocusedPane(0);
-        return [sessionId];
-      }
-      if (mode === "split" && current.length < MAX_PANES) {
-        setFocusedPane(current.length);
-        return [...current, sessionId];
-      }
-      const target =
-        mode === "split" ? current.length - 1 : Math.min(focusedPane, current.length - 1);
-      const next = current.slice();
-      next[target] = sessionId;
-      setFocusedPane(target);
-      return next;
+      return { ...current, [activeSessionId]: { ...activity, unread: false } };
     });
-  }
+  }, [activeSessionId]);
 
-  function closePane(index: number): void {
-    setPaneSessionIds((current) => {
-      const next = current.filter((_, paneIndex) => paneIndex !== index);
-      setFocusedPane((focus) =>
-        Math.max(0, Math.min(focus > index ? focus - 1 : focus, next.length - 1)),
-      );
-      return next;
-    });
-  }
-
-  // Sessions opened in a pane are "watched": their unread flag clears.
+  // Drop the active session if it was archived elsewhere.
   useEffect(() => {
-    setActivityBySession((current) => {
-      let changed = false;
-      const next = { ...current };
-      for (const sessionId of paneSessionIds) {
-        const activity = next[sessionId];
-        if (activity?.unread) {
-          next[sessionId] = { ...activity, unread: false };
-          changed = true;
-        }
-      }
-      return changed ? next : current;
-    });
-  }, [paneSessionIds]);
+    if (activeSessionId && !agentSessions.some((session) => session.id === activeSessionId)) {
+      setActiveSessionId(undefined);
+    }
+  }, [activeSessionId, agentSessions]);
 
-  // Drop panes whose sessions were archived elsewhere.
-  useEffect(() => {
-    setPaneSessionIds((current) => {
-      const next = current.filter((id) => agentSessions.some((session) => session.id === id));
-      return next.length === current.length ? current : next;
-    });
-  }, [agentSessions]);
-
-  const paneSessions = useMemo(
-    () =>
-      paneSessionIds
-        .map((id) => agentSessions.find((session) => session.id === id))
-        .filter((session): session is AgentSessionInfo => Boolean(session)),
-    [paneSessionIds, agentSessions],
+  const activeSession = useMemo(
+    () => agentSessions.find((session) => session.id === activeSessionId),
+    [activeSessionId, agentSessions],
   );
-  const focusedSession = paneSessions[Math.min(focusedPane, paneSessions.length - 1)];
 
   /* ── Session lifecycle ───────────────────────────────────────────────── */
 
@@ -250,10 +193,7 @@ export function App() {
     await refreshSessions();
   }
 
-  async function createSession(
-    workspace: WorkspaceInfo | null,
-    mode: "replace" | "split",
-  ): Promise<AgentSessionInfo | null> {
+  async function createSession(workspace: WorkspaceInfo | null): Promise<AgentSessionInfo | null> {
     if (!workspace) {
       return null;
     }
@@ -272,7 +212,7 @@ export function App() {
       setSessionCreateError(undefined);
       setActiveWorkspace(workspace);
       await refreshSessions();
-      openSessionInPane(session.id, mode);
+      setActiveSessionId(session.id);
       return session;
     } catch (error) {
       setSessionCreateError(error instanceof Error ? error.message : String(error));
@@ -280,12 +220,12 @@ export function App() {
     }
   }
 
-  function selectSession(session: AgentSessionInfo, mode: "replace" | "split" = "replace"): void {
+  function selectSession(session: AgentSessionInfo): void {
     setSessionCreateError(undefined);
     setActiveWorkspace(
       workspaces.find((workspace) => workspace.id === session.workspaceId) ?? activeWorkspace,
     );
-    openSessionInPane(session.id, mode);
+    setActiveSessionId(session.id);
   }
 
   async function archiveSession(session: AgentSessionInfo): Promise<void> {
@@ -309,7 +249,7 @@ export function App() {
     if (!message.trim()) {
       return;
     }
-    const session = await createSession(activeWorkspace, "replace");
+    const session = await createSession(activeWorkspace);
     if (!session) {
       return;
     }
@@ -349,12 +289,12 @@ export function App() {
     async (direction: "forward" | "backward"): Promise<void> => {
       const next = await window.modus.agent.cycleModel({
         direction,
-        sessionId: focusedSession?.id,
+        sessionId: activeSession?.id,
       });
       setModel(next.id);
       void refreshSessions();
     },
-    [focusedSession?.id, refreshSessions],
+    [activeSession?.id, refreshSessions],
   );
 
   useEffect(() => {
@@ -369,17 +309,16 @@ export function App() {
     return () => window.removeEventListener("keydown", handleModelCycle);
   }, [cycleModel]);
 
-  const hasPanes = paneSessions.length > 0;
-  const activeCwd =
-    focusedSession?.worktreePath ?? focusedSession?.cwd ?? activeWorkspace?.rootPath;
-  const focusedRunning = focusedSession
-    ? (activityBySession[focusedSession.id]?.running ?? false)
+  const hasSession = Boolean(activeSession);
+  const activeCwd = activeSession?.cwd ?? activeWorkspace?.rootPath;
+  const activeRunning = activeSession
+    ? (activityBySession[activeSession.id]?.running ?? false)
     : false;
 
   useEffect(() => {
-    // focusedRunning gates nothing but re-runs the poll whenever the focused
+    // activeRunning gates nothing but re-runs the poll whenever the active
     // agent starts/stops — its edits have just landed when it stops.
-    void focusedRunning;
+    void activeRunning;
     if (!activeCwd) {
       setEnvironmentStats({ added: 0, removed: 0 });
       return;
@@ -387,7 +326,7 @@ export function App() {
     void window.modus.diff.read({ cwd: activeCwd }).then((fileDiff: FileDiff) => {
       setEnvironmentStats(getDiffTotals(fileDiff.diff));
     });
-  }, [activeCwd, focusedRunning]);
+  }, [activeCwd, activeRunning]);
 
   const workspaceRoot = activeWorkspace?.rootPath;
   useEffect(() => {
@@ -426,16 +365,16 @@ export function App() {
                   agentSessions={agentSessions}
                   canCreateSession={canCreateSession}
                   onArchiveSession={(session) => void archiveSession(session)}
-                  onNewSession={() => void createSession(activeWorkspace, "replace")}
-                  onNewWorkspaceSession={(workspace) => void createSession(workspace, "replace")}
+                  onNewSession={() => void createSession(activeWorkspace)}
+                  onNewWorkspaceSession={(workspace) => void createSession(workspace)}
                   onOpenChange={setSidebarOpen}
                   onOpenWorkspace={() => void openWorkspace()}
                   onOpenSettings={() => setSettingsOpen(true)}
-                  onSelectSession={(session, mode) => selectSession(session, mode)}
+                  onSelectSession={selectSession}
                   onSelectWorkspace={setActiveWorkspace}
                   onWidthChange={setSidebarWidth}
+                  activeSessionId={activeSessionId}
                   open={sidebarOpen}
-                  paneSessionIds={paneSessionIds}
                   width={sidebarWidth}
                   workspaces={workspaces}
                 />
@@ -461,17 +400,14 @@ export function App() {
                           </m.div>
                         ) : null}
                       </AnimatePresence>
-                      {!hasPanes ? <ChatTopBar activeWorkspace={activeWorkspace} /> : null}
+                      {!hasSession ? <ChatTopBar activeWorkspace={activeWorkspace} /> : null}
                     </div>
                     <div className="flex flex-1 items-center justify-end pr-2">
                       <HeaderActions
                         activeWorkspace={activeWorkspace}
-                        canSplit={canCreateSession && paneSessions.length < MAX_PANES}
                         environmentStats={environmentStats}
                         inspectorOpen={inspectorOpen}
-                        onNewParallelTask={() => void createSession(activeWorkspace, "split")}
                         onToggleInspector={() => setInspectorOpen((open) => !open)}
-                        showParallel={hasPanes}
                       />
                     </div>
                   </header>
@@ -483,7 +419,7 @@ export function App() {
                   ) : null}
 
                   <AnimatePresence initial={false} mode="wait">
-                    {hasPanes ? (
+                    {activeSession ? (
                       <m.div
                         animate={{ opacity: 1 }}
                         className="flex min-h-0 flex-1"
@@ -492,31 +428,23 @@ export function App() {
                         key="conversation"
                         transition={{ duration: 0.12, ease: "easeOut" }}
                       >
-                        {paneSessions.map((session, index) => (
-                          <ChatPane
-                            activity={activityBySession[session.id]}
-                            contextUsage={contextUsageBySession[session.id]}
-                            defaultModel={model}
-                            focused={index === focusedPane}
-                            hub={hubRef.current}
-                            key={session.id}
-                            models={models}
-                            onClose={paneSessions.length > 1 ? () => closePane(index) : undefined}
-                            onFocus={() => setFocusedPane(index)}
-                            onModelChange={setModel}
-                            onModelConfigChange={(next, thinkingLevel) =>
-                              void updateModelThinking(next, thinkingLevel)
-                            }
-                            onOpenReview={() => {
-                              setFocusedPane(index);
-                              setInspectorOpen(true);
-                            }}
-                            onSessionsChanged={() => void refreshSessions()}
-                            session={session}
-                            showHeader={paneSessions.length > 1}
-                            workspace={workspaceById.get(session.workspaceId) ?? activeWorkspace}
-                          />
-                        ))}
+                        <ChatPane
+                          contextUsage={contextUsageBySession[activeSession.id]}
+                          defaultModel={model}
+                          hub={hubRef.current}
+                          key={activeSession.id}
+                          models={models}
+                          onModelChange={setModel}
+                          onModelConfigChange={(next, thinkingLevel) =>
+                            void updateModelThinking(next, thinkingLevel)
+                          }
+                          onOpenReview={() => setInspectorOpen(true)}
+                          onSessionsChanged={() => void refreshSessions()}
+                          session={activeSession}
+                          workspace={
+                            workspaceById.get(activeSession.workspaceId) ?? activeWorkspace
+                          }
+                        />
                       </m.div>
                     ) : (
                       <m.div
@@ -548,7 +476,7 @@ export function App() {
                           <div className="mt-4 flex items-center justify-center gap-2">
                             <Pill
                               disabled={!activeWorkspace}
-                              onClick={() => void createSession(activeWorkspace, "replace")}
+                              onClick={() => void createSession(activeWorkspace)}
                               shortcut="⌥Tab"
                             >
                               Plan New Idea
@@ -565,11 +493,11 @@ export function App() {
                   </AnimatePresence>
                 </main>
 
-                {hasPanes ? (
+                {hasSession ? (
                   <Inspector
                     activeWorkspace={activeWorkspace}
                     cwd={activeCwd}
-                    sessionId={focusedSession?.id}
+                    sessionId={activeSession?.id}
                     onOpenChange={setInspectorOpen}
                     onWidthChange={setInspectorWidth}
                     open={inspectorOpen}
@@ -741,32 +669,17 @@ function TopBarItem({ children, icon }: { children: string; icon: ReactNode }) {
 
 function HeaderActions({
   activeWorkspace,
-  canSplit,
   environmentStats,
   inspectorOpen,
-  onNewParallelTask,
   onToggleInspector,
-  showParallel,
 }: {
   activeWorkspace: WorkspaceInfo | null;
-  canSplit: boolean;
   environmentStats: { added: number; removed: number };
   inspectorOpen: boolean;
-  onNewParallelTask(): void;
   onToggleInspector(): void;
-  showParallel: boolean;
 }) {
   return (
     <div className="app-no-drag flex h-7 items-center gap-1">
-      {showParallel ? (
-        <ToolbarButton
-          disabled={!canSplit}
-          label={canSplit ? "New parallel agent (own worktree)" : "Pane limit reached"}
-          onClick={onNewParallelTask}
-        >
-          <IconColumns size={15} stroke={1.65} />
-        </ToolbarButton>
-      ) : null}
       <EnvironmentPopover activeWorkspace={activeWorkspace} environmentStats={environmentStats} />
       <ToolbarButton
         active={inspectorOpen}

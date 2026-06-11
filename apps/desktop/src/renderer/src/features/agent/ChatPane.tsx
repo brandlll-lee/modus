@@ -1,13 +1,12 @@
-import { Popover } from "@base-ui/react/popover";
 import {
-  IconArrowMergeAltLeft,
-  IconCheck,
-  IconGitBranch,
-  IconLoader2,
-  IconX,
-} from "@tabler/icons-react";
-import { AnimatePresence, m } from "motion/react";
-import { type UIEvent, useCallback, useEffect, useRef, useState } from "react";
+  type ReactNode,
+  type RefObject,
+  type UIEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import type {
   AgentEvent,
   AgentSessionInfo,
@@ -23,50 +22,26 @@ import type {
   WorkspaceInfo,
 } from "../../../../shared/contracts";
 import { CollapsibleMotionProvider } from "../../components/ui/CollapsibleMotion";
-import { cn } from "../../lib/cn";
 import { Composer } from "../composer/Composer";
-import {
-  type AgentEventHub,
-  type AgentEventItem,
-  appendAgentEvents,
-  type SessionActivity,
-} from "./agentEventHub";
-import { ChangeFileList, changeSummaryLabel, LineDelta } from "./changes/ChangeStats";
+import { type AgentEventHub, type AgentEventItem, appendAgentEvents } from "./agentEventHub";
 import { ChangesStrip } from "./changes/ChangesStrip";
-import { SessionStatusDot } from "./SessionStatusDot";
 import { Timeline } from "./Timeline";
 
 /**
- * One parallel-agent column: a full conversation surface (timeline + composer
- * + per-session errors) bound to a single session. Every pane owns its own
- * event stream (seeded from the store, then fed live through the
- * AgentEventHub), so any number of sessions can stream side by side without
- * sharing state — the Agents-Window model.
+ * Full conversation surface bound to one active session.
  */
 
 /** Coalesce streamed events into ~25fps of React commits (AI SDK guidance). */
 const AGENT_EVENT_FLUSH_MS = 40;
 
-type WorktreeApplyState =
-  | { phase: "idle" }
-  | { phase: "applying" }
-  | { phase: "done"; message: string; conflicted: boolean }
-  | { phase: "error"; message: string };
-
 type ChatPaneProps = {
   session: AgentSessionInfo;
   hub: AgentEventHub;
-  activity: SessionActivity | undefined;
-  focused: boolean;
-  /** Pane chrome (header w/ title, close, apply) is shown in split layouts. */
-  showHeader: boolean;
   models: ModelInfo[];
   /** App-level default model id — fallback when the session has none. */
   defaultModel: string;
   contextUsage?: ContextUsageInfo | undefined;
   workspace: WorkspaceInfo | null;
-  onFocus(): void;
-  onClose?: (() => void) | undefined;
   /** Refresh the session list after operations that mutate session rows. */
   onSessionsChanged(): void;
   onModelChange(model: string): void;
@@ -78,15 +53,10 @@ type ChatPaneProps = {
 export function ChatPane({
   session,
   hub,
-  activity,
-  focused,
-  showHeader,
   models,
   defaultModel,
   contextUsage,
   workspace,
-  onFocus,
-  onClose,
   onSessionsChanged,
   onModelChange,
   onModelConfigChange,
@@ -98,8 +68,6 @@ export function ChatPane({
   const [promptError, setPromptError] = useState<string | undefined>();
   const [pendingPrompt, setPendingPrompt] = useState(false);
   const [aborting, setAborting] = useState(false);
-  const [applyState, setApplyState] = useState<WorktreeApplyState>({ phase: "idle" });
-  const [applyReviewOpen, setApplyReviewOpen] = useState(false);
   const [workingStats, setWorkingStats] = useState<WorkingChangeStats | undefined>();
 
   const queuedRef = useRef<AgentEventItem[]>([]);
@@ -108,10 +76,10 @@ export function ChatPane({
   const shouldFollowRef = useRef(true);
   const scrollFollowPauseTimerRef = useRef<number | undefined>(undefined);
   const statsTimerRef = useRef<number | undefined>(undefined);
-  const statsCwdRef = useRef(session.worktreePath ?? session.cwd);
-  statsCwdRef.current = session.worktreePath ?? session.cwd;
+  const statsCwdRef = useRef(session.cwd);
+  statsCwdRef.current = session.cwd;
 
-  /** Refresh the working-tree change summary (strip + apply review payload). */
+  /** Refresh the working-tree change summary shown above the composer. */
   const refreshStats = useCallback((): void => {
     const cwd = statsCwdRef.current;
     void window.modus.diff
@@ -172,8 +140,6 @@ export function ChatPane({
     setPromptError(undefined);
     setPendingPrompt(false);
     setAborting(false);
-    setApplyState({ phase: "idle" });
-    setApplyReviewOpen(false);
     setWorkingStats(undefined);
     refreshStats();
 
@@ -293,7 +259,7 @@ export function ChatPane({
   /* ── Conversation actions ──────────────────────────────────────────── */
 
   const paneModel = session.model ?? defaultModel;
-  const activeCwd = session.worktreePath ?? session.cwd;
+  const activeCwd = session.cwd;
   const activeRunStatus = latestRunStatus(agentEvents);
   const isRunning =
     !aborting && (pendingPrompt || activeRunStatus === "running" || activeRunStatus === "blocked");
@@ -383,180 +349,8 @@ export function ChatPane({
     onSessionsChanged();
   }
 
-  async function applyWorktree(): Promise<void> {
-    const rootPath = workspace?.rootPath;
-    const worktreePath = session.worktreePath;
-    if (!rootPath || !worktreePath || applyState.phase === "applying") {
-      return;
-    }
-    setApplyReviewOpen(false);
-    setApplyState({ phase: "applying" });
-    try {
-      const result = await window.modus.worktree.apply({ cwd: rootPath, path: worktreePath });
-      if (result.applied) {
-        setApplyState({
-          phase: "done",
-          message: result.conflicted
-            ? `Applied ${result.fileCount} file(s) with conflicts — resolve the markers in the main checkout.`
-            : `Applied ${result.fileCount} file(s) to the main checkout.`,
-          conflicted: result.conflicted,
-        });
-      } else if (result.fileCount === 0) {
-        setApplyState({ phase: "done", message: "No changes to apply.", conflicted: false });
-      } else {
-        setApplyState({ phase: "error", message: result.output });
-      }
-      refreshStats();
-    } catch (error) {
-      setApplyState({
-        phase: "error",
-        message: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
   return (
-    <section
-      className={cn(
-        "flex h-full min-w-0 flex-1 flex-col border-hairline-strong border-l first:border-l-0",
-        showHeader && !focused && "opacity-[0.97]",
-      )}
-      onFocusCapture={onFocus}
-      onMouseDownCapture={onFocus}
-    >
-      {showHeader ? (
-        <header
-          className={cn(
-            "flex h-9 shrink-0 items-center gap-2 border-hairline-soft border-b px-3",
-            focused ? "bg-transparent" : "bg-panel/40",
-          )}
-        >
-          <SessionStatusDot activity={activity} />
-          <span
-            className={cn("min-w-0 truncate text-sm", focused ? "text-fg" : "text-fg-muted")}
-            title={session.title}
-          >
-            {session.title}
-          </span>
-          {session.worktreePath ? (
-            <span
-              className="flex shrink-0 items-center gap-1 rounded bg-chip px-1.5 py-0.5 text-2xs text-fg-faint"
-              title={session.worktreePath}
-            >
-              <IconGitBranch size={10} stroke={1.8} />
-              worktree
-            </span>
-          ) : null}
-          <div className="min-w-0 flex-1" />
-          {applyState.phase === "done" || applyState.phase === "error" ? (
-            <span
-              className={cn(
-                "min-w-0 truncate text-2xs",
-                applyState.phase === "error" || applyState.conflicted
-                  ? "text-danger"
-                  : "text-success",
-              )}
-              title={applyState.message}
-            >
-              {applyState.message}
-            </span>
-          ) : null}
-          {session.worktreePath && workspace ? (
-            <Popover.Root onOpenChange={setApplyReviewOpen} open={applyReviewOpen}>
-              <Popover.Trigger
-                className="flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-2xs text-fg-subtle transition-colors hover:bg-hover hover:text-fg disabled:cursor-wait data-popup-open:bg-active data-popup-open:text-fg"
-                disabled={applyState.phase === "applying"}
-                onClick={() => refreshStats()}
-                title="Review & apply this worktree's changes to the main checkout"
-              >
-                {applyState.phase === "applying" ? (
-                  <IconLoader2 className="animate-spin" size={12} stroke={1.8} />
-                ) : applyState.phase === "done" && !applyState.conflicted ? (
-                  <IconCheck size={12} stroke={1.9} />
-                ) : (
-                  <IconArrowMergeAltLeft size={12} stroke={1.8} />
-                )}
-                Apply
-              </Popover.Trigger>
-              <AnimatePresence>
-                {applyReviewOpen ? (
-                  <Popover.Portal keepMounted>
-                    <Popover.Positioner align="end" side="bottom" sideOffset={8}>
-                      <Popover.Popup render={<m.div />}>
-                        <m.div
-                          animate={{ opacity: 1, scale: 1, y: 0 }}
-                          className="w-[360px] rounded-xl border border-hairline bg-elevated p-3 shadow-popup outline-none"
-                          exit={{ opacity: 0, scale: 0.98, y: -4 }}
-                          initial={{ opacity: 0, scale: 0.98, y: -4 }}
-                          transition={{ duration: 0.14, ease: [0.22, 1, 0.36, 1] }}
-                        >
-                          <div className="flex items-center gap-2 px-1 pb-2">
-                            <span className="text-sm text-fg">Apply to main workspace</span>
-                            <div className="flex-1" />
-                            {workingStats && workingStats.fileCount > 0 ? (
-                              <LineDelta
-                                added={workingStats.added}
-                                removed={workingStats.removed}
-                              />
-                            ) : null}
-                          </div>
-                          {workingStats && workingStats.fileCount > 0 ? (
-                            <>
-                              <p className="px-1 pb-2 text-xs leading-5 text-fg-faint">
-                                {changeSummaryLabel(workingStats)} in this worktree will be merged
-                                into the main checkout. Conflicting lines land as markers.
-                              </p>
-                              <div className="rounded-lg border border-hairline-soft bg-canvas/40 px-1 py-1">
-                                <ChangeFileList className="max-h-48" stats={workingStats} />
-                              </div>
-                            </>
-                          ) : (
-                            <p className="px-1 pb-1 text-xs leading-5 text-fg-faint">
-                              This worktree has no changes to apply.
-                            </p>
-                          )}
-                          <div className="mt-3 flex items-center justify-end gap-2">
-                            <button
-                              className="h-7 rounded-md px-2.5 text-xs text-fg-subtle transition-colors hover:bg-hover hover:text-fg"
-                              onClick={() => setApplyReviewOpen(false)}
-                              type="button"
-                            >
-                              Cancel
-                            </button>
-                            <button
-                              className="flex h-7 items-center gap-1.5 rounded-md bg-fg px-3 text-xs font-medium text-canvas transition-colors hover:bg-fg-muted disabled:cursor-not-allowed disabled:opacity-50"
-                              disabled={!workingStats || workingStats.fileCount === 0}
-                              onClick={() => void applyWorktree()}
-                              type="button"
-                            >
-                              <IconArrowMergeAltLeft size={12} stroke={1.9} />
-                              Apply{" "}
-                              {workingStats && workingStats.fileCount > 0
-                                ? `${workingStats.fileCount} file${workingStats.fileCount === 1 ? "" : "s"}`
-                                : ""}
-                            </button>
-                          </div>
-                        </m.div>
-                      </Popover.Popup>
-                    </Popover.Positioner>
-                  </Popover.Portal>
-                ) : null}
-              </AnimatePresence>
-            </Popover.Root>
-          ) : null}
-          {onClose ? (
-            <button
-              aria-label={`Close ${session.title}`}
-              className="flex size-6 shrink-0 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-hover hover:text-fg"
-              onClick={onClose}
-              type="button"
-            >
-              <IconX size={13} stroke={1.8} />
-            </button>
-          ) : null}
-        </header>
-      ) : null}
-
+    <section className="flex h-full min-w-0 flex-1 flex-col">
       {promptError ? (
         <div className="mx-4 mt-2 rounded-md border border-danger/30 bg-danger/8 px-3 py-2 text-xs text-danger">
           {promptError}
@@ -564,11 +358,7 @@ export function ChatPane({
       ) : null}
 
       <CollapsibleMotionProvider onLayoutAnimationStart={pauseScrollFollow}>
-        <div
-          className="scroll-thin min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable_both-edges]"
-          onScroll={handleScroll}
-          ref={viewportRef}
-        >
+        <ChatViewport onScroll={handleScroll} viewportRef={viewportRef}>
           <Timeline
             agentEvents={agentEvents}
             cwd={activeCwd}
@@ -579,11 +369,11 @@ export function ChatPane({
               refreshStats();
             }}
           />
-        </div>
+        </ChatViewport>
       </CollapsibleMotionProvider>
 
-      <div className="shrink-0 px-4 pb-4">
-        <div className="mx-auto max-w-5xl">
+      <div className="min-w-0 max-w-full shrink-0 px-4 pb-4">
+        <div className="mx-auto min-w-0 max-w-5xl">
           {workingStats ? (
             <ChangesStrip
               onOpenFile={(path) =>
@@ -614,6 +404,26 @@ export function ChatPane({
         </div>
       </div>
     </section>
+  );
+}
+
+function ChatViewport({
+  children,
+  onScroll,
+  viewportRef,
+}: {
+  children: ReactNode;
+  onScroll(event: UIEvent<HTMLDivElement>): void;
+  viewportRef: RefObject<HTMLDivElement | null>;
+}) {
+  return (
+    <div
+      className="scroll-thin min-h-0 min-w-0 max-w-full flex-1 overflow-y-auto overflow-x-clip overscroll-contain [scrollbar-gutter:stable_both-edges]"
+      onScroll={onScroll}
+      ref={viewportRef}
+    >
+      <div className="min-w-0 max-w-full">{children}</div>
+    </div>
   );
 }
 

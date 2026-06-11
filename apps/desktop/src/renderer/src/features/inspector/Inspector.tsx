@@ -3,18 +3,15 @@ import {
   IconDots,
   IconGitBranch,
   IconLayoutSidebarRight,
-  IconPlus,
   IconShieldCheck,
   IconShieldX,
   IconTerminal2,
-  IconTrash,
-  IconVersions,
 } from "@tabler/icons-react";
 import { animate, m, useMotionValue } from "motion/react";
-import { type PointerEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { type PointerEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import type { SecurityState } from "../../../../preload/types";
-import type { WorkspaceInfo, WorktreeInfo } from "../../../../shared/contracts";
-import { EmptyState, PanelHeader } from "../../components/ui/Panel";
+import type { WorkspaceInfo } from "../../../../shared/contracts";
+import { PanelHeader } from "../../components/ui/Panel";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
 import { DiffPanel } from "../diff/DiffPanel";
@@ -39,7 +36,6 @@ const INSPECTOR_TRANSITION = { duration: 0.18, ease: [0.22, 1, 0.36, 1] } as con
 const TABS = [
   { value: "changes", label: "Changes", icon: <IconGitBranch size={15} stroke={1.65} /> },
   { value: "terminal", label: "Terminal", icon: <IconTerminal2 size={15} stroke={1.65} /> },
-  { value: "worktrees", label: "Worktrees", icon: <IconVersions size={15} stroke={1.65} /> },
   { value: "security", label: "Security", icon: <IconShieldCheck size={15} stroke={1.65} /> },
 ];
 
@@ -205,9 +201,6 @@ export function Inspector({
                     workspaceId={activeWorkspace?.id}
                   />
                 </Tabs.Panel>
-                <Tabs.Panel className="min-h-0 flex-1 outline-none" value="worktrees">
-                  <WorktreesPanel cwd={activeWorkspace?.rootPath} />
-                </Tabs.Panel>
                 <Tabs.Panel
                   className="scroll-thin min-h-0 flex-1 overflow-y-auto outline-none"
                   value="security"
@@ -243,113 +236,6 @@ function InspectorIconButton({
         {children}
       </button>
     </Tooltip>
-  );
-}
-
-function WorktreesPanel({ cwd }: { cwd?: string | undefined }) {
-  const [worktrees, setWorktrees] = useState<WorktreeInfo[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | undefined>();
-
-  const refresh = useCallback(async (target: string | undefined): Promise<void> => {
-    if (!target) {
-      setWorktrees([]);
-      return;
-    }
-    try {
-      setError(undefined);
-      setWorktrees(await window.modus.worktree.list(target));
-    } catch (error) {
-      setError(error instanceof Error ? error.message : String(error));
-      setWorktrees([]);
-    }
-  }, []);
-
-  useEffect(() => {
-    void refresh(cwd);
-  }, [cwd, refresh]);
-
-  async function createWorktree(): Promise<void> {
-    if (!cwd) {
-      return;
-    }
-    setBusy(true);
-    setError(undefined);
-    try {
-      await window.modus.worktree.create({ cwd, taskId: `task-${Date.now().toString(36)}` });
-      await refresh(cwd);
-    } catch (error) {
-      setError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function removeWorktree(path: string): Promise<void> {
-    if (!cwd) {
-      return;
-    }
-    setError(undefined);
-    try {
-      await window.modus.worktree.delete({ cwd, path });
-      await refresh(cwd);
-    } catch (error) {
-      setError(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  return (
-    <div className="flex h-full flex-col">
-      <PanelHeader title="Worktrees">
-        <button
-          className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-fg-subtle transition-colors hover:bg-hover hover:text-fg disabled:opacity-40"
-          disabled={!cwd || busy}
-          onClick={() => void createWorktree()}
-          type="button"
-        >
-          <IconPlus size={15} stroke={1.65} /> New
-        </button>
-      </PanelHeader>
-      <div className="scroll-thin flex-1 space-y-1.5 overflow-y-auto p-3">
-        {error ? (
-          <div className="rounded-md border border-danger/30 bg-danger/8 px-2.5 py-2 text-xs text-danger">
-            {error}
-          </div>
-        ) : null}
-        {worktrees.length === 0 ? (
-          <EmptyState
-            hint={
-              cwd ? "No worktrees yet. Create one to isolate an agent task." : "Open a workspace."
-            }
-            icon={<IconVersions size={22} stroke={1.5} />}
-          />
-        ) : (
-          worktrees.map((worktree) => (
-            <div
-              className="group flex items-center gap-2.5 rounded-lg px-2.5 py-2 transition-colors hover:bg-hover"
-              key={worktree.path}
-            >
-              <IconGitBranch className="shrink-0 text-fg-subtle" size={15} stroke={1.6} />
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-xs text-fg">{worktree.branch}</div>
-                <div className="truncate font-mono text-2xs text-fg-faint">{worktree.path}</div>
-              </div>
-              <span className="shrink-0 font-mono text-2xs text-fg-faint">
-                {worktree.head.slice(0, 7)}
-              </span>
-              <button
-                aria-label="Delete worktree"
-                className="shrink-0 rounded-md p-1 text-fg-faint opacity-0 transition-all hover:text-danger group-hover:opacity-100"
-                onClick={() => void removeWorktree(worktree.path)}
-                type="button"
-              >
-                <IconTrash size={14} stroke={1.6} />
-              </button>
-            </div>
-          ))
-        )}
-      </div>
-    </div>
   );
 }
 
