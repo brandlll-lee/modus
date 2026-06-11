@@ -3,8 +3,6 @@ import { m, useReducedMotion } from "motion/react";
 import { memo, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type {
   AgentEvent,
-  PermissionDecision,
-  PermissionRequest,
   PromptImageAttachment,
   TodoItem,
   WorkingChangeStats,
@@ -14,7 +12,6 @@ import { ModusBot } from "../../components/ui/ModusBot";
 import { cn } from "../../lib/cn";
 import { TurnChangesCard } from "./changes/ChangeStats";
 import { MessageBlock } from "./MessageBlock";
-import { PermissionCard } from "./PermissionCard";
 import { ShinyText } from "./TextEffects";
 import { TodosCard } from "./TodosCard";
 import { ToolCard } from "./ToolCard";
@@ -23,7 +20,6 @@ type TimelineProps = {
   agentEvents: Array<{ id: string; event: AgentEvent; createdAt?: string }>;
   /** Session cwd, threaded to diff tool cards so they can open edited files. */
   cwd?: string | undefined;
-  onPermissionDecision?(request: PermissionRequest, decision: PermissionDecision["decision"]): void;
   onRestoreCheckpoint?(checkpointId: string): Promise<void> | void;
   /**
    * Cursor-style edit & resend: rolls the session back to just before the
@@ -72,13 +68,6 @@ type ToolBlockItem = {
   output: string;
   isComplete?: boolean;
   isError?: boolean;
-};
-
-type PermissionBlockItem = {
-  id: string;
-  type: "permission";
-  request: Extract<AgentEvent, { type: "permission.requested" }>["request"];
-  decision?: PermissionDecision["decision"];
 };
 
 type RunBlockItem = {
@@ -135,7 +124,6 @@ type ToolGroupBlockItem = {
 type TimelineBlock =
   | MessageBlockItem
   | ToolBlockItem
-  | PermissionBlockItem
   | RunBlockItem
   | NoticeBlockItem
   | ThinkingBlockItem
@@ -454,24 +442,7 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
       continue;
     }
 
-    if (event.type === "permission.requested") {
-      const block: PermissionBlockItem = {
-        id: event.request.id,
-        type: "permission",
-        request: event.request,
-      };
-      blocks.push(block);
-      blockById.set(event.request.id, block);
-      continue;
-    }
-
-    if (event.type === "permission.resolved") {
-      const block = blockById.get(event.requestId);
-      if (block?.type === "permission") {
-        block.decision = event.decision;
-      }
-      continue;
-    }
+    if (event.type === "permission.requested" || event.type === "permission.resolved") continue;
 
     if (event.type === "runtime.error") {
       blocks.push({
@@ -931,13 +902,7 @@ function Notice({ body, isError = false, title }: NoticeBlockItem) {
   );
 }
 
-export function Timeline({
-  agentEvents,
-  cwd,
-  onPermissionDecision,
-  onRestoreCheckpoint,
-  onEditResend,
-}: TimelineProps) {
+export function Timeline({ agentEvents, cwd, onRestoreCheckpoint, onEditResend }: TimelineProps) {
   const blocks = useMemo(
     () => groupToolBlocks(attachTurnActions(buildBlocks(agentEvents))),
     [agentEvents],
@@ -959,7 +924,7 @@ export function Timeline({
 
   if (visibleBlocks.length === 0) {
     return (
-      <div className="flex h-full min-w-0 max-w-full flex-col items-center justify-center gap-6 px-6 text-center">
+      <div className="flex min-h-full min-w-0 w-full max-w-full flex-1 flex-col items-center justify-center gap-6 px-6 text-center">
         <ModusBot className="size-24" />
         <div className="space-y-2">
           <p className="text-[17px] font-normal tracking-tight text-fg-muted">
@@ -974,12 +939,12 @@ export function Timeline({
   }
 
   return (
-    <div className="relative mx-auto min-w-0 max-w-5xl px-6 pt-8 pb-24">
-      <div className="min-w-0 max-w-full space-y-4">
+    <div className="relative mx-auto min-w-0 w-full max-w-5xl px-6 pt-8 pb-24">
+      <div className="min-w-0 w-full max-w-full space-y-4">
         {visibleBlocks.map((block, index) => (
           <m.div
             animate={{ opacity: 1 }}
-            className="min-w-0 max-w-full"
+            className="min-w-0 w-full max-w-full"
             initial={{ opacity: 0 }}
             key={renderKeys[index]}
             transition={{ duration: 0.15, ease: "easeOut" }}
@@ -1015,13 +980,6 @@ export function Timeline({
                 isError={block.isError ?? false}
                 summary={block.summary}
                 tools={block.tools}
-              />
-            ) : null}
-            {block.type === "permission" ? (
-              <PermissionCard
-                {...(onPermissionDecision ? { onDecide: onPermissionDecision } : {})}
-                decision={block.decision}
-                request={block.request}
               />
             ) : null}
             {block.type === "run" ? <RunRow block={block} /> : null}

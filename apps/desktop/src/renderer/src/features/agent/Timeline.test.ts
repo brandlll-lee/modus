@@ -41,7 +41,7 @@ describe("buildBlocks", () => {
     );
   });
 
-  it("resolves permission blocks", () => {
+  it("keeps approval prompts out of the timeline", () => {
     const blocks = buildBlocks([
       item("1", {
         type: "permission.requested",
@@ -57,7 +57,7 @@ describe("buildBlocks", () => {
       item("2", { type: "permission.resolved", sessionId: "s", requestId: "p", decision: "deny" }),
     ]);
 
-    expect(blocks[0]).toEqual(expect.objectContaining({ type: "permission", decision: "deny" }));
+    expect(blocks).toEqual([]);
   });
 
   it("shows exactly one active thinking row for a running turn", () => {

@@ -4,6 +4,7 @@ import {
   type UIEvent,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -23,8 +24,10 @@ import type {
 } from "../../../../shared/contracts";
 import { CollapsibleMotionProvider } from "../../components/ui/CollapsibleMotion";
 import { Composer } from "../composer/Composer";
+import { ApprovalPanel } from "./ApprovalPanel";
 import { type AgentEventHub, type AgentEventItem, appendAgentEvents } from "./agentEventHub";
 import { ChangesStrip } from "./changes/ChangesStrip";
+import { latestPendingPermissionRequest } from "./permissionRequests";
 import { Timeline } from "./Timeline";
 
 /**
@@ -263,6 +266,10 @@ export function ChatPane({
   const activeRunStatus = latestRunStatus(agentEvents);
   const isRunning =
     !aborting && (pendingPrompt || activeRunStatus === "running" || activeRunStatus === "blocked");
+  const pendingPermission = useMemo(
+    () => latestPendingPermissionRequest(agentEvents),
+    [agentEvents],
+  );
 
   function submitPrompt(
     message: string,
@@ -314,6 +321,7 @@ export function ChatPane({
     request: PermissionRequest,
     decision: PermissionDecision["decision"],
   ): Promise<void> {
+    setPromptError(undefined);
     await window.modus.permission.decide({
       requestId: request.id,
       sessionId: request.sessionId,
@@ -363,7 +371,6 @@ export function ChatPane({
             agentEvents={agentEvents}
             cwd={activeCwd}
             onEditResend={editAndResend}
-            onPermissionDecision={(request, decision) => void decidePermission(request, decision)}
             onRestoreCheckpoint={async (checkpointId) => {
               await window.modus.checkpoint.restore({ checkpointId });
               refreshStats();
@@ -373,7 +380,7 @@ export function ChatPane({
       </CollapsibleMotionProvider>
 
       <div className="min-w-0 max-w-full shrink-0 px-4 pb-4">
-        <div className="mx-auto min-w-0 max-w-5xl">
+        <div className="mx-auto min-w-0 w-full max-w-5xl">
           {workingStats ? (
             <ChangesStrip
               onOpenFile={(path) =>
@@ -383,24 +390,32 @@ export function ChatPane({
               stats={workingStats}
             />
           ) : null}
-          <Composer
-            canSubmit={Boolean(workspace) && Boolean(paneModel)}
-            contextItems={contextItems}
-            cwd={activeCwd}
-            hasSession
-            isRunning={isRunning}
-            model={paneModel}
-            models={models}
-            {...(contextUsage ? { contextUsage } : {})}
-            onAbort={() => void abortPrompt()}
-            onContextChange={setContextItems}
-            onModelChange={(next) => void changeModel(next)}
-            onModelConfigChange={onModelConfigChange}
-            onSubmit={(message, context, delivery, attachments, skills) =>
-              submitPrompt(message, context, delivery, attachments, skills)
-            }
-            workspaceId={workspace?.id}
-          />
+          {pendingPermission ? (
+            <ApprovalPanel
+              key={pendingPermission.id}
+              onDecide={(request, decision) => decidePermission(request, decision)}
+              request={pendingPermission}
+            />
+          ) : (
+            <Composer
+              canSubmit={Boolean(workspace) && Boolean(paneModel)}
+              contextItems={contextItems}
+              cwd={activeCwd}
+              hasSession
+              isRunning={isRunning}
+              model={paneModel}
+              models={models}
+              {...(contextUsage ? { contextUsage } : {})}
+              onAbort={() => void abortPrompt()}
+              onContextChange={setContextItems}
+              onModelChange={(next) => void changeModel(next)}
+              onModelConfigChange={onModelConfigChange}
+              onSubmit={(message, context, delivery, attachments, skills) =>
+                submitPrompt(message, context, delivery, attachments, skills)
+              }
+              workspaceId={workspace?.id}
+            />
+          )}
         </div>
       </div>
     </section>
@@ -422,7 +437,7 @@ function ChatViewport({
       onScroll={onScroll}
       ref={viewportRef}
     >
-      <div className="min-w-0 max-w-full">{children}</div>
+      <div className="flex min-h-full min-w-0 w-full max-w-full flex-col">{children}</div>
     </div>
   );
 }
