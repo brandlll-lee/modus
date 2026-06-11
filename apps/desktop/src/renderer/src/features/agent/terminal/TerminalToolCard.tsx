@@ -4,8 +4,8 @@ import {
   IconLoader2,
   IconTerminal2,
 } from "@tabler/icons-react";
-import { AnimatePresence, m } from "motion/react";
 import { memo, useMemo, useState } from "react";
+import { CollapsibleMotion } from "../../../components/ui/CollapsibleMotion";
 import { cn } from "../../../lib/cn";
 import { parseTerminalOutput, tailLines } from "./parseTerminal";
 
@@ -120,34 +120,27 @@ export const TerminalToolCard = memo(
 
         {/* Collapsed: live tail preview. Expanded: full scrollable output. */}
         {hasBody ? (
-          open ? (
-            <AnimatePresence initial={false}>
-              <m.div
-                animate={{ height: "auto", opacity: 1 }}
-                className="overflow-hidden"
-                exit={{ height: 0, opacity: 0 }}
-                initial={{ height: 0, opacity: 0 }}
-                transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
-              >
-                <pre className="scroll-thin max-h-96 overflow-auto border-hairline-soft border-t px-3 py-2 font-mono text-[12px] text-fg-faint leading-relaxed whitespace-pre-wrap wrap-break-word">
-                  {parsed.truncated ? "[earlier output truncated]\n" : ""}
-                  {cappedBody}
-                </pre>
-              </m.div>
-            </AnimatePresence>
-          ) : (
-            <div className="border-hairline-soft border-t px-3 py-2">
-              <pre className="max-h-16 overflow-hidden font-mono text-[12px] text-fg-faint leading-relaxed whitespace-pre-wrap wrap-break-word">
-                {preview.text}
+          <>
+            <CollapsibleMotion open={open} preset="timeline">
+              <pre className="scroll-thin max-h-96 overflow-auto border-hairline-soft border-t px-3 py-2 font-mono text-[12px] text-fg-faint leading-relaxed whitespace-pre-wrap wrap-break-word">
+                {parsed.truncated ? "[earlier output truncated]\n" : ""}
+                {cappedBody}
               </pre>
-              {hasMore ? (
-                <div className="mt-1 text-2xs text-fg-faint">
-                  {parsed.truncated ? "earlier output truncated · " : ""}
-                  click to expand{preview.hidden > 0 ? ` (+${preview.hidden} lines)` : ""}
-                </div>
-              ) : null}
-            </div>
-          )
+            </CollapsibleMotion>
+            {!open ? (
+              <div className="border-hairline-soft border-t px-3 py-2">
+                <pre className="max-h-16 overflow-hidden font-mono text-[12px] text-fg-faint leading-relaxed whitespace-pre-wrap wrap-break-word">
+                  {preview.text}
+                </pre>
+                {hasMore ? (
+                  <div className="mt-1 text-2xs text-fg-faint">
+                    {parsed.truncated ? "earlier output truncated · " : ""}
+                    click to expand{preview.hidden > 0 ? ` (+${preview.hidden} lines)` : ""}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </>
         ) : null}
       </div>
     );

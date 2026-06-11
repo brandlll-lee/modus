@@ -24,9 +24,9 @@ import {
   IconRotateClockwise,
   IconTrash,
 } from "@tabler/icons-react";
-import { AnimatePresence, m } from "motion/react";
 import { memo, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import type { AgentReviewResult, FileChange, GitStatusSummary } from "../../../../shared/contracts";
+import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
 import { EmptyState, PanelHeader } from "../../components/ui/Panel";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
@@ -291,23 +291,13 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
                             </button>
                           </Tooltip>
                         </div>
-                        <AnimatePresence initial={false}>
-                          {selected ? (
-                            <m.div
-                              animate={{ height: "auto", opacity: 1 }}
-                              className="overflow-hidden"
-                              exit={{ height: 0, opacity: 0 }}
-                              initial={{ height: 0, opacity: 0 }}
-                              transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
-                            >
-                              <FileDiffPreview
-                                change={change}
-                                cwd={cwd ?? ""}
-                                refreshToken={refreshToken}
-                              />
-                            </m.div>
-                          ) : null}
-                        </AnimatePresence>
+                        <CollapsibleMotion open={selected} preset="default">
+                          <FileDiffPreview
+                            change={change}
+                            cwd={cwd ?? ""}
+                            refreshToken={refreshToken}
+                          />
+                        </CollapsibleMotion>
                       </div>
                     );
                   })}

@@ -1,7 +1,8 @@
 import { IconChevronRight, IconLoader2, IconPencil } from "@tabler/icons-react";
-import { AnimatePresence, m } from "motion/react";
+import { m } from "motion/react";
 import { type KeyboardEvent, memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { PromptImageAttachment } from "../../../../shared/contracts";
+import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
 import { CopyButton } from "../../components/ui/CopyButton";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
@@ -130,19 +131,11 @@ export const MessageBlock = memo(function MessageBlock({
             </m.span>
             <span>{`Thought for ${estimateThinkingSeconds(thinking)}s`}</span>
           </button>
-          <AnimatePresence initial={false}>
-            {thinkingOpen ? (
-              <m.pre
-                animate={{ height: "auto", opacity: 1 }}
-                className="scroll-thin mt-1 max-h-44 overflow-y-auto whitespace-pre-wrap pl-4 font-mono text-2xs text-fg-faint leading-relaxed"
-                exit={{ height: 0, opacity: 0 }}
-                initial={{ height: 0, opacity: 0 }}
-                transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
-              >
-                {thinking}
-              </m.pre>
-            ) : null}
-          </AnimatePresence>
+          <CollapsibleMotion open={thinkingOpen} preset="timeline">
+            <pre className="scroll-thin mt-1 max-h-44 overflow-y-auto whitespace-pre-wrap pl-4 font-mono text-2xs text-fg-faint leading-relaxed">
+              {thinking}
+            </pre>
+          </CollapsibleMotion>
         </div>
       ) : null}
       {content ? <MarkdownMessage content={displayContent} streaming={streaming} /> : null}

@@ -44,6 +44,7 @@ import type {
   SkillInfo,
   ThinkingLevel,
 } from "../../../../shared/contracts";
+import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
 import { type ThemeMode, useTheme } from "../../lib/theme";
@@ -1087,26 +1088,18 @@ function McpSettingsPanel({ cwd }: { cwd: string | undefined }) {
 
       {mcpError ? <p className="-mt-4 text-danger text-xs">{mcpError}</p> : null}
 
-      <AnimatePresence initial={false}>
-        {form && cwd ? (
-          <m.div
-            animate={{ height: "auto", opacity: 1 }}
-            className="overflow-hidden"
-            exit={{ height: 0, opacity: 0 }}
-            initial={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-          >
-            <McpServerForm
-              busy={saving}
-              form={form}
-              isNew={form.originalName === undefined}
-              onCancel={() => setForm(undefined)}
-              onChange={setForm}
-              onSubmit={(state) => void saveForm(state)}
-            />
-          </m.div>
+      <CollapsibleMotion open={Boolean(form && cwd)} preset="default">
+        {form ? (
+          <McpServerForm
+            busy={saving}
+            form={form}
+            isNew={form.originalName === undefined}
+            onCancel={() => setForm(undefined)}
+            onChange={setForm}
+            onSubmit={(state) => void saveForm(state)}
+          />
         ) : null}
-      </AnimatePresence>
+      </CollapsibleMotion>
 
       <SettingsSection title="Servers">
         {serverList.length === 0 ? (
@@ -1830,68 +1823,58 @@ function SkillsSettingsPanel({ cwd }: { cwd: string | undefined }) {
 
       {skillsError ? <p className="-mt-4 text-danger text-xs">{skillsError}</p> : null}
 
-      <AnimatePresence initial={false}>
-        {creating && cwd ? (
-          <m.div
-            animate={{ height: "auto", opacity: 1 }}
-            className="overflow-hidden"
-            exit={{ height: 0, opacity: 0 }}
-            initial={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-          >
-            <div className="flex flex-col gap-3 rounded-lg border border-hairline-soft bg-panel px-5 py-4">
-              <label className="flex flex-col gap-1.5">
-                <span className="text-xs text-fg-subtle">Name</span>
-                <input
-                  className="h-8 rounded-md border border-hairline bg-surface px-2.5 text-sm text-fg outline-none focus:border-focus-ring"
-                  onChange={(event) => setDraftName(event.target.value)}
-                  placeholder="code-review"
-                  value={draftName}
-                />
-              </label>
-              <label className="flex flex-col gap-1.5">
-                <span className="text-xs text-fg-subtle">Description</span>
-                <textarea
-                  className="scroll-thin min-h-[68px] resize-none rounded-md border border-hairline bg-surface px-2.5 py-2 text-sm text-fg leading-5 outline-none focus:border-focus-ring"
-                  maxLength={280}
-                  onChange={(event) => setDraftDescription(event.target.value)}
-                  placeholder="Review a diff for correctness and security"
-                  value={draftDescription}
-                />
-              </label>
-              <label className="flex flex-col gap-1.5">
-                <span className="text-xs text-fg-subtle">Instructions</span>
-                <textarea
-                  className="scroll-thin min-h-48 resize-y rounded-md border border-hairline bg-surface px-3 py-2 font-mono text-xs text-fg leading-5 outline-none placeholder:text-fg-faint focus:border-focus-ring"
-                  onChange={(event) => setDraftBody(event.target.value)}
-                  placeholder={
-                    "# code-review\n\nUse this skill when reviewing code.\n\n## Steps\n\n1. Read the diff.\n2. Find correctness risks.\n3. Return concise findings first."
-                  }
-                  value={draftBody}
-                />
-              </label>
-              <div className="flex items-center justify-end gap-2">
-                <button
-                  className="flex h-8 items-center rounded-md border border-hairline bg-surface px-3 text-xs text-fg-muted transition-colors hover:bg-hover"
-                  onClick={() => setCreating(false)}
-                  type="button"
-                >
-                  Cancel
-                </button>
-                <button
-                  className="flex h-8 items-center gap-1.5 rounded-md bg-fg px-3 text-canvas text-xs transition-colors hover:bg-fg-muted disabled:opacity-40"
-                  disabled={!draftName.trim() || !draftBody.trim() || saving}
-                  onClick={() => void saveSkill()}
-                  type="button"
-                >
-                  {saving ? <IconLoader2 className="animate-spin" size={14} stroke={1.7} /> : null}
-                  Create skill
-                </button>
-              </div>
-            </div>
-          </m.div>
-        ) : null}
-      </AnimatePresence>
+      <CollapsibleMotion open={creating && Boolean(cwd)} preset="default">
+        <div className="flex flex-col gap-3 rounded-lg border border-hairline-soft bg-panel px-5 py-4">
+          <label className="flex flex-col gap-1.5">
+            <span className="text-xs text-fg-subtle">Name</span>
+            <input
+              className="h-8 rounded-md border border-hairline bg-surface px-2.5 text-sm text-fg outline-none focus:border-focus-ring"
+              onChange={(event) => setDraftName(event.target.value)}
+              placeholder="code-review"
+              value={draftName}
+            />
+          </label>
+          <label className="flex flex-col gap-1.5">
+            <span className="text-xs text-fg-subtle">Description</span>
+            <textarea
+              className="scroll-thin min-h-[68px] resize-none rounded-md border border-hairline bg-surface px-2.5 py-2 text-sm text-fg leading-5 outline-none focus:border-focus-ring"
+              maxLength={280}
+              onChange={(event) => setDraftDescription(event.target.value)}
+              placeholder="Review a diff for correctness and security"
+              value={draftDescription}
+            />
+          </label>
+          <label className="flex flex-col gap-1.5">
+            <span className="text-xs text-fg-subtle">Instructions</span>
+            <textarea
+              className="scroll-thin min-h-48 resize-y rounded-md border border-hairline bg-surface px-3 py-2 font-mono text-xs text-fg leading-5 outline-none placeholder:text-fg-faint focus:border-focus-ring"
+              onChange={(event) => setDraftBody(event.target.value)}
+              placeholder={
+                "# code-review\n\nUse this skill when reviewing code.\n\n## Steps\n\n1. Read the diff.\n2. Find correctness risks.\n3. Return concise findings first."
+              }
+              value={draftBody}
+            />
+          </label>
+          <div className="flex items-center justify-end gap-2">
+            <button
+              className="flex h-8 items-center rounded-md border border-hairline bg-surface px-3 text-xs text-fg-muted transition-colors hover:bg-hover"
+              onClick={() => setCreating(false)}
+              type="button"
+            >
+              Cancel
+            </button>
+            <button
+              className="flex h-8 items-center gap-1.5 rounded-md bg-fg px-3 text-canvas text-xs transition-colors hover:bg-fg-muted disabled:opacity-40"
+              disabled={!draftName.trim() || !draftBody.trim() || saving}
+              onClick={() => void saveSkill()}
+              type="button"
+            >
+              {saving ? <IconLoader2 className="animate-spin" size={14} stroke={1.7} /> : null}
+              Create skill
+            </button>
+          </div>
+        </div>
+      </CollapsibleMotion>
 
       <SettingsSection title="Available skills">
         {!cwd ? (
@@ -2452,56 +2435,44 @@ function ModelRow({
         </div>
       </div>
 
-      <AnimatePresence initial={false}>
-        {open && expandable ? (
-          <m.div
-            animate={{ height: "auto", opacity: 1 }}
-            className="overflow-hidden"
-            exit={{ height: 0, opacity: 0 }}
-            initial={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
-          >
-            <div className="mt-3 grid gap-4 border-hairline-soft border-t pt-4">
-              {canEditThinking ? (
-                <div className="grid max-w-xs gap-2">
-                  <SelectField
-                    label="Default thinking level"
-                    onChange={(value) =>
-                      onEditModel(model, { thinkingLevel: value as ThinkingLevel })
-                    }
-                    options={thinkingOptions}
-                    value={model.thinkingLevel}
-                  />
-                </div>
-              ) : null}
-              {editableLimits ? (
-                <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end">
-                  <Field
-                    label="Context window"
-                    onChange={setContextDraft}
-                    placeholder="128000"
-                    value={contextDraft}
-                  />
-                  <Field
-                    label="Max output tokens"
-                    onChange={setMaxTokensDraft}
-                    placeholder="16384"
-                    value={maxTokensDraft}
-                  />
-                  <button
-                    className="flex h-10 items-center justify-center rounded-md bg-fg px-3 text-sm text-canvas transition-colors hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
-                    disabled={busy}
-                    onClick={saveLimits}
-                    type="button"
-                  >
-                    Save
-                  </button>
-                </div>
-              ) : null}
+      <CollapsibleMotion open={open && expandable} preset="default">
+        <div className="mt-3 grid gap-4 border-hairline-soft border-t pt-4">
+          {canEditThinking ? (
+            <div className="grid max-w-xs gap-2">
+              <SelectField
+                label="Default thinking level"
+                onChange={(value) => onEditModel(model, { thinkingLevel: value as ThinkingLevel })}
+                options={thinkingOptions}
+                value={model.thinkingLevel}
+              />
             </div>
-          </m.div>
-        ) : null}
-      </AnimatePresence>
+          ) : null}
+          {editableLimits ? (
+            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end">
+              <Field
+                label="Context window"
+                onChange={setContextDraft}
+                placeholder="128000"
+                value={contextDraft}
+              />
+              <Field
+                label="Max output tokens"
+                onChange={setMaxTokensDraft}
+                placeholder="16384"
+                value={maxTokensDraft}
+              />
+              <button
+                className="flex h-10 items-center justify-center rounded-md bg-fg px-3 text-sm text-canvas transition-colors hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={busy}
+                onClick={saveLimits}
+                type="button"
+              >
+                Save
+              </button>
+            </div>
+          ) : null}
+        </div>
+      </CollapsibleMotion>
     </m.div>
   );
 }

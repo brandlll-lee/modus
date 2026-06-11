@@ -13,7 +13,7 @@ import {
   IconSearch,
   IconSettings,
 } from "@tabler/icons-react";
-import { AnimatePresence, animate, m, useMotionValue } from "motion/react";
+import { animate, m, useMotionValue } from "motion/react";
 import {
   type MouseEvent,
   type PointerEvent,
@@ -26,6 +26,7 @@ import type { AgentSessionInfo, WorkspaceInfo } from "../../../shared/contracts"
 import type { SessionActivity } from "../features/agent/agentEventHub";
 import { SessionStatusDot } from "../features/agent/SessionStatusDot";
 import { cn } from "../lib/cn";
+import { CollapsibleMotion } from "./ui/CollapsibleMotion";
 import { ToolbarButton } from "./ui/ToolbarButton";
 
 const SIDEBAR_MIN_WIDTH = 240;
@@ -187,52 +188,38 @@ export function Sidebar({
             Projects
           </SectionHeader>
 
-          <AnimatePresence initial={false}>
-            {projectsExpanded ? (
-              <m.div
-                animate={{ height: "auto", opacity: 1 }}
-                className="overflow-hidden"
-                exit={{ height: 0, opacity: 0 }}
-                initial={{ height: 0, opacity: 0 }}
-                transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-              >
-                {workspaces.length === 0 ? (
-                  <NavRow
-                    icon={<IconFolder size={17} stroke={1.6} />}
-                    muted
-                    onClick={onOpenWorkspace}
-                  >
-                    Open a repository…
-                  </NavRow>
-                ) : (
-                  workspaces.map((workspace) => (
-                    <WorkspaceItem
-                      activityBySession={activityBySession}
-                      isActive={activeWorkspace?.id === workspace.id}
-                      key={workspace.id}
-                      onArchiveSession={onArchiveSession}
-                      onNewSession={() => onNewWorkspaceSession(workspace)}
-                      onSelect={() => onSelectWorkspace(workspace)}
-                      onSelectSession={onSelectSession}
-                      paneSessionIds={paneSessionIds}
-                      sessions={sessionsByWorkspace.get(workspace.id) ?? []}
-                      workspace={workspace}
-                    />
-                  ))
-                )}
+          <CollapsibleMotion open={projectsExpanded} preset="default">
+            {workspaces.length === 0 ? (
+              <NavRow icon={<IconFolder size={17} stroke={1.6} />} muted onClick={onOpenWorkspace}>
+                Open a repository…
+              </NavRow>
+            ) : (
+              workspaces.map((workspace) => (
+                <WorkspaceItem
+                  activityBySession={activityBySession}
+                  isActive={activeWorkspace?.id === workspace.id}
+                  key={workspace.id}
+                  onArchiveSession={onArchiveSession}
+                  onNewSession={() => onNewWorkspaceSession(workspace)}
+                  onSelect={() => onSelectWorkspace(workspace)}
+                  onSelectSession={onSelectSession}
+                  paneSessionIds={paneSessionIds}
+                  sessions={sessionsByWorkspace.get(workspace.id) ?? []}
+                  workspace={workspace}
+                />
+              ))
+            )}
 
-                <div className="mt-1">
-                  <NavRow
-                    icon={<IconFolderPlus size={17} stroke={1.6} />}
-                    muted
-                    onClick={onOpenWorkspace}
-                  >
-                    Open workspace
-                  </NavRow>
-                </div>
-              </m.div>
-            ) : null}
-          </AnimatePresence>
+            <div className="mt-1">
+              <NavRow
+                icon={<IconFolderPlus size={17} stroke={1.6} />}
+                muted
+                onClick={onOpenWorkspace}
+              >
+                Open workspace
+              </NavRow>
+            </div>
+          </CollapsibleMotion>
 
           <SectionLabel>Chats</SectionLabel>
         </div>

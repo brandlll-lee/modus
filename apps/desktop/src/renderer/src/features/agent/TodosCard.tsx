@@ -6,9 +6,9 @@ import {
   IconCircleX,
   IconListCheck,
 } from "@tabler/icons-react";
-import { AnimatePresence, m } from "motion/react";
 import { useState } from "react";
 import type { TodoItem, TodoStatus } from "../../../../shared/contracts";
+import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
 import { cn } from "../../lib/cn";
 import { ShinyText } from "./TextEffects";
 
@@ -48,23 +48,13 @@ export function TodosCard({ todos, updating }: { todos: TodoItem[]; updating: bo
           stroke={1.7}
         />
       </button>
-      <AnimatePresence initial={false}>
-        {open ? (
-          <m.div
-            animate={{ height: "auto", opacity: 1 }}
-            className="overflow-hidden"
-            exit={{ height: 0, opacity: 0 }}
-            initial={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
-          >
-            <ul className="border-hairline-soft border-t px-3 py-2">
-              {todos.map((todo) => (
-                <TodoRow key={todo.id} todo={todo} />
-              ))}
-            </ul>
-          </m.div>
-        ) : null}
-      </AnimatePresence>
+      <CollapsibleMotion open={open} preset="timeline">
+        <ul className="border-hairline-soft border-t px-3 py-2">
+          {todos.map((todo) => (
+            <TodoRow key={todo.id} todo={todo} />
+          ))}
+        </ul>
+      </CollapsibleMotion>
     </section>
   );
 }

@@ -1,7 +1,7 @@
 import { IconChevronRight } from "@tabler/icons-react";
-import { AnimatePresence, m } from "motion/react";
 import { useState } from "react";
 import type { WorkingChangeStats } from "../../../../../shared/contracts";
+import { CollapsibleMotion } from "../../../components/ui/CollapsibleMotion";
 import { cn } from "../../../lib/cn";
 import { ChangeFileList, LineDelta } from "./ChangeStats";
 
@@ -56,21 +56,11 @@ export function ChangesStrip({
           Review
         </button>
       </div>
-      <AnimatePresence initial={false}>
-        {expanded ? (
-          <m.div
-            animate={{ height: "auto", opacity: 1 }}
-            className="overflow-hidden"
-            exit={{ height: 0, opacity: 0 }}
-            initial={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
-          >
-            <div className="border-hairline-soft border-t px-1.5 py-1.5">
-              <ChangeFileList className="max-h-44" onOpenFile={onOpenFile} stats={stats} />
-            </div>
-          </m.div>
-        ) : null}
-      </AnimatePresence>
+      <CollapsibleMotion open={expanded} preset="compact">
+        <div className="border-hairline-soft border-t px-1.5 py-1.5">
+          <ChangeFileList className="max-h-44" onOpenFile={onOpenFile} stats={stats} />
+        </div>
+      </CollapsibleMotion>
     </div>
   );
 }

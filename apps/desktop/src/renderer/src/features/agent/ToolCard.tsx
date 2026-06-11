@@ -1,7 +1,7 @@
 import { IconAlertTriangle, IconChevronRight, IconLoader2 } from "@tabler/icons-react";
-import { AnimatePresence, m } from "motion/react";
 import { memo, type ReactNode, useState } from "react";
 import { getToolUiMeta, type ToolUiMeta } from "../../../../shared/tools";
+import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
 import { cn } from "../../lib/cn";
 import { DiffToolCard } from "./diff/DiffToolCard";
 import { TERMINAL_CARD_TOOLS } from "./terminal/parseTerminal";
@@ -150,27 +150,17 @@ function FlatToolRow({
         <div className="flex w-full min-w-0 items-center gap-2 py-0.5">{body}</div>
       )}
 
-      <AnimatePresence initial={false}>
-        {open && expandable ? (
-          <m.div
-            animate={{ height: "auto", opacity: 1 }}
-            className="overflow-hidden"
-            exit={{ height: 0, opacity: 0 }}
-            initial={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
-          >
-            <pre
-              className={cn(
-                "scroll-thin mt-1 max-h-72 overflow-auto rounded-md border border-hairline bg-canvas px-3 py-2",
-                "whitespace-pre-wrap wrap-break-word font-mono text-[12px] text-fg-faint leading-relaxed",
-                isError && "border-danger/25 text-danger/90",
-              )}
-            >
-              {clampDetail(detail)}
-            </pre>
-          </m.div>
-        ) : null}
-      </AnimatePresence>
+      <CollapsibleMotion open={open && expandable} preset="timeline">
+        <pre
+          className={cn(
+            "scroll-thin mt-1 max-h-72 overflow-auto rounded-md border border-hairline bg-canvas px-3 py-2",
+            "whitespace-pre-wrap wrap-break-word font-mono text-[12px] text-fg-faint leading-relaxed",
+            isError && "border-danger/25 text-danger/90",
+          )}
+        >
+          {clampDetail(detail)}
+        </pre>
+      </CollapsibleMotion>
     </div>
   );
 }

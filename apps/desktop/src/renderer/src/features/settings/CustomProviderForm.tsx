@@ -11,6 +11,7 @@ import {
 import { AnimatePresence, m } from "motion/react";
 import { type FormEvent, type ReactNode, useState } from "react";
 import type { CustomProviderConfig, TestCustomProviderResult } from "../../../../shared/contracts";
+import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
 import { cn } from "../../lib/cn";
 import {
   Disclosure,
@@ -596,221 +597,209 @@ function ModelRowEditor({
         <span className="min-w-0 truncate">{summary ? `— ${summary}` : ""}</span>
       </button>
 
-      <AnimatePresence initial={false}>
-        {open ? (
-          <m.div
-            animate={{ height: "auto", opacity: 1 }}
-            className="overflow-hidden"
-            exit={{ height: 0, opacity: 0 }}
-            initial={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
-          >
-            <div className="grid gap-6 border-hairline-soft border-t px-3.5 pt-4 pb-4">
-              {row.reasoning ? (
-                <OptionGroup
-                  hint={
-                    isAnthropic
-                      ? "Claude relays use effort levels; pick the Claude preset (low – max) or map your own."
-                      : "Map Modus thinking presets to what this endpoint expects."
-                  }
-                  title="Thinking"
-                >
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <SelectField
-                      label="Thinking levels"
-                      onChange={(value) => onChange({ thinkingPreset: value as ThinkingPreset })}
-                      options={THINKING_PRESET_OPTIONS}
-                      value={row.thinkingPreset}
-                    />
-                    {isOpenAiCompletions ? (
-                      <SelectField
-                        label="Request format"
-                        onChange={(value) =>
-                          onChange({ thinkingFormat: value as ModelThinkingFormat })
-                        }
-                        options={[
-                          { label: "OpenAI default", value: "none" },
-                          ...THINKING_FORMAT_OPTIONS,
-                        ]}
-                        value={row.thinkingFormat}
-                      />
-                    ) : null}
-                  </div>
-                  {row.thinkingPreset === "custom" ? (
-                    <div className="grid gap-3">
-                      <div className="grid gap-3 sm:grid-cols-3">
-                        <Field
-                          label="Off"
-                          mono
-                          onChange={(value) => onChange({ thinkingOff: value })}
-                          placeholder="default"
-                          value={row.thinkingOff}
-                        />
-                        <Field
-                          label="Minimal"
-                          mono
-                          onChange={(value) => onChange({ thinkingMinimal: value })}
-                          placeholder="hidden"
-                          value={row.thinkingMinimal}
-                        />
-                        <Field
-                          label="Low"
-                          mono
-                          onChange={(value) => onChange({ thinkingLow: value })}
-                          placeholder="hidden"
-                          value={row.thinkingLow}
-                        />
-                        <Field
-                          label="Medium"
-                          mono
-                          onChange={(value) => onChange({ thinkingMedium: value })}
-                          placeholder="hidden"
-                          value={row.thinkingMedium}
-                        />
-                        <Field
-                          label="High"
-                          mono
-                          onChange={(value) => onChange({ thinkingHigh: value })}
-                          placeholder="hidden"
-                          value={row.thinkingHigh}
-                        />
-                        <Field
-                          label="Extra high"
-                          mono
-                          onChange={(value) => onChange({ thinkingXHigh: value })}
-                          placeholder="hidden"
-                          value={row.thinkingXHigh}
-                        />
-                      </div>
-                      <p className="text-xs leading-5 text-fg-faint">
-                        The value in each box is sent to the provider for that level; leave a box
-                        empty to hide the level in Modus. Off stays available either way.
-                      </p>
-                    </div>
-                  ) : null}
-                  {isAnthropic ? (
-                    <div className="grid gap-1">
-                      <ToggleField
-                        checked={row.adaptiveThinking}
-                        description="Send thinking.type: adaptive with output_config.effort — required for Claude Opus 4.7+ class models, recommended for 4.6."
-                        label="Adaptive thinking"
-                        onChange={(value) => onChange({ adaptiveThinking: value })}
-                      />
-                      <ToggleField
-                        checked={row.allowEmptySignature}
-                        description="Replay thinking blocks even when the relay strips signatures — keeps thinking visible across turns."
-                        label="Allow unsigned thinking"
-                        onChange={(value) => onChange({ allowEmptySignature: value })}
-                      />
-                    </div>
-                  ) : null}
-                  {isOpenAiCompletions ? (
-                    <ToggleField
-                      checked={row.supportsUsageInStreaming}
-                      description="Read token usage from streaming responses when the endpoint reports it."
-                      label="Streaming usage"
-                      onChange={(value) => onChange({ supportsUsageInStreaming: value })}
-                    />
-                  ) : null}
-                </OptionGroup>
-              ) : null}
-
-              <OptionGroup hint="Defaults suit most relays." title="Capabilities & limits">
-                <ToggleField
-                  checked={row.imageInput}
-                  description="Allow image attachments for this model."
-                  label="Image input"
-                  onChange={(value) => onChange({ imageInput: value })}
+      <CollapsibleMotion open={open} preset="default">
+        <div className="grid gap-6 border-hairline-soft border-t px-3.5 pt-4 pb-4">
+          {row.reasoning ? (
+            <OptionGroup
+              hint={
+                isAnthropic
+                  ? "Claude relays use effort levels; pick the Claude preset (low – max) or map your own."
+                  : "Map Modus thinking presets to what this endpoint expects."
+              }
+              title="Thinking"
+            >
+              <div className="grid gap-4 sm:grid-cols-2">
+                <SelectField
+                  label="Thinking levels"
+                  onChange={(value) => onChange({ thinkingPreset: value as ThinkingPreset })}
+                  options={THINKING_PRESET_OPTIONS}
+                  value={row.thinkingPreset}
                 />
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <Field
-                    label="Context window"
-                    onChange={(value) => onChange({ contextWindow: value })}
-                    placeholder="128000"
-                    value={row.contextWindow}
-                  />
-                  <Field
-                    label="Max output tokens"
-                    onChange={(value) => onChange({ maxTokens: value })}
-                    placeholder="16384"
-                    value={row.maxTokens}
-                  />
-                </div>
-              </OptionGroup>
-
-              <OptionGroup
-                hint="Only needed when this model lives on a different endpoint or protocol."
-                title="Endpoint override"
-              >
-                <div className="grid gap-4 sm:grid-cols-2">
+                {isOpenAiCompletions ? (
                   <SelectField
-                    label="Protocol"
-                    onChange={(value) => onChange({ api: value })}
-                    options={MODEL_API_OPTIONS}
-                    value={
-                      (MODEL_API_OPTIONS.some((option) => option.value === row.api)
-                        ? row.api
-                        : "") as (typeof MODEL_API_OPTIONS)[number]["value"]
-                    }
+                    label="Request format"
+                    onChange={(value) => onChange({ thinkingFormat: value as ModelThinkingFormat })}
+                    options={[
+                      { label: "OpenAI default", value: "none" },
+                      ...THINKING_FORMAT_OPTIONS,
+                    ]}
+                    value={row.thinkingFormat}
                   />
-                  <Field
-                    label="Base URL"
-                    mono
-                    onChange={(value) => onChange({ baseUrl: value })}
-                    placeholder="provider default"
-                    type="url"
-                    value={row.baseUrl}
+                ) : null}
+              </div>
+              {row.thinkingPreset === "custom" ? (
+                <div className="grid gap-3">
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <Field
+                      label="Off"
+                      mono
+                      onChange={(value) => onChange({ thinkingOff: value })}
+                      placeholder="default"
+                      value={row.thinkingOff}
+                    />
+                    <Field
+                      label="Minimal"
+                      mono
+                      onChange={(value) => onChange({ thinkingMinimal: value })}
+                      placeholder="hidden"
+                      value={row.thinkingMinimal}
+                    />
+                    <Field
+                      label="Low"
+                      mono
+                      onChange={(value) => onChange({ thinkingLow: value })}
+                      placeholder="hidden"
+                      value={row.thinkingLow}
+                    />
+                    <Field
+                      label="Medium"
+                      mono
+                      onChange={(value) => onChange({ thinkingMedium: value })}
+                      placeholder="hidden"
+                      value={row.thinkingMedium}
+                    />
+                    <Field
+                      label="High"
+                      mono
+                      onChange={(value) => onChange({ thinkingHigh: value })}
+                      placeholder="hidden"
+                      value={row.thinkingHigh}
+                    />
+                    <Field
+                      label="Extra high"
+                      mono
+                      onChange={(value) => onChange({ thinkingXHigh: value })}
+                      placeholder="hidden"
+                      value={row.thinkingXHigh}
+                    />
+                  </div>
+                  <p className="text-xs leading-5 text-fg-faint">
+                    The value in each box is sent to the provider for that level; leave a box empty
+                    to hide the level in Modus. Off stays available either way.
+                  </p>
+                </div>
+              ) : null}
+              {isAnthropic ? (
+                <div className="grid gap-1">
+                  <ToggleField
+                    checked={row.adaptiveThinking}
+                    description="Send thinking.type: adaptive with output_config.effort — required for Claude Opus 4.7+ class models, recommended for 4.6."
+                    label="Adaptive thinking"
+                    onChange={(value) => onChange({ adaptiveThinking: value })}
+                  />
+                  <ToggleField
+                    checked={row.allowEmptySignature}
+                    description="Replay thinking blocks even when the relay strips signatures — keeps thinking visible across turns."
+                    label="Allow unsigned thinking"
+                    onChange={(value) => onChange({ allowEmptySignature: value })}
                   />
                 </div>
-              </OptionGroup>
+              ) : null}
+              {isOpenAiCompletions ? (
+                <ToggleField
+                  checked={row.supportsUsageInStreaming}
+                  description="Read token usage from streaming responses when the endpoint reports it."
+                  label="Streaming usage"
+                  onChange={(value) => onChange({ supportsUsageInStreaming: value })}
+                />
+              ) : null}
+            </OptionGroup>
+          ) : null}
 
-              <OptionGroup hint="Optional $ per 1M tokens, for cost display." title="Pricing">
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                  <Field
-                    label="Input"
-                    onChange={(value) => onChange({ costInput: value })}
-                    placeholder="0"
-                    value={row.costInput}
-                  />
-                  <Field
-                    label="Output"
-                    onChange={(value) => onChange({ costOutput: value })}
-                    placeholder="0"
-                    value={row.costOutput}
-                  />
-                  <Field
-                    label="Cache read"
-                    onChange={(value) => onChange({ costCacheRead: value })}
-                    placeholder="0"
-                    value={row.costCacheRead}
-                  />
-                  <Field
-                    label="Cache write"
-                    onChange={(value) => onChange({ costCacheWrite: value })}
-                    placeholder="0"
-                    value={row.costCacheWrite}
-                  />
-                </div>
-              </OptionGroup>
-
-              <KeyValueEditor
-                addLabel="Add header"
-                description="Override or extend the provider headers for this model."
-                emptyLabel="No model-specific headers."
-                keyPlaceholder="Header"
-                onAdd={() => onChange({ headers: [...row.headers, createKeyValueRow()] })}
-                onChange={updateHeader}
-                onRemove={(rowId) =>
-                  onChange({ headers: row.headers.filter((header) => header.rowId !== rowId) })
-                }
-                rows={row.headers}
-                title="Model headers"
-                valuePlaceholder="Value"
+          <OptionGroup hint="Defaults suit most relays." title="Capabilities & limits">
+            <ToggleField
+              checked={row.imageInput}
+              description="Allow image attachments for this model."
+              label="Image input"
+              onChange={(value) => onChange({ imageInput: value })}
+            />
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field
+                label="Context window"
+                onChange={(value) => onChange({ contextWindow: value })}
+                placeholder="128000"
+                value={row.contextWindow}
+              />
+              <Field
+                label="Max output tokens"
+                onChange={(value) => onChange({ maxTokens: value })}
+                placeholder="16384"
+                value={row.maxTokens}
               />
             </div>
-          </m.div>
-        ) : null}
-      </AnimatePresence>
+          </OptionGroup>
+
+          <OptionGroup
+            hint="Only needed when this model lives on a different endpoint or protocol."
+            title="Endpoint override"
+          >
+            <div className="grid gap-4 sm:grid-cols-2">
+              <SelectField
+                label="Protocol"
+                onChange={(value) => onChange({ api: value })}
+                options={MODEL_API_OPTIONS}
+                value={
+                  (MODEL_API_OPTIONS.some((option) => option.value === row.api)
+                    ? row.api
+                    : "") as (typeof MODEL_API_OPTIONS)[number]["value"]
+                }
+              />
+              <Field
+                label="Base URL"
+                mono
+                onChange={(value) => onChange({ baseUrl: value })}
+                placeholder="provider default"
+                type="url"
+                value={row.baseUrl}
+              />
+            </div>
+          </OptionGroup>
+
+          <OptionGroup hint="Optional $ per 1M tokens, for cost display." title="Pricing">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <Field
+                label="Input"
+                onChange={(value) => onChange({ costInput: value })}
+                placeholder="0"
+                value={row.costInput}
+              />
+              <Field
+                label="Output"
+                onChange={(value) => onChange({ costOutput: value })}
+                placeholder="0"
+                value={row.costOutput}
+              />
+              <Field
+                label="Cache read"
+                onChange={(value) => onChange({ costCacheRead: value })}
+                placeholder="0"
+                value={row.costCacheRead}
+              />
+              <Field
+                label="Cache write"
+                onChange={(value) => onChange({ costCacheWrite: value })}
+                placeholder="0"
+                value={row.costCacheWrite}
+              />
+            </div>
+          </OptionGroup>
+
+          <KeyValueEditor
+            addLabel="Add header"
+            description="Override or extend the provider headers for this model."
+            emptyLabel="No model-specific headers."
+            keyPlaceholder="Header"
+            onAdd={() => onChange({ headers: [...row.headers, createKeyValueRow()] })}
+            onChange={updateHeader}
+            onRemove={(rowId) =>
+              onChange({ headers: row.headers.filter((header) => header.rowId !== rowId) })
+            }
+            rows={row.headers}
+            title="Model headers"
+            valuePlaceholder="Value"
+          />
+        </div>
+      </CollapsibleMotion>
     </m.div>
   );
 }

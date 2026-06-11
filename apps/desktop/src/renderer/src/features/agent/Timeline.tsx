@@ -9,6 +9,7 @@ import type {
   TodoItem,
   WorkingChangeStats,
 } from "../../../../shared/contracts";
+import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
 import { ModusBot } from "../../components/ui/ModusBot";
 import { cn } from "../../lib/cn";
 import { TurnChangesCard } from "./changes/ChangeStats";
@@ -896,12 +897,7 @@ const ToolGroup = memo(function ToolGroup({
           stroke={1.7}
         />
       </button>
-      <m.div
-        animate={{ height: expanded ? "auto" : 0, opacity: expanded ? 1 : 0 }}
-        className="overflow-hidden"
-        initial={false}
-        transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-      >
+      <CollapsibleMotion open={expanded} preset="timeline">
         <div className="space-y-0.5 pt-0.5 pl-5">
           {tools.map((tool) => (
             <ToolCard
@@ -914,7 +910,7 @@ const ToolGroup = memo(function ToolGroup({
             />
           ))}
         </div>
-      </m.div>
+      </CollapsibleMotion>
     </div>
   );
 });

@@ -9,6 +9,7 @@ import {
 } from "@tabler/icons-react";
 import { AnimatePresence, m } from "motion/react";
 import { type ReactNode, useState } from "react";
+import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
 import { cn } from "../../lib/cn";
 import type { KeyValueRow } from "./provider-form-mapping";
 
@@ -221,19 +222,9 @@ export function Disclosure({
         />
         {label}
       </button>
-      <AnimatePresence initial={false}>
-        {open ? (
-          <m.div
-            animate={{ height: "auto", opacity: 1 }}
-            className="overflow-hidden"
-            exit={{ height: 0, opacity: 0 }}
-            initial={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
-          >
-            <div className="grid gap-5 pt-1">{children}</div>
-          </m.div>
-        ) : null}
-      </AnimatePresence>
+      <CollapsibleMotion open={open} preset="default">
+        <div className="grid gap-5 pt-1">{children}</div>
+      </CollapsibleMotion>
     </div>
   );
 }

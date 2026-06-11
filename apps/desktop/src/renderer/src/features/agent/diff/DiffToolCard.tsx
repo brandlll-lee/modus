@@ -1,7 +1,7 @@
 import { IconAlertTriangle, IconChevronRight, IconCopy, IconLoader2 } from "@tabler/icons-react";
-import { AnimatePresence, m } from "motion/react";
 import { memo, useMemo, useState } from "react";
 import { getToolUiMeta } from "../../../../../shared/tools";
+import { CollapsibleMotion } from "../../../components/ui/CollapsibleMotion";
 import { Tooltip } from "../../../components/ui/Tooltip";
 import { cn } from "../../../lib/cn";
 import { toolIcon } from "../toolIcons";
@@ -155,21 +155,11 @@ export const DiffToolCard = memo(
         </div>
 
         {/* Body: lightweight inline diff, collapsed by default. */}
-        <AnimatePresence initial={false}>
-          {open && diff ? (
-            <m.div
-              animate={{ height: "auto", opacity: 1 }}
-              className="overflow-hidden"
-              exit={{ height: 0, opacity: 0 }}
-              initial={{ height: 0, opacity: 0 }}
-              transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
-            >
-              <div className="scroll-thin max-h-96 overflow-auto border-hairline-soft border-t">
-                <InlineDiffView diff={diff} />
-              </div>
-            </m.div>
-          ) : null}
-        </AnimatePresence>
+        <CollapsibleMotion open={open && Boolean(diff)} preset="timeline">
+          <div className="scroll-thin max-h-96 overflow-auto border-hairline-soft border-t">
+            {diff ? <InlineDiffView diff={diff} /> : null}
+          </div>
+        </CollapsibleMotion>
       </div>
     );
   },

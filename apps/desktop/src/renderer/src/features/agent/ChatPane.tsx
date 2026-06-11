@@ -22,6 +22,7 @@ import type {
   WorkingChangeStats,
   WorkspaceInfo,
 } from "../../../../shared/contracts";
+import { CollapsibleMotionProvider } from "../../components/ui/CollapsibleMotion";
 import { cn } from "../../lib/cn";
 import { Composer } from "../composer/Composer";
 import {
@@ -105,6 +106,7 @@ export function ChatPane({
   const flushTimerRef = useRef<number | undefined>(undefined);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const shouldFollowRef = useRef(true);
+  const scrollFollowPauseTimerRef = useRef<number | undefined>(undefined);
   const statsTimerRef = useRef<number | undefined>(undefined);
   const statsCwdRef = useRef(session.worktreePath ?? session.cwd);
   statsCwdRef.current = session.worktreePath ?? session.cwd;
@@ -133,7 +135,13 @@ export function ChatPane({
     }, 1200);
   }, [refreshStats]);
 
-  useEffect(() => () => window.clearTimeout(statsTimerRef.current), []);
+  useEffect(
+    () => () => {
+      window.clearTimeout(statsTimerRef.current);
+      window.clearTimeout(scrollFollowPauseTimerRef.current);
+    },
+    [],
+  );
 
   const flushQueued = useCallback((): void => {
     flushTimerRef.current = undefined;
@@ -234,6 +242,28 @@ export function ChatPane({
       container.scrollHeight - container.scrollTop - container.clientHeight;
     shouldFollowRef.current = distanceFromBottom < 96;
   }
+
+  const pauseScrollFollow = useCallback((durationMs: number): void => {
+    const container = viewportRef.current;
+    if (!container) {
+      return;
+    }
+    const distanceFromBottom =
+      container.scrollHeight - container.scrollTop - container.clientHeight;
+    if (distanceFromBottom >= 96) {
+      return;
+    }
+    shouldFollowRef.current = false;
+    window.clearTimeout(scrollFollowPauseTimerRef.current);
+    scrollFollowPauseTimerRef.current = window.setTimeout(() => {
+      const latest = viewportRef.current;
+      if (!latest) {
+        return;
+      }
+      const latestDistance = latest.scrollHeight - latest.scrollTop - latest.clientHeight;
+      shouldFollowRef.current = latestDistance < 96;
+    }, durationMs);
+  }, []);
 
   useEffect(() => {
     const container = viewportRef.current;
@@ -533,22 +563,24 @@ export function ChatPane({
         </div>
       ) : null}
 
-      <div
-        className="scroll-thin min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable_both-edges]"
-        onScroll={handleScroll}
-        ref={viewportRef}
-      >
-        <Timeline
-          agentEvents={agentEvents}
-          cwd={activeCwd}
-          onEditResend={editAndResend}
-          onPermissionDecision={(request, decision) => void decidePermission(request, decision)}
-          onRestoreCheckpoint={async (checkpointId) => {
-            await window.modus.checkpoint.restore({ checkpointId });
-            refreshStats();
-          }}
-        />
-      </div>
+      <CollapsibleMotionProvider onLayoutAnimationStart={pauseScrollFollow}>
+        <div
+          className="scroll-thin min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable_both-edges]"
+          onScroll={handleScroll}
+          ref={viewportRef}
+        >
+          <Timeline
+            agentEvents={agentEvents}
+            cwd={activeCwd}
+            onEditResend={editAndResend}
+            onPermissionDecision={(request, decision) => void decidePermission(request, decision)}
+            onRestoreCheckpoint={async (checkpointId) => {
+              await window.modus.checkpoint.restore({ checkpointId });
+              refreshStats();
+            }}
+          />
+        </div>
+      </CollapsibleMotionProvider>
 
       <div className="shrink-0 px-4 pb-4">
         <div className="mx-auto max-w-5xl">
