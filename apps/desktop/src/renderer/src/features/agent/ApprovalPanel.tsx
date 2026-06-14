@@ -180,5 +180,6 @@ function approvalTitle(action: PermissionRequest["action"]): string {
   if (action === "git.write") return "Allow changing git state?";
   if (action === "file.write") return "Allow editing files?";
   if (action === "file.delete") return "Allow deleting files?";
+  if (action === "browser.control") return "Allow controlling the browser?";
   return "Allow opening this external target?";
 }

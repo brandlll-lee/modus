@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import type { PermissionAction, PermissionDecision } from "../../shared/contracts";
+import { DEFAULT_APPROVAL_MODE, isApprovalMode } from "../../shared/approval";
+import type { ApprovalMode, PermissionAction, PermissionDecision } from "../../shared/contracts";
 import { getDatabase } from "../db/database";
 
 type PermissionRow = {
@@ -58,6 +59,27 @@ export function listPermissionDecisions(): PermissionDecision[] {
     .all() as PermissionRow[];
 
   return rows.map(toPermission);
+}
+
+/** Global approval mode (persisted in app_settings; defaults to the safe mode). */
+const APPROVAL_MODE_KEY = "approval_mode";
+
+export function getApprovalMode(): ApprovalMode {
+  const row = getDatabase()
+    .prepare("select value from app_settings where key = ?")
+    .get(APPROVAL_MODE_KEY) as { value: string | null } | undefined;
+  return isApprovalMode(row?.value) ? row.value : DEFAULT_APPROVAL_MODE;
+}
+
+export function setApprovalMode(mode: ApprovalMode): ApprovalMode {
+  getDatabase()
+    .prepare(
+      `insert into app_settings (key, value, updated_at)
+       values (?, ?, ?)
+       on conflict(key) do update set value = excluded.value, updated_at = excluded.updated_at`,
+    )
+    .run(APPROVAL_MODE_KEY, mode, new Date().toISOString());
+  return mode;
 }
 
 export function findWorkspaceAllowDecision(

@@ -1,8 +1,9 @@
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
+import { shouldPrompt } from "../../shared/approval";
 import type { AgentEvent } from "../../shared/contracts";
 import { requestPermission } from "../permissions/permission-broker";
-import { findWorkspaceAllowDecision } from "../permissions/permission-store";
-import { getActiveAgentRun, updateAgentRunStatus } from "./agent-run-store";
+import { findWorkspaceAllowDecision, getApprovalMode } from "../permissions/permission-store";
+import { getActiveAgentRun } from "./agent-run-store";
 import { getToolTarget, toolRegistry } from "./tools/registry";
 
 type PermissionEmitter = (event: AgentEvent) => void;
@@ -14,7 +15,10 @@ export function createModusPermissionExtension(
   return (pi) => {
     pi.on("tool_call", async (event) => {
       const { action, dangerous } = toolRegistry.classify(event);
-      if (!dangerous) {
+      // The global approval mode decides whether a dangerous call pauses for the
+      // user (request-approval), only pauses for high-risk ones (auto), or never
+      // pauses (full-access). Non-dangerous calls always pass straight through.
+      if (!shouldPrompt(getApprovalMode(), action, dangerous)) {
         return undefined;
       }
 
@@ -35,18 +39,13 @@ export function createModusPermissionExtension(
       const decision = await requestPermission(permissionInput);
 
       if (decision.decision === "deny") {
-        const blockedRun = run
-          ? updateAgentRunStatus(run.id, "blocked", decision.target)
-          : undefined;
-        if (blockedRun) {
-          emit({
-            type: "run.blocked",
-            sessionId,
-            runId: blockedRun.id,
-            requestId: decision.requestId,
-            reason: decision.target,
-          });
-        }
+        // Denying ONE tool call does not stop the run: PI feeds the refusal
+        // back to the model, which carries on (acknowledges, tries another
+        // way, or wraps up) and the run completes normally. The old code
+        // flipped the run to "blocked" here, which the completion path didn't
+        // recognise — no run.completed ever fired and the UI spun forever.
+        // The denial itself is already visible via permission.resolved and the
+        // failed tool card.
         return { block: true, reason: `Denied by user: ${target}` };
       }
 
