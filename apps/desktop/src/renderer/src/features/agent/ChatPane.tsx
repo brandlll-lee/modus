@@ -9,7 +9,6 @@ import {
   useState,
 } from "react";
 import type {
-  AgentEvent,
   AgentSessionInfo,
   BrowserEvent,
   ContextItem,
@@ -29,6 +28,7 @@ import { ApprovalPanel } from "./ApprovalPanel";
 import { type AgentEventHub, type AgentEventItem, appendAgentEvents } from "./agentEventHub";
 import { ChangesStrip } from "./changes/ChangesStrip";
 import { latestPendingPermissionRequest } from "./permissionRequests";
+import { isRunActive, isTerminalRunEvent } from "./runState";
 import { Timeline } from "./Timeline";
 
 /**
@@ -180,13 +180,7 @@ export function ChatPane({
       if (event.type === "tool.ended") {
         scheduleStatsRefresh();
       }
-      if (
-        event.type === "run.completed" ||
-        event.type === "run.failed" ||
-        event.type === "run.cancelled" ||
-        event.type === "run.blocked" ||
-        event.type === "runtime.error"
-      ) {
+      if (isTerminalRunEvent(event)) {
         setPendingPrompt(false);
         setAborting(false);
         scheduleStatsRefresh();
@@ -284,9 +278,7 @@ export function ChatPane({
 
   const paneModel = session.model ?? defaultModel;
   const activeCwd = session.cwd;
-  const activeRunStatus = latestRunStatus(agentEvents);
-  const isRunning =
-    !aborting && (pendingPrompt || activeRunStatus === "running" || activeRunStatus === "blocked");
+  const isRunning = !aborting && (isRunActive(agentEvents) || pendingPrompt);
   const pendingPermission = useMemo(
     () => latestPendingPermissionRequest(agentEvents),
     [agentEvents],
@@ -460,6 +452,7 @@ export function ChatPane({
               onSubmit={(message, context, delivery, attachments, skills) =>
                 submitPrompt(message, context, delivery, attachments, skills)
               }
+              sessionId={sessionId}
               workspaceId={workspace?.id}
             />
           )}
@@ -487,14 +480,4 @@ function ChatViewport({
       <div className="flex min-h-full min-w-0 w-full max-w-full flex-col">{children}</div>
     </div>
   );
-}
-
-function latestRunStatus(events: Array<{ event: AgentEvent }>): string | undefined {
-  for (let index = events.length - 1; index >= 0; index -= 1) {
-    const event = events[index]?.event;
-    if (event?.type.startsWith("run.")) {
-      return event.type.replace("run.", "");
-    }
-  }
-  return undefined;
 }

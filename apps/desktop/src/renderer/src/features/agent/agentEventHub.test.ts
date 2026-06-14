@@ -111,6 +111,51 @@ describe("appendAgentEvents", () => {
     );
     expect(merged).toHaveLength(2);
   });
+
+  it("collapses a run of tool.delta for the same call to the latest args", () => {
+    const merged = appendAgentEvents(
+      [],
+      [
+        item({
+          type: "tool.delta",
+          sessionId: "s",
+          toolCallId: "t",
+          toolName: "write",
+          args: { path: "a.html", content: "<a" },
+        }),
+        item({
+          type: "tool.delta",
+          sessionId: "s",
+          toolCallId: "t",
+          toolName: "write",
+          args: { path: "a.html", content: "<ab" },
+        }),
+        item({
+          type: "tool.delta",
+          sessionId: "s",
+          toolCallId: "t",
+          toolName: "write",
+          args: { path: "a.html", content: "<abc" },
+        }),
+      ],
+    );
+    expect(merged).toHaveLength(1);
+    expect(merged[0]?.event).toMatchObject({
+      type: "tool.delta",
+      args: { content: "<abc" },
+    });
+  });
+
+  it("keeps tool.delta of different calls separate", () => {
+    const merged = appendAgentEvents(
+      [],
+      [
+        item({ type: "tool.delta", sessionId: "s", toolCallId: "t1", toolName: "write", args: {} }),
+        item({ type: "tool.delta", sessionId: "s", toolCallId: "t2", toolName: "write", args: {} }),
+      ],
+    );
+    expect(merged).toHaveLength(2);
+  });
 });
 
 describe("AgentEventHub", () => {

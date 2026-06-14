@@ -84,6 +84,32 @@ function stringify(value: unknown): string {
   return JSON.stringify(value, null, 2);
 }
 
+type StreamingToolCall = { id: string; name: string; arguments: Record<string, unknown> };
+
+/**
+ * The tool call currently being streamed, read from the partial assistant
+ * message at the event's content index. Returns undefined until the provider
+ * has assigned the call an id (so the live card merges with the durable
+ * `tool.started` that shares that id, instead of forking a second card).
+ */
+function streamingToolCall(event: {
+  contentIndex: number;
+  partial: { content: unknown[] };
+}): StreamingToolCall | undefined {
+  const part = event.partial.content[event.contentIndex];
+  if (
+    part &&
+    typeof part === "object" &&
+    (part as { type?: unknown }).type === "toolCall" &&
+    typeof (part as { id?: unknown }).id === "string" &&
+    (part as { id: string }).id.length > 0
+  ) {
+    const call = part as { id: string; name: string; arguments: Record<string, unknown> };
+    return { id: call.id, name: call.name, arguments: call.arguments ?? {} };
+  }
+  return undefined;
+}
+
 export function createPiEventNormalizer(
   sessionId: string,
 ): (event: AgentSessionEvent) => AgentEvent[] {
@@ -140,6 +166,27 @@ export function normalizePiEvent(
             delta: event.assistantMessageEvent.delta,
           },
         ];
+      }
+      // Streaming tool call: surface the partial call (id + name + best-effort
+      // parsed args) so the tool card appears the instant the model starts
+      // emitting it, and its diff grows live as arguments stream. pi parses the
+      // accumulating arguments into `partial.content[contentIndex]` for us.
+      if (
+        event.assistantMessageEvent.type === "toolcall_start" ||
+        event.assistantMessageEvent.type === "toolcall_delta"
+      ) {
+        const streaming = streamingToolCall(event.assistantMessageEvent);
+        return streaming
+          ? [
+              {
+                type: "tool.delta",
+                sessionId,
+                toolCallId: streaming.id,
+                toolName: streaming.name,
+                args: streaming.arguments,
+              },
+            ]
+          : [];
       }
       return [];
     case "message_end": {

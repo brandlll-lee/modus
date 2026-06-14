@@ -1,9 +1,14 @@
-import { memo } from "react";
+import type { ThemedToken } from "shiki/core";
+import { memo, useMemo } from "react";
+import { highlightToLines, languageForPath, useCodeHighlighter } from "../../../lib/codeHighlight";
 import { cn } from "../../../lib/cn";
+import { useTheme } from "../../../lib/theme";
 import type { InlineDiff, InlineDiffLine } from "./computeInlineDiff";
 
 type InlineDiffViewProps = {
   diff: InlineDiff;
+  /** Target file path, used to pick the syntax-highlighting grammar. */
+  path?: string | undefined;
 };
 
 /** Marker glyph shown in the sign column for each line kind. */
@@ -15,18 +20,48 @@ const SIGN: Record<InlineDiffLine["kind"], string> = {
 };
 
 /**
- * Lightweight, Cursor-style inline diff. Pure DOM rows — no Monaco instance —
- * so a single agent turn can render many of these without choking the chat
- * stream. Red/green washes come from the `--color-diff-*` theme tokens, so the
- * view tracks light/dark automatically. Syntax highlighting is intentionally
- * deferred (Q4.1): the red/green wash plus the sign column carries the meaning.
+ * Cursor-style inline diff: red/green washed rows with real syntax highlighting
+ * (Shiki, JS engine — pure DOM rows, no Monaco). The whole change is tokenized
+ * in one pass so multi-line context (strings, comments) colours correctly; gap
+ * rows are excluded from the code blob and mapped back by index. While a grammar
+ * loads, rows fall back to plain text and re-render once it's ready.
  */
-export const InlineDiffView = memo(function InlineDiffView({ diff }: InlineDiffViewProps) {
+export const InlineDiffView = memo(function InlineDiffView({ diff, path }: InlineDiffViewProps) {
+  const [themeMode] = useTheme();
+  const lang = languageForPath(path);
+  const ready = useCodeHighlighter(lang);
+
+  const tokenByLine = useMemo(() => {
+    // Map each diff line to its index in the highlighted code blob (gaps excluded).
+    const codeLineByDiffIndex: Array<number | null> = [];
+    const codeLines: string[] = [];
+    for (const line of diff.lines) {
+      if (line.kind === "gap") {
+        codeLineByDiffIndex.push(null);
+        continue;
+      }
+      codeLineByDiffIndex.push(codeLines.length);
+      codeLines.push(line.text);
+    }
+    // `ready` is referenced so the memo recomputes once the grammar finishes loading.
+    void ready;
+    const tokens = highlightToLines(codeLines.join("\n"), lang, themeMode);
+    return { codeLineByDiffIndex, tokens };
+  }, [diff.lines, lang, themeMode, ready]);
+
   return (
     <div className="overflow-x-auto font-mono text-[12px] leading-[1.65]">
       <div className="min-w-full">
         {diff.lines.map((line, index) => (
-          <DiffRow key={diffRowKey(line, index)} line={line} />
+          <DiffRow
+            key={diffRowKey(line, index)}
+            line={line}
+            tokens={
+              tokenByLine.codeLineByDiffIndex[index] !== null
+                ? tokenByLine.tokens?.[tokenByLine.codeLineByDiffIndex[index] as number]
+                : undefined
+            }
+          />
         ))}
       </div>
       {diff.truncated ? (
@@ -47,7 +82,7 @@ function diffRowKey(line: InlineDiffLine, index: number): string {
   return `${index}:${line.kind}:${line.oldLine ?? ""}:${line.newLine ?? ""}`;
 }
 
-function DiffRow({ line }: { line: InlineDiffLine }) {
+function DiffRow({ line, tokens }: { line: InlineDiffLine; tokens?: ThemedToken[] | undefined }) {
   if (line.kind === "gap") {
     return (
       <div className="flex select-none items-center text-fg-faint">
@@ -81,14 +116,28 @@ function DiffRow({ line }: { line: InlineDiffLine }) {
       >
         {SIGN[line.kind]}
       </span>
-      <span
-        className={cn(
-          "whitespace-pre px-2 py-0.5",
-          isAdd ? "text-fg" : isDel ? "text-fg-muted" : "text-fg-subtle",
-        )}
-      >
-        {line.text === "" ? " " : line.text}
+      <span className={cn("whitespace-pre px-2 py-0.5", isDel && "opacity-70")}>
+        <DiffLineText line={line} tokens={tokens} />
       </span>
     </div>
+  );
+}
+
+/** Highlighted tokens when a grammar is ready, else the raw line text. */
+function DiffLineText({ line, tokens }: { line: InlineDiffLine; tokens?: ThemedToken[] | undefined }) {
+  if (line.text === "") {
+    return <span> </span>;
+  }
+  if (!tokens || tokens.length === 0) {
+    return <span className="text-fg-subtle">{line.text}</span>;
+  }
+  return (
+    <>
+      {tokens.map((token, index) => (
+        <span key={`${index}:${token.offset ?? index}`} style={{ color: token.color }}>
+          {token.content}
+        </span>
+      ))}
+    </>
   );
 }

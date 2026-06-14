@@ -27,6 +27,64 @@ describe("normalizePiEvent", () => {
     ]);
   });
 
+  it("surfaces a streaming tool call as a live tool.delta with partial args", () => {
+    // A `toolcall_delta` whose partial message already carries the parsed
+    // arguments-so-far → the card can render immediately and grow live.
+    expect(
+      normalizePiEvent(
+        "session-1",
+        event({
+          type: "message_update",
+          message: { id: "message-1", role: "assistant" },
+          assistantMessageEvent: {
+            type: "toolcall_delta",
+            contentIndex: 0,
+            delta: '","content":"<!DOCTYPE',
+            partial: {
+              content: [
+                {
+                  type: "toolCall",
+                  id: "tooluse_abc",
+                  name: "write",
+                  arguments: { path: "index.html", content: "<!DOCTYPE html>" },
+                },
+              ],
+            },
+          },
+        }),
+      ),
+    ).toEqual([
+      {
+        type: "tool.delta",
+        sessionId: "session-1",
+        toolCallId: "tooluse_abc",
+        toolName: "write",
+        args: { path: "index.html", content: "<!DOCTYPE html>" },
+      },
+    ]);
+  });
+
+  it("ignores a streaming tool call until the provider assigns it an id", () => {
+    // Early in the stream the id may not be set yet; emitting then would fork a
+    // second card that can't merge with the durable tool.started.
+    expect(
+      normalizePiEvent(
+        "session-1",
+        event({
+          type: "message_update",
+          message: { id: "message-1", role: "assistant" },
+          assistantMessageEvent: {
+            type: "toolcall_start",
+            contentIndex: 0,
+            partial: {
+              content: [{ type: "toolCall", id: "", name: "write", arguments: {} }],
+            },
+          },
+        }),
+      ),
+    ).toEqual([]);
+  });
+
   it("omits absent optional compaction summary fields", () => {
     expect(
       normalizePiEvent(

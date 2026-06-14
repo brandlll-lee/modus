@@ -148,6 +148,17 @@ function mergeAdjacentAgentEvent(
       event: { ...previousEvent, output: previousEvent.output + nextEvent.output },
     };
   }
+  // Live tool-call streaming: each `tool.delta` carries the full args-so-far,
+  // so a run of them for the same call collapses to the latest (keeps the
+  // in-memory stream bounded while the diff +/- still ticks up).
+  if (
+    previousEvent.type === "tool.delta" &&
+    nextEvent.type === "tool.delta" &&
+    previousEvent.sessionId === nextEvent.sessionId &&
+    previousEvent.toolCallId === nextEvent.toolCallId
+  ) {
+    return next;
+  }
   return undefined;
 }
 

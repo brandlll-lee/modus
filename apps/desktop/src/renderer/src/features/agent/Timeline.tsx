@@ -8,7 +8,7 @@ import type {
   TodoItem,
   WorkingChangeStats,
 } from "../../../../shared/contracts";
-import { BROWSER_TOOL_NAMES } from "../../../../shared/tools";
+import { BROWSER_TOOL_NAMES, toolRenderKind } from "../../../../shared/tools";
 import { ModusBot } from "../../components/ui/ModusBot";
 import { ActivityGroup, ThoughtRow } from "./ActivityGroup";
 import { TurnChangesCard } from "./changes/ChangeStats";
@@ -408,11 +408,48 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
       continue;
     }
 
+    if (event.type === "tool.delta") {
+      // Live streaming of a tool call before it executes: show the card now and
+      // keep its args fresh so the diff grows in real time.
+      if (toolRenderKind(event.toolName) === "todo") {
+        if (!todoToolCallIds.has(event.toolCallId)) {
+          todoToolCallIds.add(event.toolCallId);
+          todoUpdatesInFlight += 1;
+        }
+        continue;
+      }
+      const existing = blockById.get(event.toolCallId);
+      if (existing?.type === "tool") {
+        existing.args = event.args;
+      } else {
+        const block: ToolBlockItem = {
+          id: event.toolCallId,
+          type: "tool",
+          name: event.toolName,
+          args: event.args,
+          output: "",
+        };
+        blocks.push(block);
+        blockById.set(event.toolCallId, block);
+      }
+      continue;
+    }
+
     if (event.type === "tool.started") {
       // todo_write surfaces through TodosCard snapshots instead of a tool row.
-      if (event.toolName === "todo_write") {
-        todoToolCallIds.add(event.toolCallId);
-        todoUpdatesInFlight += 1;
+      if (toolRenderKind(event.toolName) === "todo") {
+        if (!todoToolCallIds.has(event.toolCallId)) {
+          todoToolCallIds.add(event.toolCallId);
+          todoUpdatesInFlight += 1;
+        }
+        continue;
+      }
+      // Idempotent: a live `tool.delta` may have already created the block.
+      // Refresh its args with the authoritative ones rather than forking a
+      // duplicate card.
+      const existing = blockById.get(event.toolCallId);
+      if (existing?.type === "tool") {
+        existing.args = event.args;
         continue;
       }
       const block: ToolBlockItem = {

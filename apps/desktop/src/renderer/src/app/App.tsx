@@ -43,6 +43,7 @@ import {
   type SessionActivity,
 } from "../features/agent/agentEventHub";
 import { ChatPane } from "../features/agent/ChatPane";
+import { isTerminalRunEvent } from "../features/agent/runState";
 import { Composer } from "../features/composer/Composer";
 import { INSPECTOR_MIN_WIDTH, Inspector } from "../features/inspector/Inspector";
 import { SettingsPanel } from "../features/settings/SettingsPanel";
@@ -163,11 +164,8 @@ export function App() {
         event.type === "agent.started" ||
         event.type === "agent.ended" ||
         event.type === "message.completed" ||
-        event.type === "run.completed" ||
-        event.type === "run.failed" ||
-        event.type === "run.cancelled" ||
-        event.type === "run.blocked" ||
-        event.type === "runtime.error"
+        isTerminalRunEvent(event) ||
+        event.type === "run.blocked"
       ) {
         void refreshSessions();
       }

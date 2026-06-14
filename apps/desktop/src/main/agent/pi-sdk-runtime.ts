@@ -22,6 +22,7 @@ import { formatResolvedContext, resolveContext } from "../context/context-servic
 import { getChangeStatsSince } from "../git/git-service";
 import { IPC_CHANNELS } from "../ipc/channels";
 import { maybeNotifyAgentEvent } from "../notifications/agent-notifications";
+import { summarizeApps } from "../process/app-process-service";
 import { resolveAlwaysRulesPrompt } from "../rules/rules-service";
 import { resolveSkillsPrompt } from "../skills/skills-service";
 import { summarizeTerminals } from "../terminal/terminal-service";
@@ -64,6 +65,7 @@ import type {
 } from "./runtime";
 import { deriveSessionTitle, shouldReplaceSessionTitle } from "./session-title";
 import { describeAgentShellForPrompt, resolveAgentShell } from "./shell-resolver";
+import { registerAppTools } from "./tools/app-tools";
 import { registerBrowserTools } from "./tools/browser-tools";
 import { toolRegistry } from "./tools/registry";
 import { registerTerminalTools } from "./tools/terminal-tools";
@@ -101,6 +103,13 @@ type RunOutputTracker = {
   hasVisibleOutput: boolean;
 };
 
+/**
+ * Minimum gap between live `tool.delta` emissions per session. Caps the IPC/
+ * render rate while a large tool argument streams; the durable `tool.started`
+ * still carries the final args, so throttling never loses the end state.
+ */
+const TOOL_DELTA_THROTTLE_MS = 100;
+
 export class PiSdkRuntime implements AgentRuntime {
   private sessions = new Map<string, SdkRuntimeSession>();
   private resumePromises = new Map<string, Promise<SdkRuntimeSession | undefined>>();
@@ -114,6 +123,7 @@ export class PiSdkRuntime implements AgentRuntime {
     registerTerminalTools();
     registerWebTools();
     registerBrowserTools();
+    registerAppTools();
     registerTodoTools();
   }
 
@@ -249,10 +259,23 @@ export class PiSdkRuntime implements AgentRuntime {
         params.emitVolatile(event);
       }
     };
+    // Per-session throttle for live tool-call streaming. `tool.delta` carries
+    // the (growing) partial args, so we cap its rate to keep IPC light; the
+    // durable `tool.started` at execution time always delivers the final args.
+    let lastToolDeltaAt = 0;
     const unsubscribe = session.subscribe((event) => {
       for (const normalized of normalizePiEvent(event)) {
         this.noteAssistantOutput(normalized);
-        params.emit(normalized);
+        if (normalized.type === "tool.delta") {
+          const now = Date.now();
+          if (now - lastToolDeltaAt < TOOL_DELTA_THROTTLE_MS) {
+            continue;
+          }
+          lastToolDeltaAt = now;
+          params.emitVolatile(normalized);
+        } else {
+          params.emit(normalized);
+        }
       }
       if (shouldPublishContextUsage(event)) {
         publishContextUsage();
@@ -510,11 +533,13 @@ export class PiSdkRuntime implements AgentRuntime {
       const contextText = formatResolvedContext(resolved);
       // Passive terminal awareness (like Cursor's terminal status): tell the
       // model what's running so it can decide to read/restart instead of
-      // blindly re-launching.
-      const digest = summarizeTerminals({
+      // blindly re-launching. Covers both PTY terminals and launched GUI apps.
+      const terminalDigest = summarizeTerminals({
         sessionId: runtimeSession.info.id,
         workspaceId: runtimeSession.info.workspaceId,
       });
+      const appDigest = summarizeApps({ sessionId: runtimeSession.info.id });
+      const digest = [terminalDigest, appDigest].filter(Boolean).join("\n");
       const awareness = digest ? `<active_terminals>\n${digest}\n</active_terminals>` : "";
       // Manually invoked skills (`/name`) are injected as instruction blocks.
       const skillsText = resolveSkillsPrompt(runtimeSession.info.cwd, input.skills ?? []);
