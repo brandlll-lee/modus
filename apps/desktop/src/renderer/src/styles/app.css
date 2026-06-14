@@ -26,6 +26,10 @@
   --color-hairline-soft: rgba(255, 255, 255, 0.03);
   --color-hairline-strong: rgba(255, 255, 255, 0.065);
 
+  /* Composer 专属描边：比通用 hairline 明显一档，让输入框从主区"读"出来而不融进背景
+     （Cursor 实测观感）。配合 shadow-composer-edge 的顶部内高光呈现精致浮起边缘。 */
+  --color-composer-border: rgba(255, 255, 255, 0.11);
+
   /* 悬停 / 选中 半透明白叠层 */
   --color-hover: rgba(255, 255, 255, 0.04);
   --color-active: rgba(255, 255, 255, 0.06);
@@ -103,6 +107,10 @@
 
   /* hairline-only 纵深：仅给浮层一抹极淡阴影 */
   --shadow-composer: 0 1px 10px -6px rgba(0, 0, 0, 0.5);
+  /* Composer 静息态：在 shadow-composer 基础上叠一道顶部内高光，让上边缘"接住光"
+     呈现精致浮起感（Cursor 风）。仅用于输入框/消息编辑框，不污染按钮/药丸。 */
+  --shadow-composer-edge:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.06), 0 1px 10px -6px rgba(0, 0, 0, 0.5);
   /* composer 聚焦态：保留原纵深 + 1px 品牌紫描边环 + 极淡紫色外发光 */
   --shadow-composer-focus:
     0 1px 10px -6px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--color-focus-ring),
@@ -154,6 +162,10 @@
   --color-hairline-soft: rgba(0, 0, 0, 0.055);
   --color-hairline-strong: rgba(0, 0, 0, 0.14);
 
+  /* Composer border on white: a clearly readable edge (stronger than hairline)
+     so the input reads as a distinct surface above the off-white canvas. */
+  --color-composer-border: rgba(0, 0, 0, 0.16);
+
   /* Hover / active overlays — black-alpha */
   --color-hover: rgba(0, 0, 0, 0.045);
   --color-active: rgba(0, 0, 0, 0.07);
@@ -199,6 +211,9 @@
 
   /* Shadows — visible & soft to carry elevation that dark gets from lightness */
   --shadow-composer: 0 1px 2px rgba(0, 0, 0, 0.07), 0 1px 1px rgba(0, 0, 0, 0.04);
+  /* On white the top inner-highlight is a no-op (surface is already white), so
+     the composer leans on its border + a slightly deeper drop shadow to lift. */
+  --shadow-composer-edge: 0 1px 2px rgba(0, 0, 0, 0.08), 0 1px 1px rgba(0, 0, 0, 0.05);
   --shadow-composer-focus:
     0 1px 3px rgba(0, 0, 0, 0.08), 0 0 0 1px var(--color-focus-ring),
     0 0 16px -4px rgba(133, 63, 244, 0.28);

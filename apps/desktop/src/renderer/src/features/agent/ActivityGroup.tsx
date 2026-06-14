@@ -56,7 +56,7 @@ export function ThoughtRow({ text, streaming = false }: { text: string; streamin
         {streaming ? <ShinyText>{label}</ShinyText> : <span>{label}</span>}
       </button>
       <CollapsibleMotion open={open} preset="timeline">
-        <pre className="scroll-thin mt-1 max-h-44 max-w-full overflow-x-auto overflow-y-auto whitespace-pre-wrap pl-4 font-mono text-2xs text-fg-faint leading-relaxed">
+        <pre className="scroll-thin mt-1 max-h-44 max-w-full overflow-x-auto overflow-y-auto whitespace-pre-wrap font-mono text-2xs text-fg-faint leading-relaxed">
           {text}
         </pre>
       </CollapsibleMotion>
@@ -114,6 +114,7 @@ export const ActivityGroup = memo(function ActivityGroup({
 
   // Stick the live viewport to the bottom so the newest line stays in view.
   const signature = streamLength(items);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: signature is the content-growth signal that should retrigger the scroll; the node is read via ref.
   useLayoutEffect(() => {
     if (active && open && viewportRef.current) {
       viewportRef.current.scrollTop = viewportRef.current.scrollHeight;
@@ -160,7 +161,7 @@ export const ActivityGroup = memo(function ActivityGroup({
       <CollapsibleMotion open={open} preset="timeline">
         <div
           className={cn(
-            "space-y-1 pt-0.5 pb-1.5 pl-5",
+            "space-y-1 pt-0.5 pb-1.5",
             active
               ? "activity-fade max-h-[200px] overflow-hidden"
               : "scroll-thin max-h-96 overflow-y-auto",

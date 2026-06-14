@@ -230,7 +230,7 @@ function UserMessageEditor({
     <m.div
       animate={{ opacity: 1, scale: 1 }}
       className={cn(
-        "rounded-[14px] border border-hairline-soft bg-surface px-4 pt-3 pb-2.5 shadow-composer",
+        "rounded-[14px] border border-composer-border bg-surface px-4 pt-3 pb-2.5 shadow-composer-edge",
         "transition-[border-color,box-shadow] duration-150",
         !sending && "focus-within:border-focus-ring focus-within:shadow-composer-focus",
       )}
