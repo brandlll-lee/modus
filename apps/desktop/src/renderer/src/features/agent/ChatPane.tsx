@@ -11,6 +11,7 @@ import {
 import type {
   AgentEvent,
   AgentSessionInfo,
+  BrowserEvent,
   ContextItem,
   ContextUsageInfo,
   ModelInfo,
@@ -113,6 +114,26 @@ export function ChatPane({
     },
     [],
   );
+
+  // Design Mode (in-app browser) → the selected element lands in the composer
+  // context as a removable thumbnail + chip, de-duplicated by its id.
+  useEffect(() => {
+    const wsId = workspace?.id;
+    if (!wsId) {
+      return undefined;
+    }
+    return window.modus.browser.onEvent((event: BrowserEvent) => {
+      if (event.type === "browser.design-select" && event.workspaceId === wsId) {
+        setContextItems((items) =>
+          items.some(
+            (item) => item.type === "design-element" && item.element.id === event.element.id,
+          )
+            ? items
+            : [...items, { type: "design-element", element: event.element }],
+        );
+      }
+    });
+  }, [workspace?.id]);
 
   const flushQueued = useCallback((): void => {
     flushTimerRef.current = undefined;
@@ -284,14 +305,40 @@ export function ChatPane({
     shouldFollowRef.current = true;
     setPromptError(undefined);
     setPendingPrompt(true);
+    // Design-element context carries an element screenshot. Send it to the model
+    // as an image attachment (so it can see the element), and strip the heavy
+    // base64 out of the text context payload so it only travels once.
+    const designAttachments: PromptImageAttachment[] = [];
+    for (const item of context) {
+      if (item.type !== "design-element" || !item.element.screenshotDataUrl) {
+        continue;
+      }
+      const match = /^data:(.+?);base64,(.*)$/.exec(item.element.screenshotDataUrl);
+      const mimeType = match?.[1];
+      const data = match?.[2];
+      if (mimeType && data) {
+        designAttachments.push({
+          type: "image",
+          data,
+          mimeType,
+          name: `${item.element.label}.png`,
+        });
+      }
+    }
+    const mergedAttachments = [...(attachments ?? []), ...designAttachments];
+    const leanContext = context.map((item) =>
+      item.type === "design-element"
+        ? { ...item, element: { ...item.element, screenshotDataUrl: undefined } }
+        : item,
+    );
     void window.modus.agent
       .prompt({
-        context,
+        context: leanContext,
         delivery,
         sessionId,
         message,
         userMessageId: `local-user:${crypto.randomUUID()}`,
-        ...(attachments && attachments.length > 0 ? { attachments } : {}),
+        ...(mergedAttachments.length > 0 ? { attachments: mergedAttachments } : {}),
         ...(skills && skills.length > 0 ? { skills } : {}),
       })
       .then(() => onSessionsChanged())

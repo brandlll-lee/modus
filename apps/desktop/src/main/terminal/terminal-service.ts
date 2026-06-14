@@ -2,7 +2,7 @@ import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { delimiter, join } from "node:path";
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, type BrowserWindow as BrowserWindowType } from "electron";
 import type {
   TerminalEvent,
   TerminalInfo,
@@ -37,7 +37,7 @@ const persistTimers = new Map<string, ReturnType<typeof setTimeout>>();
 let host: ChildProcessWithoutNullStreams | undefined;
 let hostBuffer = "";
 /** Last window that touched the terminal system; agent-run terminals emit here. */
-let lastWindow: BrowserWindow | undefined;
+let lastWindow: BrowserWindowType | undefined;
 
 const MAX_OUTPUT_BYTES = 64 * 1024;
 /** Cap retained exited terminals so agent history doesn't grow unbounded. */
@@ -111,7 +111,7 @@ function resolveSidecarPath(): string {
 }
 
 /** Best window to deliver terminal events to (single-window app). */
-function targetWindow(explicit?: BrowserWindow): BrowserWindow | undefined {
+function targetWindow(explicit?: BrowserWindowType): BrowserWindowType | undefined {
   if (explicit && !explicit.isDestroyed()) {
     return explicit;
   }
@@ -121,7 +121,7 @@ function targetWindow(explicit?: BrowserWindow): BrowserWindow | undefined {
   return BrowserWindow.getAllWindows().find((window) => !window.isDestroyed());
 }
 
-function emit(event: TerminalEvent, explicit?: BrowserWindow): void {
+function emit(event: TerminalEvent, explicit?: BrowserWindowType): void {
   const window = targetWindow(explicit);
   if (window) {
     window.webContents.send(IPC_CHANNELS.terminalEvent, event);
@@ -256,7 +256,7 @@ function handleHostEvent(event: HostEvent): void {
   }
 }
 
-function ensureHost(window?: BrowserWindow): ChildProcessWithoutNullStreams {
+function ensureHost(window?: BrowserWindowType): ChildProcessWithoutNullStreams {
   if (window && !window.isDestroyed()) {
     lastWindow = window;
   }
@@ -319,7 +319,7 @@ type SpawnTerminalInput = {
   title?: string;
   sessionId?: string;
   args?: string[];
-  window?: BrowserWindow;
+  window?: BrowserWindowType;
 };
 
 /** Shared spawn path for both interactive shells and agent-run commands. */
@@ -360,7 +360,7 @@ function spawnTerminal(input: SpawnTerminalInput): TerminalRecord {
 }
 
 export function createTerminal(
-  window: BrowserWindow,
+  window: BrowserWindowType,
   input: { workspaceId: string; cwd: string; cols?: number; rows?: number; sessionId?: string },
 ): TerminalInfo {
   const record = spawnTerminal({
@@ -439,7 +439,7 @@ export async function runAgentCommand(input: {
   cols?: number;
   rows?: number;
   outputBytes?: number;
-  window?: BrowserWindow;
+  window?: BrowserWindowType;
 }): Promise<RunCommandResult> {
   const shell = defaultShell();
   const record = spawnTerminal({

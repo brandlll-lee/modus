@@ -1,7 +1,8 @@
 import type { ToolCallEvent } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 import type { ToolCatalogEntry } from "../../../shared/tools";
-import { ToolRegistry } from "./registry";
+import { registerBrowserTools } from "./browser-tools";
+import { ToolRegistry, toolRegistry } from "./registry";
 
 function toolEvent(toolName: string, input: Record<string, unknown>): ToolCallEvent {
   return { type: "tool_call", toolCallId: "t1", toolName, input } as ToolCallEvent;
@@ -45,6 +46,36 @@ describe("ToolRegistry custom tools", () => {
     expect(registry.getCustomToolDefinitions("chat")).toContain(definition);
     expect(registry.resolveActiveTools("review")).not.toContain("demo");
     expect(registry.getCustomToolDefinitions("review")).not.toContain(definition);
+  });
+
+  it("rejects a registered tool's execute promptly when its abort signal fires", async () => {
+    const registry = new ToolRegistry();
+    // A tool whose work never settles on its own — only an abort can end it.
+    const hang = new Promise<{ output: string }>(() => {});
+    registry.registerTool({
+      entry: {
+        name: "slow",
+        profiles: ["chat"],
+        permission: { danger: "safe" },
+        ui: { iconName: "tool", verb: "Slow", mono: false },
+      },
+      definition: { name: "slow", execute: () => hang } as never,
+    });
+
+    const [wrapped] = registry.getCustomToolDefinitions("chat") as Array<{
+      execute: (
+        id: string,
+        params: unknown,
+        signal: AbortSignal,
+        onUpdate: undefined,
+        ctx: unknown,
+      ) => Promise<unknown>;
+    }>;
+    const controller = new AbortController();
+    const pending = wrapped!.execute("call-1", {}, controller.signal, undefined, {});
+    controller.abort();
+
+    await expect(pending).rejects.toThrow(/aborted/i);
   });
 
   it("applies a custom dynamic classifier for a registered tool", () => {
@@ -117,5 +148,34 @@ describe("ToolRegistry classify", () => {
       dangerous: true,
     });
     expect(registry.classify(toolEvent("unknown_tool", {})).dangerous).toBe(false);
+  });
+});
+
+describe("Browser tool permissions", () => {
+  it("registers Cursor-compatible browser tools with read-only and control gating", () => {
+    registerBrowserTools();
+
+    expect(toolRegistry.getEntry("browser_tabs")).toBeDefined();
+    expect(toolRegistry.getEntry("browser_click")).toBeDefined();
+    expect(toolRegistry.classify(toolEvent("browser_snapshot", {}))).toEqual({
+      action: "browser.control",
+      dangerous: false,
+    });
+    expect(toolRegistry.classify(toolEvent("browser_console_messages", {}))).toEqual({
+      action: "browser.control",
+      dangerous: false,
+    });
+    expect(toolRegistry.classify(toolEvent("browser_tabs", { action: "list" }))).toEqual({
+      action: "browser.control",
+      dangerous: false,
+    });
+    expect(toolRegistry.classify(toolEvent("browser_click", { ref: "ref-1" }))).toEqual({
+      action: "browser.control",
+      dangerous: true,
+    });
+    expect(toolRegistry.classify(toolEvent("browser_tabs", { action: "new" }))).toEqual({
+      action: "browser.control",
+      dangerous: true,
+    });
   });
 });

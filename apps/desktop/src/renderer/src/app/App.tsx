@@ -31,7 +31,9 @@ import type {
   WorkspaceInfo,
 } from "../../../shared/contracts";
 import modusLogo from "../assets/modus-logo.png";
-import { Sidebar } from "../components/Sidebar";
+import { SIDEBAR_MIN_WIDTH, Sidebar } from "../components/Sidebar";
+import { ImageViewerProvider } from "../components/ui/ImageViewer";
+import { NativeSurfaceProvider } from "../components/ui/nativeSurface";
 import { ToolbarButton } from "../components/ui/ToolbarButton";
 import { TooltipProvider } from "../components/ui/Tooltip";
 import {
@@ -42,9 +44,16 @@ import {
 } from "../features/agent/agentEventHub";
 import { ChatPane } from "../features/agent/ChatPane";
 import { Composer } from "../features/composer/Composer";
-import { Inspector } from "../features/inspector/Inspector";
+import { INSPECTOR_MIN_WIDTH, Inspector } from "../features/inspector/Inspector";
 import { SettingsPanel } from "../features/settings/SettingsPanel";
 import { cn } from "../lib/cn";
+
+/**
+ * Floor the main column keeps no matter how wide the side panels get. The
+ * sidebar/inspector resize (and any programmatic width change) is clamped so
+ * this is always reserved — the chat can't be crushed to an unreadable sliver.
+ */
+const MAIN_MIN_WIDTH = 480;
 
 export function App() {
   const [securityState, setSecurityState] = useState<SecurityState | null>(null);
@@ -67,9 +76,29 @@ export function App() {
   const [inspectorWidth, setInspectorWidth] = useState(384);
   const [environmentStats, setEnvironmentStats] = useState({ added: 0, removed: 0 });
   const [sessionCreateError, setSessionCreateError] = useState<string | undefined>();
+  const [layoutWidth, setLayoutWidth] = useState(0);
 
   const hubRef = useRef(new AgentEventHub());
   const activeSessionIdRef = useRef<string | undefined>(undefined);
+  const layoutRowRef = useRef<HTMLDivElement>(null);
+
+  // Track the panel row's live width so side-panel widths can be clamped to keep
+  // the main column at least MAIN_MIN_WIDTH (responsive to window + panel state).
+  useEffect(() => {
+    const row = layoutRowRef.current;
+    if (!row) {
+      return;
+    }
+    setLayoutWidth(row.clientWidth);
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width;
+      if (width) {
+        setLayoutWidth(width);
+      }
+    });
+    observer.observe(row);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     activeSessionIdRef.current = activeSessionId;
@@ -315,6 +344,32 @@ export function App() {
     ? (activityBySession[activeSession.id]?.running ?? false)
     : false;
 
+  // Each panel may grow only until the OTHER panel + main's reserved floor are
+  // accounted for. Until the row is measured, allow the panels' own caps.
+  const sidebarSpace = sidebarOpen ? sidebarWidth : 0;
+  const inspectorSpace = hasSession && inspectorOpen ? inspectorWidth : 0;
+  const sidebarMaxWidth =
+    layoutWidth > 0
+      ? Math.max(SIDEBAR_MIN_WIDTH, layoutWidth - inspectorSpace - MAIN_MIN_WIDTH)
+      : Number.POSITIVE_INFINITY;
+  const inspectorMaxWidth =
+    layoutWidth > 0
+      ? Math.max(INSPECTOR_MIN_WIDTH, layoutWidth - sidebarSpace - MAIN_MIN_WIDTH)
+      : Number.POSITIVE_INFINITY;
+
+  // When the window (or the other panel) shrinks, pull an over-wide panel back
+  // in so the main column never drops below its floor.
+  useEffect(() => {
+    if (sidebarWidth > sidebarMaxWidth) {
+      setSidebarWidth(sidebarMaxWidth);
+    }
+  }, [sidebarWidth, sidebarMaxWidth]);
+  useEffect(() => {
+    if (inspectorWidth > inspectorMaxWidth) {
+      setInspectorWidth(inspectorMaxWidth);
+    }
+  }, [inspectorWidth, inspectorMaxWidth]);
+
   useEffect(() => {
     // activeRunning gates nothing but re-runs the poll whenever the active
     // agent starts/stops — its edits have just landed when it stops.
@@ -345,170 +400,185 @@ export function App() {
   return (
     <LazyMotion features={domAnimation} strict>
       <TooltipProvider>
-        <div className="app-root flex h-screen flex-col bg-canvas text-fg">
-          <MenuBar />
+        <NativeSurfaceProvider>
+          <ImageViewerProvider>
+            <div className="app-root flex h-screen flex-col bg-canvas text-fg">
+              <MenuBar />
 
-          <div className="flex min-h-0 flex-1">
-            {settingsOpen ? (
-              <SettingsPanel
-                onClose={() => setSettingsOpen(false)}
-                onRefresh={() => void refreshModelSettings()}
-                open
-                state={modelSettings}
-                workspaceCwd={activeWorkspace?.rootPath}
-              />
-            ) : (
-              <>
-                <Sidebar
-                  activeWorkspace={activeWorkspace}
-                  activityBySession={activityBySession}
-                  agentSessions={agentSessions}
-                  canCreateSession={canCreateSession}
-                  onArchiveSession={(session) => void archiveSession(session)}
-                  onNewSession={() => void createSession(activeWorkspace)}
-                  onNewWorkspaceSession={(workspace) => void createSession(workspace)}
-                  onOpenChange={setSidebarOpen}
-                  onOpenWorkspace={() => void openWorkspace()}
-                  onOpenSettings={() => setSettingsOpen(true)}
-                  onSelectSession={selectSession}
-                  onSelectWorkspace={setActiveWorkspace}
-                  onWidthChange={setSidebarWidth}
-                  activeSessionId={activeSessionId}
-                  open={sidebarOpen}
-                  width={sidebarWidth}
-                  workspaces={workspaces}
-                />
-
-                <main className="relative flex min-w-0 flex-1 flex-col bg-canvas">
-                  <header className="relative flex h-9 shrink-0 items-center px-3">
-                    <div className="app-no-drag flex flex-1 items-center gap-1.5">
-                      <AnimatePresence initial={false}>
-                        {!sidebarOpen ? (
-                          <m.div
-                            animate={{ opacity: 1, width: "auto" }}
-                            className="overflow-hidden"
-                            exit={{ opacity: 0, width: 0 }}
-                            initial={{ opacity: 0, width: 0 }}
-                            transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-                          >
-                            <ToolbarButton
-                              label="Show left sidebar"
-                              onClick={() => setSidebarOpen(true)}
-                            >
-                              <IconLayoutSidebar size={15} stroke={1.65} />
-                            </ToolbarButton>
-                          </m.div>
-                        ) : null}
-                      </AnimatePresence>
-                      {!hasSession ? <ChatTopBar activeWorkspace={activeWorkspace} /> : null}
-                    </div>
-                    <div className="flex flex-1 items-center justify-end pr-2">
-                      <HeaderActions
-                        activeWorkspace={activeWorkspace}
-                        environmentStats={environmentStats}
-                        inspectorOpen={inspectorOpen}
-                        onToggleInspector={() => setInspectorOpen((open) => !open)}
-                      />
-                    </div>
-                  </header>
-
-                  {sessionCreateError ? (
-                    <div className="mx-6 mb-2 rounded-md border border-danger/30 bg-danger/8 px-3 py-2 text-xs text-danger">
-                      {sessionCreateError}
-                    </div>
-                  ) : null}
-
-                  <AnimatePresence initial={false} mode="wait">
-                    {activeSession ? (
-                      <m.div
-                        animate={{ opacity: 1 }}
-                        className="flex min-h-0 flex-1"
-                        exit={{ opacity: 0 }}
-                        initial={{ opacity: 0 }}
-                        key="conversation"
-                        transition={{ duration: 0.12, ease: "easeOut" }}
-                      >
-                        <ChatPane
-                          contextUsage={contextUsageBySession[activeSession.id]}
-                          defaultModel={model}
-                          hub={hubRef.current}
-                          key={activeSession.id}
-                          models={models}
-                          onModelChange={setModel}
-                          onModelConfigChange={(next, thinkingLevel) =>
-                            void updateModelThinking(next, thinkingLevel)
-                          }
-                          onOpenReview={() => setInspectorOpen(true)}
-                          onSessionsChanged={() => void refreshSessions()}
-                          session={activeSession}
-                          workspace={
-                            workspaceById.get(activeSession.workspaceId) ?? activeWorkspace
-                          }
-                        />
-                      </m.div>
-                    ) : (
-                      <m.div
-                        animate={{ opacity: 1 }}
-                        className="flex min-h-0 flex-1 flex-col items-center justify-center px-6"
-                        exit={{ opacity: 0 }}
-                        initial={{ opacity: 0 }}
-                        key="hero"
-                        transition={{ duration: 0.12, ease: "easeOut" }}
-                      >
-                        <div className="w-full max-w-[680px] -translate-y-8">
-                          <Composer
-                            canSubmit={canCreateSession}
-                            contextItems={heroContextItems}
-                            cwd={activeWorkspace?.rootPath}
-                            hasSession={false}
-                            model={model}
-                            models={models}
-                            onContextChange={setHeroContextItems}
-                            onModelChange={(next) => void changeDefaultModel(next)}
-                            onModelConfigChange={(next, thinkingLevel) =>
-                              void updateModelThinking(next, thinkingLevel)
-                            }
-                            onSubmit={(message, context, delivery, attachments, skills) =>
-                              void submitHeroPrompt(message, context, delivery, attachments, skills)
-                            }
-                            workspaceId={activeWorkspace?.id}
-                          />
-                          <div className="mt-4 flex items-center justify-center gap-2">
-                            <Pill
-                              disabled={!activeWorkspace}
-                              onClick={() => void createSession(activeWorkspace)}
-                              shortcut="⌥Tab"
-                            >
-                              Plan New Idea
-                            </Pill>
-                            <Pill onClick={() => setSettingsOpen(true)}>Use Your Model</Pill>
-                          </div>
-                        </div>
-                        <p className="absolute bottom-5 text-xs font-normal text-fg-faint">
-                          Bring your own model to Modus for local, private, context-aware agent
-                          work.
-                        </p>
-                      </m.div>
-                    )}
-                  </AnimatePresence>
-                </main>
-
-                {hasSession ? (
-                  <Inspector
-                    activeWorkspace={activeWorkspace}
-                    cwd={activeCwd}
-                    sessionId={activeSession?.id}
-                    onOpenChange={setInspectorOpen}
-                    onWidthChange={setInspectorWidth}
-                    open={inspectorOpen}
-                    securityState={securityState}
-                    width={inspectorWidth}
+              <div className="flex min-h-0 flex-1" ref={layoutRowRef}>
+                {settingsOpen ? (
+                  <SettingsPanel
+                    onClose={() => setSettingsOpen(false)}
+                    onRefresh={() => void refreshModelSettings()}
+                    open
+                    state={modelSettings}
+                    workspaceCwd={activeWorkspace?.rootPath}
                   />
-                ) : null}
-              </>
-            )}
-          </div>
-        </div>
+                ) : (
+                  <>
+                    <Sidebar
+                      activeWorkspace={activeWorkspace}
+                      activityBySession={activityBySession}
+                      agentSessions={agentSessions}
+                      canCreateSession={canCreateSession}
+                      onArchiveSession={(session) => void archiveSession(session)}
+                      onNewSession={() => void createSession(activeWorkspace)}
+                      onNewWorkspaceSession={(workspace) => void createSession(workspace)}
+                      onOpenChange={setSidebarOpen}
+                      onOpenWorkspace={() => void openWorkspace()}
+                      onOpenSettings={() => setSettingsOpen(true)}
+                      onSelectSession={selectSession}
+                      onSelectWorkspace={setActiveWorkspace}
+                      onWidthChange={setSidebarWidth}
+                      activeSessionId={activeSessionId}
+                      maxWidth={sidebarMaxWidth}
+                      open={sidebarOpen}
+                      width={sidebarWidth}
+                      workspaces={workspaces}
+                    />
+
+                    <main
+                      className="relative flex flex-1 flex-col bg-canvas"
+                      style={{ minWidth: MAIN_MIN_WIDTH }}
+                    >
+                      <header className="relative flex h-9 shrink-0 items-center px-3">
+                        <div className="app-no-drag flex flex-1 items-center gap-1.5">
+                          <AnimatePresence initial={false}>
+                            {!sidebarOpen ? (
+                              <m.div
+                                animate={{ opacity: 1, width: "auto" }}
+                                className="overflow-hidden"
+                                exit={{ opacity: 0, width: 0 }}
+                                initial={{ opacity: 0, width: 0 }}
+                                transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+                              >
+                                <ToolbarButton
+                                  label="Show left sidebar"
+                                  onClick={() => setSidebarOpen(true)}
+                                >
+                                  <IconLayoutSidebar size={15} stroke={1.65} />
+                                </ToolbarButton>
+                              </m.div>
+                            ) : null}
+                          </AnimatePresence>
+                          {!hasSession ? <ChatTopBar activeWorkspace={activeWorkspace} /> : null}
+                        </div>
+                        <div className="flex flex-1 items-center justify-end pr-2">
+                          <HeaderActions
+                            activeWorkspace={activeWorkspace}
+                            environmentStats={environmentStats}
+                            inspectorOpen={inspectorOpen}
+                            onToggleInspector={() => setInspectorOpen((open) => !open)}
+                          />
+                        </div>
+                      </header>
+
+                      {sessionCreateError ? (
+                        <div className="mx-6 mb-2 rounded-md border border-danger/30 bg-danger/8 px-3 py-2 text-xs text-danger">
+                          {sessionCreateError}
+                        </div>
+                      ) : null}
+
+                      <AnimatePresence initial={false} mode="wait">
+                        {activeSession ? (
+                          <m.div
+                            animate={{ opacity: 1 }}
+                            className="flex min-h-0 flex-1"
+                            exit={{ opacity: 0 }}
+                            initial={{ opacity: 0 }}
+                            key="conversation"
+                            transition={{ duration: 0.12, ease: "easeOut" }}
+                          >
+                            <ChatPane
+                              contextUsage={contextUsageBySession[activeSession.id]}
+                              defaultModel={model}
+                              hub={hubRef.current}
+                              key={activeSession.id}
+                              models={models}
+                              onModelChange={setModel}
+                              onModelConfigChange={(next, thinkingLevel) =>
+                                void updateModelThinking(next, thinkingLevel)
+                              }
+                              onOpenReview={() => setInspectorOpen(true)}
+                              onSessionsChanged={() => void refreshSessions()}
+                              session={activeSession}
+                              workspace={
+                                workspaceById.get(activeSession.workspaceId) ?? activeWorkspace
+                              }
+                            />
+                          </m.div>
+                        ) : (
+                          <m.div
+                            animate={{ opacity: 1 }}
+                            className="flex min-h-0 flex-1 flex-col items-center justify-center px-6"
+                            exit={{ opacity: 0 }}
+                            initial={{ opacity: 0 }}
+                            key="hero"
+                            transition={{ duration: 0.12, ease: "easeOut" }}
+                          >
+                            <div className="w-full max-w-[680px] -translate-y-8">
+                              <Composer
+                                canSubmit={canCreateSession}
+                                contextItems={heroContextItems}
+                                cwd={activeWorkspace?.rootPath}
+                                hasSession={false}
+                                model={model}
+                                models={models}
+                                onContextChange={setHeroContextItems}
+                                onModelChange={(next) => void changeDefaultModel(next)}
+                                onModelConfigChange={(next, thinkingLevel) =>
+                                  void updateModelThinking(next, thinkingLevel)
+                                }
+                                onSubmit={(message, context, delivery, attachments, skills) =>
+                                  void submitHeroPrompt(
+                                    message,
+                                    context,
+                                    delivery,
+                                    attachments,
+                                    skills,
+                                  )
+                                }
+                                workspaceId={activeWorkspace?.id}
+                              />
+                              <div className="mt-4 flex items-center justify-center gap-2">
+                                <Pill
+                                  disabled={!activeWorkspace}
+                                  onClick={() => void createSession(activeWorkspace)}
+                                  shortcut="⌥Tab"
+                                >
+                                  Plan New Idea
+                                </Pill>
+                                <Pill onClick={() => setSettingsOpen(true)}>Use Your Model</Pill>
+                              </div>
+                            </div>
+                            <p className="absolute bottom-5 text-xs font-normal text-fg-faint">
+                              Bring your own model to Modus for local, private, context-aware agent
+                              work.
+                            </p>
+                          </m.div>
+                        )}
+                      </AnimatePresence>
+                    </main>
+
+                    {hasSession ? (
+                      <Inspector
+                        activeWorkspace={activeWorkspace}
+                        cwd={activeCwd}
+                        sessionId={activeSession?.id}
+                        maxWidth={inspectorMaxWidth}
+                        onOpenChange={setInspectorOpen}
+                        onWidthChange={setInspectorWidth}
+                        open={inspectorOpen}
+                        securityState={securityState}
+                        width={inspectorWidth}
+                      />
+                    ) : null}
+                  </>
+                )}
+              </div>
+            </div>
+          </ImageViewerProvider>
+        </NativeSurfaceProvider>
       </TooltipProvider>
     </LazyMotion>
   );

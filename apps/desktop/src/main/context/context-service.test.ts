@@ -48,4 +48,32 @@ describe("context-service", () => {
     expect(resolved[0]?.content).toContain("Status");
     expect(resolved[0]?.content).toContain("Diff stat");
   });
+
+  it("formats a design-element with its component and source line for the model", async () => {
+    const resolved = await resolveContext(repo, [
+      {
+        type: "design-element",
+        element: {
+          id: "el-1",
+          tabId: "tab-1",
+          url: "https://example.com/docs",
+          label: 'MDXContent · span "Kimi K2.7 Co…"',
+          tagName: "span",
+          componentName: "MDXContent",
+          source: { file: "src/content/page.mdx", line: 42, column: 7 },
+          domPath: "main > article > p:nth-of-type(2) > span",
+          text: "Kimi K2.7 Code is…",
+          styleSummary: { color: "rgb(156, 163, 175)", fontSize: "16px" },
+          rect: { x: 10, y: 20, width: 300, height: 24 },
+          screenshotDataUrl: "data:image/png;base64,AAAA",
+        },
+      },
+    ]);
+
+    const content = resolved[0]?.content ?? "";
+    expect(content).toContain("MDXContent");
+    expect(content).toContain("src/content/page.mdx:42:7");
+    expect(content).toContain("<span>");
+    expect(content).toContain("A screenshot of this element is attached");
+  });
 });

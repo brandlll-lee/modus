@@ -157,6 +157,12 @@ export type AgentEvent =
       role: "assistant" | "user";
       /** Images the user attached to this message (user role only). */
       attachments?: PromptImageAttachment[];
+      /**
+       * User only: context the prompt carried (file/element/browser/…), shown
+       * as removable-looking chips in the message bubble so the sent context
+       * stays visible after sending (Cursor parity).
+       */
+      contextChips?: MessageContextChip[];
     }
   | { type: "message.delta"; sessionId: string; messageId: string; delta: string }
   | { type: "message.completed"; sessionId: string; messageId: string }
@@ -297,7 +303,8 @@ export type PermissionAction =
   | "file.delete"
   | "git.write"
   | "mcp.call"
-  | "external.open";
+  | "external.open"
+  | "browser.control";
 
 export type PermissionDecision = {
   id: string;
@@ -306,6 +313,13 @@ export type PermissionDecision = {
   decision: "allow-once" | "allow-workspace" | "deny";
   createdAt: string;
 };
+
+/**
+ * Global approval mode chosen in the composer. Collapses Codex's
+ * approval×sandbox preset into a single "when to prompt" axis (Modus has no OS
+ * sandbox): the decision logic + per-mode metadata live in `shared/approval.ts`.
+ */
+export type ApprovalMode = "request-approval" | "auto" | "full-access";
 
 /** Branch / remote / sync state for the git review panel header + commit dialog. */
 export type GitStatusSummary = {
@@ -372,22 +386,84 @@ export type ContextKind =
   | "folder"
   | "doc"
   | "terminal"
+  | "browser"
   | "git-diff"
   | "project-summary"
   | "recent-changes"
   | "rules"
-  | "search";
+  | "search"
+  | "design-element";
 
 export type ContextItem =
   | { type: "file"; path: string }
   | { type: "folder"; path: string }
   | { type: "doc"; docId: string; title: string; query?: string }
   | { type: "terminal"; terminalId: string; range?: { fromLine?: number; toLine?: number } }
+  | { type: "browser"; workspaceId?: string; viewId?: string }
   | { type: "git-diff"; mode: "working-state" | "branch"; base?: string }
   | { type: "project-summary" }
   | { type: "recent-changes"; limit?: number }
   | { type: "rules" }
-  | { type: "search"; query: string };
+  | { type: "search"; query: string }
+  /**
+   * A page element captured from the in-app browser's Design Mode (point-and-
+   * select). Self-contained: the payload is a point-in-time snapshot of the
+   * element (the live page may have changed by the time the agent reads it), so
+   * unlike file/doc refs it is NOT re-resolved from an id — `resolveContext`
+   * just formats `element` into model-readable text.
+   */
+  | { type: "design-element"; element: DesignElementPayload };
+
+/**
+ * A point-in-time capture of a DOM element selected via the browser's Design
+ * Mode. Built in the page (identity/source via React fiber `_debugSource`,
+ * with a DOM-path fallback) + main process (element-clipped screenshot), then
+ * carried verbatim into the chat composer as a removable chip + thumbnail.
+ */
+export type DesignElementPayload = {
+  /** Stable id for de-dup / removal in the composer. */
+  id: string;
+  /** Browser tab the element was captured from. */
+  tabId: string;
+  /** Page URL at capture time. */
+  url: string;
+  /** Chip label, e.g. `MDXContent · span "Kimi K2.7 Co…"`. */
+  label: string;
+  /** Lowercased tag name, e.g. "span". */
+  tagName: string;
+  /** React component display name (fiber `_debugOwner`), when resolvable. */
+  componentName?: string;
+  /** Source location from React fiber `_debugSource` (dev builds only). */
+  source?: { file: string; line: number; column?: number };
+  /** Stable CSS selector — the universal fallback when there's no source map. */
+  domPath: string;
+  /** Truncated visible text. */
+  text?: string;
+  /** A few salient computed styles (color/font/spacing/layout…) for the model. */
+  styleSummary?: Record<string, string>;
+  /**
+   * Salient HTML attributes (id, class, href, role, aria-*, type, name, alt,
+   * title, placeholder, value, data-*…) — Cursor parity for element identity.
+   */
+  attributes?: Record<string, string>;
+  /**
+   * Ancestor chain (nearest first, ~4 levels), giving the element's position in
+   * the page structure: tag + id + classes + role + short text per level.
+   */
+  ancestors?: Array<{
+    tag: string;
+    id?: string;
+    classes?: string;
+    role?: string;
+    text?: string;
+  }>;
+  /** Serializable React props from the element's host fiber (primitives only). */
+  props?: Record<string, string>;
+  /** Element bounding box in CSS pixels (root viewport). */
+  rect: { x: number; y: number; width: number; height: number };
+  /** Element-clipped screenshot as a data URL (PNG). Shown as a thumbnail. */
+  screenshotDataUrl?: string;
+};
 
 export type ContextSuggestion = {
   id: string;
@@ -397,10 +473,107 @@ export type ContextSuggestion = {
   item: ContextItem;
 };
 
+/**
+ * A compact, display-only summary of one context item, attached to a sent user
+ * message so its chips persist in the timeline bubble (the full `ContextItem`
+ * is resolved server-side and not needed for rendering).
+ */
+export type MessageContextChip = {
+  kind: ContextKind;
+  /** Primary chip text, e.g. `MDXContent · div "pip install…"` or `app.tsx`. */
+  label: string;
+  /** Secondary hover detail, e.g. `src/app.tsx:42` for a design element. */
+  detail?: string;
+};
+
 export type ResolvedContext = {
   item: ContextItem;
   title: string;
   content: string;
+};
+
+/* ── Browser (Cursor-compatible in-app browser) ───────────────────────── */
+
+export type BrowserTabInfo = {
+  id: string;
+  workspaceId: string;
+  url: string;
+  title: string;
+  loading: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  devtoolsOpen: boolean;
+  locked: boolean;
+  createdAt: string;
+  updatedAt: string;
+  favicon?: string;
+};
+
+export type BrowserEvent =
+  | { type: "browser.created"; tab: BrowserTabInfo }
+  | { type: "browser.updated"; tab: BrowserTabInfo }
+  | { type: "browser.closed"; workspaceId: string; tabId: string }
+  | { type: "browser.selected"; workspaceId: string; tabId: string }
+  | {
+      type: "browser.find-result";
+      workspaceId: string;
+      tabId: string;
+      matches: number;
+      activeMatchOrdinal: number;
+      finalUpdate: boolean;
+    }
+  | {
+      /** Keyboard shortcut captured inside the page that the UI must act on. */
+      type: "browser.shortcut";
+      workspaceId: string;
+      tabId: string;
+      shortcut: "focus-address" | "find" | "toggle-design";
+    }
+  | {
+      /** Design Mode toggled (from the toolbar, a shortcut, or page-side). */
+      type: "browser.design-mode-changed";
+      workspaceId: string;
+      tabId: string;
+      enabled: boolean;
+    }
+  | {
+      /** User selected an element in Design Mode and asked to add it to chat. */
+      type: "browser.design-select";
+      workspaceId: string;
+      tabId: string;
+      element: DesignElementPayload;
+    };
+
+export type BrowserBounds = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+export type BrowserConsoleMessage = {
+  id: string;
+  tabId: string;
+  level: "debug" | "info" | "warning" | "error";
+  text: string;
+  url?: string;
+  line?: number;
+  column?: number;
+  createdAt: string;
+};
+
+export type BrowserNetworkRequest = {
+  id: string;
+  tabId: string;
+  method: string;
+  url: string;
+  status?: number;
+  statusText?: string;
+  resourceType?: string;
+  failed?: boolean;
+  errorText?: string;
+  startedAt: string;
+  completedAt?: string;
 };
 
 export type DocSource = {

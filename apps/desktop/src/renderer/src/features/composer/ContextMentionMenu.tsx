@@ -8,6 +8,7 @@ import {
   IconReportSearch,
   IconSearch,
   IconTerminal2,
+  IconWorld,
 } from "@tabler/icons-react";
 import type { ContextKind, ContextSuggestion } from "../../../../shared/contracts";
 import { cn } from "../../lib/cn";
@@ -29,6 +30,10 @@ function iconForType(type: ContextKind) {
 
   if (type === "terminal") {
     return <IconTerminal2 size={14} stroke={1.6} />;
+  }
+
+  if (type === "browser") {
+    return <IconWorld size={14} stroke={1.6} />;
   }
 
   if (type === "git-diff") {

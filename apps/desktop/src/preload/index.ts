@@ -1,6 +1,6 @@
 import type { IpcRendererEvent } from "electron";
 import { contextBridge, ipcRenderer } from "electron";
-import type { AgentEvent, TerminalEvent } from "../shared/contracts";
+import type { AgentEvent, BrowserEvent, TerminalEvent } from "../shared/contracts";
 import type { ModusApi, SecurityState } from "./types";
 
 const api: ModusApi = {
@@ -53,6 +53,30 @@ const api: ModusApi = {
       return () => ipcRenderer.removeListener("terminal:event", listener);
     },
   },
+  browser: {
+    listTabs: (input) => ipcRenderer.invoke("browser:list-tabs", input),
+    createTab: (input) => ipcRenderer.invoke("browser:create-tab", input),
+    selectTab: (input) => ipcRenderer.invoke("browser:select-tab", input),
+    closeTab: (input) => ipcRenderer.invoke("browser:close-tab", input),
+    navigate: (input) => ipcRenderer.invoke("browser:navigate", input),
+    back: (input) => ipcRenderer.invoke("browser:back", input),
+    forward: (input) => ipcRenderer.invoke("browser:forward", input),
+    reload: (input) => ipcRenderer.invoke("browser:reload", input),
+    setBounds: (input) => ipcRenderer.invoke("browser:set-bounds", input),
+    show: (input) => ipcRenderer.invoke("browser:show", input),
+    hide: (input) => ipcRenderer.invoke("browser:hide", input),
+    toggleDevtools: (input) => ipcRenderer.invoke("browser:toggle-devtools", input),
+    openExternal: (input) => ipcRenderer.invoke("browser:open-external", input),
+    setDesignMode: (input) => ipcRenderer.invoke("browser:design-mode", input),
+    find: (input) => ipcRenderer.invoke("browser:find", input),
+    findStop: (input) => ipcRenderer.invoke("browser:find-stop", input),
+    onEvent: (callback) => {
+      const listener = (_event: IpcRendererEvent, payload: unknown) =>
+        callback(payload as BrowserEvent);
+      ipcRenderer.on("browser:event", listener);
+      return () => ipcRenderer.removeListener("browser:event", listener);
+    },
+  },
   diff: {
     list: (cwd) => ipcRenderer.invoke("diff:list", cwd),
     read: (input) => ipcRenderer.invoke("diff:read", input),
@@ -77,6 +101,8 @@ const api: ModusApi = {
   permission: {
     decide: (input) => ipcRenderer.invoke("permission:decide", input),
     list: () => ipcRenderer.invoke("permission:list"),
+    getMode: () => ipcRenderer.invoke("permission:get-mode"),
+    setMode: (mode) => ipcRenderer.invoke("permission:set-mode", { mode }),
   },
   context: {
     search: (input) => ipcRenderer.invoke("context:search", input),

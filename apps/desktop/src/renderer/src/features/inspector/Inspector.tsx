@@ -6,6 +6,7 @@ import {
   IconShieldCheck,
   IconShieldX,
   IconTerminal2,
+  IconWorld,
 } from "@tabler/icons-react";
 import { animate, m, useMotionValue } from "motion/react";
 import { type PointerEvent, type ReactNode, useEffect, useRef, useState } from "react";
@@ -14,6 +15,7 @@ import type { WorkspaceInfo } from "../../../../shared/contracts";
 import { PanelHeader } from "../../components/ui/Panel";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
+import { BrowserPanel } from "../browser/BrowserPanel";
 import { DiffPanel } from "../diff/DiffPanel";
 import { TerminalPanel } from "../terminal/TerminalPanel";
 
@@ -24,17 +26,21 @@ type InspectorProps = {
   securityState: SecurityState | null;
   open: boolean;
   width: number;
+  /** Upper bound from App so the panel can't crush the main column's min width. */
+  maxWidth: number;
   onOpenChange(open: boolean): void;
   onWidthChange(width: number): void;
 };
 
-const INSPECTOR_MIN_WIDTH = 320;
-const INSPECTOR_MAX_WIDTH = 720;
+export const INSPECTOR_MIN_WIDTH = 320;
+const INSPECTOR_MAX_WIDTH = 1040;
+const INSPECTOR_BROWSER_PREFERRED_WIDTH = 760;
 const INSPECTOR_COLLAPSED_WIDTH = 0;
 const INSPECTOR_TRANSITION = { duration: 0.18, ease: [0.22, 1, 0.36, 1] } as const;
 
 const TABS = [
   { value: "changes", label: "Changes", icon: <IconGitBranch size={15} stroke={1.65} /> },
+  { value: "browser", label: "Browser", icon: <IconWorld size={15} stroke={1.65} /> },
   { value: "terminal", label: "Terminal", icon: <IconTerminal2 size={15} stroke={1.65} /> },
   { value: "security", label: "Security", icon: <IconShieldCheck size={15} stroke={1.65} /> },
 ];
@@ -46,6 +52,7 @@ export function Inspector({
   securityState,
   open,
   width,
+  maxWidth,
   onOpenChange,
   onWidthChange,
 }: InspectorProps) {
@@ -58,6 +65,12 @@ export function Inspector({
   // its heavy Timeline on every pointermove. open/close still animates smoothly;
   // the drag tracks the cursor 1:1 with no layout-property tween fighting it.
   const panelWidth = useMotionValue(open ? width : INSPECTOR_COLLAPSED_WIDTH);
+
+  useEffect(() => {
+    if (open && tab === "browser" && width < INSPECTOR_BROWSER_PREFERRED_WIDTH) {
+      onWidthChange(Math.min(INSPECTOR_MAX_WIDTH, maxWidth, INSPECTOR_BROWSER_PREFERRED_WIDTH));
+    }
+  }, [open, onWidthChange, tab, width, maxWidth]);
 
   // Drive the open/close animation and keep the motion value in sync when `width`
   // changes from a committed drag or an external update. We never re-animate while
@@ -98,6 +111,7 @@ export function Inspector({
     }
     const nextWidth = Math.min(
       INSPECTOR_MAX_WIDTH,
+      maxWidth,
       Math.max(
         INSPECTOR_MIN_WIDTH,
         dragStartRef.current.width + dragStartRef.current.x - event.clientX,
@@ -192,6 +206,9 @@ export function Inspector({
 
                 <Tabs.Panel className="min-h-0 flex-1 outline-none" value="changes">
                   <DiffPanel cwd={cwd} sessionId={sessionId} workspaceId={activeWorkspace?.id} />
+                </Tabs.Panel>
+                <Tabs.Panel className="min-h-0 flex-1 outline-none" keepMounted value="browser">
+                  <BrowserPanel active={tab === "browser"} workspaceId={activeWorkspace?.id} />
                 </Tabs.Panel>
                 <Tabs.Panel className="min-h-0 flex-1 outline-none" keepMounted value="terminal">
                   <TerminalPanel

@@ -20,5 +20,6 @@ describe("MCP tool UI metadata", () => {
     expect(getToolUiMeta("mcp_github_search")?.verb).toBe("github");
     expect(getToolUiMeta("bash")?.verb).toBe("Ran");
     expect(getToolUiMeta("terminal_run")?.verb).toBe("Terminal");
+    expect(getToolUiMeta("browser_navigate")?.verb).toBe("Navigated");
   });
 });

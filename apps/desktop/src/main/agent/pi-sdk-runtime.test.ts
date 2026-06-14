@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { BrowserWindow } from "electron";
+import type { BrowserWindow as BrowserWindowType } from "electron";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 let userData: string;
@@ -36,13 +36,13 @@ vi.mock("electron", () => ({
 }));
 
 /** Window stub: focused + alive, so background notifications never fire in tests. */
-function createWindowStub(): BrowserWindow {
+function createWindowStub(): BrowserWindowType {
   return {
     webContents: { send: vi.fn() },
     isDestroyed: () => false,
     isFocused: () => true,
     isMinimized: () => false,
-  } as unknown as BrowserWindow;
+  } as unknown as BrowserWindowType;
 }
 
 vi.mock("@earendil-works/pi-coding-agent", () => ({

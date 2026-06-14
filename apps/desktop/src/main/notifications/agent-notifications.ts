@@ -1,4 +1,4 @@
-import { type BrowserWindow, Notification } from "electron";
+import { type BrowserWindow as BrowserWindowType, Notification } from "electron";
 import type { AgentEvent } from "../../shared/contracts";
 import { getAgentSession } from "../agent/agent-store";
 import { IPC_CHANNELS } from "../ipc/channels";
@@ -9,7 +9,7 @@ import { IPC_CHANNELS } from "../ipc/channels";
  * notification focuses the window and asks the renderer to show that session.
  */
 
-function notify(window: BrowserWindow, sessionId: string, title: string, body: string): void {
+function notify(window: BrowserWindowType, sessionId: string, title: string, body: string): void {
   if (!Notification.isSupported()) {
     return;
   }
@@ -32,7 +32,7 @@ function notify(window: BrowserWindow, sessionId: string, title: string, body: s
  * Fire a system notification for lifecycle events the user should hear about
  * while Modus is not the focused window. Cheap no-op for every other event.
  */
-export function maybeNotifyAgentEvent(window: BrowserWindow, event: AgentEvent): void {
+export function maybeNotifyAgentEvent(window: BrowserWindowType, event: AgentEvent): void {
   if (
     event.type !== "run.completed" &&
     event.type !== "run.failed" &&

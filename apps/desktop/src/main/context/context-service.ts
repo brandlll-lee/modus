@@ -8,6 +8,7 @@ import type {
   ContextSuggestion,
   ResolvedContext,
 } from "../../shared/contracts";
+import { activeBrowserContext } from "../browser/browser-service";
 import { getDocChunk, searchDocs } from "../docs/docs-service";
 import { readDiff } from "../git/git-service";
 import { getTerminalOutput, listTerminals } from "../terminal/terminal-service";
@@ -164,6 +165,18 @@ export async function searchContext(input: {
     }));
   }
 
+  if (input.kind === "browser" || /browser|page|url|tab/i.test(query)) {
+    return [
+      {
+        id: "browser:active",
+        type: "browser",
+        label: "Current Browser Page",
+        detail: "Active in-app browser tab",
+        item: { type: "browser", workspaceId: input.workspaceId },
+      },
+    ];
+  }
+
   if (input.kind === "doc" || /^docs?/i.test(query)) {
     return searchDocs(input.workspaceId, query.replace(/^docs?/i, "").trim()).map((hit) => ({
       id: `doc:${hit.chunkId}`,
@@ -235,6 +248,15 @@ export async function resolveContext(
       });
     }
 
+    if (item.type === "browser") {
+      const content = item.workspaceId ? activeBrowserContext(item.workspaceId) : undefined;
+      resolvedItems.push({
+        item,
+        title: "browser:active",
+        content: content ?? "No active browser tab.",
+      });
+    }
+
     if (item.type === "git-diff") {
       const diff = await readDiff(cwd);
       resolvedItems.push({
@@ -295,6 +317,60 @@ export async function resolveContext(
         item,
         title: `search:${item.query}`,
         content: await grepProject(cwd, item.query),
+      });
+    }
+
+    if (item.type === "design-element") {
+      const el = item.element;
+      const sourceLine = el.source
+        ? `${el.source.file}:${el.source.line}${el.source.column ? `:${el.source.column}` : ""}`
+        : undefined;
+      const styles = el.styleSummary
+        ? Object.entries(el.styleSummary)
+            .map(([key, value]) => `${key}: ${value}`)
+            .join("; ")
+        : undefined;
+      const attributes = el.attributes
+        ? Object.entries(el.attributes)
+            .map(([key, value]) => `${key}="${value}"`)
+            .join(" ")
+        : undefined;
+      const props = el.props
+        ? Object.entries(el.props)
+            .map(([key, value]) => `${key}={${value}}`)
+            .join(" ")
+        : undefined;
+      const ancestry =
+        el.ancestors && el.ancestors.length > 0
+          ? el.ancestors
+              .map((a) => {
+                const cls = a.classes ? `.${a.classes.split(" ").join(".")}` : "";
+                const id = a.id ? `#${a.id}` : "";
+                const role = a.role ? `[role=${a.role}]` : "";
+                const text = a.text ? ` "${a.text}"` : "";
+                return `${a.tag}${id}${cls}${role}${text}`;
+              })
+              .reverse()
+              .join(" > ")
+          : undefined;
+      const lines = [
+        `Selected UI element from the in-app browser (Design Mode): ${el.label}`,
+        el.componentName ? `Component: ${el.componentName}` : "",
+        sourceLine ? `Source: ${sourceLine}` : "",
+        `Tag: <${el.tagName}>`,
+        attributes ? `Attributes: ${attributes}` : "",
+        props ? `React props: ${props}` : "",
+        `DOM path: ${el.domPath}`,
+        ancestry ? `Position in page structure: ${ancestry} > (selected)` : "",
+        el.text ? `Text: "${el.text}"` : "",
+        styles ? `Key styles: ${styles}` : "",
+        `Page URL: ${el.url}`,
+        el.screenshotDataUrl ? "A screenshot of this element is attached to the message." : "",
+      ].filter(Boolean);
+      resolvedItems.push({
+        item,
+        title: `design-element:${el.label}`,
+        content: lines.join("\n"),
       });
     }
   }

@@ -1,4 +1,4 @@
-import type { BrowserWindow } from "electron";
+import type { BrowserWindow as BrowserWindowType } from "electron";
 import type { EmitAgentEvent } from "../runtime";
 
 /**
@@ -14,7 +14,7 @@ export type AgentToolContext = {
   workspaceId: string;
   cwd: string;
   sessionId: string;
-  window?: BrowserWindow;
+  window?: BrowserWindowType;
   /** Persists + pushes an agent event (recordAgentEvent + webContents.send). */
   emit?: EmitAgentEvent;
 };

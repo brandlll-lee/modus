@@ -178,6 +178,83 @@ export const WEB_TOOL_UI: Record<WebToolName, ToolUiMeta> = {
   web_fetch: { iconName: "globe", verb: "Fetched", mono: true, primaryArgKey: "url" },
 };
 
+/**
+ * In-app browser tool names (custom tools registered at runtime). The set and
+ * semantics align with the industry-standard agent browser surface
+ * (playwright-mcp / chrome-devtools-mcp): accessibility-tree snapshots with
+ * refs, trusted CDP input, CSS-pixel screenshots that the model can see.
+ */
+export const BROWSER_TOOL_NAMES = [
+  "browser_tabs",
+  "browser_navigate",
+  "browser_navigate_back",
+  "browser_snapshot",
+  "browser_take_screenshot",
+  "browser_click",
+  "browser_click_xy",
+  "browser_hover",
+  "browser_drag",
+  "browser_fill",
+  "browser_type",
+  "browser_fill_form",
+  "browser_select_option",
+  "browser_scroll",
+  "browser_wait_for",
+  "browser_console_messages",
+  "browser_network_requests",
+  "browser_network_request",
+  "browser_resize",
+  "browser_press_key",
+  "browser_handle_dialog",
+  "browser_evaluate",
+  "browser_profile_start",
+  "browser_profile_stop",
+] as const;
+
+export type BrowserToolName = (typeof BROWSER_TOOL_NAMES)[number];
+
+export const BROWSER_TOOL_UI: Record<BrowserToolName, ToolUiMeta> = {
+  browser_tabs: { iconName: "globe", verb: "Browser tabs", mono: false, primaryArgKey: "action" },
+  browser_navigate: { iconName: "globe", verb: "Navigated", mono: true, primaryArgKey: "url" },
+  browser_navigate_back: { iconName: "globe", verb: "Went back", mono: false },
+  browser_snapshot: { iconName: "globe", verb: "Snapshotted page", mono: false },
+  browser_take_screenshot: { iconName: "globe", verb: "Captured page", mono: false },
+  browser_click: { iconName: "globe", verb: "Clicked", mono: false, primaryArgKey: "element" },
+  browser_click_xy: { iconName: "globe", verb: "Clicked coordinates", mono: false },
+  browser_hover: { iconName: "globe", verb: "Hovered", mono: false, primaryArgKey: "element" },
+  browser_drag: { iconName: "globe", verb: "Dragged", mono: false, primaryArgKey: "startElement" },
+  browser_fill: { iconName: "globe", verb: "Filled", mono: false, primaryArgKey: "element" },
+  browser_type: { iconName: "globe", verb: "Typed", mono: false, primaryArgKey: "element" },
+  browser_fill_form: { iconName: "globe", verb: "Filled form", mono: false },
+  browser_select_option: {
+    iconName: "globe",
+    verb: "Selected option",
+    mono: false,
+    primaryArgKey: "element",
+  },
+  browser_scroll: { iconName: "globe", verb: "Scrolled", mono: false },
+  browser_wait_for: { iconName: "globe", verb: "Waited", mono: false, primaryArgKey: "text" },
+  browser_console_messages: { iconName: "globe", verb: "Read console", mono: false },
+  browser_network_requests: { iconName: "globe", verb: "Read network", mono: false },
+  browser_network_request: {
+    iconName: "globe",
+    verb: "Inspected request",
+    mono: true,
+    primaryArgKey: "requestId",
+  },
+  browser_resize: { iconName: "globe", verb: "Resized browser", mono: false },
+  browser_press_key: { iconName: "globe", verb: "Pressed key", mono: true, primaryArgKey: "key" },
+  browser_handle_dialog: { iconName: "globe", verb: "Handled dialog", mono: false },
+  browser_evaluate: {
+    iconName: "globe",
+    verb: "Evaluated in page",
+    mono: true,
+    primaryArgKey: "expression",
+  },
+  browser_profile_start: { iconName: "globe", verb: "Started profile", mono: false },
+  browser_profile_stop: { iconName: "globe", verb: "Stopped profile", mono: false },
+};
+
 /** Tool names belonging to a profile, derived from a catalog. */
 export function toolNamesForProfile(
   catalog: ToolCatalogEntry[],
@@ -220,6 +297,7 @@ export function getToolUiMeta(name: string): ToolUiMeta | undefined {
   return (
     getBuiltinToolUiMeta(name) ??
     TERMINAL_TOOL_UI[name as TerminalToolName] ??
-    WEB_TOOL_UI[name as WebToolName]
+    WEB_TOOL_UI[name as WebToolName] ??
+    BROWSER_TOOL_UI[name as BrowserToolName]
   );
 }

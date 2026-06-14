@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { app, BrowserWindow, shell } from "electron";
+import { app, BrowserWindow, shell, type BrowserWindow as BrowserWindowType } from "electron";
 import { IPC_CHANNELS } from "../ipc/channels";
 
 const currentDir = fileURLToPath(new URL(".", import.meta.url));
@@ -17,7 +17,7 @@ function isExternalUrlAllowed(rawUrl: string): boolean {
   }
 }
 
-export function createMainWindow(): BrowserWindow {
+export function createMainWindow(): BrowserWindowType {
   const preloadPath = fileURLToPath(new URL("../preload/index.cjs", import.meta.url));
 
   const window = new BrowserWindow({
@@ -70,8 +70,8 @@ export function createMainWindow(): BrowserWindow {
   });
 
   if (process.env.ELECTRON_RENDERER_URL) {
-    window.webContents.on("console-message", (_event, level, message) => {
-      console.log(`[renderer:${level}] ${message}`);
+    window.webContents.on("console-message", (event) => {
+      console.log(`[renderer:${event.level}] ${event.message}`);
     });
     window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedUrl) => {
       console.error("[renderer:did-fail-load]", errorCode, errorDescription, validatedUrl);

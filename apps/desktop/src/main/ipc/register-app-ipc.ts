@@ -1,5 +1,12 @@
 import { isAbsolute, resolve, sep } from "node:path";
-import { app, BrowserWindow, type IpcMainInvokeEvent, ipcMain, shell } from "electron";
+import {
+  app,
+  BrowserWindow,
+  type BrowserWindow as BrowserWindowType,
+  type IpcMainInvokeEvent,
+  ipcMain,
+  shell,
+} from "electron";
 import { listAgentEvents, recordAgentEvent } from "../agent/agent-event-store";
 import { listAgentRuns } from "../agent/agent-run-store";
 import { deleteAgentSession, getAgentSession, listAgentSessions } from "../agent/agent-store";
@@ -23,6 +30,24 @@ import {
 import { listAgentReviews, startAgentReview } from "../agent/review-service";
 import { rollbackToUserMessage } from "../agent/rollback-service";
 import { getAgentRuntime } from "../agent/runtime-registry";
+import {
+  closeBrowserTab,
+  createBrowserTab,
+  findInBrowserPage,
+  hideBrowserTab,
+  listBrowserTabs,
+  navigateBrowser,
+  navigateBrowserBack,
+  navigateBrowserForward,
+  openBrowserExternal,
+  reloadBrowser,
+  selectBrowserTab,
+  setBrowserBounds,
+  setBrowserDesignMode,
+  showBrowserTab,
+  stopFindInBrowserPage,
+  toggleBrowserDevtools,
+} from "../browser/browser-service";
 import { resolveContext, searchContext } from "../context/context-service";
 import { addDocSource, indexWorkspaceDocs, listDocSources, searchDocs } from "../docs/docs-service";
 import {
@@ -58,7 +83,12 @@ import {
   denyPendingPermissionRequestsForSession,
   resolvePermissionRequest,
 } from "../permissions/permission-broker";
-import { listPermissionDecisions, recordPermissionDecision } from "../permissions/permission-store";
+import {
+  getApprovalMode,
+  listPermissionDecisions,
+  recordPermissionDecision,
+  setApprovalMode,
+} from "../permissions/permission-store";
 import { listRuleFiles } from "../rules/rules-service";
 import { createSkill, ensureSkillsDir, getSkill, listSkills } from "../skills/skills-service";
 import {
@@ -77,6 +107,15 @@ import {
   agentPromptSchema,
   agentRollbackSchema,
   agentSetModelSchema,
+  approvalModeSchema,
+  browserBoundsSchema,
+  browserCreateTabSchema,
+  browserDesignModeSchema,
+  browserFindSchema,
+  browserFindStopSchema,
+  browserNavigateSchema,
+  browserTabSchema,
+  browserWorkspaceSchema,
   checkpointRestoreSchema,
   configureProviderSchema,
   contextResolveSchema,
@@ -141,7 +180,7 @@ function assertTrustedSender(event: IpcMainInvokeEvent): void {
   }
 }
 
-function getSenderWindow(event: IpcMainInvokeEvent): BrowserWindow {
+function getSenderWindow(event: IpcMainInvokeEvent): BrowserWindowType {
   const window = BrowserWindow.fromWebContents(event.sender);
 
   if (!window) {
@@ -331,6 +370,140 @@ export function registerAppIpc(): void {
     return listTerminals();
   });
 
+  ipcMain.handle(IPC_CHANNELS.browserListTabs, (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(browserWorkspaceSchema, input, IPC_CHANNELS.browserListTabs);
+    return listBrowserTabs(parsed.workspaceId);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.browserCreateTab, (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(browserCreateTabSchema, input, IPC_CHANNELS.browserCreateTab);
+    return createBrowserTab(getSenderWindow(event), {
+      workspaceId: parsed.workspaceId,
+      ...(parsed.url !== undefined ? { url: parsed.url } : {}),
+      select: true,
+    });
+  });
+
+  ipcMain.handle(IPC_CHANNELS.browserSelectTab, (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(browserTabSchema, input, IPC_CHANNELS.browserSelectTab);
+    return selectBrowserTab(getSenderWindow(event), parsed.tabId);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.browserCloseTab, (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(browserTabSchema, input, IPC_CHANNELS.browserCloseTab);
+    closeBrowserTab(parsed.tabId);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.browserNavigate, async (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(browserNavigateSchema, input, IPC_CHANNELS.browserNavigate);
+    return await navigateBrowser({
+      window: getSenderWindow(event),
+      ...(parsed.workspaceId !== undefined ? { workspaceId: parsed.workspaceId } : {}),
+      ...(parsed.tabId !== undefined ? { tabId: parsed.tabId } : {}),
+      url: parsed.url,
+      ...(parsed.newTab !== undefined ? { newTab: parsed.newTab } : {}),
+    });
+  });
+
+  ipcMain.handle(IPC_CHANNELS.browserBack, (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(browserTabSchema, input, IPC_CHANNELS.browserBack);
+    return navigateBrowserBack({ tabId: parsed.tabId });
+  });
+
+  ipcMain.handle(IPC_CHANNELS.browserForward, (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(browserTabSchema, input, IPC_CHANNELS.browserForward);
+    return navigateBrowserForward({ tabId: parsed.tabId });
+  });
+
+  ipcMain.handle(IPC_CHANNELS.browserReload, (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(browserTabSchema, input, IPC_CHANNELS.browserReload);
+    return reloadBrowser({ tabId: parsed.tabId });
+  });
+
+  // Renderer rectangles arrive in the renderer's CSS pixels. When the chrome
+  // UI is zoomed (Ctrl +/- persists per-origin in Electron), CSS px no longer
+  // equal window DIPs — un-scaled bounds shifted the WebContentsView (the
+  // "black band beside the page" bug), with the offset growing with x/y.
+  const scaleBoundsToWindow = (
+    event: IpcMainInvokeEvent,
+    bounds: { x: number; y: number; width: number; height: number },
+  ) => {
+    const zoom = event.sender.getZoomFactor();
+    if (zoom === 1) {
+      return bounds;
+    }
+    return {
+      x: bounds.x * zoom,
+      y: bounds.y * zoom,
+      width: bounds.width * zoom,
+      height: bounds.height * zoom,
+    };
+  };
+
+  ipcMain.handle(IPC_CHANNELS.browserSetBounds, (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(browserBoundsSchema, input, IPC_CHANNELS.browserSetBounds);
+    setBrowserBounds(parsed.tabId, scaleBoundsToWindow(event, parsed.bounds));
+  });
+
+  ipcMain.handle(IPC_CHANNELS.browserShow, (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(browserBoundsSchema, input, IPC_CHANNELS.browserShow);
+    showBrowserTab(getSenderWindow(event), parsed.tabId, scaleBoundsToWindow(event, parsed.bounds));
+  });
+
+  ipcMain.handle(IPC_CHANNELS.browserHide, (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(browserTabSchema, input, IPC_CHANNELS.browserHide);
+    hideBrowserTab(parsed.tabId);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.browserToggleDevtools, (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(browserTabSchema, input, IPC_CHANNELS.browserToggleDevtools);
+    return toggleBrowserDevtools(parsed.tabId);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.browserOpenExternal, async (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(browserTabSchema, input, IPC_CHANNELS.browserOpenExternal);
+    await openBrowserExternal(parsed.tabId);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.browserDesignMode, async (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(browserDesignModeSchema, input, IPC_CHANNELS.browserDesignMode);
+    return await setBrowserDesignMode(
+      parsed.tabId,
+      parsed.enabled,
+      parsed.theme ? parsed.theme : undefined,
+    );
+  });
+
+  ipcMain.handle(IPC_CHANNELS.browserFind, (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(browserFindSchema, input, IPC_CHANNELS.browserFind);
+    findInBrowserPage(parsed.tabId, parsed.query, {
+      ...(parsed.forward !== undefined ? { forward: parsed.forward } : {}),
+      ...(parsed.findNext !== undefined ? { findNext: parsed.findNext } : {}),
+      ...(parsed.matchCase !== undefined ? { matchCase: parsed.matchCase } : {}),
+    });
+  });
+
+  ipcMain.handle(IPC_CHANNELS.browserFindStop, (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(browserFindStopSchema, input, IPC_CHANNELS.browserFindStop);
+    stopFindInBrowserPage(parsed.tabId, parsed.action ?? "clearSelection");
+  });
+
   ipcMain.handle(IPC_CHANNELS.diffList, async (event, cwd: string) => {
     assertTrustedSender(event);
     return await listChanges(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.diffList));
@@ -447,6 +620,17 @@ export function registerAppIpc(): void {
   ipcMain.handle(IPC_CHANNELS.permissionList, (event) => {
     assertTrustedSender(event);
     return listPermissionDecisions();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.permissionGetMode, (event) => {
+    assertTrustedSender(event);
+    return getApprovalMode();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.permissionSetMode, (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(approvalModeSchema, input, IPC_CHANNELS.permissionSetMode);
+    return setApprovalMode(parsed.mode);
   });
 
   ipcMain.handle(IPC_CHANNELS.contextSearch, async (event, input) => {

@@ -1,9 +1,9 @@
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, type BrowserWindow as BrowserWindowType } from "electron";
 import { registerAppIpc } from "./ipc/register-app-ipc";
 import { disposeAllMcp } from "./mcp/mcp-service";
 import { createMainWindow } from "./windows/main-window";
 
-let mainWindow: BrowserWindow | null = null;
+let mainWindow: BrowserWindowType | null = null;
 
 function boot(): void {
   registerAppIpc();

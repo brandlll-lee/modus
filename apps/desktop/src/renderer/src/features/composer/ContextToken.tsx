@@ -8,6 +8,7 @@ import {
   IconReportSearch,
   IconSearch,
   IconTerminal2,
+  IconWorld,
   IconX,
 } from "@tabler/icons-react";
 import type { ReactNode } from "react";
@@ -43,6 +44,10 @@ function tokenMeta(item: ContextItem): {
       icon: <IconTerminal2 size={12} stroke={1.7} />,
       label: `terminal:${item.terminalId.slice(0, 6)}`,
     };
+  }
+
+  if (item.type === "browser") {
+    return { icon: <IconWorld size={12} stroke={1.7} />, label: "browser" };
   }
 
   if (item.type === "project-summary") {

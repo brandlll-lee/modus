@@ -1,18 +1,18 @@
-import { IconAlertTriangle, IconChevronRight } from "@tabler/icons-react";
-import { m, useReducedMotion } from "motion/react";
-import { memo, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { IconAlertCircle, IconChevronRight } from "@tabler/icons-react";
+import { m } from "motion/react";
+import { useEffect, useMemo, useReducer } from "react";
 import type {
   AgentEvent,
+  MessageContextChip,
   PromptImageAttachment,
   TodoItem,
   WorkingChangeStats,
 } from "../../../../shared/contracts";
-import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
+import { BROWSER_TOOL_NAMES } from "../../../../shared/tools";
 import { ModusBot } from "../../components/ui/ModusBot";
-import { cn } from "../../lib/cn";
+import { ActivityGroup, ThoughtRow } from "./ActivityGroup";
 import { TurnChangesCard } from "./changes/ChangeStats";
 import { MessageBlock } from "./MessageBlock";
-import { ShinyText } from "./TextEffects";
 import { TodosCard } from "./TodosCard";
 import { ToolCard } from "./ToolCard";
 
@@ -33,12 +33,11 @@ type TimelineProps = {
   ): Promise<void>;
 };
 
-type MessageBlockItem = {
+export type MessageBlockItem = {
   id: string;
   type: "message";
   role: "assistant" | "user";
   content: string;
-  thinking: string;
   streaming?: boolean;
   /** Epoch ms — user send time, or assistant completion time. */
   createdAt?: number;
@@ -52,6 +51,8 @@ type MessageBlockItem = {
   checkpointId?: string;
   /** User only: images attached to the prompt. */
   attachments?: PromptImageAttachment[];
+  /** User only: context chips attached to the prompt (shown in the bubble). */
+  contextChips?: MessageContextChip[];
   /**
    * User only: this message anchored a normal-delivery run, so it can be
    * edited & resent (rolling the session back to this point). Steered and
@@ -60,7 +61,7 @@ type MessageBlockItem = {
   editable?: boolean;
 };
 
-type ToolBlockItem = {
+export type ToolBlockItem = {
   id: string;
   type: "tool";
   name: string;
@@ -69,6 +70,19 @@ type ToolBlockItem = {
   isComplete?: boolean;
   isError?: boolean;
 };
+
+export type ThoughtBlockItem = {
+  id: string;
+  type: "thought";
+  /** Run that produced this thinking segment, when known. */
+  runId?: string;
+  text: string;
+  /** True while the segment is still being produced — label shimmers, body live. */
+  streaming?: boolean;
+};
+
+/** Block kinds that can live inside an {@link ActivityGroupBlockItem}. */
+export type ActivityItem = ThoughtBlockItem | ToolBlockItem | MessageBlockItem;
 
 type RunBlockItem = {
   id: string;
@@ -89,12 +103,6 @@ type NoticeBlockItem = {
   isError?: boolean;
 };
 
-type ThinkingBlockItem = {
-  id: string;
-  type: "thinking";
-  runId: string;
-};
-
 type ChangesBlockItem = {
   id: string;
   type: "changes";
@@ -112,22 +120,27 @@ type TodosBlockItem = {
   updating: boolean;
 };
 
-type ToolGroupBlockItem = {
+type ActivityGroupBlockItem = {
   id: string;
-  type: "tool-group";
-  /** Cursor-style digest of the folded run, e.g. "Explored 4 files, 6 searches". */
+  type: "activity-group";
+  /** Read-only exploration vs. in-app browser control — drives label + summary. */
+  kind: "explore" | "browser";
+  /** Still streaming → forced open, fixed-height fade viewport, shimmering label. */
+  active: boolean;
+  /** Sealed digest of the folded run, e.g. "Explored 4 files, 6 searches". */
   summary: string;
-  tools: ToolBlockItem[];
+  /** Interleaved members in stream order: thoughts, intermediate text, tools. */
+  items: ActivityItem[];
   isError?: boolean;
 };
 
 type TimelineBlock =
   | MessageBlockItem
   | ToolBlockItem
+  | ThoughtBlockItem
   | RunBlockItem
   | NoticeBlockItem
-  | ThinkingBlockItem
-  | ToolGroupBlockItem
+  | ActivityGroupBlockItem
   | ChangesBlockItem
   | TodosBlockItem;
 
@@ -145,6 +158,9 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
   let activeAssistantMessageId: string | undefined;
   let activeRunId: string | undefined;
   let lastUserMessageBlock: MessageBlockItem | undefined;
+  /** Thinking now streams as its own ordered block, keyed by its message. */
+  const thoughtByMessage = new Map<string, ThoughtBlockItem>();
+  let activeThoughtId: string | undefined;
 
   function appendMessageBlock(block: MessageBlockItem): MessageBlockItem {
     blocks.push(block);
@@ -170,7 +186,6 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
       type: "message",
       role: "assistant",
       content: "",
-      thinking: "",
     });
   }
 
@@ -323,10 +338,12 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
         type: "message",
         role: event.role,
         content: "",
-        thinking: "",
         createdAt: eventAt,
         ...(event.attachments && event.attachments.length > 0
           ? { attachments: event.attachments }
+          : {}),
+        ...(event.contextChips && event.contextChips.length > 0
+          ? { contextChips: event.contextChips }
           : {}),
       };
       appendMessageBlock(block);
@@ -349,17 +366,34 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
     }
 
     if (event.type === "thinking.delta") {
-      const block = blockById.get(event.messageId);
-      if (block?.type === "message") {
-        block.thinking += event.delta;
-      } else if (activeAssistantMessageId) {
-        const activeBlock = blockById.get(activeAssistantMessageId);
-        if (activeBlock?.type === "message") {
-          activeBlock.thinking += event.delta;
+      // Route to a dedicated thought block (orphan deltas from old logs attach to
+      // the active assistant message). Keep thoughts above their sibling answer
+      // by splicing in just before the message block when it already exists.
+      const targetId = blockById.has(event.messageId)
+        ? event.messageId
+        : (activeAssistantMessageId ?? event.messageId);
+      let thought = thoughtByMessage.get(targetId);
+      if (!thought) {
+        thought = {
+          id: `thought:${targetId}`,
+          type: "thought",
+          text: "",
+          streaming: true,
+          ...(activeRunId !== undefined ? { runId: activeRunId } : {}),
+        };
+        thoughtByMessage.set(targetId, thought);
+        blockById.set(thought.id, thought);
+        const sibling = blockById.get(targetId);
+        const siblingIndex = sibling ? blocks.indexOf(sibling) : -1;
+        if (siblingIndex >= 0) {
+          blocks.splice(siblingIndex, 0, thought);
+        } else {
+          blocks.push(thought);
         }
-      } else {
-        ensureAssistantMessageBlock(event.messageId).thinking += event.delta;
       }
+      thought.text += event.delta;
+      thought.streaming = true;
+      activeThoughtId = thought.id;
       continue;
     }
 
@@ -533,29 +567,32 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
     }
   }
 
-  if (activeRunId) {
-    const runBlock = blockById.get(activeRunId);
-    if (runBlock?.type === "run" && runBlock.status === "running") {
-      if (activeAssistantMessageId) {
-        const activeBlock = blockById.get(activeAssistantMessageId);
-        if (activeBlock?.type === "message" && activeBlock.role === "assistant") {
-          activeBlock.streaming = true;
-        }
-      }
-      let insertAfter = blocks.length - 1;
-      for (let index = blocks.length - 1; index >= 0; index -= 1) {
-        const block = blocks[index];
-        if (!block) continue;
-        if (block.type !== "run" || block.runId === activeRunId) {
-          insertAfter = index;
-          break;
-        }
-      }
-      blocks.splice(insertAfter + 1, 0, {
-        id: `thinking:${activeRunId}`,
-        type: "thinking",
-        runId: activeRunId,
-      });
+  const runStillRunning =
+    activeRunId !== undefined &&
+    (() => {
+      const runBlock = blockById.get(activeRunId);
+      return runBlock?.type === "run" && runBlock.status === "running";
+    })();
+
+  if (runStillRunning && activeAssistantMessageId) {
+    const activeBlock = blockById.get(activeAssistantMessageId);
+    if (activeBlock?.type === "message" && activeBlock.role === "assistant") {
+      activeBlock.streaming = true;
+    }
+  }
+
+  // Finalize thought streaming: only the live thought of a still-running turn
+  // whose answer hasn't begun keeps shimmering ("Thinking"); everything else
+  // settles to a foldable "Thought for Xs".
+  for (const thought of thoughtByMessage.values()) {
+    thought.streaming = false;
+  }
+  if (runStillRunning && activeThoughtId) {
+    const live = blockById.get(activeThoughtId);
+    const sibling = blockById.get(activeThoughtId.slice("thought:".length));
+    const hasAnswer = sibling?.type === "message" && sibling.content.trim().length > 0;
+    if (live?.type === "thought" && !hasAnswer) {
+      live.streaming = true;
     }
   }
 
@@ -563,21 +600,20 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
 }
 
 /**
- * Read-only exploration tools fold into one Cursor-style summary row when ≥2
- * run back-to-back — mixed names included ("Explored 4 files, 6 searches").
- * Tools with side effects (bash, edit, write, terminal_run, MCP…) never fold.
+ * Read-only exploration tools fold into one Cursor-style "Exploring" group
+ * (mixed names welcome). Tools with side effects or first-class output
+ * (edit/write/bash/terminal_run/terminal_read/web_fetch/MCP/todo) always stand
+ * alone; in-app browser control gets its own "Browser using" fold.
  */
-const EXPLORE_TOOLS = new Set([
-  "read",
-  "grep",
-  "find",
-  "ls",
-  "terminal_read",
-  "terminal_list",
-  "web_search",
-  "web_fetch",
-]);
-const TOOL_GROUP_MIN = 2;
+const EXPLORE_TOOLS = new Set(["read", "grep", "find", "ls", "terminal_list", "web_search"]);
+const BROWSER_TOOLS = new Set<string>(BROWSER_TOOL_NAMES);
+
+/** Which fold a tool joins, or undefined when it always stands alone. */
+function activityKind(name: string): "explore" | "browser" | undefined {
+  if (BROWSER_TOOLS.has(name)) return "browser";
+  if (EXPLORE_TOOLS.has(name)) return "explore";
+  return undefined;
+}
 
 /** Build the folded run's digest from its members. Exported for tests. */
 export function buildExploreSummary(tools: ToolBlockItem[]): string {
@@ -607,12 +643,10 @@ export function buildExploreSummary(tools: ToolBlockItem[]): string {
       case "ls":
         listings += 1;
         break;
-      case "terminal_read":
       case "terminal_list":
         terminalChecks += 1;
         break;
       case "web_search":
-      case "web_fetch":
         webLookups += 1;
         break;
       default:
@@ -629,6 +663,53 @@ export function buildExploreSummary(tools: ToolBlockItem[]): string {
   if (terminalChecks > 0) parts.push(plural(terminalChecks, "terminal check"));
   if (webLookups > 0) parts.push(plural(webLookups, "web lookup"));
   return parts.length > 0 ? `Explored ${parts.join(", ")}` : `Explored ${tools.length} steps`;
+}
+
+/** Sealed digest for a browser-control run, e.g. "Browser used 2 pages, 3 clicks". */
+export function buildBrowserSummary(tools: ToolBlockItem[]): string {
+  let pages = 0;
+  let clicks = 0;
+  let shots = 0;
+  let inputs = 0;
+  let other = 0;
+
+  for (const tool of tools) {
+    switch (tool.name) {
+      case "browser_navigate":
+      case "browser_navigate_back":
+        pages += 1;
+        break;
+      case "browser_click":
+      case "browser_click_xy":
+        clicks += 1;
+        break;
+      case "browser_take_screenshot":
+      case "browser_snapshot":
+        shots += 1;
+        break;
+      case "browser_type":
+      case "browser_fill":
+      case "browser_fill_form":
+      case "browser_press_key":
+        inputs += 1;
+        break;
+      default:
+        other += 1;
+        break;
+    }
+  }
+
+  const plural = (count: number, singular: string, pluralForm = `${singular}s`): string =>
+    `${count} ${count === 1 ? singular : pluralForm}`;
+  const parts: string[] = [];
+  if (pages > 0) parts.push(plural(pages, "page"));
+  if (clicks > 0) parts.push(plural(clicks, "click"));
+  if (shots > 0) parts.push(plural(shots, "capture"));
+  if (inputs > 0) parts.push(plural(inputs, "input"));
+  if (other > 0) parts.push(plural(other, "action"));
+  return parts.length > 0
+    ? `Browser used ${parts.join(", ")}`
+    : `Browser used ${tools.length} steps`;
 }
 
 /**
@@ -688,63 +769,106 @@ export function blockRenderKeys(blocks: TimelineBlock[]): string[] {
   });
 }
 
+/** Thoughts and intermediate assistant text can ride inside an activity fold. */
+function isFoldableFiller(block: TimelineBlock): block is ThoughtBlockItem | MessageBlockItem {
+  return block.type === "thought" || (block.type === "message" && block.role === "assistant");
+}
+
 /**
- * Collapse maximal runs of ≥2 adjacent EXPLORATION tool blocks (read/grep/
- * find/ls/terminal peeks/web lookups — mixed names welcome) into a single
- * `tool-group` digest row — but only once the run is "sealed": every member
- * complete AND (a real non-thinking block follows OR no run is active). While
- * a batch is still streaming or sits at the live tail, the tools stay as
- * individual rows so progress is visible; sealing triggers the fold.
+ * Collapse contiguous read-only exploration (or browser-control) activity into a
+ * single Cursor-style fold. A fold absorbs its same-kind tools plus the thoughts
+ * and intermediate assistant text interleaved with them; the trailing final
+ * answer stays OUTSIDE, rendered full-width. While the run is live the fold is
+ * left `active` (the component forces it open with a fading viewport); once
+ * sealed — all members complete AND (something follows OR no run is active) — it
+ * collapses to a one-line digest. Single tools fold too, so any read-only call
+ * surfaces as an "Exploring" group.
  */
-export function groupToolBlocks(blocks: TimelineBlock[]): TimelineBlock[] {
+export function groupActivity(blocks: TimelineBlock[]): TimelineBlock[] {
   const hasActiveRun = blocks.some((block) => block.type === "run" && block.status === "running");
   const result: TimelineBlock[] = [];
   let index = 0;
 
   while (index < blocks.length) {
-    const block = blocks[index];
-    if (!block) {
+    const start = blocks[index];
+    if (!start) {
       index += 1;
       continue;
     }
 
-    if (block.type !== "tool" || !EXPLORE_TOOLS.has(block.name)) {
-      result.push(block);
+    const startKind = start.type === "tool" ? activityKind(start.name) : undefined;
+    if (!startKind) {
+      result.push(start);
       index += 1;
       continue;
     }
 
-    // Collect the maximal run of consecutive exploration tool blocks.
-    const run: ToolBlockItem[] = [];
+    // Pull back leading thoughts / intermediate text already emitted so they
+    // sit inside the fold, above the first tool (Cursor-style).
+    const leading: TimelineBlock[] = [];
+    while (result.length > 0) {
+      const prev = result[result.length - 1];
+      if (prev && isFoldableFiller(prev)) {
+        leading.unshift(prev);
+        result.pop();
+      } else {
+        break;
+      }
+    }
+
+    // Scan forward over same-kind tools and the fillers interleaved with them.
+    const window: TimelineBlock[] = [...leading];
+    let lastToolOffset = -1;
     let cursor = index;
     while (cursor < blocks.length) {
       const candidate = blocks[cursor];
-      if (candidate?.type === "tool" && EXPLORE_TOOLS.has(candidate.name)) {
-        run.push(candidate);
+      if (!candidate) break;
+      if (candidate.type === "tool") {
+        if (activityKind(candidate.name) !== startKind) break;
+        lastToolOffset = window.length;
+        window.push(candidate);
+        cursor += 1;
+      } else if (isFoldableFiller(candidate)) {
+        window.push(candidate);
         cursor += 1;
       } else {
         break;
       }
     }
 
-    const allComplete = run.every((tool) => tool.isComplete);
-    const followedByRealBlock = blocks
-      .slice(cursor)
-      .some((following) => following.type !== "thinking");
-    const sealed = allComplete && (followedByRealBlock || !hasActiveRun);
-    const first = run[0];
+    // Keep trailing thoughts in the fold; the first trailing assistant message
+    // begins the final answer and stays outside.
+    let groupEnd = lastToolOffset;
+    for (let offset = lastToolOffset + 1; offset < window.length; offset += 1) {
+      if (window[offset]?.type === "thought") {
+        groupEnd = offset;
+      } else {
+        break;
+      }
+    }
+    const groupItems = window.slice(0, groupEnd + 1);
+    const trailing = window.slice(groupEnd + 1);
 
-    if (run.length >= TOOL_GROUP_MIN && sealed && first) {
+    const tools = groupItems.filter((item): item is ToolBlockItem => item.type === "tool");
+    const firstTool = tools[0];
+    const allComplete = tools.every((tool) => tool.isComplete);
+    const movedOn = cursor < blocks.length || trailing.length > 0;
+    const sealed = allComplete && (movedOn || !hasActiveRun);
+
+    if (firstTool) {
       result.push({
-        id: `tool-group:${first.id}`,
-        type: "tool-group",
-        summary: buildExploreSummary(run),
-        tools: run,
-        isError: run.some((tool) => tool.isError),
+        id: `activity-group:${firstTool.id}`,
+        type: "activity-group",
+        kind: startKind,
+        active: !sealed,
+        summary: startKind === "browser" ? buildBrowserSummary(tools) : buildExploreSummary(tools),
+        items: groupItems as ActivityItem[],
+        isError: tools.some((tool) => tool.isError),
       });
     } else {
-      result.push(...run);
+      result.push(...groupItems);
     }
+    result.push(...trailing);
     index = cursor;
   }
 
@@ -791,105 +915,10 @@ function RunRow({ block }: { block: RunBlockItem }) {
   );
 }
 
-// Memoized with no props: it renders exactly once and never re-renders while the
-// timeline churns through streamed tokens. That fully decouples the shimmer's
-// rAF loop from the stream, so "Thinking" stays smooth instead of flickering on
-// every chunk.
-const ThinkingRow = memo(function ThinkingRow() {
-  return (
-    <div className="text-sm leading-relaxed">
-      <ShinyText>Thinking</ShinyText>
-    </div>
-  );
-});
-
-/**
- * Cursor-style digest row for a sealed exploration run ("Explored 4 files,
- * 6 searches ›"). Mounts in the expanded state so the rows the user was
- * already watching stay put, then folds into the one-line summary on the next
- * frame (height + opacity, domAnimation-only). Reduced motion starts
- * collapsed. Once the user toggles, their choice wins and auto-fold stops.
- */
-const ToolGroup = memo(function ToolGroup({
-  summary,
-  tools,
-  isError = false,
-}: {
-  summary: string;
-  tools: ToolBlockItem[];
-  isError?: boolean;
-}) {
-  const reduceMotion = useReducedMotion();
-  const [expanded, setExpanded] = useState(!reduceMotion);
-  const interactedRef = useRef(false);
-
-  useEffect(() => {
-    if (reduceMotion || interactedRef.current) {
-      return;
-    }
-    const id = window.setTimeout(() => {
-      if (!interactedRef.current) {
-        setExpanded(false);
-      }
-    }, 80);
-    return () => window.clearTimeout(id);
-  }, [reduceMotion]);
-
-  function toggle(): void {
-    interactedRef.current = true;
-    setExpanded((value) => !value);
-  }
-
-  return (
-    <div className="min-w-0 text-sm">
-      <button
-        aria-expanded={expanded}
-        className="group/explore flex w-fit min-w-0 max-w-full items-center gap-1.5 rounded-md py-0.5 text-left transition-colors"
-        onClick={toggle}
-        type="button"
-      >
-        {isError ? (
-          <IconAlertTriangle className="shrink-0 text-danger" size={14} stroke={1.7} />
-        ) : null}
-        <span
-          className={cn(
-            "min-w-0 truncate transition-colors",
-            isError ? "text-danger" : "text-fg-muted group-hover/explore:text-fg",
-          )}
-        >
-          {summary}
-        </span>
-        <IconChevronRight
-          className={cn(
-            "shrink-0 text-fg-faint transition-transform duration-150",
-            expanded && "rotate-90",
-          )}
-          size={13}
-          stroke={1.7}
-        />
-      </button>
-      <CollapsibleMotion open={expanded} preset="timeline">
-        <div className="space-y-0.5 pt-0.5 pl-5">
-          {tools.map((tool) => (
-            <ToolCard
-              args={tool.args}
-              isComplete={tool.isComplete ?? false}
-              isError={tool.isError ?? false}
-              key={tool.id}
-              name={tool.name}
-              output={tool.output}
-            />
-          ))}
-        </div>
-      </CollapsibleMotion>
-    </div>
-  );
-});
-
 function Notice({ body, isError = false, title }: NoticeBlockItem) {
   return (
     <div className="flex min-w-0 items-start gap-2 text-sm text-fg-subtle">
-      <IconAlertTriangle
+      <IconAlertCircle
         className={isError ? "mt-0.5 shrink-0 text-danger" : "mt-0.5 shrink-0 text-fg-faint"}
         size={15}
         stroke={1.65}
@@ -904,19 +933,19 @@ function Notice({ body, isError = false, title }: NoticeBlockItem) {
 
 export function Timeline({ agentEvents, cwd, onRestoreCheckpoint, onEditResend }: TimelineProps) {
   const blocks = useMemo(
-    () => groupToolBlocks(attachTurnActions(buildBlocks(agentEvents))),
+    () => groupActivity(attachTurnActions(buildBlocks(agentEvents))),
     [agentEvents],
   );
   const visibleBlocks = useMemo(
     () =>
       blocks.filter((block) => {
+        if (block.type === "thought") {
+          return block.text.trim().length > 0;
+        }
         if (block.type !== "message") {
           return true;
         }
-        if (block.role === "user") {
-          return block.content.trim();
-        }
-        return block.content.trim() || block.thinking.trim();
+        return block.content.trim().length > 0;
       }),
     [blocks],
   );
@@ -953,6 +982,7 @@ export function Timeline({ agentEvents, cwd, onRestoreCheckpoint, onEditResend }
               <MessageBlock
                 {...(block.actions ? { actions: block.actions } : {})}
                 {...(block.attachments ? { attachments: block.attachments } : {})}
+                {...(block.contextChips ? { contextChips: block.contextChips } : {})}
                 {...(block.checkpointId !== undefined ? { checkpointId: block.checkpointId } : {})}
                 {...(onRestoreCheckpoint ? { onRestoreCheckpoint } : {})}
                 content={block.content}
@@ -962,7 +992,6 @@ export function Timeline({ agentEvents, cwd, onRestoreCheckpoint, onEditResend }
                 {...(onEditResend ? { onEditResend } : {})}
                 messageRole={block.role}
                 streaming={block.streaming ?? false}
-                thinking={block.thinking}
               />
             ) : null}
             {block.type === "tool" ? (
@@ -975,16 +1004,20 @@ export function Timeline({ agentEvents, cwd, onRestoreCheckpoint, onEditResend }
                 output={block.output}
               />
             ) : null}
-            {block.type === "tool-group" ? (
-              <ToolGroup
+            {block.type === "activity-group" ? (
+              <ActivityGroup
+                active={block.active}
                 isError={block.isError ?? false}
+                items={block.items}
+                kind={block.kind}
                 summary={block.summary}
-                tools={block.tools}
               />
+            ) : null}
+            {block.type === "thought" ? (
+              <ThoughtRow streaming={block.streaming ?? false} text={block.text} />
             ) : null}
             {block.type === "run" ? <RunRow block={block} /> : null}
             {block.type === "notice" ? <Notice {...block} /> : null}
-            {block.type === "thinking" ? <ThinkingRow /> : null}
             {block.type === "todos" ? (
               <TodosCard todos={block.todos} updating={block.updating} />
             ) : null}

@@ -5,9 +5,7 @@ import {
   IconChevronDown,
   IconCube,
   IconEdit,
-  IconMicrophone,
-  IconPlayerStop,
-  IconPlus,
+  IconPlayerStopFilled,
   IconX,
 } from "@tabler/icons-react";
 import { AnimatePresence, m } from "motion/react";
@@ -29,11 +27,15 @@ import type {
   ThinkingLevel,
 } from "../../../../shared/contracts";
 import { BorderBeam } from "../../components/ui/BorderBeam";
+import { ImageThumb } from "../../components/ui/ImageViewer";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { TypingAnimation } from "../../components/ui/TypingAnimation";
 import { cn } from "../../lib/cn";
+import { ProviderLogo } from "../settings/ProviderLogo";
+import { ApprovalModeSelect } from "./ApprovalModeSelect";
 import { ContextMentionMenu } from "./ContextMentionMenu";
 import { ContextToken } from "./ContextToken";
+import { DesignElementToken } from "./DesignElementToken";
 import { SlashMenu } from "./SlashMenu";
 import { useComposerImages } from "./useComposerImages";
 import { useComposerMentions } from "./useComposerMentions";
@@ -187,16 +189,6 @@ export function Composer({
         `${value.slice(0, mention.start)}${value.slice(mention.start).replace(/@[^\s]*$/, "")}`,
       );
     }
-  }
-
-  async function openContextMenu(): Promise<void> {
-    if (!workspaceId || !cwd) {
-      return;
-    }
-    if (value.endsWith("@") || /(?:^|\s)@[^\s]*$/.test(value)) {
-      return;
-    }
-    setValue((current) => `${current}${current && !current.endsWith(" ") ? " " : ""}@`);
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
@@ -371,7 +363,7 @@ export function Composer({
         <div className="flex flex-wrap gap-2 px-3 pt-1.5">
           {images.map((image) => (
             <div className="group/image relative" key={image.id}>
-              <img
+              <ImageThumb
                 alt={image.name}
                 className="size-14 rounded-lg border border-hairline object-cover"
                 src={image.dataUrl}
@@ -390,31 +382,48 @@ export function Composer({
         </div>
       ) : null}
 
-      {contextItems.length > 0 ? (
-        <div className="flex flex-wrap gap-1.5 px-3 pt-1">
-          {contextItems.map((item, index) => (
-            <ContextToken
-              item={item}
-              key={contextItemKey(item)}
-              onRemove={() =>
-                onContextChange(contextItems.filter((_, itemIndex) => itemIndex !== index))
-              }
-            />
-          ))}
+      {contextItems.some((item) => item.type === "design-element") ? (
+        <div className="flex flex-wrap gap-2 px-3 pt-1.5">
+          {contextItems
+            .filter((item) => item.type === "design-element")
+            .map((item) => (
+              <DesignElementToken
+                element={item.element}
+                key={contextItemKey(item)}
+                onRemove={() =>
+                  onContextChange(
+                    contextItems.filter((other) => contextItemKey(other) !== contextItemKey(item)),
+                  )
+                }
+              />
+            ))}
         </div>
       ) : null}
 
-      <div className="flex items-center gap-2 px-3 pt-1 pb-2.5">
-        <Tooltip content="Add context">
-          <button
-            aria-label="Add context"
-            className="flex size-[26px] items-center justify-center rounded-full text-fg-subtle transition-colors hover:bg-hover hover:text-fg"
-            onClick={() => void openContextMenu()}
-            type="button"
-          >
-            <IconPlus size={16} stroke={1.7} />
-          </button>
-        </Tooltip>
+      {contextItems.some((item) => item.type !== "design-element") ? (
+        <div className="flex flex-wrap gap-1.5 px-3 pt-1">
+          {contextItems
+            .filter((item) => item.type !== "design-element")
+            .map((item) => (
+              <ContextToken
+                item={item}
+                key={contextItemKey(item)}
+                onRemove={() =>
+                  onContextChange(
+                    contextItems.filter((other) => contextItemKey(other) !== contextItemKey(item)),
+                  )
+                }
+              />
+            ))}
+        </div>
+      ) : null}
+
+      {/* @container: controls collapse their labels to icons as the composer
+          narrows (responsive to the composer's own width, not the viewport). */}
+      {/* @container: controls collapse their labels to icons as the composer
+          narrows (responsive to the composer's own width, not the viewport). */}
+      <div className="@container flex items-center gap-2 px-3 pt-1 pb-2.5">
+        <ApprovalModeSelect />
 
         <ContextUsageIndicator
           {...(currentModel?.contextWindow ? { contextWindow: currentModel.contextWindow } : {})}
@@ -430,14 +439,14 @@ export function Composer({
 
         <div className="flex-1" />
 
-        {/* 用纯 opacity 切换 send/mic：去掉 scale 变换，避免每次切换都触发 layout/paint reflow；
-            duration 80ms 触感更快，配合 LazyMotion(domAnimation) 走单帧 transform 路径。 */}
+        {/* Stop while running; otherwise the send button is always shown (active in
+            brand purple, muted/disabled when there's nothing to send). */}
         <AnimatePresence initial={false} mode="popLayout">
           {isRunning && onAbort ? (
             <m.button
               animate={{ opacity: 1, scale: 1 }}
               aria-label="Stop"
-              className="flex size-[26px] items-center justify-center rounded-full bg-fg text-canvas shadow-composer transition-colors hover:bg-white active:scale-[0.94]"
+              className="flex size-[26px] shrink-0 items-center justify-center rounded-full bg-focus-ring text-white shadow-composer transition-colors hover:bg-focus-ring-soft active:scale-[0.94]"
               exit={{ opacity: 0 }}
               initial={{ opacity: 0, scale: 0.96 }}
               key="stop"
@@ -445,14 +454,14 @@ export function Composer({
               transition={{ duration: 0.12, ease: [0.22, 1, 0.36, 1] }}
               type="button"
             >
-              <IconPlayerStop size={13} stroke={2.4} />
+              <IconPlayerStopFilled size={11} />
             </m.button>
-          ) : hasContent ? (
+          ) : (
             <m.button
               animate={{ opacity: 1 }}
               aria-label="Send"
-              className="flex size-[26px] items-center justify-center rounded-full bg-fg text-canvas transition-colors hover:bg-fg-muted active:scale-[0.94] disabled:bg-chip-strong disabled:text-fg-faint"
-              disabled={!canSubmit || models.length === 0 || !model}
+              className="flex size-[26px] shrink-0 items-center justify-center rounded-full bg-focus-ring text-white transition-colors hover:bg-focus-ring-soft active:scale-[0.94] disabled:bg-chip-strong disabled:text-fg-faint"
+              disabled={!hasContent || !canSubmit || models.length === 0 || !model}
               exit={{ opacity: 0 }}
               initial={{ opacity: 0 }}
               key="send"
@@ -461,19 +470,6 @@ export function Composer({
               type="button"
             >
               <IconArrowUp size={14} stroke={2.4} />
-            </m.button>
-          ) : (
-            <m.button
-              animate={{ opacity: 1 }}
-              aria-label="Dictate"
-              className="flex size-[26px] items-center justify-center rounded-full bg-chip-strong text-fg transition-colors hover:bg-active active:scale-[0.94]"
-              exit={{ opacity: 0 }}
-              initial={{ opacity: 0 }}
-              key="mic"
-              transition={{ duration: 0.08, ease: "linear" }}
-              type="button"
-            >
-              <IconMicrophone size={14} stroke={1.7} />
             </m.button>
           )}
         </AnimatePresence>
@@ -496,18 +492,24 @@ function ModelSelect({
   const [editingModel, setEditingModel] = useState<string | null>(null);
   const current = models.find((item) => item.id === model) ?? models[0];
   const editingItem = models.find((item) => item.id === editingModel);
-  const name = current?.provider ?? "Settings";
   const tag = current?.name ?? "No model configured";
 
   return current ? (
     <Select.Root onValueChange={(next) => onModelChange(String(next))} value={model}>
-      {/* 不再前置 Sparkles 图标，与 Cursor 原生模型按钮形态一致 */}
-      <Select.Trigger className="app-no-drag flex h-[26px] items-center gap-1 rounded-md px-2 text-sm font-normal transition-colors hover:bg-hover data-popup-open:bg-hover">
-        <span className="text-fg-muted">{name}</span>
-        <span className="text-fg-subtle">{tag}</span>
-        <span className="text-fg-faint">{current.thinkingLevel}</span>
+      {/* Provider shown as its (frameless) logo, then the model + thinking. */}
+      <Select.Trigger className="app-no-drag flex h-[26px] min-w-0 items-center gap-1.5 rounded-md px-2 text-sm font-normal transition-colors hover:bg-hover data-popup-open:bg-hover">
+        <ProviderLogo
+          framed={false}
+          name={current.providerName ?? current.provider}
+          provider={current.provider}
+          size="sm"
+        />
+        <span className="min-w-0 truncate text-fg-subtle">{tag}</span>
+        <span className="hidden shrink-0 whitespace-nowrap text-fg-faint @md:inline">
+          {current.thinkingLevel}
+        </span>
         <Select.Icon>
-          <IconChevronDown className="text-fg-faint" size={12} stroke={2} />
+          <IconChevronDown className="shrink-0 text-fg-faint" size={12} stroke={2} />
         </Select.Icon>
       </Select.Trigger>
       <Select.Portal>
@@ -533,10 +535,18 @@ function ModelSelect({
                 key={item.id}
                 value={item.id}
               >
-                <Select.ItemText className="shrink-0 text-fg-muted">
-                  {item.provider}
+                <ProviderLogo
+                  framed={false}
+                  name={item.providerName ?? item.provider}
+                  provider={item.provider}
+                  size="sm"
+                />
+                <span className="shrink-0 text-sm text-fg-muted">
+                  {item.providerName ?? item.provider}
+                </span>
+                <Select.ItemText className="min-w-0 truncate text-sm text-fg-subtle">
+                  {item.name}
                 </Select.ItemText>
-                <span className="min-w-0 truncate text-sm text-fg-subtle">{item.name}</span>
                 {!item.available ? (
                   <span className="ml-1 shrink-0 rounded bg-chip px-1 text-2xs text-fg-faint">
                     off
@@ -715,6 +725,10 @@ function contextItemKey(item: ContextItem): string {
 
   if (item.type === "search") {
     return `search:${item.query}`;
+  }
+
+  if (item.type === "design-element") {
+    return `design-element:${item.element.id}`;
   }
 
   return item.type;

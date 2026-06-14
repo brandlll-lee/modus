@@ -7,14 +7,17 @@ import {
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { app, type BrowserWindow } from "electron";
+import { app, type BrowserWindow as BrowserWindowType } from "electron";
 import type {
   AgentEvent,
   AgentRunInfo,
   AgentSessionInfo,
+  ContextItem,
   ContextUsageInfo,
+  MessageContextChip,
   ModelInfo,
 } from "../../shared/contracts";
+import { releaseAgentBrowserControl } from "../browser/browser-service";
 import { formatResolvedContext, resolveContext } from "../context/context-service";
 import { getChangeStatsSince } from "../git/git-service";
 import { IPC_CHANNELS } from "../ipc/channels";
@@ -61,6 +64,7 @@ import type {
 } from "./runtime";
 import { deriveSessionTitle, shouldReplaceSessionTitle } from "./session-title";
 import { describeAgentShellForPrompt, resolveAgentShell } from "./shell-resolver";
+import { registerBrowserTools } from "./tools/browser-tools";
 import { toolRegistry } from "./tools/registry";
 import { registerTerminalTools } from "./tools/terminal-tools";
 import { registerTodoTools } from "./tools/todo-tools";
@@ -109,6 +113,7 @@ export class PiSdkRuntime implements AgentRuntime {
     // profile before any session is assembled.
     registerTerminalTools();
     registerWebTools();
+    registerBrowserTools();
     registerTodoTools();
   }
 
@@ -141,7 +146,7 @@ export class PiSdkRuntime implements AgentRuntime {
   }
 
   private async getOrResume(
-    window: BrowserWindow,
+    window: BrowserWindowType,
     sessionId: string,
   ): Promise<SdkRuntimeSession | undefined> {
     const existing = this.sessions.get(sessionId);
@@ -161,7 +166,7 @@ export class PiSdkRuntime implements AgentRuntime {
     return await next;
   }
 
-  async ensure(window: BrowserWindow, sessionId: string): Promise<AgentSessionInfo> {
+  async ensure(window: BrowserWindowType, sessionId: string): Promise<AgentSessionInfo> {
     const runtimeSession = await this.getOrResume(window, sessionId);
     if (!runtimeSession) {
       throw new Error(`Agent session not found: ${sessionId}`);
@@ -282,7 +287,10 @@ export class PiSdkRuntime implements AgentRuntime {
     return runtimeSession;
   }
 
-  async create(window: BrowserWindow, input: CreateAgentRuntimeInput): Promise<AgentSessionInfo> {
+  async create(
+    window: BrowserWindowType,
+    input: CreateAgentRuntimeInput,
+  ): Promise<AgentSessionInfo> {
     const emit: EmitAgentEvent = (event) => {
       recordAgentEvent(event);
       window.webContents.send(IPC_CHANNELS.agentEvent, event);
@@ -339,7 +347,7 @@ export class PiSdkRuntime implements AgentRuntime {
   }
 
   private async createRuntimeSession(
-    window: BrowserWindow,
+    window: BrowserWindowType,
     sessionId: string,
   ): Promise<SdkRuntimeSession | undefined> {
     const info = getAgentSession(sessionId);
@@ -400,7 +408,7 @@ export class PiSdkRuntime implements AgentRuntime {
     });
   }
 
-  async prompt(window: BrowserWindow, input: PromptAgentInput): Promise<void> {
+  async prompt(window: BrowserWindowType, input: PromptAgentInput): Promise<void> {
     const runtimeSession = await this.getOrResume(window, input.sessionId);
     if (!runtimeSession) {
       throw new Error(`Agent session not running: ${input.sessionId}`);
@@ -443,6 +451,7 @@ export class PiSdkRuntime implements AgentRuntime {
 
     updateAgentSessionStatus(input.sessionId, "running");
     const userMessageId = input.userMessageId ?? `user:${run.id}`;
+    const contextChips = buildContextChips(input.context ?? []);
     runtimeSession.emit({
       type: "message.started",
       sessionId: input.sessionId,
@@ -451,6 +460,7 @@ export class PiSdkRuntime implements AgentRuntime {
       ...(input.attachments && input.attachments.length > 0
         ? { attachments: input.attachments }
         : {}),
+      ...(contextChips.length > 0 ? { contextChips } : {}),
     });
     runtimeSession.emit({
       type: "message.delta",
@@ -586,8 +596,14 @@ export class PiSdkRuntime implements AgentRuntime {
       throw error;
     } finally {
       this.runOutputTrackers.delete(input.sessionId);
-      if (getAgentSession(input.sessionId)?.status !== "error") {
+      const session = getAgentSession(input.sessionId);
+      if (session?.status !== "error") {
         updateAgentSessionStatus(input.sessionId, "idle");
+      }
+      // The run is over (completed/failed/cancelled all funnel through here):
+      // dim the in-app browser's "AI in control" glow + cursor.
+      if (session?.workspaceId) {
+        releaseAgentBrowserControl(session.workspaceId);
       }
     }
   }
@@ -640,7 +656,7 @@ export class PiSdkRuntime implements AgentRuntime {
   }
 
   async setModel(
-    window: BrowserWindow,
+    window: BrowserWindowType,
     sessionId: string,
     modelId: string,
     thinkingLevel?: string,
@@ -666,7 +682,7 @@ export class PiSdkRuntime implements AgentRuntime {
   }
 
   async cycleModel(
-    window: BrowserWindow | undefined,
+    window: BrowserWindowType | undefined,
     sessionId: string | undefined,
     direction: "forward" | "backward" = "forward",
   ): Promise<ModelInfo> {
@@ -736,4 +752,50 @@ function getModelThinkingLevelFromInput(value: string): ReturnType<typeof getMod
   }
 
   return "off";
+}
+
+/**
+ * Compact, display-only chips for the sent user message bubble (Cursor parity:
+ * the context you attached stays visible after sending). Derived from the run's
+ * context items — the full items are still resolved server-side for the model.
+ */
+function buildContextChips(items: ContextItem[]): MessageContextChip[] {
+  return items.map(contextChipFor);
+}
+
+function contextChipFor(item: ContextItem): MessageContextChip {
+  switch (item.type) {
+    case "file":
+      return { kind: "file", label: chipBasename(item.path) };
+    case "folder":
+      return { kind: "folder", label: `${chipBasename(item.path)}/` };
+    case "doc":
+      return { kind: "doc", label: item.title };
+    case "terminal":
+      return { kind: "terminal", label: `terminal:${item.terminalId.slice(0, 6)}` };
+    case "browser":
+      return { kind: "browser", label: "browser" };
+    case "git-diff":
+      return { kind: "git-diff", label: item.mode === "branch" ? "branch diff" : "working diff" };
+    case "project-summary":
+      return { kind: "project-summary", label: "project summary" };
+    case "recent-changes":
+      return { kind: "recent-changes", label: "recent changes" };
+    case "rules":
+      return { kind: "rules", label: "project rules" };
+    case "search":
+      return { kind: "search", label: `search:${item.query}` };
+    case "design-element": {
+      const el = item.element;
+      const text = el.text
+        ? ` "${el.text.length > 24 ? `${el.text.slice(0, 23)}…` : el.text}"`
+        : "";
+      const detail = el.source ? `${el.source.file}:${el.source.line}` : el.domPath;
+      return { kind: "design-element", label: `${el.label}${text}`, detail };
+    }
+  }
+}
+
+function chipBasename(path: string): string {
+  return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
 }

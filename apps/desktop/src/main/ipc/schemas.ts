@@ -83,6 +83,70 @@ export const terminalResizeSchema = z.object({
 
 export const cwdSchema = nonEmptyString;
 
+export const browserWorkspaceSchema = z.object({
+  workspaceId: nonEmptyString,
+});
+
+export const browserCreateTabSchema = z.object({
+  workspaceId: nonEmptyString,
+  url: z.string().trim().optional(),
+});
+
+export const browserTabSchema = z.object({
+  tabId: nonEmptyString,
+});
+
+export const browserNavigateSchema = z.object({
+  tabId: optionalNonEmptyString,
+  workspaceId: optionalNonEmptyString,
+  url: nonEmptyString,
+  newTab: z.boolean().optional(),
+});
+
+export const browserBoundsSchema = z.object({
+  tabId: nonEmptyString,
+  bounds: z.object({
+    x: z.number().finite(),
+    y: z.number().finite(),
+    width: z.number().finite().min(0).max(10_000),
+    height: z.number().finite().min(0).max(10_000),
+  }),
+});
+
+export const browserFindSchema = z.object({
+  tabId: nonEmptyString,
+  query: nonEmptyString,
+  forward: z.boolean().optional(),
+  findNext: z.boolean().optional(),
+  matchCase: z.boolean().optional(),
+});
+
+export const browserFindStopSchema = z.object({
+  tabId: nonEmptyString,
+  action: z.enum(["clearSelection", "keepSelection", "activateSelection"]).optional(),
+});
+
+const hexColor = z.string().trim().min(1).max(64);
+
+export const browserDesignModeSchema = z.object({
+  tabId: nonEmptyString,
+  enabled: z.boolean(),
+  theme: z
+    .object({
+      accent: hexColor,
+      accentSoft: hexColor,
+      accentContrast: hexColor,
+      surface: hexColor,
+      elevated: hexColor,
+      fg: hexColor,
+      fgSubtle: hexColor,
+      border: hexColor,
+      shadow: hexColor,
+      fill: hexColor,
+    })
+    .optional(),
+});
+
 export const skillsGetSchema = z.object({
   cwd: nonEmptyString,
   id: nonEmptyString,
@@ -163,9 +227,14 @@ export const permissionDecideSchema = z.object({
     "git.write",
     "mcp.call",
     "external.open",
+    "browser.control",
   ]),
   target: nonEmptyString,
   decision: z.enum(["allow-once", "allow-workspace", "deny"]),
+});
+
+export const approvalModeSchema = z.object({
+  mode: z.enum(["request-approval", "auto", "full-access"]),
 });
 
 export const contextSearchSchema = z.object({
@@ -178,6 +247,7 @@ export const contextSearchSchema = z.object({
       "folder",
       "doc",
       "terminal",
+      "browser",
       "git-diff",
       "project-summary",
       "recent-changes",

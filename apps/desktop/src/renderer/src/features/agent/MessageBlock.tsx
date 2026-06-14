@@ -1,9 +1,20 @@
-import { IconChevronRight, IconLoader2, IconPencil } from "@tabler/icons-react";
+import {
+  IconBook2,
+  IconFile,
+  IconFolder,
+  IconGitBranch,
+  IconLayoutList,
+  IconLoader2,
+  IconPencil,
+  IconSearch,
+  IconTerminal2,
+  IconWorld,
+} from "@tabler/icons-react";
 import { m } from "motion/react";
 import { type KeyboardEvent, memo, useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { PromptImageAttachment } from "../../../../shared/contracts";
-import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
+import type { MessageContextChip, PromptImageAttachment } from "../../../../shared/contracts";
 import { CopyButton } from "../../components/ui/CopyButton";
+import { ImageThumb } from "../../components/ui/ImageViewer";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
 import { formatClock } from "../../lib/formatClock";
@@ -16,7 +27,6 @@ type MessageBlockProps = {
   /** Timeline id of this message — the rollback anchor for edit & resend. */
   messageId: string;
   content: string;
-  thinking: string;
   streaming?: boolean;
   /** Epoch ms — user send time. */
   createdAt?: number;
@@ -35,13 +45,14 @@ type MessageBlockProps = {
   ): Promise<void>;
   /** User only: images attached to the prompt, rendered as thumbnails. */
   attachments?: PromptImageAttachment[];
+  /** User only: context chips attached to the prompt, kept visible after send. */
+  contextChips?: MessageContextChip[];
 };
 
 export const MessageBlock = memo(function MessageBlock({
   messageRole,
   messageId,
   content,
-  thinking,
   streaming = false,
   createdAt,
   actions,
@@ -50,8 +61,8 @@ export const MessageBlock = memo(function MessageBlock({
   editable = false,
   onEditResend,
   attachments,
+  contextChips,
 }: MessageBlockProps) {
-  const [thinkingOpen, setThinkingOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   // Smoothly reveal assistant text like a typewriter, decoupled from bursty
   // provider chunks. User messages are already complete, so this is a no-op.
@@ -78,13 +89,20 @@ export const MessageBlock = memo(function MessageBlock({
           {attachments && attachments.length > 0 ? (
             <div className="mb-2 flex flex-wrap justify-end gap-1.5">
               {attachments.map((attachment, index) => (
-                <img
+                <ImageThumb
                   alt={attachment.name ?? `attachment ${index + 1}`}
                   className="max-h-44 max-w-full rounded-lg border border-hairline object-contain"
                   key={`${attachment.name ?? "image"}:${attachment.data.length}:${attachment.data.slice(-24)}`}
                   src={`data:${attachment.mimeType};base64,${attachment.data}`}
                   title={attachment.name}
                 />
+              ))}
+            </div>
+          ) : null}
+          {contextChips && contextChips.length > 0 ? (
+            <div className="mb-2 flex flex-wrap justify-end gap-1.5">
+              {contextChips.map((chip) => (
+                <ContextChip chip={chip} key={`${chip.kind}:${chip.label}:${chip.detail ?? ""}`} />
               ))}
             </div>
           ) : null}
@@ -115,29 +133,6 @@ export const MessageBlock = memo(function MessageBlock({
 
   return (
     <div className="group min-w-0 max-w-full text-sm leading-relaxed">
-      {thinking ? (
-        <div className="mb-1.5">
-          <button
-            className="flex items-center gap-1 text-sm text-fg-subtle transition-colors hover:text-fg-muted"
-            onClick={() => setThinkingOpen((open) => !open)}
-            type="button"
-          >
-            <m.span
-              animate={{ rotate: thinkingOpen ? 90 : 0 }}
-              className="flex size-3 items-center justify-center"
-              transition={{ duration: 0.16, ease: "easeOut" }}
-            >
-              <IconChevronRight size={12} stroke={1.8} />
-            </m.span>
-            <span>{`Thought for ${estimateThinkingSeconds(thinking)}s`}</span>
-          </button>
-          <CollapsibleMotion open={thinkingOpen} preset="timeline">
-            <pre className="scroll-thin mt-1 max-h-44 max-w-full overflow-y-auto overflow-x-auto whitespace-pre-wrap pl-4 font-mono text-2xs text-fg-faint leading-relaxed">
-              {thinking}
-            </pre>
-          </CollapsibleMotion>
-        </div>
-      ) : null}
       {content ? <MarkdownMessage content={displayContent} streaming={streaming} /> : null}
       {actions ? (
         <div className="mt-1.5 flex h-6 items-center gap-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
@@ -245,7 +240,7 @@ function UserMessageEditor({
       {attachments && attachments.length > 0 ? (
         <div className="mb-2 flex flex-wrap gap-1.5">
           {attachments.map((attachment, index) => (
-            <img
+            <ImageThumb
               alt={attachment.name ?? `attachment ${index + 1}`}
               className="size-12 rounded-lg border border-hairline object-cover"
               key={`${attachment.name ?? "image"}:${attachment.data.length}:${attachment.data.slice(-24)}`}
@@ -300,6 +295,81 @@ function UserMessageEditor({
   );
 }
 
-function estimateThinkingSeconds(thinking: string): number {
-  return Math.max(1, Math.min(9, Math.round(thinking.length / 240)));
+/**
+ * Read-only chip echoing one context item attached to a sent user message
+ * (Cursor parity — the chips stay in the bubble after sending). Design-element
+ * chips get the brand-token inspect glyph + brand text to match their composer
+ * token; every other kind uses a muted icon + label. All colors are Modus theme
+ * tokens, so the row reads correctly in light and dark mode.
+ */
+function ContextChip({ chip }: { chip: MessageContextChip }) {
+  const isDesign = chip.kind === "design-element";
+  return (
+    <span
+      className={cn(
+        "flex max-w-full items-center gap-1.5 rounded-md border px-1.5 py-0.5 text-2xs",
+        isDesign
+          ? "border-focus-ring/30 bg-focus-ring-soft/10 text-focus-ring"
+          : "border-hairline bg-chip text-fg-muted",
+      )}
+      title={chip.detail ? `${chip.label} — ${chip.detail}` : chip.label}
+    >
+      {isDesign ? <InspectGlyph /> : <ContextKindIcon kind={chip.kind} />}
+      <span className="truncate font-medium">{chip.label}</span>
+    </span>
+  );
+}
+
+/** Muted leading icon for non-design context kinds. */
+function ContextKindIcon({ kind }: { kind: MessageContextChip["kind"] }) {
+  const props = { className: "size-3 shrink-0", stroke: 1.8 } as const;
+  switch (kind) {
+    case "folder":
+      return <IconFolder {...props} />;
+    case "doc":
+    case "rules":
+      return <IconBook2 {...props} />;
+    case "terminal":
+      return <IconTerminal2 {...props} />;
+    case "browser":
+      return <IconWorld {...props} />;
+    case "git-diff":
+    case "recent-changes":
+      return <IconGitBranch {...props} />;
+    case "project-summary":
+      return <IconLayoutList {...props} />;
+    case "search":
+      return <IconSearch {...props} />;
+    default:
+      return <IconFile {...props} />;
+  }
+}
+
+/** Pointer-in-frame inspect glyph — identical to the composer token + popover. */
+function InspectGlyph() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="size-3 shrink-0"
+      fill="none"
+      height="12"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={2}
+      viewBox="0 0 24 24"
+      width="12"
+    >
+      <path d="M5 3a2 2 0 0 0-2 2" />
+      <path d="M19 3a2 2 0 0 1 2 2" />
+      <path d="M5 21a2 2 0 0 1-2-2" />
+      <path d="M9 3h1" />
+      <path d="M9 21h2" />
+      <path d="M14 3h1" />
+      <path d="M3 9v1" />
+      <path d="M21 9v2" />
+      <path d="M3 14v1" />
+      <path d="m12 12 4 10 1.7-4.3L22 16Z" />
+    </svg>
+  );
 }

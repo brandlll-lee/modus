@@ -6,6 +6,10 @@ import type {
   AgentRollbackResult,
   AgentRunInfo,
   AgentSessionInfo,
+  ApprovalMode,
+  BrowserBounds,
+  BrowserEvent,
+  BrowserTabInfo,
   CheckpointInfo,
   ConfigureProviderInput,
   ContextItem,
@@ -51,6 +55,20 @@ export type SecurityState = {
   nodeIntegration: boolean;
   sandbox: boolean;
   senderValidation: boolean;
+};
+
+/** Resolved Modus theme tokens forwarded to the in-page Design Mode overlay. */
+export type DesignModeTheme = {
+  accent: string;
+  accentSoft: string;
+  accentContrast: string;
+  surface: string;
+  elevated: string;
+  fg: string;
+  fgSubtle: string;
+  border: string;
+  shadow: string;
+  fill: string;
 };
 
 export type ModusApi = {
@@ -123,6 +141,44 @@ export type ModusApi = {
     list(): Promise<TerminalInfo[]>;
     onEvent(callback: (event: TerminalEvent) => void): () => void;
   };
+  browser: {
+    listTabs(input: { workspaceId: string }): Promise<BrowserTabInfo[]>;
+    createTab(input: { workspaceId: string; url?: string }): Promise<BrowserTabInfo>;
+    selectTab(input: { tabId: string }): Promise<BrowserTabInfo>;
+    closeTab(input: { tabId: string }): Promise<void>;
+    navigate(input: {
+      tabId?: string;
+      workspaceId?: string;
+      url: string;
+      newTab?: boolean;
+    }): Promise<BrowserTabInfo>;
+    back(input: { tabId: string }): Promise<BrowserTabInfo>;
+    forward(input: { tabId: string }): Promise<BrowserTabInfo>;
+    reload(input: { tabId: string }): Promise<BrowserTabInfo>;
+    setBounds(input: { tabId: string; bounds: BrowserBounds }): Promise<void>;
+    show(input: { tabId: string; bounds: BrowserBounds }): Promise<void>;
+    hide(input: { tabId: string }): Promise<void>;
+    toggleDevtools(input: { tabId: string }): Promise<BrowserTabInfo>;
+    openExternal(input: { tabId: string }): Promise<void>;
+    /** Toggle Design Mode (point-and-select). `theme` carries Modus light/dark tokens. */
+    setDesignMode(input: {
+      tabId: string;
+      enabled: boolean;
+      theme?: DesignModeTheme;
+    }): Promise<BrowserTabInfo>;
+    find(input: {
+      tabId: string;
+      query: string;
+      forward?: boolean;
+      findNext?: boolean;
+      matchCase?: boolean;
+    }): Promise<void>;
+    findStop(input: {
+      tabId: string;
+      action?: "clearSelection" | "keepSelection" | "activateSelection";
+    }): Promise<void>;
+    onEvent(callback: (event: BrowserEvent) => void): () => void;
+  };
   diff: {
     list(cwd: string): Promise<FileChange[]>;
     read(input: { cwd: string; path?: string; mode?: FileDiff["mode"] }): Promise<FileDiff>;
@@ -165,6 +221,8 @@ export type ModusApi = {
       decision: PermissionDecision["decision"];
     }): Promise<PermissionDecision>;
     list(): Promise<PermissionDecision[]>;
+    getMode(): Promise<ApprovalMode>;
+    setMode(mode: ApprovalMode): Promise<ApprovalMode>;
   };
   context: {
     search(input: {

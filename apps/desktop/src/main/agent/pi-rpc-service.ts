@@ -1,7 +1,7 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { app, type BrowserWindow } from "electron";
+import { app, type BrowserWindow as BrowserWindowType } from "electron";
 import type { AgentEvent, AgentSessionInfo } from "../../shared/contracts";
 import { IPC_CHANNELS } from "../ipc/channels";
 import { recordAgentEvent } from "./agent-event-store";
@@ -16,7 +16,7 @@ type RuntimeSession = {
 
 const sessions = new Map<string, RuntimeSession>();
 
-function emit(window: BrowserWindow, event: AgentEvent): void {
+function emit(window: BrowserWindowType, event: AgentEvent): void {
   recordAgentEvent(event);
   window.webContents.send(IPC_CHANNELS.agentEvent, event);
 }
@@ -26,7 +26,7 @@ function stringifyLine(line: unknown): string {
 }
 
 export function createPiRpcSession(
-  window: BrowserWindow,
+  window: BrowserWindowType,
   input: { workspaceId: string; cwd: string; title: string },
 ): AgentSessionInfo {
   const info = createAgentSessionRecord({ ...input, runtime: "pi-rpc" });
