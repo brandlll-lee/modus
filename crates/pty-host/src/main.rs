@@ -9,6 +9,9 @@ use std::{
     thread,
 };
 
+mod decoder;
+use decoder::PtyDecoder;
+
 type Sessions = Arc<Mutex<HashMap<String, Session>>>;
 type HostWriter = Arc<Mutex<io::Stdout>>;
 
@@ -16,6 +19,10 @@ struct Session {
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
     killer: Box<dyn ChildKiller + Send + Sync>,
+    /// OS process id of the PTY child, used to tear down the whole process tree
+    /// on kill so a restarted server actually frees its port (no orphaned
+    /// grandchildren like `npm`→`node` holding the port).
+    pid: Option<u32>,
 }
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
@@ -28,6 +35,10 @@ enum HostCommand {
         cols: u16,
         rows: u16,
         env: Option<HashMap<String, String>>,
+        /// Decode override for this session: `Some("utf-8")` forces UTF-8 (used
+        /// for agent commands whose shell is set to UTF-8); otherwise the host
+        /// console code page is used.
+        encoding: Option<String>,
         /// Optional arguments passed to the shell. When present the PTY runs
         /// `shell <args...>` (e.g. `bash -lc "<command>"`) and the child's exit
         /// status becomes the terminal's exit code — this is how an agent-run
@@ -74,34 +85,6 @@ fn pty_size(cols: u16, rows: u16) -> PtySize {
     }
 }
 
-/// Split a byte buffer into the longest valid UTF-8 prefix plus any trailing
-/// bytes that don't yet form a complete character.
-///
-/// PTY reads land on arbitrary byte boundaries, so a multi-byte character
-/// (CJK, emoji, box-drawing) can straddle two reads. `String::from_utf8_lossy`
-/// would replace the split halves with `U+FFFD` *irreversibly*. Instead we emit
-/// only the complete prefix and hand the incomplete tail back to the caller to
-/// prepend to the next read. Genuinely invalid bytes still collapse to a single
-/// replacement char so we never stall.
-fn split_utf8(buf: &[u8]) -> (String, Vec<u8>) {
-    match std::str::from_utf8(buf) {
-        Ok(text) => (text.to_owned(), Vec::new()),
-        Err(error) => {
-            let valid_up_to = error.valid_up_to();
-            let mut text = String::from_utf8_lossy(&buf[..valid_up_to]).into_owned();
-            match error.error_len() {
-                None => (text, buf[valid_up_to..].to_vec()),
-                Some(len) => {
-                    text.push('\u{FFFD}');
-                    let (rest_text, carry) = split_utf8(&buf[valid_up_to + len..]);
-                    text.push_str(&rest_text);
-                    (text, carry)
-                }
-            }
-        }
-    }
-}
-
 fn spawn_session(
     sessions: &Sessions,
     writer: &HostWriter,
@@ -111,6 +94,7 @@ fn spawn_session(
     cols: u16,
     rows: u16,
     env: Option<HashMap<String, String>>,
+    encoding: Option<String>,
     args: Option<Vec<String>>,
 ) -> Result<()> {
     let pty_system = native_pty_system();
@@ -163,6 +147,7 @@ fn spawn_session(
             master: pair.master,
             writer: pty_writer,
             killer,
+            pid,
         },
     );
 
@@ -173,17 +158,17 @@ fn spawn_session(
     let read_id = id.clone();
     thread::spawn(move || {
         let mut buffer = [0_u8; 8192];
-        // Incomplete trailing UTF-8 bytes from the previous read, prepended to
-        // the next chunk so multi-byte characters survive read boundaries.
-        let mut carry: Vec<u8> = Vec::new();
+        // Decode child bytes into UTF-8 using this session's encoding (UTF-8 for
+        // agent commands, else the OS console code page), with state carried
+        // across reads so multi-byte characters that straddle a read boundary
+        // are reassembled. See `decoder::PtyDecoder`.
+        let mut decoder = PtyDecoder::new(encoding.as_deref());
 
         loop {
             match reader.read(&mut buffer) {
                 Ok(0) => break,
                 Ok(size) => {
-                    carry.extend_from_slice(&buffer[..size]);
-                    let (data, rest) = split_utf8(&carry);
-                    carry = rest;
+                    let data = decoder.push(&buffer[..size]);
                     if !data.is_empty() {
                         let _ = send_event(
                             &read_writer,
@@ -207,13 +192,14 @@ fn spawn_session(
             }
         }
 
-        // Flush any dangling bytes (process died mid-character) so nothing is lost.
-        if !carry.is_empty() {
+        // Flush any buffered partial sequence (process died mid-character).
+        let tail = decoder.finish();
+        if !tail.is_empty() {
             let _ = send_event(
                 &read_writer,
                 HostEvent::Data {
                     id: &read_id,
-                    data: String::from_utf8_lossy(&carry).into_owned(),
+                    data: tail,
                 },
             );
         }
@@ -238,6 +224,37 @@ fn spawn_session(
     Ok(())
 }
 
+/// Best-effort termination of a child *and its descendants*, so killing a
+/// terminal that ran e.g. `npm run dev` also stops the `node` server it spawned
+/// and releases the port. Uses only platform CLIs (no extra crates): `taskkill
+/// /T` on Windows, and a process-group `kill` on Unix (PTY children are session
+/// leaders, so the negative pid targets the whole group). The direct
+/// `killer.kill()` in the caller remains the fallback.
+fn kill_process_tree(pid: Option<u32>) {
+    let Some(pid) = pid else {
+        return;
+    };
+
+    #[cfg(windows)]
+    {
+        let _ = std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+
+    #[cfg(unix)]
+    {
+        // Negative pid → the process group led by the PTY child.
+        let _ = std::process::Command::new("kill")
+            .args(["-TERM", &format!("-{pid}")])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+}
+
 fn handle_command(command: HostCommand, sessions: &Sessions, writer: &HostWriter) -> Result<bool> {
     match command {
         HostCommand::Spawn {
@@ -247,10 +264,12 @@ fn handle_command(command: HostCommand, sessions: &Sessions, writer: &HostWriter
             cols,
             rows,
             env,
+            encoding,
             args,
         } => {
             let id_for_error = id.clone();
-            if let Err(error) = spawn_session(sessions, writer, id, shell, cwd, cols, rows, env, args)
+            if let Err(error) =
+                spawn_session(sessions, writer, id, shell, cwd, cols, rows, env, encoding, args)
             {
                 send_event(
                     writer,
@@ -274,7 +293,11 @@ fn handle_command(command: HostCommand, sessions: &Sessions, writer: &HostWriter
         }
         HostCommand::Kill { id } => {
             if let Some(mut session) = sessions.lock().expect("session lock poisoned").remove(&id) {
-                session.killer.kill()?;
+                // Tear down the whole tree first (frees ports held by grandchildren
+                // such as a `node` spawned by `npm run dev`), then signal the PTY
+                // child directly as a fallback in case the tree kill missed it.
+                kill_process_tree(session.pid);
+                let _ = session.killer.kill();
             }
         }
         HostCommand::Shutdown => return Ok(false),
@@ -350,7 +373,7 @@ mod tests {
             vec!["-c".to_string(), "echo MODUS_PTY_PROBE".to_string()],
         );
 
-        spawn_session(&sessions, &writer, "probe".to_string(), shell, ".".to_string(), 120, 30, None, Some(args))
+        spawn_session(&sessions, &writer, "probe".to_string(), shell, ".".to_string(), 120, 30, None, None, Some(args))
             .expect("spawn_session");
 
         // spawn_session moved the master into the session map and a reader thread

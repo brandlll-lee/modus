@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { deriveTitle, shellCommandArgs, sliceSince, stripAnsi, tailText } from "./terminal-output";
+import {
+  deriveTitle,
+  formatDuration,
+  matchesReadyLog,
+  shellCommandArgs,
+  sliceSince,
+  stripAnsi,
+  tailText,
+} from "./terminal-output";
 
 describe("stripAnsi", () => {
   it("removes SGR color escapes", () => {
@@ -22,6 +30,49 @@ describe("tailText", () => {
 
   it("drops a partial first line after truncating", () => {
     expect(tailText("aaa\nbbbbbb", 7)).toEqual({ text: "bbbbbb", truncated: true });
+  });
+});
+
+describe("formatDuration", () => {
+  it("renders sub-second durations in milliseconds", () => {
+    expect(formatDuration(0)).toBe("0ms");
+    expect(formatDuration(999)).toBe("999ms");
+    expect(formatDuration(1)).toBe("1ms");
+  });
+
+  it("renders seconds with one decimal under a minute", () => {
+    expect(formatDuration(1000)).toBe("1.0s");
+    expect(formatDuration(1500)).toBe("1.5s");
+    expect(formatDuration(59_900)).toBe("59.9s");
+  });
+
+  it("renders minutes and seconds past a minute", () => {
+    expect(formatDuration(60_000)).toBe("1m0s");
+    expect(formatDuration(90_000)).toBe("1m30s");
+  });
+
+  it("guards against invalid input", () => {
+    expect(formatDuration(-1)).toBe("?");
+    expect(formatDuration(Number.NaN)).toBe("?");
+  });
+});
+
+describe("matchesReadyLog", () => {
+  it("matches a readiness regex case-insensitively", () => {
+    expect(matchesReadyLog("VITE ready in 312 ms", "ready in \\d+ ms")).toBe(true);
+    expect(matchesReadyLog("Local:   http://localhost:5173/", "local:")).toBe(true);
+  });
+
+  it("returns false when the pattern is absent from the output", () => {
+    expect(matchesReadyLog("compiling...", "ready in \\d+ ms")).toBe(false);
+  });
+
+  it("never throws on an invalid regex (returns false)", () => {
+    expect(matchesReadyLog("anything", "(unclosed")).toBe(false);
+  });
+
+  it("returns false for an empty pattern", () => {
+    expect(matchesReadyLog("output", "")).toBe(false);
   });
 });
 
@@ -65,6 +116,21 @@ describe("shellCommandArgs", () => {
   it("uses a login shell for bash/zsh/sh", () => {
     expect(shellCommandArgs("/bin/bash", "echo hi")).toEqual(["-lc", "echo hi"]);
     expect(shellCommandArgs("/usr/bin/zsh", "echo hi")).toEqual(["-lc", "echo hi"]);
+  });
+
+  it("forces UTF-8 for an agent pwsh command when requested", () => {
+    const args = shellCommandArgs("pwsh.exe", "npm install", { utf8: true });
+    expect(args.slice(0, 3)).toEqual(["-NoLogo", "-NoProfile", "-Command"]);
+    expect(args.at(-1)).toContain("UTF8");
+    expect(args.at(-1)).toContain("npm install");
+  });
+
+  it("forces chcp 65001 for an agent cmd command when requested", () => {
+    expect(shellCommandArgs("cmd.exe", "dir", { utf8: true }).at(-1)).toBe("chcp 65001>nul & dir");
+  });
+
+  it("leaves the command untouched when utf8 is not requested", () => {
+    expect(shellCommandArgs("pwsh.exe", "ls")).toEqual(["-NoLogo", "-NoProfile", "-Command", "ls"]);
   });
 });
 

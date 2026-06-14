@@ -1,6 +1,7 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
+import { connect as netConnect } from "node:net";
 import { delimiter, join } from "node:path";
 import { app, BrowserWindow, type BrowserWindow as BrowserWindowType } from "electron";
 import type {
@@ -11,16 +12,26 @@ import type {
 } from "../../shared/contracts";
 import { getDatabase } from "../db/database";
 import { IPC_CHANNELS } from "../ipc/channels";
-import { deriveTitle, shellCommandArgs, sliceSince, stripAnsi, tailText } from "./terminal-output";
+import { publishManagedProcessChange } from "../process/managed-process-bus";
+import { TerminalGrid } from "./terminal-grid";
+import {
+  deriveTitle,
+  matchesReadyLog,
+  shellCommandArgs,
+  sliceSince,
+  tailText,
+} from "./terminal-output";
 
 type ExitWaiter = (exitCode: number) => void;
 
 type TerminalRecord = {
   info: TerminalInfo;
-  /** ANSI-stripped scrollback (capped). Used for agent reads + persistence. */
-  output: string;
-  /** Total ANSI-stripped bytes ever produced — the cursor space for reads. */
-  produced: number;
+  /**
+   * Headless VT screen that renders raw PTY output the way the agent would see
+   * it (cursor moves / carriage returns / clears applied), so progress bars and
+   * spinners collapse instead of duplicating. Backs all agent reads + persist.
+   */
+  grid: TerminalGrid;
   /** Foreground awaiters resolved when the process exits. */
   waiters: ExitWaiter[];
   exited: boolean;
@@ -39,14 +50,46 @@ let hostBuffer = "";
 /** Last window that touched the terminal system; agent-run terminals emit here. */
 let lastWindow: BrowserWindowType | undefined;
 
-const MAX_OUTPUT_BYTES = 64 * 1024;
 /** Cap retained exited terminals so agent history doesn't grow unbounded. */
 const MAX_EXITED_RETAINED = 40;
+
+/**
+ * Environment for agent-run commands: deterministic, non-interactive, UTF-8.
+ * Disables progress spinners/animations (which redraw and bloat output),
+ * pagers (which block waiting for a keypress), and color, and forces UTF-8 so
+ * tool output decodes cleanly regardless of the host console code page. This is
+ * the same hardening CI environments apply.
+ */
+const AGENT_COMMAND_ENV: Record<string, string> = {
+  CI: "1",
+  NO_COLOR: "1",
+  FORCE_COLOR: "0",
+  npm_config_progress: "false",
+  npm_config_fund: "false",
+  npm_config_audit: "false",
+  npm_config_color: "false",
+  PIP_PROGRESS_BAR: "off",
+  PIP_NO_INPUT: "1",
+  PYTHONUTF8: "1",
+  PYTHONIOENCODING: "utf-8",
+  PAGER: "cat",
+  GIT_PAGER: "cat",
+  GIT_TERMINAL_PROMPT: "0",
+};
 /** Default foreground wait before a command is promoted to a background terminal. */
 export const DEFAULT_COMMAND_TIMEOUT_MS = 120_000;
 export const MAX_COMMAND_TIMEOUT_MS = 600_000;
-/** How long a background launch waits to capture the process's first output. */
-const BACKGROUND_PRIME_MS = 700;
+/**
+ * Default "yield window" for a background launch: spawn the process, watch it
+ * for this long, then report whether it stayed ALIVE or already EXITED. This is
+ * the liveness check that turns "started a server" into a verifiable outcome
+ * instead of a fire-and-forget guess (codex `unified_exec` parity).
+ */
+export const DEFAULT_BACKGROUND_YIELD_MS = 2_500;
+export const MIN_BACKGROUND_YIELD_MS = 500;
+export const MAX_BACKGROUND_YIELD_MS = 30_000;
+/** Poll cadence while waiting for a background process to exit or become ready. */
+const BACKGROUND_POLL_MS = 150;
 // Cap how often a terminal's scrollback snapshot hits SQLite. Without this, a
 // burst of output (think `npm install`) fires one synchronous upsert per chunk
 // on the main process and visibly stalls every terminal.
@@ -146,7 +189,7 @@ function persistOutput(terminalId: string): void {
       terminal.info.id,
       terminal.info.workspaceId,
       terminal.info.cwd,
-      terminal.output,
+      terminal.grid.render(),
       new Date().toISOString(),
     );
 }
@@ -180,10 +223,9 @@ function appendOutput(terminalId: string, data: string): void {
   if (!terminal) {
     return;
   }
-
-  const clean = stripAnsi(data);
-  terminal.produced += Buffer.byteLength(clean, "utf8");
-  terminal.output = `${terminal.output}${clean}`.slice(-MAX_OUTPUT_BYTES);
+  // Feed raw bytes (ANSI included) into the headless VT screen; it applies
+  // cursor moves / clears so the agent later reads the rendered result.
+  terminal.grid.write(data);
   schedulePersist(terminalId);
 }
 
@@ -193,6 +235,7 @@ function pruneExited(): void {
     .filter((record) => record.exited)
     .sort((a, b) => (a.info.endedAt ?? "").localeCompare(b.info.endedAt ?? ""));
   for (const record of exited.slice(0, Math.max(0, exited.length - MAX_EXITED_RETAINED))) {
+    record.grid.dispose();
     terminals.delete(record.info.id);
   }
 }
@@ -220,6 +263,7 @@ function markExited(terminalId: string, exitCode: number): void {
     waiter(exitCode);
   }
   pruneExited();
+  publishManagedProcessChange();
 }
 
 function handleHostEvent(event: HostEvent): void {
@@ -342,9 +386,15 @@ function spawnTerminal(input: SpawnTerminalInput): TerminalRecord {
     ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
   };
 
-  const record: TerminalRecord = { info, output: "", produced: 0, waiters: [], exited: false };
+  const record: TerminalRecord = {
+    info,
+    grid: new TerminalGrid(input.cols, input.rows),
+    waiters: [],
+    exited: false,
+  };
   terminals.set(id, record);
 
+  const isAgent = input.origin === "agent";
   writeHost({
     type: "spawn",
     id,
@@ -353,9 +403,14 @@ function spawnTerminal(input: SpawnTerminalInput): TerminalRecord {
     cols: input.cols,
     rows: input.rows,
     ...(input.args !== undefined ? { args: input.args } : {}),
+    // Agent-run commands get a clean, deterministic, UTF-8 environment: no
+    // progress animations/pagers to garble the captured screen, and a forced
+    // UTF-8 stream so the pty-host decodes it without code-page mojibake.
+    ...(isAgent ? { env: AGENT_COMMAND_ENV, encoding: "utf-8" } : {}),
   });
 
   emit({ type: "terminal.created", terminal: { ...info } }, input.window);
+  publishManagedProcessChange();
   return record;
 }
 
@@ -417,7 +472,172 @@ export type RunCommandResult = {
   truncated: boolean;
   /** Cursor to pass to `readTerminal` for incremental follow-up reads. */
   cursor: number;
+  /** Wall-clock time the command ran before this result was produced (ms). */
+  durationMs: number;
+  /**
+   * Real OS process id of the spawned shell — the authoritative identity for
+   * inspecting or killing this process. This is the actual Windows/Unix PID,
+   * not a shell-internal id (e.g. Git Bash `ps -W` column 1), so the model
+   * should use it (or `terminal_kill`) rather than parsing `ps`.
+   */
+  pid?: number;
+  /** Background: the process was still running at the end of the yield window. */
+  alive?: boolean;
+  /** Background + `readyWhen`: a readiness signal (port/log/http) was satisfied. */
+  ready?: boolean;
+  /** Human-readable readiness signal, e.g. `port 5173 is accepting connections`. */
+  readySignal?: string;
+  /** Returned an already-running terminal instead of spawning a duplicate. */
+  reused?: boolean;
+  /**
+   * `readyWhen.port` was already in use by some other process *before* spawn —
+   * the new process likely can't bind it (a server may already be running).
+   */
+  portInUse?: number;
 };
+
+/** A readiness contract for a background launch: "ready" when one of these holds. */
+export type ReadyWhen = {
+  /** A TCP port that should start accepting connections (e.g. a dev server). */
+  port?: number;
+  /** A regex tested against the terminal's output (e.g. "ready in \\d+ ms"). */
+  log?: string;
+  /** A URL that should return a 2xx response. */
+  httpUrl?: string;
+};
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    timer.unref?.();
+  });
+}
+
+/** Resolve true if a TCP connection to the port succeeds within `timeoutMs`. */
+function checkPort(port: number, host = "127.0.0.1", timeoutMs = 500): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = netConnect({ port, host });
+    let settled = false;
+    const done = (ok: boolean): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      socket.destroy();
+      resolve(ok);
+    };
+    socket.setTimeout(timeoutMs);
+    socket.once("connect", () => done(true));
+    socket.once("timeout", () => done(false));
+    socket.once("error", () => done(false));
+  });
+}
+
+/** Resolve true if `url` answers with a 2xx status within `timeoutMs`. */
+async function checkHttp(url: string, timeoutMs = 1500): Promise<boolean> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  timer.unref?.();
+  try {
+    const response = await fetch(url, { signal: controller.signal, redirect: "manual" });
+    return response.status >= 200 && response.status < 400;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Evaluate a readiness contract once; returns the first signal that holds. */
+async function evaluateReady(
+  record: TerminalRecord,
+  readyWhen: ReadyWhen,
+): Promise<string | undefined> {
+  if (readyWhen.log) {
+    if (matchesReadyLog(record.grid.render(), readyWhen.log)) {
+      return `log matched /${readyWhen.log}/`;
+    }
+  }
+  if (readyWhen.port !== undefined && (await checkPort(readyWhen.port))) {
+    return `port ${readyWhen.port} is accepting connections`;
+  }
+  if (readyWhen.httpUrl && (await checkHttp(readyWhen.httpUrl))) {
+    return `${readyWhen.httpUrl} returned a successful response`;
+  }
+  return undefined;
+}
+
+type BackgroundOutcome =
+  | { kind: "exited" }
+  | { kind: "ready"; signal: string }
+  | { kind: "alive" }
+  | { kind: "alive-not-ready" };
+
+/**
+ * Watch a freshly spawned background process for up to `yieldMs`: resolve as
+ * soon as it exits or (when a `readyWhen` contract is given) becomes ready;
+ * otherwise resolve "alive" / "alive-not-ready" at the deadline. This is the
+ * core liveness/readiness check that lets the agent tell a real start from a
+ * launcher that died immediately.
+ */
+async function waitForReadyOrExit(
+  record: TerminalRecord,
+  options: { yieldMs: number; readyWhen?: ReadyWhen | undefined },
+): Promise<BackgroundOutcome> {
+  const deadline = Date.now() + options.yieldMs;
+  while (true) {
+    if (record.exited) {
+      return { kind: "exited" };
+    }
+    if (options.readyWhen) {
+      const signal = await evaluateReady(record, options.readyWhen);
+      if (signal) {
+        return { kind: "ready", signal };
+      }
+    }
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      break;
+    }
+    await sleep(Math.min(BACKGROUND_POLL_MS, remaining));
+  }
+  if (record.exited) {
+    return { kind: "exited" };
+  }
+  return options.readyWhen ? { kind: "alive-not-ready" } : { kind: "alive" };
+}
+
+/** Normalize a command for reuse matching (collapse whitespace). */
+function normalizeCommandKey(command: string): string {
+  return command.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Find a still-running agent terminal in the same session that is already
+ * running the identical command in the same cwd. Lets a background launch reuse
+ * a live process instead of spawning a duplicate — the fix for "restart the dev
+ * server" spawning a new terminal each time and drifting the port.
+ */
+function findReusableBackgroundTerminal(input: {
+  sessionId?: string;
+  cwd: string;
+  command: string;
+}): TerminalRecord | undefined {
+  const key = normalizeCommandKey(input.command);
+  for (const record of terminals.values()) {
+    if (
+      !record.exited &&
+      record.info.origin === "agent" &&
+      record.info.sessionId === input.sessionId &&
+      record.info.cwd === input.cwd &&
+      record.info.command !== undefined &&
+      normalizeCommandKey(record.info.command) === key
+    ) {
+      return record;
+    }
+  }
+  return undefined;
+}
 
 /**
  * Run a command in a managed PTY terminal that shows up in the side panel.
@@ -426,8 +646,11 @@ export type RunCommandResult = {
  *   the exit code + output are returned. If it outruns the timeout it is left
  *   running (promoted to a background terminal) so the agent never loses a
  *   long-lived process — matching Cursor's behaviour.
- * - `background: true` returns immediately (after a short prime window to
- *   capture the first output) with the terminal id to observe later.
+ * - `background: true` spawns the process, then watches it for a yield window
+ *   (`yieldMs`) and reports whether it stayed ALIVE (optionally READY, via
+ *   `readyWhen`) or already EXITED. A process that dies inside the window is
+ *   reported as exited-with-code, so a launcher that fails immediately can no
+ *   longer be mistaken for a successful start.
  */
 export async function runAgentCommand(input: {
   workspaceId: string;
@@ -436,11 +659,62 @@ export async function runAgentCommand(input: {
   background: boolean;
   sessionId?: string;
   timeoutMs?: number;
+  yieldMs?: number;
+  readyWhen?: ReadyWhen;
+  reuse?: boolean;
   cols?: number;
   rows?: number;
   outputBytes?: number;
   window?: BrowserWindowType;
 }): Promise<RunCommandResult> {
+  const outputBytes = input.outputBytes ?? 12 * 1024;
+  const startedAt = Date.now();
+
+  const resultFor = (
+    record: TerminalRecord,
+    extra: Partial<RunCommandResult> = {},
+  ): RunCommandResult => {
+    const tail = tailText(record.grid.render(), outputBytes);
+    return {
+      terminalId: record.info.id,
+      status: record.info.status,
+      background: input.background,
+      timedOut: false,
+      ...(record.info.exitCode !== undefined ? { exitCode: record.info.exitCode } : {}),
+      output: tail.text,
+      truncated: tail.truncated,
+      cursor: record.grid.produced,
+      durationMs: Date.now() - startedAt,
+      ...(record.info.pid !== undefined ? { pid: record.info.pid } : {}),
+      ...extra,
+    };
+  };
+
+  // Background reuse: if an identical command is already running in this session
+  // and cwd, hand back the live terminal instead of spawning a duplicate (avoids
+  // port drift from "restart the server" opening a fresh terminal each time).
+  if (input.background && input.reuse !== false) {
+    const existing = findReusableBackgroundTerminal({
+      ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
+      cwd: input.cwd,
+      command: input.command,
+    });
+    if (existing) {
+      await existing.grid.flush();
+      return resultFor(existing, { alive: true, reused: true });
+    }
+  }
+
+  // Port awareness: detect when the requested readiness port is already taken
+  // before we even spawn — a server is probably already up (or the port is
+  // occupied), so a fresh launch will likely fail to bind.
+  let portInUse: number | undefined;
+  if (input.background && input.readyWhen?.port !== undefined) {
+    if (await checkPort(input.readyWhen.port)) {
+      portInUse = input.readyWhen.port;
+    }
+  }
+
   const shell = defaultShell();
   const record = spawnTerminal({
     workspaceId: input.workspaceId,
@@ -451,34 +725,43 @@ export async function runAgentCommand(input: {
     origin: "agent",
     command: input.command,
     title: deriveTitle(input.command),
-    args: shellCommandArgs(shell, input.command),
+    args: shellCommandArgs(shell, input.command, { utf8: true }),
     ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
     ...(input.window !== undefined ? { window: input.window } : {}),
   });
 
-  const outputBytes = input.outputBytes ?? 12 * 1024;
-  const result = (): RunCommandResult => {
-    const tail = tailText(record.output, outputBytes);
-    return {
-      terminalId: record.info.id,
-      status: record.info.status,
-      background: input.background,
-      timedOut: false,
-      ...(record.info.exitCode !== undefined ? { exitCode: record.info.exitCode } : {}),
-      output: tail.text,
-      truncated: tail.truncated,
-      cursor: record.produced,
-    };
-  };
-
   if (input.background) {
-    await waitForExit(record, BACKGROUND_PRIME_MS);
-    return result();
+    const yieldMs = Math.min(
+      Math.max(input.yieldMs ?? DEFAULT_BACKGROUND_YIELD_MS, MIN_BACKGROUND_YIELD_MS),
+      MAX_BACKGROUND_YIELD_MS,
+    );
+    const outcome = await waitForReadyOrExit(record, {
+      yieldMs,
+      ...(input.readyWhen ? { readyWhen: input.readyWhen } : {}),
+    });
+    const extra: Partial<RunCommandResult> = portInUse !== undefined ? { portInUse } : {};
+    await record.grid.flush();
+    switch (outcome.kind) {
+      case "exited":
+        return resultFor(record, extra);
+      case "ready":
+        return resultFor(record, {
+          ...extra,
+          alive: true,
+          ready: true,
+          readySignal: outcome.signal,
+        });
+      case "alive-not-ready":
+        return resultFor(record, { ...extra, alive: true, ready: false });
+      default:
+        return resultFor(record, { ...extra, alive: true });
+    }
   }
 
   const timeoutMs = Math.min(input.timeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS, MAX_COMMAND_TIMEOUT_MS);
   const outcome = await waitForExit(record, timeoutMs);
-  return { ...result(), timedOut: outcome === "timeout" };
+  await record.grid.flush();
+  return resultFor(record, { timedOut: outcome === "timeout" });
 }
 
 export function writeTerminal(terminalId: string, data: string): void {
@@ -493,6 +776,7 @@ export function resizeTerminal(terminalId: string, cols: number, rows: number): 
   if (terminal && !terminal.exited) {
     terminal.info.cols = cols;
     terminal.info.rows = rows;
+    terminal.grid.resize(cols, rows);
     writeHost({ type: "resize", id: terminalId, cols, rows });
   }
 }
@@ -516,6 +800,7 @@ export function removeTerminal(terminalId: string): void {
     writeHost({ type: "kill", id: terminalId });
   }
   flushPersist(terminalId);
+  terminal.grid.dispose();
   terminals.delete(terminalId);
 }
 
@@ -565,12 +850,17 @@ export function readTerminal(input: {
   }
 
   const maxBytes = input.maxBytes ?? 16 * 1024;
-  const { text: slice, truncated } = sliceSince({
-    output: terminal.output,
-    produced: terminal.produced,
+  // New committed history since the cursor, then the live viewport appended.
+  // The viewport is volatile (it redraws in place), so it is always returned
+  // fresh; committed scrollback bytes are the stable cursor space.
+  const { text: history, truncated } = sliceSince({
+    output: terminal.grid.scrollback,
+    produced: terminal.grid.produced,
     sinceCursor: input.sinceCursor,
     maxBytes,
   });
+  const screen = terminal.grid.screen();
+  const slice = screen ? (history ? `${history}${screen}` : screen) : history;
 
   return {
     terminalId: terminal.info.id,
@@ -584,13 +874,13 @@ export function readTerminal(input: {
     startedAt: terminal.info.startedAt,
     ...(terminal.info.endedAt !== undefined ? { endedAt: terminal.info.endedAt } : {}),
     output: slice,
-    cursor: terminal.produced,
+    cursor: terminal.grid.produced,
     truncated,
   };
 }
 
 export function getTerminalOutput(terminalId: string): string {
-  const active = terminals.get(terminalId)?.output;
+  const active = terminals.get(terminalId)?.grid.render();
   if (active !== undefined) {
     return active;
   }
@@ -626,15 +916,17 @@ export function summarizeTerminals(filter?: { sessionId?: string; workspaceId?: 
     .map((record) => {
       const state =
         record.info.status === "running" ? "running" : `exited ${record.info.exitCode ?? "?"}`;
+      const pid = record.info.pid !== undefined ? `, pid ${record.info.pid}` : "";
       const label = record.info.command ?? `${record.info.shell} (interactive)`;
       const lastLine =
-        record.output
+        record.grid
+          .render()
           .split("\n")
           .map((value) => value.trim())
           .filter(Boolean)
           .pop() ?? "";
       const tail = lastLine ? ` → ${lastLine.slice(0, 80)}` : "";
-      return `- ${record.info.id} [${state}] ${label}${tail}`;
+      return `- ${record.info.id} [${state}${pid}] ${label}${tail}`;
     });
 
   return lines.join("\n");
