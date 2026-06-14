@@ -3,8 +3,8 @@
   <h1>Modus</h1>
   <p><b>Local-first desktop workspace for AI coding agents.</b></p>
   <p>
-    Open a project, chat with an agent, attach context, review diffs, run terminals, manage models,
-    and keep the whole loop visible on your machine.
+    Open a project, chat with an agent, browse pages, attach context, review diffs, run terminals,
+    manage models, and keep the whole loop visible on your machine.
   </p>
 </div>
 
@@ -59,6 +59,7 @@ clear direction and a codebase you can study, modify, and grow.
 | Git | Change list, diffs, file versions, stage/unstage/discard, commit, push, status, stats |
 | Review | Early AI review flow with stored review results and heuristic fallback checks |
 | Terminal | Real PTY sessions through Rust `modus-pty-host`, rendered with xterm.js |
+| Browser | Right-inspector in-app browser with tabs, navigation, DevTools, logs, screenshots, and Cursor-compatible tools |
 | Checkpoints | Pre-run snapshots, restore points, and rollback to previous user messages |
 | Permissions | Typed IPC, sender validation, dynamic tool risk checks, and permission records |
 | Models | Provider configuration, custom providers, model settings, context/output limits |
@@ -73,8 +74,8 @@ clear direction and a codebase you can study, modify, and grow.
   diffs, terminal actions, todos, checkpoints, and rollback/edit affordances.
 - The **composer** supports model switching, thinking-level config, images, slash skills, and `@`
   context.
-- The **right inspector** holds Changes, Terminal, and Security so you can audit what happened while
-  you are still in the conversation.
+- The **right inspector** holds Changes, Browser, Terminal, and Security so you can inspect pages,
+  logs, diffs, and runtime state while you are still in the conversation.
 - The **settings window** manages providers, custom models, model parameters, MCP servers, skills,
   and security-facing configuration.
 
@@ -160,6 +161,16 @@ The packaging config includes the Rust terminal sidecar as an unpacked binary re
 - Read, write to, list, and kill terminals through registered tools.
 - Keep long-running commands visible instead of hiding them in an invisible subprocess.
 
+### Browser
+
+- Open real pages inside the right inspector Browser tab.
+- Use tab strip, back/forward, reload, URL/search input, external open, and embedded DevTools.
+- Keep browser cookies/storage isolated per workspace through Electron partitions.
+- Let agents use Cursor-compatible browser tools such as `browser_tabs`, `browser_navigate`,
+  `browser_snapshot`, `browser_click`, `browser_fill`, screenshots, console logs, and network logs.
+- Gate browser actions with the same permission pipeline used by shell/Git/MCP tools.
+- Keep Design Mode, iframe deep control, and no-approval auto-run out of phase one.
+
 ### Models, MCP, And Skills
 
 - Configure built-in and custom providers.
@@ -184,7 +195,7 @@ See [desktop security notes](./docs/architecture/desktop-security.md) for more d
 - Per-session Git worktree creation.
 - Multi-agent tiled panes inside one workspace.
 - Cloud agents.
-- Browser/computer-use automation.
+- Browser Design Mode and no-approval computer-use automation.
 - Full PR automation.
 - Auto-update, signing, and production release channels.
 
@@ -232,7 +243,8 @@ Preload bridge
   A narrow typed doorway called window.modus.
 
 Electron main process
-  Trusted services for workspace, Git, terminal, docs, model, MCP, skills, permissions, and agents.
+  Trusted services for workspace, Git, browser, terminal, docs, model, MCP, skills, permissions,
+  and agents.
 
 Rust PTY sidecar
   Real terminal sessions without native terminal code inside React.
@@ -270,7 +282,7 @@ cargo check -p modus-pty-host
 | MCP | Early UI/services | Supported | Supported |
 | Skills/rules | Early skills surface | Skills/rules/memories vary by setup | Rules, memories, hooks, subagents |
 | Cloud agents | Not implemented | Cloud mode | Cloud Agents |
-| Browser/computer use | Not implemented | Browser/computer use features | Browser/design/remote flows |
+| Browser/computer use | In-app browser phase one; no Design Mode | Browser/computer use features | Browser/design/remote flows |
 | Automations | Not implemented | Automations | Cloud-agent automations |
 
 Sources used for the product comparison:
@@ -298,12 +310,12 @@ Near-term:
 - Stronger permission prompts and safer approval UX.
 - Better diff review, hunk-level actions, and PR-oriented workflows.
 - More reliable terminal replay and long-running command management.
+- Browser hardening: richer snapshots, better dialogs, and visual QA flows.
 - More complete MCP and skills experience.
 - Packaging, signing, and release-channel hardening.
 
 Later:
 
-- Browser review.
 - Rules and memories.
 - Automations.
 - Cloud or remote execution.
