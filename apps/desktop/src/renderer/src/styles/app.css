@@ -44,7 +44,7 @@
 
   /* 品牌紫：仅用于输入框聚焦态描边（focus-within），与灰阶基调形成克制的高亮 */
   --color-focus-ring: #853ff4;
-  /* 浅一档品牌紫：状态点 / 次级强调（如 Remote control 激活点） */
+  /* 浅一档品牌紫：状态点 / 次级强调 */
   --color-focus-ring-soft: #b388ff;
 
   /* 文本选区：半透明品牌紫。文字色保留（含代码高亮），暗底上读作柔和紫高亮 */
@@ -265,6 +265,24 @@ input {
   /* 明确保留给极少数标题使用；默认正文始终归零。 */
   .tracking-snug {
     letter-spacing: 0;
+  }
+  /* Activity fold live viewport: soft fade at top/bottom instead of a hard
+     clip/border, so the streaming exploration "bleeds" into the chat (图1). */
+  .activity-fade {
+    -webkit-mask-image: linear-gradient(
+      to bottom,
+      transparent 0,
+      #000 22px,
+      #000 calc(100% - 16px),
+      transparent 100%
+    );
+    mask-image: linear-gradient(
+      to bottom,
+      transparent 0,
+      #000 22px,
+      #000 calc(100% - 16px),
+      transparent 100%
+    );
   }
 }
 

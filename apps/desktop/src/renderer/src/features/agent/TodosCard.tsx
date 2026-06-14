@@ -59,33 +59,49 @@ export function TodosCard({ todos, updating }: { todos: TodoItem[]; updating: bo
   );
 }
 
-function statusIcon(status: TodoStatus) {
-  if (status === "completed") {
-    return <IconCircleCheck className="text-fg-faint" size={15} stroke={1.7} />;
-  }
-  if (status === "in_progress") {
-    return <IconCircleArrowRight className="text-focus-ring-soft" size={15} stroke={1.8} />;
-  }
-  if (status === "cancelled") {
-    return <IconCircleX className="text-fg-faint" size={15} stroke={1.7} />;
-  }
-  return <IconCircleDashed className="text-fg-faint" size={15} stroke={1.6} />;
-}
+/**
+ * Per-status visual language for a to-do row. Centralizing icon + colour here
+ * (instead of branching inline) keeps the hierarchy systematic and legible:
+ * unfinished work stays prominent in `fg`, the active item gains weight + the
+ * brand accent, and finished work recedes to a clearly struck, dimmed tone.
+ * Every colour is a Modus token, so dark/light themes flip automatically.
+ */
+const TODO_ROW_STYLES: Record<
+  TodoStatus,
+  { Glyph: typeof IconCircleCheck; iconClass: string; iconStroke: number; textClass: string }
+> = {
+  pending: {
+    Glyph: IconCircleDashed,
+    iconClass: "text-fg-subtle",
+    iconStroke: 1.6,
+    textClass: "text-fg",
+  },
+  in_progress: {
+    Glyph: IconCircleArrowRight,
+    iconClass: "text-focus-ring-soft",
+    iconStroke: 1.8,
+    textClass: "text-fg font-medium",
+  },
+  completed: {
+    Glyph: IconCircleCheck,
+    iconClass: "text-fg-faint",
+    iconStroke: 1.7,
+    textClass: "text-fg-subtle line-through decoration-fg-faint",
+  },
+  cancelled: {
+    Glyph: IconCircleX,
+    iconClass: "text-fg-faint",
+    iconStroke: 1.7,
+    textClass: "text-fg-faint line-through decoration-fg-faint",
+  },
+};
 
 function TodoRow({ todo }: { todo: TodoItem }) {
-  const struck = todo.status === "completed" || todo.status === "cancelled";
+  const { Glyph, iconClass, iconStroke, textClass } = TODO_ROW_STYLES[todo.status];
   return (
     <li className="flex items-start gap-2.5 py-1.5">
-      <span className="mt-0.5 shrink-0">{statusIcon(todo.status)}</span>
-      <span
-        className={cn(
-          "min-w-0 flex-1 text-sm leading-snug",
-          todo.status === "in_progress" ? "text-fg" : "text-fg-muted",
-          struck && "text-fg-faint line-through decoration-hairline-strong",
-        )}
-      >
-        {todo.content}
-      </span>
+      <Glyph className={cn("mt-0.5 shrink-0", iconClass)} size={15} stroke={iconStroke} />
+      <span className={cn("min-w-0 flex-1 text-sm leading-snug", textClass)}>{todo.content}</span>
     </li>
   );
 }

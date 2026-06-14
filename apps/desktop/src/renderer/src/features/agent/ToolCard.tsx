@@ -1,4 +1,4 @@
-import { IconAlertTriangle, IconChevronRight, IconLoader2 } from "@tabler/icons-react";
+import { IconAlertCircle, IconChevronRight, IconLoader2 } from "@tabler/icons-react";
 import { memo, type ReactNode, useState } from "react";
 import { getToolUiMeta, type ToolUiMeta } from "../../../../shared/tools";
 import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
@@ -6,6 +6,7 @@ import { cn } from "../../lib/cn";
 import { DiffToolCard } from "./diff/DiffToolCard";
 import { TERMINAL_CARD_TOOLS } from "./terminal/parseTerminal";
 import { TerminalToolCard } from "./terminal/TerminalToolCard";
+import { ShinyText } from "./TextEffects";
 import { toolIcon } from "./toolIcons";
 
 type ToolCardProps = {
@@ -95,12 +96,13 @@ function FlatToolRow({
   const view = describeTool(name, args);
   const detail = toolDetail(name, args, output);
   const expandable = detail.trim().length > 0;
+  const running = !isComplete && !isError;
 
   const body = (
     <>
       <span className="shrink-0 text-fg-faint">
         {isError ? (
-          <IconAlertTriangle className="text-danger" size={14} stroke={1.7} />
+          <IconAlertCircle className="text-danger" size={14} stroke={1.7} />
         ) : isComplete ? (
           view.icon
         ) : (
@@ -111,16 +113,27 @@ function FlatToolRow({
           />
         )}
       </span>
-      <span className={cn("shrink-0", isError ? "text-danger" : "text-fg-muted")}>{view.verb}</span>
-      <span
-        className={cn(
-          "min-w-0 flex-1 truncate text-fg-faint",
-          view.mono && "font-mono text-[12px]",
-        )}
-        title={view.target}
-      >
-        {view.target}
-      </span>
+      {running ? (
+        // Running tools shimmer their label (the timeline's "Thinking" effect).
+        <ShinyText className="min-w-0 flex-1 truncate">
+          {`${view.verb} ${view.target}`.trim()}
+        </ShinyText>
+      ) : (
+        <>
+          <span className={cn("shrink-0", isError ? "text-danger" : "text-fg-muted")}>
+            {view.verb}
+          </span>
+          <span
+            className={cn(
+              "min-w-0 flex-1 truncate text-fg-faint",
+              view.mono && "font-mono text-[12px]",
+            )}
+            title={view.target}
+          >
+            {view.target}
+          </span>
+        </>
+      )}
       {isError ? <span className="shrink-0 text-2xs text-danger">failed</span> : null}
       {expandable ? (
         <IconChevronRight

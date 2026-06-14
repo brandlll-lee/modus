@@ -2,7 +2,6 @@ import {
   IconArchive,
   IconChevronRight,
   IconClock,
-  IconDeviceMobile,
   IconEdit,
   IconFolder,
   IconFolderPlus,
@@ -28,7 +27,7 @@ import { cn } from "../lib/cn";
 import { CollapsibleMotion } from "./ui/CollapsibleMotion";
 import { ToolbarButton } from "./ui/ToolbarButton";
 
-const SIDEBAR_MIN_WIDTH = 240;
+export const SIDEBAR_MIN_WIDTH = 240;
 const SIDEBAR_MAX_WIDTH = 480;
 const SIDEBAR_TRANSITION = { duration: 0.18, ease: [0.22, 1, 0.36, 1] } as const;
 
@@ -41,6 +40,8 @@ type SidebarProps = {
   activityBySession: Record<string, SessionActivity>;
   open: boolean;
   width: number;
+  /** Upper bound from App so the panel can't crush the main column's min width. */
+  maxWidth: number;
   onOpenWorkspace(): void;
   onSelectWorkspace(workspace: WorkspaceInfo): void;
   onSelectSession(session: AgentSessionInfo): void;
@@ -61,6 +62,7 @@ export function Sidebar({
   activityBySession,
   open,
   width,
+  maxWidth,
   onOpenWorkspace,
   onSelectWorkspace,
   onSelectSession,
@@ -120,6 +122,7 @@ export function Sidebar({
     // Left panel: the handle is on the right edge, so dragging right widens.
     const nextWidth = Math.min(
       SIDEBAR_MAX_WIDTH,
+      maxWidth,
       Math.max(
         SIDEBAR_MIN_WIDTH,
         dragStartRef.current.width + event.clientX - dragStartRef.current.x,
@@ -167,16 +170,6 @@ export function Sidebar({
           <NavRow icon={<IconSearch size={17} stroke={1.75} />}>Search</NavRow>
           <NavRow icon={<IconGridDots size={17} stroke={1.75} />}>Plugins</NavRow>
           <NavRow icon={<IconClock size={17} stroke={1.75} />}>Automations</NavRow>
-          <NavRow
-            icon={
-              <span className="relative flex">
-                <IconDeviceMobile size={17} stroke={1.75} />
-                <span className="-right-0.5 -bottom-0.5 absolute size-1.5 rounded-full bg-focus-ring-soft" />
-              </span>
-            }
-          >
-            Remote control
-          </NavRow>
 
           <SectionHeader
             expanded={projectsExpanded}

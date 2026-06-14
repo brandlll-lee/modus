@@ -1,5 +1,5 @@
 import {
-  IconAlertTriangle,
+  IconAlertCircle,
   IconChevronRight,
   IconLoader2,
   IconTerminal2,
@@ -7,6 +7,7 @@ import {
 import { memo, useMemo, useState } from "react";
 import { CollapsibleMotion } from "../../../components/ui/CollapsibleMotion";
 import { cn } from "../../../lib/cn";
+import { ShinyText } from "../TextEffects";
 import { parseTerminalOutput, tailLines } from "./parseTerminal";
 
 type TerminalToolCardProps = {
@@ -76,7 +77,7 @@ export const TerminalToolCard = memo(
         >
           <span className="flex shrink-0 items-center text-fg-faint">
             {isError ? (
-              <IconAlertTriangle className="text-danger" size={14} stroke={1.7} />
+              <IconAlertCircle className="text-danger" size={14} stroke={1.7} />
             ) : running ? (
               <IconLoader2
                 className="animate-spin text-fg-subtle will-change-transform"
@@ -94,7 +95,11 @@ export const TerminalToolCard = memo(
             )}
             title={parsed.command}
           >
-            {parsed.command ?? "terminal"}
+            {running ? (
+              <ShinyText>{parsed.command ?? "terminal"}</ShinyText>
+            ) : (
+              (parsed.command ?? "terminal")
+            )}
           </span>
           {statusLabel ? (
             <span

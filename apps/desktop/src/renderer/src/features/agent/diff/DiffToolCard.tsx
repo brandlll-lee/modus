@@ -1,9 +1,10 @@
-import { IconAlertTriangle, IconChevronRight, IconCopy, IconLoader2 } from "@tabler/icons-react";
+import { IconAlertCircle, IconChevronRight, IconCopy, IconLoader2 } from "@tabler/icons-react";
 import { memo, useMemo, useState } from "react";
 import { getToolUiMeta } from "../../../../../shared/tools";
 import { CollapsibleMotion } from "../../../components/ui/CollapsibleMotion";
 import { Tooltip } from "../../../components/ui/Tooltip";
 import { cn } from "../../../lib/cn";
+import { ShinyText } from "../TextEffects";
 import { toolIcon } from "../toolIcons";
 import { type InlineDiff, inlineDiffFromToolArgs, toolTargetPath } from "./computeInlineDiff";
 import { InlineDiffView } from "./InlineDiff";
@@ -61,6 +62,7 @@ export const DiffToolCard = memo(
     const meta = getToolUiMeta(name);
     const verb = meta?.verb ?? name;
     const fileName = path ? shortenPath(path) : verb;
+    const running = !isComplete && !isError;
 
     function openFile(): void {
       if (cwd && path) {
@@ -90,7 +92,7 @@ export const DiffToolCard = memo(
         <div className="flex h-9 min-w-0 items-center gap-2 px-2.5">
           <span className="flex shrink-0 items-center text-fg-faint">
             {isError ? (
-              <IconAlertTriangle className="text-danger" size={14} stroke={1.7} />
+              <IconAlertCircle className="text-danger" size={14} stroke={1.7} />
             ) : isComplete ? (
               toolIcon(meta?.iconName ?? "pencil")
             ) : (
@@ -112,7 +114,7 @@ export const DiffToolCard = memo(
             title={cwd && path ? `Open ${path}` : path}
             type="button"
           >
-            {fileName}
+            {running ? <ShinyText>{fileName}</ShinyText> : fileName}
           </button>
 
           {diff ? (

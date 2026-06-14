@@ -8,13 +8,15 @@ import {
   providerLogoFallbackLabel,
 } from "./providerLogoRegistry";
 
-type ProviderLogoSize = "md" | "lg";
+type ProviderLogoSize = "sm" | "md" | "lg";
 type ProviderLogoState = "loading" | "ready" | "fallback";
 
 type ProviderLogoProps = {
   provider: string;
   name?: string;
   size?: ProviderLogoSize;
+  /** false → no chip frame: just the transparent masked glyph (composer inline use). */
+  framed?: boolean;
 };
 
 type ProviderLogoAsset = {
@@ -40,11 +42,20 @@ const resolveProviderLogoKey = createProviderLogoResolver(availableProviderLogos
 
 const providerLogoCache = new Map<string, Promise<ProviderLogoAsset | undefined>>();
 
-export function ProviderLogo({ provider, name, size = "md" }: ProviderLogoProps) {
+export function ProviderLogo({ provider, name, size = "md", framed = true }: ProviderLogoProps) {
   const [asset, setAsset] = useState<ProviderLogoAsset | undefined>();
   const [state, setState] = useState<ProviderLogoState>("loading");
   const logoKey = useMemo(() => resolveProviderLogoKey(provider, name), [provider, name]);
   const label = providerLogoFallbackLabel(provider, name);
+  const boxClass = size === "lg" ? "size-10" : size === "sm" ? "size-5" : "size-8";
+  const readyPad = framed
+    ? size === "lg"
+      ? "p-[8px]"
+      : size === "sm"
+        ? "p-[3px]"
+        : "p-[7px]"
+    : "p-0";
+  const fallbackIconSize = size === "lg" ? 17 : size === "sm" ? 12 : 15;
 
   useEffect(() => {
     let alive = true;
@@ -81,9 +92,10 @@ export function ProviderLogo({ provider, name, size = "md" }: ProviderLogoProps)
     <span
       aria-label={`${name ?? provider} provider logo`}
       className={cn(
-        "relative flex shrink-0 items-center justify-center overflow-hidden rounded-md border border-hairline bg-chip text-fg-muted shadow-composer",
-        "transition-colors group-hover:border-hairline-strong",
-        size === "lg" ? "size-10" : "size-8",
+        "relative flex shrink-0 items-center justify-center overflow-hidden text-fg-muted",
+        framed &&
+          "rounded-md border border-hairline bg-chip shadow-composer transition-colors group-hover:border-hairline-strong",
+        boxClass,
       )}
       data-logo-state={state}
       role="img"
@@ -92,7 +104,7 @@ export function ProviderLogo({ provider, name, size = "md" }: ProviderLogoProps)
         {state === "ready" && asset ? (
           <m.span
             animate={{ opacity: 1, scale: 1 }}
-            className="flex size-full items-center justify-center p-[7px] text-fg-muted"
+            className={cn("flex size-full items-center justify-center text-fg-muted", readyPad)}
             exit={{ opacity: 0, scale: 0.94 }}
             initial={{ opacity: 0, scale: 0.94 }}
             key={asset.key}
@@ -112,7 +124,7 @@ export function ProviderLogo({ provider, name, size = "md" }: ProviderLogoProps)
         ) : state === "loading" ? (
           <m.span
             animate={{ opacity: 0.7 }}
-            className="size-4 rounded bg-chip-strong"
+            className={cn("rounded bg-chip-strong", size === "sm" ? "size-2.5" : "size-4")}
             exit={{ opacity: 0 }}
             initial={{ opacity: 0 }}
             key="loading"
@@ -121,18 +133,21 @@ export function ProviderLogo({ provider, name, size = "md" }: ProviderLogoProps)
         ) : (
           <m.span
             animate={{ opacity: 1, scale: 1 }}
-            className="flex items-center justify-center text-xs"
+            className={cn(
+              "flex items-center justify-center",
+              size === "sm" ? "text-[9px]" : "text-xs",
+            )}
             exit={{ opacity: 0, scale: 0.94 }}
             initial={{ opacity: 0, scale: 0.94 }}
             key="fallback"
             transition={{ duration: 0.14, ease: "easeOut" }}
           >
             {provider === "synthetic" || provider === "custom" ? (
-              <IconSparkles size={size === "lg" ? 17 : 15} stroke={1.7} />
+              <IconSparkles size={fallbackIconSize} stroke={1.7} />
             ) : label ? (
               label
             ) : (
-              <IconCube size={size === "lg" ? 17 : 15} stroke={1.7} />
+              <IconCube size={fallbackIconSize} stroke={1.7} />
             )}
           </m.span>
         )}
