@@ -25,6 +25,8 @@ import type {
   GitBranchSummary,
   GitCommitResult,
   GitStatusSummary,
+  ManagedProcessInfo,
+  ManagedProcessOrigin,
   McpServerInfo,
   McpServerUpsertInput,
   ModelInfo,
@@ -140,6 +142,15 @@ export type ModusApi = {
     remove(terminalId: string): Promise<void>;
     list(): Promise<TerminalInfo[]>;
     onEvent(callback: (event: TerminalEvent) => void): () => void;
+  };
+  process: {
+    list(input: {
+      workspaceId?: string;
+      sessionId?: string;
+      origin?: ManagedProcessOrigin;
+    }): Promise<ManagedProcessInfo[]>;
+    kill(id: string): Promise<boolean>;
+    onChanged(callback: () => void): () => void;
   };
   browser: {
     listTabs(input: { workspaceId: string }): Promise<BrowserTabInfo[]>;

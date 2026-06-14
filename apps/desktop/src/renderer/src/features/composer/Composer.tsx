@@ -31,6 +31,7 @@ import { ImageThumb } from "../../components/ui/ImageViewer";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { TypingAnimation } from "../../components/ui/TypingAnimation";
 import { cn } from "../../lib/cn";
+import { RunningProcessBar } from "../process/RunningProcessBar";
 import { ProviderLogo } from "../settings/ProviderLogo";
 import { ApprovalModeSelect } from "./ApprovalModeSelect";
 import { ContextMentionMenu } from "./ContextMentionMenu";
@@ -62,6 +63,8 @@ type ComposerProps = {
   canSubmit: boolean;
   hasSession: boolean;
   isRunning?: boolean;
+  /** Agent session that owns this composer; scopes the running-process bar. */
+  sessionId?: string;
   onModelChange(model: string): void;
   onModelConfigChange?(model: string, thinkingLevel: ThinkingLevel): Promise<void> | void;
   onContextChange(items: ContextItem[]): void;
@@ -85,6 +88,7 @@ export function Composer({
   canSubmit,
   hasSession,
   isRunning = false,
+  sessionId,
   onAbort,
   onModelChange,
   onModelConfigChange,
@@ -276,203 +280,210 @@ export function Composer({
   }
 
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: drag-drop is a pointer-only enhancement; keyboard users attach images via paste in the textarea.
-    <div
-      className={cn(
-        "relative rounded-[14px] border border-hairline-soft bg-surface shadow-composer transition-[border-color,box-shadow] duration-150",
-        // agent 工作时不再用紫色聚焦描边，改由 Border Beam 光束动画呈现；
-        // 空闲时保留点击聚焦的品牌紫描边 + 发光。
-        !isRunning && "focus-within:border-focus-ring focus-within:shadow-composer-focus",
-        dragging && "border-focus-ring shadow-composer-focus",
-      )}
-      onDragLeave={() => setDragging(false)}
-      onDragOver={handleDragOver}
-      onDrop={handleDrop}
-    >
-      {isRunning ? <BorderBeam /> : null}
-      <div className="relative">
-        {!hasText && !hasSelectedSkills ? (
+    <div className="flex flex-col items-stretch">
+      <RunningProcessBar sessionId={sessionId} workspaceId={workspaceId} />
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: drag-drop is a pointer-only enhancement; keyboard users attach images via paste in the textarea. */}
+      <div
+        className={cn(
+          "relative rounded-[14px] border border-composer-border bg-surface shadow-composer-edge transition-[border-color,box-shadow] duration-150",
+          // agent 工作时不再用紫色聚焦描边，改由 Border Beam 光束动画呈现；
+          // 空闲时保留点击聚焦的品牌紫描边 + 发光。
+          !isRunning && "focus-within:border-focus-ring focus-within:shadow-composer-focus",
+          dragging && "border-focus-ring shadow-composer-focus",
+        )}
+        onDragLeave={() => setDragging(false)}
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
+      >
+        {isRunning ? <BorderBeam /> : null}
+        <div className="relative">
+          {!hasText && !hasSelectedSkills ? (
+            <div
+              aria-hidden
+              className="pointer-events-none absolute inset-x-0 top-0 px-4 pt-4 text-md font-normal text-fg-subtle"
+            >
+              {hasSession ? (
+                SESSION_PLACEHOLDER_WORDS[0]
+              ) : (
+                <TypingAnimation
+                  blinkCursor
+                  cursorStyle="line"
+                  deleteSpeed={28}
+                  loop
+                  pauseDelay={2200}
+                  showCursor
+                  startOnView={false}
+                  typeSpeed={42}
+                  words={HERO_PLACEHOLDER_WORDS}
+                />
+              )}
+            </div>
+          ) : null}
           <div
-            aria-hidden
-            className="pointer-events-none absolute inset-x-0 top-0 px-4 pt-4 text-md font-normal text-fg-subtle"
-          >
-            {hasSession ? (
-              SESSION_PLACEHOLDER_WORDS[0]
-            ) : (
-              <TypingAnimation
-                blinkCursor
-                cursorStyle="line"
-                deleteSpeed={28}
-                loop
-                pauseDelay={2200}
-                showCursor
-                startOnView={false}
-                typeSpeed={42}
-                words={HERO_PLACEHOLDER_WORDS}
-              />
+            className={cn(
+              hasSelectedSkills
+                ? "flex min-h-[68px] flex-wrap items-start gap-x-2 gap-y-1 px-4 pt-4"
+                : "",
             )}
+          >
+            {hasSelectedSkills
+              ? selectedSkills.map((skill) => (
+                  <span
+                    className="inline-flex h-6 items-center gap-1.5 text-focus-ring text-sm font-medium"
+                    key={skill}
+                  >
+                    <IconCube size={15} stroke={1.8} />
+                    <span>{skill}</span>
+                  </span>
+                ))
+              : null}
+            <textarea
+              className={cn(
+                "scroll-thin block max-h-[260px] resize-none overflow-y-auto bg-transparent text-md font-normal text-fg leading-[1.5] outline-none",
+                hasSelectedSkills
+                  ? "min-h-[28px] min-w-[180px] flex-1 pt-px"
+                  : "min-h-[68px] w-full px-4 pt-4",
+              )}
+              onChange={(event) => setValue(event.target.value)}
+              onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
+              ref={textareaRef}
+              value={value}
+            />
+          </div>
+          <ContextMentionMenu
+            activeIndex={activeIndex}
+            onSelect={addContext}
+            suggestions={isOpen ? suggestions : []}
+          />
+          {slash.isOpen ? (
+            <SlashMenu
+              activeIndex={slash.activeIndex}
+              items={slash.items}
+              onSelect={selectSlashItem}
+            />
+          ) : null}
+        </div>
+
+        {images.length > 0 ? (
+          <div className="flex flex-wrap gap-2 px-3 pt-1.5">
+            {images.map((image) => (
+              <div className="group/image relative" key={image.id}>
+                <ImageThumb
+                  alt={image.name}
+                  className="size-14 rounded-lg border border-hairline object-cover"
+                  src={image.dataUrl}
+                  title={image.name}
+                />
+                <button
+                  aria-label={`Remove ${image.name}`}
+                  className="absolute -top-1.5 -right-1.5 flex size-4.5 items-center justify-center rounded-full border border-hairline bg-elevated text-fg-faint opacity-0 transition-opacity hover:text-fg group-hover/image:opacity-100"
+                  onClick={() => removeImage(image.id)}
+                  type="button"
+                >
+                  <IconX size={11} stroke={2.2} />
+                </button>
+              </div>
+            ))}
           </div>
         ) : null}
-        <div
-          className={cn(
-            hasSelectedSkills
-              ? "flex min-h-[68px] flex-wrap items-start gap-x-2 gap-y-1 px-4 pt-4"
-              : "",
-          )}
-        >
-          {hasSelectedSkills
-            ? selectedSkills.map((skill) => (
-                <span
-                  className="inline-flex h-6 items-center gap-1.5 text-focus-ring text-sm font-medium"
-                  key={skill}
-                >
-                  <IconCube size={15} stroke={1.8} />
-                  <span>{skill}</span>
-                </span>
-              ))
-            : null}
-          <textarea
-            className={cn(
-              "scroll-thin block max-h-[260px] resize-none overflow-y-auto bg-transparent text-md font-normal text-fg leading-[1.5] outline-none",
-              hasSelectedSkills
-                ? "min-h-[28px] min-w-[180px] flex-1 pt-px"
-                : "min-h-[68px] w-full px-4 pt-4",
-            )}
-            onChange={(event) => setValue(event.target.value)}
-            onKeyDown={handleKeyDown}
-            onPaste={handlePaste}
-            ref={textareaRef}
-            value={value}
-          />
-        </div>
-        <ContextMentionMenu
-          activeIndex={activeIndex}
-          onSelect={addContext}
-          suggestions={isOpen ? suggestions : []}
-        />
-        {slash.isOpen ? (
-          <SlashMenu
-            activeIndex={slash.activeIndex}
-            items={slash.items}
-            onSelect={selectSlashItem}
-          />
-        ) : null}
-      </div>
 
-      {images.length > 0 ? (
-        <div className="flex flex-wrap gap-2 px-3 pt-1.5">
-          {images.map((image) => (
-            <div className="group/image relative" key={image.id}>
-              <ImageThumb
-                alt={image.name}
-                className="size-14 rounded-lg border border-hairline object-cover"
-                src={image.dataUrl}
-                title={image.name}
-              />
-              <button
-                aria-label={`Remove ${image.name}`}
-                className="absolute -top-1.5 -right-1.5 flex size-4.5 items-center justify-center rounded-full border border-hairline bg-elevated text-fg-faint opacity-0 transition-opacity hover:text-fg group-hover/image:opacity-100"
-                onClick={() => removeImage(image.id)}
+        {contextItems.some((item) => item.type === "design-element") ? (
+          <div className="flex flex-wrap gap-2 px-3 pt-1.5">
+            {contextItems
+              .filter((item) => item.type === "design-element")
+              .map((item) => (
+                <DesignElementToken
+                  element={item.element}
+                  key={contextItemKey(item)}
+                  onRemove={() =>
+                    onContextChange(
+                      contextItems.filter(
+                        (other) => contextItemKey(other) !== contextItemKey(item),
+                      ),
+                    )
+                  }
+                />
+              ))}
+          </div>
+        ) : null}
+
+        {contextItems.some((item) => item.type !== "design-element") ? (
+          <div className="flex flex-wrap gap-1.5 px-3 pt-1">
+            {contextItems
+              .filter((item) => item.type !== "design-element")
+              .map((item) => (
+                <ContextToken
+                  item={item}
+                  key={contextItemKey(item)}
+                  onRemove={() =>
+                    onContextChange(
+                      contextItems.filter(
+                        (other) => contextItemKey(other) !== contextItemKey(item),
+                      ),
+                    )
+                  }
+                />
+              ))}
+          </div>
+        ) : null}
+
+        {/* @container: controls collapse their labels to icons as the composer
+          narrows (responsive to the composer's own width, not the viewport). */}
+        {/* @container: controls collapse their labels to icons as the composer
+          narrows (responsive to the composer's own width, not the viewport). */}
+        <div className="@container flex items-center gap-2 px-3 pt-1 pb-2.5">
+          <ApprovalModeSelect />
+
+          <ContextUsageIndicator
+            {...(currentModel?.contextWindow ? { contextWindow: currentModel.contextWindow } : {})}
+            {...(contextUsage ? { usage: contextUsage } : {})}
+          />
+
+          <ModelSelect
+            model={model}
+            models={models}
+            onModelChange={onModelChange}
+            {...(onModelConfigChange ? { onModelConfigChange } : {})}
+          />
+
+          <div className="flex-1" />
+
+          {/* Stop while running; otherwise the send button is always shown (active in
+            brand purple, muted/disabled when there's nothing to send). */}
+          <AnimatePresence initial={false} mode="popLayout">
+            {isRunning && onAbort ? (
+              <m.button
+                animate={{ opacity: 1, scale: 1 }}
+                aria-label="Stop"
+                className="flex size-[26px] shrink-0 items-center justify-center rounded-full bg-focus-ring text-white shadow-composer transition-colors hover:bg-focus-ring-soft active:scale-[0.94]"
+                exit={{ opacity: 0 }}
+                initial={{ opacity: 0, scale: 0.96 }}
+                key="stop"
+                onClick={onAbort}
+                transition={{ duration: 0.12, ease: [0.22, 1, 0.36, 1] }}
                 type="button"
               >
-                <IconX size={11} stroke={2.2} />
-              </button>
-            </div>
-          ))}
+                <IconPlayerStopFilled size={11} />
+              </m.button>
+            ) : (
+              <m.button
+                animate={{ opacity: 1 }}
+                aria-label="Send"
+                className="flex size-[26px] shrink-0 items-center justify-center rounded-full bg-focus-ring text-white transition-colors hover:bg-focus-ring-soft active:scale-[0.94] disabled:bg-chip-strong disabled:text-fg-faint"
+                disabled={!hasContent || !canSubmit || models.length === 0 || !model}
+                exit={{ opacity: 0 }}
+                initial={{ opacity: 0 }}
+                key="send"
+                onClick={() => send()}
+                transition={{ duration: 0.08, ease: "linear" }}
+                type="button"
+              >
+                <IconArrowUp size={14} stroke={2.4} />
+              </m.button>
+            )}
+          </AnimatePresence>
         </div>
-      ) : null}
-
-      {contextItems.some((item) => item.type === "design-element") ? (
-        <div className="flex flex-wrap gap-2 px-3 pt-1.5">
-          {contextItems
-            .filter((item) => item.type === "design-element")
-            .map((item) => (
-              <DesignElementToken
-                element={item.element}
-                key={contextItemKey(item)}
-                onRemove={() =>
-                  onContextChange(
-                    contextItems.filter((other) => contextItemKey(other) !== contextItemKey(item)),
-                  )
-                }
-              />
-            ))}
-        </div>
-      ) : null}
-
-      {contextItems.some((item) => item.type !== "design-element") ? (
-        <div className="flex flex-wrap gap-1.5 px-3 pt-1">
-          {contextItems
-            .filter((item) => item.type !== "design-element")
-            .map((item) => (
-              <ContextToken
-                item={item}
-                key={contextItemKey(item)}
-                onRemove={() =>
-                  onContextChange(
-                    contextItems.filter((other) => contextItemKey(other) !== contextItemKey(item)),
-                  )
-                }
-              />
-            ))}
-        </div>
-      ) : null}
-
-      {/* @container: controls collapse their labels to icons as the composer
-          narrows (responsive to the composer's own width, not the viewport). */}
-      {/* @container: controls collapse their labels to icons as the composer
-          narrows (responsive to the composer's own width, not the viewport). */}
-      <div className="@container flex items-center gap-2 px-3 pt-1 pb-2.5">
-        <ApprovalModeSelect />
-
-        <ContextUsageIndicator
-          {...(currentModel?.contextWindow ? { contextWindow: currentModel.contextWindow } : {})}
-          {...(contextUsage ? { usage: contextUsage } : {})}
-        />
-
-        <ModelSelect
-          model={model}
-          models={models}
-          onModelChange={onModelChange}
-          {...(onModelConfigChange ? { onModelConfigChange } : {})}
-        />
-
-        <div className="flex-1" />
-
-        {/* Stop while running; otherwise the send button is always shown (active in
-            brand purple, muted/disabled when there's nothing to send). */}
-        <AnimatePresence initial={false} mode="popLayout">
-          {isRunning && onAbort ? (
-            <m.button
-              animate={{ opacity: 1, scale: 1 }}
-              aria-label="Stop"
-              className="flex size-[26px] shrink-0 items-center justify-center rounded-full bg-focus-ring text-white shadow-composer transition-colors hover:bg-focus-ring-soft active:scale-[0.94]"
-              exit={{ opacity: 0 }}
-              initial={{ opacity: 0, scale: 0.96 }}
-              key="stop"
-              onClick={onAbort}
-              transition={{ duration: 0.12, ease: [0.22, 1, 0.36, 1] }}
-              type="button"
-            >
-              <IconPlayerStopFilled size={11} />
-            </m.button>
-          ) : (
-            <m.button
-              animate={{ opacity: 1 }}
-              aria-label="Send"
-              className="flex size-[26px] shrink-0 items-center justify-center rounded-full bg-focus-ring text-white transition-colors hover:bg-focus-ring-soft active:scale-[0.94] disabled:bg-chip-strong disabled:text-fg-faint"
-              disabled={!hasContent || !canSubmit || models.length === 0 || !model}
-              exit={{ opacity: 0 }}
-              initial={{ opacity: 0 }}
-              key="send"
-              onClick={() => send()}
-              transition={{ duration: 0.08, ease: "linear" }}
-              type="button"
-            >
-              <IconArrowUp size={14} stroke={2.4} />
-            </m.button>
-          )}
-        </AnimatePresence>
       </div>
     </div>
   );

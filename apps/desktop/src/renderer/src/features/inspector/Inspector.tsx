@@ -215,6 +215,7 @@ export function Inspector({
                     active={tab === "terminal"}
                     cwd={cwd}
                     key={activeWorkspace?.id ?? "none"}
+                    sessionId={sessionId}
                     workspaceId={activeWorkspace?.id}
                   />
                 </Tabs.Panel>

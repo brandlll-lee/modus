@@ -89,6 +89,8 @@ import {
   recordPermissionDecision,
   setApprovalMode,
 } from "../permissions/permission-store";
+import { onManagedProcessChange } from "../process/managed-process-bus";
+import { killManagedProcess, listManagedProcesses } from "../process/managed-process-facade";
 import { listRuleFiles } from "../rules/rules-service";
 import { createSkill, ensureSkillsDir, getSkill, listSkills } from "../skills/skills-service";
 import {
@@ -136,6 +138,8 @@ import {
   mcpUpsertSchema,
   parseIpcInput,
   permissionDecideSchema,
+  processKillSchema,
+  processListSchema,
   reviewStartSchema,
   sessionIdSchema,
   skillsCreateSchema,
@@ -368,6 +372,34 @@ export function registerAppIpc(): void {
   ipcMain.handle(IPC_CHANNELS.terminalList, (event) => {
     assertTrustedSender(event);
     return listTerminals();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.processList, (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(processListSchema, input, IPC_CHANNELS.processList);
+    return listManagedProcesses({
+      ...(parsed.workspaceId !== undefined ? { workspaceId: parsed.workspaceId } : {}),
+      ...(parsed.sessionId !== undefined ? { sessionId: parsed.sessionId } : {}),
+      ...(parsed.origin !== undefined ? { origin: parsed.origin } : {}),
+    });
+  });
+
+  ipcMain.handle(IPC_CHANNELS.processKill, async (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(processKillSchema, input, IPC_CHANNELS.processKill);
+    return killManagedProcess(parsed.id);
+  });
+
+  // Observer fan-out: when any registry reports a process created/exited/killed,
+  // push a coarse no-payload signal to every window. The renderer re-reads the
+  // session-scoped snapshot, so a single signal drives both the composer bar and
+  // the terminal panel without per-window bookkeeping here.
+  onManagedProcessChange(() => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) {
+        window.webContents.send(IPC_CHANNELS.processChanged);
+      }
+    }
   });
 
   ipcMain.handle(IPC_CHANNELS.browserListTabs, (event, input) => {

@@ -1,10 +1,17 @@
 import "@xterm/xterm/css/xterm.css";
-import { IconEraser, IconPlus, IconTerminal2, IconTrash, IconX } from "@tabler/icons-react";
+import {
+  IconEraser,
+  IconLock,
+  IconPlus,
+  IconTerminal2,
+  IconTrash,
+  IconX,
+} from "@tabler/icons-react";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { type ITheme, Terminal } from "@xterm/xterm";
 import { m } from "motion/react";
-import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { TerminalEvent, TerminalInfo } from "../../../../shared/contracts";
 import { EmptyState } from "../../components/ui/Panel";
 import { cn } from "../../lib/cn";
@@ -46,9 +53,23 @@ type Registry = Map<string, TerminalSink>;
 type TerminalPanelProps = {
   workspaceId?: string | undefined;
   cwd?: string | undefined;
+  /** Active agent session; agent terminals are scoped to it for isolation. */
+  sessionId?: string | undefined;
   /** True when the inspector's Terminal tab is the active one. */
   active?: boolean;
 };
+
+/**
+ * Per-session isolation, mirrored from the composer bar's scope rule: agent
+ * terminals belong to the session that started them and only show there; user
+ * shells are workspace-level and shared across that workspace's sessions.
+ */
+function isTabInScope(tab: TerminalTab, sessionId: string | undefined): boolean {
+  if (tab.origin === "agent") {
+    return sessionId !== undefined && tab.sessionId === sessionId;
+  }
+  return true;
+}
 
 function token(styles: CSSStyleDeclaration, name: string, fallback: string): string {
   return styles.getPropertyValue(name).trim() || fallback;
@@ -120,10 +141,12 @@ function TerminalView({
   tab,
   active,
   registry,
+  readOnly = false,
 }: {
   tab: TerminalTab;
   active: boolean;
   registry: Registry;
+  readOnly?: boolean;
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -178,6 +201,11 @@ function TerminalView({
     });
 
     const dataSub = term.onData((data) => {
+      // Agent terminals are read-only in the viewer: the agent owns the PTY, so
+      // user keystrokes are swallowed (matching the read-only banner).
+      if (readOnly) {
+        return;
+      }
       void window.modus.terminal.write({ terminalId: id, data });
     });
 
@@ -236,7 +264,7 @@ function TerminalView({
       termRef.current = null;
       fitRef.current = null;
     };
-  }, [tab.id, registry]);
+  }, [tab.id, registry, readOnly]);
 
   // Becoming visible (tab switch or panel reveal): re-fit, push size, focus.
   useEffect(() => {
@@ -264,7 +292,7 @@ function TerminalView({
   );
 }
 
-export function TerminalPanel({ workspaceId, cwd, active = true }: TerminalPanelProps) {
+export function TerminalPanel({ workspaceId, cwd, sessionId, active = true }: TerminalPanelProps) {
   const registryRef = useRef<Registry>(new Map());
   const tabsRef = useRef<TerminalTab[]>([]);
   const spawning = useRef(false);
@@ -368,8 +396,28 @@ export function TerminalPanel({ workspaceId, cwd, active = true }: TerminalPanel
     if (activeId) registryRef.current.get(activeId)?.clear?.();
   }, [activeId]);
 
-  const activeTab = tabs.find((item) => item.id === activeId) ?? null;
+  const visibleTabs = useMemo(
+    () => tabs.filter((tab) => isTabInScope(tab, sessionId)),
+    [tabs, sessionId],
+  );
+  const agentTabs = visibleTabs.filter((tab) => tab.origin === "agent");
+  const userTabs = visibleTabs.filter((tab) => tab.origin === "user");
+  const visibleKey = visibleTabs.map((tab) => tab.id).join(",");
+
+  // Keep the selection inside the visible set: switching session/project can
+  // hide the active agent terminal, so fall back to the first visible one.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: visibleKey encodes the visible-tab identity that should retrigger this; visibleTabs is recreated each render.
+  useEffect(() => {
+    setActiveId((current) =>
+      current && visibleTabs.some((tab) => tab.id === current)
+        ? current
+        : (visibleTabs[0]?.id ?? null),
+    );
+  }, [visibleKey]);
+
+  const activeTab = visibleTabs.find((item) => item.id === activeId) ?? null;
   const hasWorkspace = Boolean(workspaceId && cwd);
+  const agentOwnsActive = activeTab?.origin === "agent" && activeTab.status !== "exited";
 
   return (
     <section className="flex h-full min-h-0 flex-col bg-panel">
@@ -412,36 +460,51 @@ export function TerminalPanel({ workspaceId, cwd, active = true }: TerminalPanel
       {hasWorkspace ? (
         <div className="flex min-h-0 flex-1">
           <div className="flex w-[200px] shrink-0 flex-col border-hairline border-r">
-            <div className="px-3 py-2 text-2xs uppercase tracking-wide text-fg-faint">
-              {tabs.length} Terminal{tabs.length === 1 ? "" : "s"}
-            </div>
-            <div className="scroll-thin min-h-0 flex-1 space-y-0.5 overflow-y-auto px-1.5 pb-2">
-              {tabs.map((tab) => (
-                <TerminalTabRow
-                  active={tab.id === activeId}
-                  key={tab.id}
-                  onClose={() => closeTab(tab.id)}
-                  onSelect={() => setActiveId(tab.id)}
-                  tab={tab}
+            <div className="scroll-thin min-h-0 flex-1 space-y-2 overflow-y-auto px-1.5 py-2">
+              {agentTabs.length > 0 ? (
+                <TerminalGroup
+                  activeId={activeId}
+                  label="Agent"
+                  onClose={closeTab}
+                  onSelect={setActiveId}
+                  tabs={agentTabs}
                 />
-              ))}
+              ) : null}
+              {userTabs.length > 0 ? (
+                <TerminalGroup
+                  activeId={activeId}
+                  label="Terminals"
+                  onClose={closeTab}
+                  onSelect={setActiveId}
+                  tabs={userTabs}
+                />
+              ) : null}
             </div>
           </div>
 
-          <div className="relative min-h-0 flex-1 bg-canvas">
-            {tabs.map((tab) => (
-              <TerminalView
-                active={tab.id === activeId}
-                key={tab.id}
-                registry={registryRef.current}
-                tab={tab}
-              />
-            ))}
-            {tabs.length === 0 ? (
-              <div className="flex h-full items-center justify-center px-6 text-center text-sm text-fg-faint">
-                No active terminals. Press + to start one.
+          <div className="relative flex min-h-0 flex-1 flex-col bg-canvas">
+            {agentOwnsActive ? (
+              <div className="flex shrink-0 items-center gap-1.5 border-hairline-soft border-b bg-accent-soft/40 px-3 py-1 text-2xs text-fg-muted">
+                <IconLock className="shrink-0 text-accent" size={12} stroke={1.8} />
+                Agent is using this terminal — read-only
               </div>
             ) : null}
+            <div className="relative min-h-0 flex-1">
+              {tabs.map((tab) => (
+                <TerminalView
+                  active={tab.id === activeId}
+                  key={tab.id}
+                  readOnly={tab.origin === "agent"}
+                  registry={registryRef.current}
+                  tab={tab}
+                />
+              ))}
+              {visibleTabs.length === 0 ? (
+                <div className="flex h-full items-center justify-center px-6 text-center text-sm text-fg-faint">
+                  No active terminals. Press + to start one.
+                </div>
+              ) : null}
+            </div>
           </div>
         </div>
       ) : (
@@ -452,6 +515,35 @@ export function TerminalPanel({ workspaceId, cwd, active = true }: TerminalPanel
         />
       )}
     </section>
+  );
+}
+
+function TerminalGroup({
+  label,
+  tabs,
+  activeId,
+  onSelect,
+  onClose,
+}: {
+  label: string;
+  tabs: TerminalTab[];
+  activeId: string | null;
+  onSelect(id: string): void;
+  onClose(id: string): void;
+}) {
+  return (
+    <div className="space-y-0.5">
+      <div className="px-1.5 pb-0.5 text-2xs uppercase tracking-wide text-fg-faint">{label}</div>
+      {tabs.map((tab) => (
+        <TerminalTabRow
+          active={tab.id === activeId}
+          key={tab.id}
+          onClose={() => onClose(tab.id)}
+          onSelect={() => onSelect(tab.id)}
+          tab={tab}
+        />
+      ))}
+    </div>
   );
 }
 

@@ -174,6 +174,21 @@ export type AgentEvent =
       toolName: string;
       args?: unknown;
     }
+  | {
+      /**
+       * Live, non-persisted progress for a tool call while the model is still
+       * streaming its arguments (path first, then content). Carries the
+       * best-effort partial args so the tool card renders immediately and its
+       * diff +/- counts grow in real time — instead of appearing only once the
+       * whole (possibly huge) call has been generated. Same shape as
+       * `tool.started`; the durable `tool.started` supersedes it on completion.
+       */
+      type: "tool.delta";
+      sessionId: string;
+      toolCallId: string;
+      toolName: string;
+      args?: unknown;
+    }
   | { type: "tool.output"; sessionId: string; toolCallId: string; output: string }
   | { type: "tool.ended"; sessionId: string; toolCallId: string; isError: boolean }
   | { type: "permission.requested"; sessionId: string; request: PermissionRequest }
@@ -236,6 +251,36 @@ export type TerminalEvent =
       exitCode: number;
       signal?: number;
     };
+
+/**
+ * Unified "managed process" — the single source of truth that backs both the
+ * composer running-process bar and the right-panel terminal grouping. A managed
+ * process is either a PTY-backed terminal or a detached GUI app, opened by a
+ * user or an agent. Both UIs render the same shape and filter it by scope, so a
+ * new process kind only needs a mapper to appear everywhere.
+ */
+export type ManagedProcessKind = "terminal" | "app";
+export type ManagedProcessOrigin = TerminalOrigin;
+export type ManagedProcessStatus = TerminalStatus;
+
+export type ManagedProcessInfo = {
+  id: string;
+  kind: ManagedProcessKind;
+  origin: ManagedProcessOrigin;
+  /** Workspace that owns the process (always set for user terminals). */
+  workspaceId?: string;
+  /** Agent session that started it; the isolation key for agent processes. */
+  sessionId?: string;
+  /** Human-readable label: the agent command, app name, or shell name. */
+  label: string;
+  status: ManagedProcessStatus;
+  /** ISO timestamp when the process started; drives the elapsed timer. */
+  startedAt: string;
+  pid?: number;
+  /** Window title for GUI apps. */
+  windowTitle?: string;
+  exitCode?: number;
+};
 
 export type FileChange = {
   path: string;
@@ -669,6 +714,13 @@ export type ModelSettingsState = {
 export type ConfigureProviderInput = {
   provider: string;
   apiKey?: string | undefined;
+  /**
+   * Optional custom endpoint for a built-in provider: relay the provider's
+   * native protocol through an OpenAI/Anthropic/Google-compatible gateway.
+   * `undefined` leaves the current setting untouched; an empty string reverts
+   * to the official endpoint; a URL overrides every built-in model's base URL.
+   */
+  baseUrl?: string | undefined;
   enabledModelIds?: string[] | undefined;
 };
 

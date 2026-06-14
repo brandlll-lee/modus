@@ -53,6 +53,15 @@ const api: ModusApi = {
       return () => ipcRenderer.removeListener("terminal:event", listener);
     },
   },
+  process: {
+    list: (input) => ipcRenderer.invoke("process:list", input),
+    kill: (id) => ipcRenderer.invoke("process:kill", { id }),
+    onChanged: (callback) => {
+      const listener = () => callback();
+      ipcRenderer.on("process:changed", listener);
+      return () => ipcRenderer.removeListener("process:changed", listener);
+    },
+  },
   browser: {
     listTabs: (input) => ipcRenderer.invoke("browser:list-tabs", input),
     createTab: (input) => ipcRenderer.invoke("browser:create-tab", input),
