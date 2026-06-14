@@ -72,6 +72,52 @@ export function classifyShellCommand(command: string): ToolClassification {
   return { action: "shell.execute", dangerous: isMutatingShellCommand(command) };
 }
 
+/**
+ * Detect "detaching launchers" — shell constructs that spawn a process which
+ * escapes Modus's PTY (a separate, backgrounded, or fire-and-forget child).
+ * When one is used, the PTY shell exits immediately with the *launcher's* code
+ * (usually 0), so Modus can never observe whether the real program started,
+ * stayed alive, or crashed. That is exactly how an "exited 0" launcher gets
+ * misread as "started successfully". Returns the matched construct (for the
+ * guidance message), or undefined when the command is safe to run tracked.
+ */
+export function detectDetachedLaunch(command: string): string | undefined {
+  const c = command.trim();
+  if (!c) {
+    return undefined;
+  }
+  // PowerShell detach: Start-Process / Start-Job / Start-ThreadJob.
+  if (/\bStart-(Process|Job|ThreadJob)\b/i.test(c)) {
+    return /\bStart-Process\b/i.test(c)
+      ? "Start-Process"
+      : /\bStart-ThreadJob\b/i.test(c)
+        ? "Start-ThreadJob"
+        : "Start-Job";
+  }
+  // POSIX detach helpers.
+  if (/\bnohup\b/i.test(c)) {
+    return "nohup";
+  }
+  if (/\bdisown\b/i.test(c)) {
+    return "disown";
+  }
+  if (/\bsetsid\b/i.test(c)) {
+    return "setsid";
+  }
+  // cmd.exe `start` (also via `cmd /c start`), at command start or after a separator.
+  if (/\bcmd(?:\.exe)?\s+\/c\s+start\b/i.test(c)) {
+    return "cmd /c start";
+  }
+  if (/(?:^|[;&|]\s*)start\b/i.test(c)) {
+    return "start";
+  }
+  // A single trailing `&` backgrounds the job (POSIX); `&&` is sequential and fine.
+  if (/(?:^|[^&])&\s*$/.test(c)) {
+    return "trailing &";
+  }
+  return undefined;
+}
+
 /** Built-in bash classifier: only git-write / mutating commands require approval. */
 const bashClassifier: ToolClassifier = (event) => classifyShellCommand(getToolTarget(event));
 

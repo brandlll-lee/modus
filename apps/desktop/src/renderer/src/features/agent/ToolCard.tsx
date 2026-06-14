@@ -1,12 +1,11 @@
 import { IconAlertCircle, IconChevronRight, IconLoader2 } from "@tabler/icons-react";
 import { memo, type ReactNode, useState } from "react";
-import { getToolUiMeta, type ToolUiMeta } from "../../../../shared/tools";
+import { getToolUiMeta, type ToolUiMeta, toolRenderKind } from "../../../../shared/tools";
 import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
 import { cn } from "../../lib/cn";
 import { DiffToolCard } from "./diff/DiffToolCard";
-import { TERMINAL_CARD_TOOLS } from "./terminal/parseTerminal";
-import { TerminalToolCard } from "./terminal/TerminalToolCard";
 import { ShinyText } from "./TextEffects";
+import { TerminalToolCard } from "./terminal/TerminalToolCard";
 import { toolIcon } from "./toolIcons";
 
 type ToolCardProps = {
@@ -18,9 +17,6 @@ type ToolCardProps = {
   /** Session cwd, threaded to the diff card so it can open the edited file. */
   cwd?: string | undefined;
 };
-
-/** Tools that render as a rich Cursor-style diff card instead of a flat row. */
-const DIFF_TOOLS = new Set(["edit", "write"]);
 
 /** Cap how much tool output we drop into the DOM at once. */
 const MAX_DETAIL_CHARS = 12_000;
@@ -43,16 +39,18 @@ export const ToolCard = memo(
     isError = false,
     cwd,
   }: ToolCardProps) {
-    // edit/write get the rich diff treatment; every other tool stays a flat row.
-    if (DIFF_TOOLS.has(name)) {
+    // The catalog declares how each tool renders; route on that capability
+    // instead of matching names, so a new tool is a catalog entry, not an edit
+    // here. (todo tools are intercepted upstream in the Timeline and never reach
+    // ToolCard, so they fall through to a flat row defensively.)
+    const render = toolRenderKind(name);
+    if (render === "diff") {
       return (
         <DiffToolCard args={args} cwd={cwd} isComplete={isComplete} isError={isError} name={name} />
       );
     }
 
-    // bash / terminal_run / terminal_read get a Cursor-style terminal card with
-    // a live output preview that expands to the full log.
-    if (TERMINAL_CARD_TOOLS.has(name)) {
+    if (render === "terminal") {
       return (
         <TerminalToolCard
           args={args}
@@ -120,14 +118,11 @@ function FlatToolRow({
         </ShinyText>
       ) : (
         <>
-          <span className={cn("shrink-0", isError ? "text-danger" : "text-fg-muted")}>
+          <span className={cn("shrink-0 font-medium", isError ? "text-danger" : "text-fg-muted")}>
             {view.verb}
           </span>
           <span
-            className={cn(
-              "min-w-0 flex-1 truncate text-fg-faint",
-              view.mono && "font-mono text-[12px]",
-            )}
+            className={cn("min-w-0 flex-1 truncate text-fg-subtle", view.mono && "font-mono")}
             title={view.target}
           >
             {view.target}
@@ -220,11 +215,14 @@ function primaryTarget(meta: ToolUiMeta, a: Record<string, unknown>): string {
 
 function toolDetail(name: string, args: unknown, output: string): string {
   const a = (args && typeof args === "object" ? args : {}) as Record<string, unknown>;
-  if (name === "bash" || name === "terminal_run") {
+  const meta = getToolUiMeta(name);
+  // A terminal-style command tool: prefix the command even with no output yet.
+  if (meta?.render === "terminal" && meta.primaryArgKey === "command") {
     const command = str(a.command);
     return output.trim() ? `$ ${command}\n\n${output}` : `$ ${command}`;
   }
-  if (name === "write" && !output.trim()) {
+  // A new-file writer with no textual output: show the content being written.
+  if (meta?.diffSource === "newFile" && !output.trim()) {
     return typeof a.content === "string" ? a.content : "";
   }
   return output;

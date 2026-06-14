@@ -6,16 +6,7 @@
  * tool's framing leaking into the UI.
  */
 
-export type TerminalToolName =
-  | "terminal_run"
-  | "terminal_read"
-  | "terminal_list"
-  | "terminal_write"
-  | "terminal_kill"
-  | "bash";
-
-/** Tools that render as a Cursor-style terminal card instead of a flat row. */
-export const TERMINAL_CARD_TOOLS = new Set<string>(["terminal_run", "terminal_read", "bash"]);
+import { getToolUiMeta } from "../../../../../shared/tools";
 
 export type ParsedTerminal = {
   /** Command line, when one is recoverable from args/output. */
@@ -32,18 +23,17 @@ function str(value: unknown): string {
   return value == null ? "" : String(value);
 }
 
-/** Command argument for terminal_run / bash, when available. */
+/** Command/target label for a terminal tool, derived from its declared args. */
 export function terminalCommand(name: string, args: unknown): string | undefined {
   const a = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
-  if (name === "bash" || name === "terminal_run") {
+  // Command-bearing tools (bash, terminal_run) declare `command` as their
+  // primary arg; the rest of the terminal family is keyed by a terminal id.
+  if (getToolUiMeta(name)?.primaryArgKey === "command") {
     const command = str(a.command).trim();
     return command || undefined;
   }
-  if (name === "terminal_read" || name === "terminal_write" || name === "terminal_kill") {
-    const id = str(a.terminal_id).trim();
-    return id ? `terminal ${id}` : undefined;
-  }
-  return undefined;
+  const id = str(a.terminal_id).trim();
+  return id ? `terminal ${id}` : undefined;
 }
 
 /**
@@ -60,7 +50,9 @@ export function parseTerminalOutput(name: string, args: unknown, output: string)
   const truncated = /\[earlier output truncated\]/.test(output);
   const cleaned = output.replace(/\n?\[earlier output truncated\]/g, "");
 
-  if (name === "bash") {
+  // Unframed tools (the PI `bash` tool) emit their output verbatim — there is no
+  // `$ cmd` header or `[terminal …]` status line to strip.
+  if (getToolUiMeta(name)?.terminalFramed !== true) {
     return {
       ...(fallbackCommand ? { command: fallbackCommand } : {}),
       body: cleaned.trimEnd(),

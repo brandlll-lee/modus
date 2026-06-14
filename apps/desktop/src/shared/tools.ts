@@ -37,6 +37,24 @@ export type ToolPermissionDecl = {
   action?: PermissionAction;
 };
 
+/**
+ * Which renderer card a tool's calls use. Declared here (data) so the renderer
+ * routes by capability, never by tool name — adding a tool is a catalog entry,
+ * not edits scattered across the timeline/diff/terminal consumers.
+ * - `flat`: a one-line collapsible row (the default for any tool).
+ * - `diff`: a Cursor-style diff card (see `diffSource`).
+ * - `terminal`: a terminal card with a live output preview (see `terminalFramed`).
+ * - `todo`: rendered as the live to-do list, not as a tool row.
+ */
+export type ToolRenderKind = "flat" | "diff" | "terminal" | "todo";
+
+/**
+ * How a `render: "diff"` tool's diff is derived from its call arguments.
+ * - `edits`: args carry `edits: {oldText,newText}[]` (in-place edit).
+ * - `newFile`: args carry `content` for a brand-new file (all-green diff).
+ */
+export type DiffSource = "edits" | "newFile";
+
 export type ToolUiMeta = {
   iconName: ToolIconName;
   verb: string;
@@ -44,6 +62,16 @@ export type ToolUiMeta = {
   mono: boolean;
   /** Argument key used to derive the default target label shown after the verb. */
   primaryArgKey?: string;
+  /** Which renderer card this tool's calls use. Absent ⇒ `flat`. */
+  render?: ToolRenderKind;
+  /** For `render: "diff"` — how to build the diff from the call's arguments. */
+  diffSource?: DiffSource;
+  /**
+   * For `render: "terminal"` — whether the tool's output is Modus-framed
+   * (a `$ cmd` header + `[terminal …]` status line, as terminal_run/_read emit)
+   * or raw (like the PI `bash` tool, whose output is the body verbatim).
+   */
+  terminalFramed?: boolean;
 };
 
 export type ToolKind = "builtin" | "custom";
@@ -75,21 +103,42 @@ export const BUILTIN_TOOL_CATALOG: ToolCatalogEntry[] = [
     kind: "builtin",
     profiles: ["chat"],
     permission: { danger: "dynamic" },
-    ui: { iconName: "terminal", verb: "Ran", mono: true, primaryArgKey: "command" },
+    ui: {
+      iconName: "terminal",
+      verb: "Ran",
+      mono: true,
+      primaryArgKey: "command",
+      render: "terminal",
+      terminalFramed: false,
+    },
   },
   {
     name: "edit",
     kind: "builtin",
     profiles: ["chat"],
     permission: { danger: "dangerous", action: "file.write" },
-    ui: { iconName: "pencil", verb: "Edited", mono: false, primaryArgKey: "path" },
+    ui: {
+      iconName: "pencil",
+      verb: "Edited",
+      mono: false,
+      primaryArgKey: "path",
+      render: "diff",
+      diffSource: "edits",
+    },
   },
   {
     name: "write",
     kind: "builtin",
     profiles: ["chat"],
     permission: { danger: "dangerous", action: "file.write" },
-    ui: { iconName: "file-plus", verb: "Wrote", mono: false, primaryArgKey: "path" },
+    ui: {
+      iconName: "file-plus",
+      verb: "Wrote",
+      mono: false,
+      primaryArgKey: "path",
+      render: "diff",
+      diffSource: "newFile",
+    },
   },
   {
     name: "grep",
@@ -131,12 +180,21 @@ export type TerminalToolName = (typeof TERMINAL_TOOL_NAMES)[number];
  * their executable definitions live in the main process.
  */
 export const TERMINAL_TOOL_UI: Record<TerminalToolName, ToolUiMeta> = {
-  terminal_run: { iconName: "terminal", verb: "Terminal", mono: true, primaryArgKey: "command" },
+  terminal_run: {
+    iconName: "terminal",
+    verb: "Terminal",
+    mono: true,
+    primaryArgKey: "command",
+    render: "terminal",
+    terminalFramed: true,
+  },
   terminal_read: {
     iconName: "terminal",
     verb: "Read terminal",
     mono: true,
     primaryArgKey: "terminal_id",
+    render: "terminal",
+    terminalFramed: true,
   },
   terminal_list: { iconName: "terminal", verb: "Listed terminals", mono: false },
   terminal_write: {
@@ -153,14 +211,24 @@ export const TERMINAL_TOOL_UI: Record<TerminalToolName, ToolUiMeta> = {
   },
 };
 
+/** Agent-facing GUI app launch tool (custom tool registered at runtime). */
+export const APP_TOOL_NAMES = ["launch_app"] as const;
+
+export type AppToolName = (typeof APP_TOOL_NAMES)[number];
+
+/** UI metadata for the GUI app launch tool. */
+export const APP_TOOL_UI: Record<AppToolName, ToolUiMeta> = {
+  launch_app: { iconName: "terminal", verb: "Launched app", mono: true, primaryArgKey: "path" },
+};
+
 /** Agent-facing to-do tool (custom tool registered at runtime). */
 export const TODO_TOOL_NAME = "todo_write";
-
 /** UI metadata for the to-do tool (its calls render as the live TodosCard). */
 export const TODO_TOOL_UI: ToolUiMeta = {
   iconName: "todo",
   verb: "Updated to-dos",
   mono: false,
+  render: "todo",
 };
 
 /** Agent-facing web tool names (custom tools registered at runtime). */
@@ -297,7 +365,17 @@ export function getToolUiMeta(name: string): ToolUiMeta | undefined {
   return (
     getBuiltinToolUiMeta(name) ??
     TERMINAL_TOOL_UI[name as TerminalToolName] ??
+    APP_TOOL_UI[name as AppToolName] ??
     WEB_TOOL_UI[name as WebToolName] ??
     BROWSER_TOOL_UI[name as BrowserToolName]
   );
+}
+
+/**
+ * Render kind for a tool's calls, defaulting to "flat" for plain, unknown, or
+ * MCP-bridged tools. Renderer consumers route on this capability instead of
+ * matching tool names, so a new tool only declares its `render` in the catalog.
+ */
+export function toolRenderKind(name: string): ToolRenderKind {
+  return getToolUiMeta(name)?.render ?? "flat";
 }

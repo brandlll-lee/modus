@@ -1,4 +1,5 @@
 import { structuredPatch } from "diff";
+import { getToolUiMeta } from "../../../../../shared/tools";
 
 /**
  * Pure diff computation for the edit/write tool cards.
@@ -206,6 +207,8 @@ export function computeWriteInlineDiff(
 /**
  * Build an inline diff straight from a tool call's name + args, or `undefined`
  * if the tool isn't a diff-producing writer or the args don't carry usable data.
+ * The diff strategy comes from the catalog's `diffSource`, so a new diff tool
+ * only declares it there — this function needs no change.
  */
 export function inlineDiffFromToolArgs(
   name: string,
@@ -217,7 +220,9 @@ export function inlineDiffFromToolArgs(
     return undefined;
   }
 
-  if (name === "edit") {
+  const diffSource = getToolUiMeta(name)?.diffSource;
+
+  if (diffSource === "edits") {
     const edits = readEdits(record);
     if (edits.length === 0) {
       return undefined;
@@ -225,7 +230,7 @@ export function inlineDiffFromToolArgs(
     return computeEditInlineDiff(edits, options);
   }
 
-  if (name === "write") {
+  if (diffSource === "newFile") {
     if (typeof record.content !== "string") {
       return undefined;
     }
