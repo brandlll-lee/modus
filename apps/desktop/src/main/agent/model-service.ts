@@ -611,6 +611,30 @@ export function getModelSettings(): ModelSettingsState {
   };
 }
 
+/** The wire protocol of a built-in provider, read from its first bundled model. */
+function builtinProviderApi(provider: string, modelRegistry: ModelRegistry): string | undefined {
+  return modelRegistry.getAll().find((model) => model.provider === provider)?.api;
+}
+
+/**
+ * Normalize a base-URL input into the override target: `undefined` (absent — do
+ * not touch), `""` (explicit clear — revert to official), or a validated http(s)
+ * URL (override). Throws on a non-empty value that isn't an http(s) URL.
+ */
+function resolveBaseUrlOverride(value: string | undefined): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "";
+  }
+  if (!/^https?:\/\//.test(trimmed)) {
+    throw new Error("Provider base URL must start with http:// or https://.");
+  }
+  return trimmed;
+}
+
 export async function configureProvider(
   input: ConfigureProviderInput,
 ): Promise<ModelProviderDetail> {
@@ -620,7 +644,42 @@ export async function configureProvider(
   }
   const modelRegistry = refreshRegistry();
   const providerName = modelRegistry.getProviderDisplayName(provider);
-  upsertProviderConfig({ provider, displayName: providerName, source: "builtin" });
+
+  // Optional custom base URL for a built-in provider. Reuses pi's native
+  // "override-only" provider entry in models.json (baseUrl/headers, no models):
+  // every built-in model is kept but its endpoint is rewritten to the relay,
+  // while auth still flows through AuthStorage. `undefined` leaves the current
+  // setting untouched; "" reverts to the official endpoint; a URL sets it.
+  const protocolApi = builtinProviderApi(provider, modelRegistry);
+  const baseUrlOverride = resolveBaseUrlOverride(input.baseUrl);
+  const runtimeHeaders = baseUrlOverride
+    ? applyClientHeaderOverrides(protocolApi, undefined)
+    : undefined;
+
+  upsertProviderConfig({
+    provider,
+    displayName: providerName,
+    source: "builtin",
+    ...(input.baseUrl === undefined
+      ? { preserveExisting: true }
+      : baseUrlOverride
+        ? { baseUrl: baseUrlOverride, ...(protocolApi ? { api: protocolApi } : {}) }
+        : {}),
+  });
+
+  if (input.baseUrl !== undefined) {
+    setProviderRuntimeConfig(
+      provider,
+      baseUrlOverride
+        ? {
+            ...(protocolApi ? { api: protocolApi } : {}),
+            baseUrl: baseUrlOverride,
+            ...(runtimeHeaders ? { headers: runtimeHeaders } : {}),
+          }
+        : undefined,
+    );
+  }
+
   if (input.apiKey?.trim()) {
     modelRegistry.authStorage.set(provider, { type: "api_key", key: input.apiKey.trim() });
   }
@@ -895,11 +954,24 @@ function readCustomModelsJson(): CustomModelsJson {
 }
 
 function writeCustomModelsJson(provider: string, config: CustomProviderJson): void {
+  setProviderRuntimeConfig(provider, config);
+}
+
+/**
+ * Upsert (or, with `undefined`, remove) a provider's entry in the runtime
+ * `models.json` that pi's ModelRegistry reads. This is the single write path for
+ * both full custom-provider configs and override-only built-in entries.
+ */
+function setProviderRuntimeConfig(provider: string, config: CustomProviderJson | undefined): void {
   const path = modelsPath();
   mkdirSync(dirname(path), { recursive: true });
   const data = readCustomModelsJson();
   data.providers = data.providers ?? {};
-  data.providers[provider] = config;
+  if (config) {
+    data.providers[provider] = config;
+  } else {
+    delete data.providers[provider];
+  }
   writeFileSync(path, `${JSON.stringify(data, null, 2)}\n`, "utf-8");
 }
 

@@ -81,6 +81,16 @@ export const terminalResizeSchema = z.object({
   rows: z.number().int().min(5).max(200),
 });
 
+export const processListSchema = z.object({
+  workspaceId: optionalNonEmptyString,
+  sessionId: optionalNonEmptyString,
+  origin: z.enum(["user", "agent"]).optional(),
+});
+
+export const processKillSchema = z.object({
+  id: nonEmptyString,
+});
+
 export const cwdSchema = nonEmptyString;
 
 export const browserWorkspaceSchema = z.object({
@@ -328,6 +338,7 @@ export const reviewStartSchema = z.object({
 export const configureProviderSchema = z.object({
   provider: nonEmptyString,
   apiKey: z.string().optional(),
+  baseUrl: z.string().trim().optional(),
   enabledModelIds: z.array(nonEmptyString).optional(),
 });
 

@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 let userData: string;
 let getDatabase: typeof import("../db/database").getDatabase;
+let configureProvider: typeof import("./model-service").configureProvider;
 let getCustomProviderConfig: typeof import("./model-service").getCustomProviderConfig;
 let updateModelConfig: typeof import("./model-service").updateModelConfig;
 let upsertCustomProvider: typeof import("./model-service").upsertCustomProvider;
@@ -18,9 +19,8 @@ vi.mock("electron", () => ({
 beforeAll(async () => {
   userData = await mkdtemp(join(tmpdir(), "modus-model-service-test-"));
   ({ getDatabase } = await import("../db/database"));
-  ({ getCustomProviderConfig, updateModelConfig, upsertCustomProvider } = await import(
-    "./model-service"
-  ));
+  ({ configureProvider, getCustomProviderConfig, updateModelConfig, upsertCustomProvider } =
+    await import("./model-service"));
 }, 60_000);
 
 afterAll(async () => {
@@ -299,5 +299,85 @@ describe("model-service custom provider config", () => {
     expect(parsedModelsJson.providers[provider].models[0].thinkingLevelMap).not.toHaveProperty(
       "off",
     );
+  });
+});
+
+describe("model-service built-in provider base URL override", () => {
+  async function readProviders(): Promise<Record<string, Record<string, unknown>>> {
+    const json = await readFile(join(userData, "pi-agent", "models.json"), "utf-8");
+    return (JSON.parse(json).providers ?? {}) as Record<string, Record<string, unknown>>;
+  }
+
+  it("relays a built-in provider through a custom base URL without dropping its models", async () => {
+    const detail = await configureProvider({
+      provider: "anthropic",
+      apiKey: "sk-builtin-secret",
+      baseUrl: "https://relay.example.test/anthropic",
+    });
+
+    // Built-in models are preserved — this is an override, not a replacement.
+    expect(detail.source).toBe("builtin");
+    expect(detail.baseUrl).toBe("https://relay.example.test/anthropic");
+    expect(detail.modelCount).toBeGreaterThan(0);
+
+    const providers = await readProviders();
+    const entry = providers.anthropic;
+    expect(entry).toBeDefined();
+    if (!entry) {
+      throw new Error("expected an anthropic override entry");
+    }
+    expect(entry).toMatchObject({
+      api: "anthropic-messages",
+      baseUrl: "https://relay.example.test/anthropic",
+    });
+    // Override-only: no custom model list is written for a built-in relay.
+    expect(entry).not.toHaveProperty("models");
+    // Fingerprint headers are blanked so the relay gets a clean request.
+    expect(entry.headers).toMatchObject({
+      "User-Agent": "Modus/0.1.0",
+      "X-Stainless-Lang": "",
+    });
+
+    // The key lives in auth.json (AuthStorage), never the models.json.
+    const modelsJson = await readFile(join(userData, "pi-agent", "models.json"), "utf-8");
+    expect(modelsJson).not.toContain("sk-builtin-secret");
+  });
+
+  it("reverts to the official endpoint when the base URL is cleared", async () => {
+    await configureProvider({
+      provider: "google",
+      apiKey: "sk-google",
+      baseUrl: "https://relay.example.test/google",
+    });
+    expect((await readProviders()).google).toBeDefined();
+
+    const detail = await configureProvider({ provider: "google", baseUrl: "" });
+
+    expect(detail.baseUrl).toBeUndefined();
+    expect(detail.modelCount).toBeGreaterThan(0);
+    expect((await readProviders()).google).toBeUndefined();
+  });
+
+  it("leaves an existing override untouched when the base URL is omitted", async () => {
+    await configureProvider({
+      provider: "openai",
+      apiKey: "sk-openai",
+      baseUrl: "https://relay.example.test/openai",
+    });
+
+    // A later call that only refreshes the key (no baseUrl field) must not wipe
+    // the relay — `undefined` means "leave untouched".
+    const detail = await configureProvider({ provider: "openai", apiKey: "sk-openai-2" });
+
+    expect(detail.baseUrl).toBe("https://relay.example.test/openai");
+    expect((await readProviders()).openai).toMatchObject({
+      baseUrl: "https://relay.example.test/openai",
+    });
+  });
+
+  it("rejects a base URL that is not an http(s) endpoint", async () => {
+    await expect(
+      configureProvider({ provider: "anthropic", baseUrl: "ftp://nope.example.test" }),
+    ).rejects.toThrow(/base URL/i);
   });
 });

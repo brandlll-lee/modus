@@ -118,7 +118,11 @@ export function SettingsPanel({
     };
   }, [open, selectedProvider]);
 
-  async function connectProvider(provider: ModelProviderInfo, apiKey?: string): Promise<void> {
+  async function connectProvider(
+    provider: ModelProviderInfo,
+    apiKey?: string,
+    baseUrl?: string,
+  ): Promise<void> {
     setBusy(true);
     setError(undefined);
     try {
@@ -127,6 +131,7 @@ export function SettingsPanel({
       await window.modus.model.configureProvider({
         provider: provider.id,
         apiKey: apiKey?.trim(),
+        ...(baseUrl !== undefined ? { baseUrl } : {}),
         enabledModelIds: providerDetail?.models.map((model) => model.id),
       });
       setProviderKeys((current) => ({ ...current, [provider.id]: "" }));
@@ -255,7 +260,9 @@ export function SettingsPanel({
               error={error}
               keyValue={detail ? (providerKeys[detail.id] ?? "") : ""}
               providerDetailOpen={providerDetailOpen}
-              onConnectProvider={(provider, apiKey) => void connectProvider(provider, apiKey)}
+              onConnectProvider={(provider, apiKey, baseUrl) =>
+                void connectProvider(provider, apiKey, baseUrl)
+              }
               onCustomCancel={() => {
                 setCustomOpen(false);
                 setCustomInitial(undefined);
@@ -475,7 +482,7 @@ function ModelProviderSettingsPanel({
   keyValue: string;
   popular: ModelProviderInfo[];
   providerDetailOpen: boolean;
-  onConnectProvider(provider: ModelProviderInfo, apiKey?: string): void;
+  onConnectProvider(provider: ModelProviderInfo, apiKey?: string, baseUrl?: string): void;
   onCustomCancel(): void;
   onCustomComplete(provider: string): void;
   onCustomOpen(): void;
@@ -752,7 +759,7 @@ function ProviderDetailDialog({
   keyValue: string;
   open: boolean;
   onClose(): void;
-  onConnectProvider(provider: ModelProviderInfo, apiKey?: string): void;
+  onConnectProvider(provider: ModelProviderInfo, apiKey?: string, baseUrl?: string): void;
   onEditModel(
     model: ProviderModelConfig,
     patch: { thinkingLevel?: ThinkingLevel; contextWindow?: number; maxTokens?: number },
@@ -779,7 +786,7 @@ function ProviderDetailDialog({
           detail={detail}
           key={detail.id}
           keyValue={keyValue}
-          onConnect={(apiKey) => onConnectProvider(detail, apiKey)}
+          onConnect={(apiKey, baseUrl) => onConnectProvider(detail, apiKey, baseUrl)}
           onEditModel={onEditModel}
           onEditProvider={onEditProvider}
           onKeyChange={onKeyChange}
@@ -2096,7 +2103,7 @@ function ProviderDetail({
   detail: ModelProviderDetail;
   busy: boolean;
   keyValue: string;
-  onConnect(apiKey: string): void;
+  onConnect(apiKey: string, baseUrl?: string): void;
   onEditModel(
     model: ProviderModelConfig,
     patch: { thinkingLevel?: ThinkingLevel; contextWindow?: number; maxTokens?: number },
@@ -2244,15 +2251,24 @@ function ProviderCredentials({
   detail: ModelProviderDetail;
   busy: boolean;
   keyValue: string;
-  onConnect(apiKey: string): void;
+  onConnect(apiKey: string, baseUrl?: string): void;
   onKeyChange(apiKey: string): void;
 }) {
+  // Custom providers own their base URL through the custom-provider form; only
+  // built-in providers expose an optional relay endpoint here. Seeded per
+  // provider (ProviderDetail is keyed by id, so this remounts on switch).
+  const supportsBaseUrl = detail.source === "builtin";
+  const storedBaseUrl = detail.baseUrl ?? "";
+  const [baseUrl, setBaseUrl] = useState(storedBaseUrl);
+  const baseUrlChanged = supportsBaseUrl && baseUrl.trim() !== storedBaseUrl;
+  const canSubmit = Boolean(keyValue.trim()) || baseUrlChanged;
+
   return (
     <form
       className="border-hairline-soft border-y py-5"
       onSubmit={(event) => {
         event.preventDefault();
-        onConnect(keyValue);
+        onConnect(keyValue, supportsBaseUrl ? baseUrl.trim() : undefined);
       }}
     >
       <div className="mb-4 flex flex-wrap items-start justify-between gap-4">
@@ -2290,13 +2306,39 @@ function ProviderCredentials({
         </label>
         <button
           className="flex h-9 min-w-[92px] items-center justify-center gap-1.5 rounded-md bg-fg px-3 text-sm text-canvas transition-colors hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
-          disabled={busy || !keyValue.trim()}
+          disabled={busy || !canSubmit}
           type="submit"
         >
           {busy ? <IconLoader2 className="animate-spin" size={13} stroke={1.8} /> : null}
           {detail.configured ? "Update" : "Connect"}
         </button>
       </div>
+
+      {supportsBaseUrl ? (
+        <div className="mt-3">
+          <label className="relative block min-w-0">
+            <span className="sr-only">Custom base URL for {detail.name}</span>
+            <IconWorld
+              className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-fg-faint"
+              size={15}
+              stroke={1.7}
+            />
+            <input
+              autoComplete="off"
+              className="h-9 w-full rounded-md border border-hairline bg-canvas pr-3 pl-9 font-mono text-sm text-fg outline-none placeholder:text-fg-faint transition-colors focus:border-hairline-strong"
+              onChange={(event) => setBaseUrl(event.target.value)}
+              placeholder="Custom base URL — official endpoint by default"
+              spellCheck={false}
+              type="url"
+              value={baseUrl}
+            />
+          </label>
+          <p className="mt-1.5 text-xs text-fg-faint">
+            Optional. Route this provider's protocol through a compatible gateway (e.g.
+            {" https://relay.example.com/v1"}). Leave empty to use the official endpoint.
+          </p>
+        </div>
+      ) : null}
     </form>
   );
 }
