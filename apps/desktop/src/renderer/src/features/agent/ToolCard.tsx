@@ -4,6 +4,7 @@ import { getToolUiMeta, type ToolUiMeta, toolRenderKind } from "../../../../shar
 import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
 import { cn } from "../../lib/cn";
 import { DiffToolCard } from "./diff/DiffToolCard";
+import { QuestionToolCard } from "./QuestionToolCard";
 import { ShinyText } from "./TextEffects";
 import { TerminalToolCard } from "./terminal/TerminalToolCard";
 import { toolIcon } from "./toolIcons";
@@ -60,6 +61,10 @@ export const ToolCard = memo(
           output={output}
         />
       );
+    }
+
+    if (render === "question") {
+      return <QuestionToolCard args={args} isComplete={isComplete} output={output} />;
     }
 
     return (

@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import type {
+  AgentMode,
   AgentSessionInfo,
   BrowserEvent,
   ContextItem,
@@ -16,18 +17,23 @@ import type {
   ModelInfo,
   PermissionDecision,
   PermissionRequest,
+  PlanRef,
   PromptDelivery,
   PromptImageAttachment,
+  QuestionAnswer,
   ThinkingLevel,
   WorkingChangeStats,
   WorkspaceInfo,
 } from "../../../../shared/contracts";
 import { CollapsibleMotionProvider } from "../../components/ui/CollapsibleMotion";
 import { Composer } from "../composer/Composer";
+import { QuestionsCard } from "../plan/QuestionsCard";
+import { ReviewPlanCard } from "../plan/ReviewPlanCard";
 import { ApprovalPanel } from "./ApprovalPanel";
 import { type AgentEventHub, type AgentEventItem, appendAgentEvents } from "./agentEventHub";
 import { ChangesStrip } from "./changes/ChangesStrip";
 import { latestPendingPermissionRequest } from "./permissionRequests";
+import { latestPendingQuestionRequest } from "./questionRequests";
 import { isRunActive, isTerminalRunEvent } from "./runState";
 import { Timeline } from "./Timeline";
 
@@ -52,6 +58,8 @@ type ChatPaneProps = {
   onModelConfigChange(model: string, thinkingLevel: ThinkingLevel): Promise<void> | void;
   /** "Review" on the changes strip: focus this pane and open the diff panel. */
   onOpenReview(): void;
+  /** A plan was (re)written in Plan Mode: open it in the file panel. */
+  onPlanUpdated(plan: PlanRef): void;
 };
 
 export function ChatPane({
@@ -65,6 +73,7 @@ export function ChatPane({
   onModelChange,
   onModelConfigChange,
   onOpenReview,
+  onPlanUpdated,
 }: ChatPaneProps) {
   const sessionId = session.id;
   const [agentEvents, setAgentEvents] = useState<AgentEventItem[]>([]);
@@ -73,6 +82,9 @@ export function ChatPane({
   const [pendingPrompt, setPendingPrompt] = useState(false);
   const [aborting, setAborting] = useState(false);
   const [workingStats, setWorkingStats] = useState<WorkingChangeStats | undefined>();
+  const [reviewPlan, setReviewPlan] = useState<PlanRef | undefined>();
+  const lastPlanHashRef = useRef<string | undefined>(undefined);
+  const [composerMode, setComposerMode] = useState<AgentMode>("build");
 
   const queuedRef = useRef<AgentEventItem[]>([]);
   const flushTimerRef = useRef<number | undefined>(undefined);
@@ -82,6 +94,45 @@ export function ChatPane({
   const statsTimerRef = useRef<number | undefined>(undefined);
   const statsCwdRef = useRef(session.cwd);
   statsCwdRef.current = session.cwd;
+
+  // When Plan Mode writes/updates a plan, surface a Review card and open it in
+  // the file panel. Keyed by content hash so we react once per distinct plan.
+  useEffect(() => {
+    let latest: PlanRef | undefined;
+    for (const item of agentEvents) {
+      if (item.event.type === "plan.updated") {
+        latest = item.event.plan;
+      }
+    }
+    if (latest && latest.hash !== lastPlanHashRef.current) {
+      lastPlanHashRef.current = latest.hash;
+      setReviewPlan(latest);
+      onPlanUpdated(latest);
+    }
+  }, [agentEvents, onPlanUpdated]);
+
+  /**
+   * Build Locally: the user's explicit authorization to execute an approved
+   * plan with a single agent. Switches the composer to build mode and sends a
+   * self-contained build prompt anchored on the plan (the plan, not the
+   * planning chatter, is the source of truth — concise-history by construction).
+   * Capability is build mode's full tool set; the plan's Acceptance Criteria are
+   * the verification contract the agent is told to check before finishing.
+   */
+  function buildPlanLocally(plan: PlanRef): void {
+    setComposerMode("build");
+    setReviewPlan(undefined);
+    const message = [
+      "Implement the following approved plan. Treat it as the single source of truth:",
+      "work through its Tasks, satisfy every Acceptance Criterion, and verify the result",
+      "against those criteria (build/tests where applicable) before reporting done.",
+      "",
+      `<plan title="${plan.title}">`,
+      plan.content,
+      "</plan>",
+    ].join("\n");
+    submitPrompt(message, [], "normal", undefined, undefined, "build");
+  }
 
   /** Refresh the working-tree change summary shown above the composer. */
   const refreshStats = useCallback((): void => {
@@ -283,6 +334,7 @@ export function ChatPane({
     () => latestPendingPermissionRequest(agentEvents),
     [agentEvents],
   );
+  const pendingQuestion = useMemo(() => latestPendingQuestionRequest(agentEvents), [agentEvents]);
 
   function submitPrompt(
     message: string,
@@ -290,6 +342,7 @@ export function ChatPane({
     delivery: PromptDelivery = "normal",
     attachments?: PromptImageAttachment[],
     skills?: string[],
+    mode?: AgentMode,
   ): void {
     if (!message.trim()) {
       return;
@@ -323,6 +376,11 @@ export function ChatPane({
         ? { ...item, element: { ...item.element, screenshotDataUrl: undefined } }
         : item,
     );
+    // Bind THIS turn's execution params to the prompt: the model the composer
+    // currently shows + its thinking level. The runtime applies them at turn
+    // start, so the turn is self-describing — no stale model/thinking/mode after
+    // a mid-session switch, edit-and-resend, or resume.
+    const turnThinking = models.find((item) => item.id === paneModel)?.thinkingLevel;
     void window.modus.agent
       .prompt({
         context: leanContext,
@@ -332,6 +390,9 @@ export function ChatPane({
         userMessageId: `local-user:${crypto.randomUUID()}`,
         ...(mergedAttachments.length > 0 ? { attachments: mergedAttachments } : {}),
         ...(skills && skills.length > 0 ? { skills } : {}),
+        ...(mode ? { mode } : {}),
+        ...(paneModel ? { model: paneModel } : {}),
+        ...(turnThinking ? { thinkingLevel: turnThinking } : {}),
       })
       .then(() => onSessionsChanged())
       .catch((error: unknown) => {
@@ -370,6 +431,14 @@ export function ChatPane({
     });
   }
 
+  async function respondQuestion(answers: QuestionAnswer[], skipped: boolean): Promise<void> {
+    if (!pendingQuestion) {
+      return;
+    }
+    setPromptError(undefined);
+    await window.modus.questions.respond({ requestId: pendingQuestion.id, answers, skipped });
+  }
+
   async function editAndResend(
     messageId: string,
     message: string,
@@ -383,7 +452,10 @@ export function ChatPane({
     setAgentEvents(await window.modus.agent.listEvents(sessionId));
     onSessionsChanged();
     refreshStats();
-    submitPrompt(message, [], "normal", attachments);
+    // Resend under the composer's CURRENT mode (plan/build); submitPrompt also
+    // attaches the current model+thinking. Dropping mode here was why an edited
+    // resend silently fell back to build mode.
+    submitPrompt(message, [], "normal", attachments, undefined, composerMode);
   }
 
   async function changeModel(nextModel: string): Promise<void> {
@@ -420,15 +492,6 @@ export function ChatPane({
 
       <div className="min-w-0 max-w-full shrink-0 px-4 pb-4">
         <div className="mx-auto min-w-0 w-full max-w-5xl">
-          {workingStats ? (
-            <ChangesStrip
-              onOpenFile={(path) =>
-                void window.modus.file.open({ cwd: activeCwd, path }).catch(() => {})
-              }
-              onReview={onOpenReview}
-              stats={workingStats}
-            />
-          ) : null}
           {pendingPermission ? (
             <ApprovalPanel
               key={pendingPermission.id}
@@ -436,25 +499,53 @@ export function ChatPane({
               request={pendingPermission}
             />
           ) : (
-            <Composer
-              canSubmit={Boolean(workspace) && Boolean(paneModel)}
-              contextItems={contextItems}
-              cwd={activeCwd}
-              hasSession
-              isRunning={isRunning}
-              model={paneModel}
-              models={models}
-              {...(contextUsage ? { contextUsage } : {})}
-              onAbort={() => void abortPrompt()}
-              onContextChange={setContextItems}
-              onModelChange={(next) => void changeModel(next)}
-              onModelConfigChange={onModelConfigChange}
-              onSubmit={(message, context, delivery, attachments, skills) =>
-                submitPrompt(message, context, delivery, attachments, skills)
-              }
-              sessionId={sessionId}
-              workspaceId={workspace?.id}
-            />
+            <>
+              {pendingQuestion ? (
+                <QuestionsCard
+                  key={pendingQuestion.id}
+                  onSkip={() => void respondQuestion([], true)}
+                  onSubmit={(answers) => void respondQuestion(answers, false)}
+                  request={pendingQuestion}
+                />
+              ) : reviewPlan ? (
+                <ReviewPlanCard
+                  onBuildLocally={() => buildPlanLocally(reviewPlan)}
+                  onDismiss={() => setReviewPlan(undefined)}
+                  onOpen={() => onPlanUpdated(reviewPlan)}
+                  plan={reviewPlan}
+                />
+              ) : null}
+              {workingStats && workingStats.fileCount > 0 ? (
+                <ChangesStrip
+                  onOpenFile={(path) =>
+                    void window.modus.file.open({ cwd: activeCwd, path }).catch(() => {})
+                  }
+                  onReview={onOpenReview}
+                  stats={workingStats}
+                />
+              ) : null}
+              <Composer
+                canSubmit={Boolean(workspace) && Boolean(paneModel)}
+                contextItems={contextItems}
+                cwd={activeCwd}
+                hasSession
+                isRunning={isRunning}
+                mode={composerMode}
+                model={paneModel}
+                models={models}
+                {...(contextUsage ? { contextUsage } : {})}
+                onAbort={() => void abortPrompt()}
+                onContextChange={setContextItems}
+                onModeChange={setComposerMode}
+                onModelChange={(next) => void changeModel(next)}
+                onModelConfigChange={onModelConfigChange}
+                onSubmit={(message, context, delivery, attachments, skills, mode) =>
+                  submitPrompt(message, context, delivery, attachments, skills, mode)
+                }
+                sessionId={sessionId}
+                workspaceId={workspace?.id}
+              />
+            </>
           )}
         </div>
       </div>

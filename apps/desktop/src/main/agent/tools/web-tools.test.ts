@@ -22,6 +22,13 @@ describe("registerWebTools", () => {
     expect(review.has("web_fetch")).toBe(false);
   });
 
+  it("makes web tools available in Plan Mode for research", () => {
+    registerWebTools();
+    const plan = new Set(toolRegistry.resolveActiveTools("plan"));
+    expect(plan.has("web_search")).toBe(true);
+    expect(plan.has("web_fetch")).toBe(true);
+  });
+
   it("classifies both web tools as safe (no approval prompt)", () => {
     registerWebTools();
     expect(toolRegistry.classify(toolEvent("web_search", { query: "x" })).dangerous).toBe(false);
