@@ -36,8 +36,11 @@ import {
  * permission / UI pipeline as every other agent tool), and reports status to
  * the Settings UI.
  *
- * Every MCP call is classified `mcp.call` + dangerous, so the permission
- * broker prompts on first use and honors workspace-level "always allow".
+ * Every MCP call is classified by the server's `readOnlyHint` capability: a
+ * read-only tool is `safe` and available in Plan Mode (like web_search, itself
+ * an Exa MCP call), while anything that can mutate is `mcp.call` + dangerous, so
+ * the permission broker prompts on first use and honors workspace-level "always
+ * allow". Absent hint ⇒ treated as mutating (conservative default).
  */
 
 const CONNECT_TIMEOUT_MS = 15_000;
@@ -236,11 +239,18 @@ async function refreshServerTools(managed: ManagedServer): Promise<void> {
   const tools: McpToolInfo[] = [];
   for (const tool of listed.tools) {
     const definition = buildToolDefinition(managed.config.name, client, tool);
+    // Classify by the server's authoritative capability hint, not by tool name:
+    // a tool that declares `readOnlyHint` is a research tool (like web_search,
+    // itself an Exa MCP call classified `safe`), so it is `safe` and available
+    // in read-only Plan Mode. Anything that can mutate stays `dangerous` +
+    // chat-only. Absent hint ⇒ treat as mutating (conservative default).
+    const readOnly =
+      (tool as { annotations?: { readOnlyHint?: boolean } }).annotations?.readOnlyHint === true;
     toolRegistry.registerTool({
       entry: {
         name: definition.name,
-        profiles: ["chat"],
-        permission: { danger: "dangerous", action: "mcp.call" },
+        profiles: readOnly ? ["chat", "plan"] : ["chat"],
+        permission: readOnly ? { danger: "safe" } : { danger: "dangerous", action: "mcp.call" },
         ui: getMcpToolUiMeta(definition.name),
       },
       definition,

@@ -26,8 +26,8 @@ export function ChangesStrip({
   }
 
   return (
-    <div className="mb-1.5 overflow-hidden rounded-[10px] border border-hairline-soft bg-panel/70">
-      <div className="flex h-8 items-center gap-1 pr-1.5 pl-1">
+    <div className="-mb-3 overflow-hidden rounded-t-[14px] bg-panel px-2.5 pt-1.5 pb-4">
+      <div className="flex h-8 items-center gap-1">
         <button
           aria-expanded={expanded}
           className="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-md px-1 text-left transition-colors hover:bg-hover"
@@ -57,7 +57,7 @@ export function ChangesStrip({
         </button>
       </div>
       <CollapsibleMotion open={expanded} preset="compact">
-        <div className="border-hairline-soft border-t px-1.5 py-1.5">
+        <div className="mt-1 border-hairline-soft border-t px-1 pt-1.5">
           <ChangeFileList className="max-h-44" onOpenFile={onOpenFile} stats={stats} />
         </div>
       </CollapsibleMotion>
