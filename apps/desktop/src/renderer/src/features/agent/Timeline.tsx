@@ -990,16 +990,9 @@ export function Timeline({ agentEvents, cwd, onRestoreCheckpoint, onEditResend }
 
   if (visibleBlocks.length === 0) {
     return (
-      <div className="flex min-h-full min-w-0 w-full max-w-full flex-1 flex-col items-center justify-center gap-6 px-6 text-center">
-        <ModusBot className="size-24" />
-        <div className="space-y-2">
-          <p className="text-[17px] font-normal tracking-tight text-fg-muted">
-            Ready when you are.
-          </p>
-          <p className="text-[13px] tracking-tight text-fg-faint">
-            Ask a question or describe a task to get started.
-          </p>
-        </div>
+      <div className="flex min-h-full min-w-0 w-full max-w-full flex-1 flex-col items-center justify-center gap-3.5 px-6 text-center">
+        <ModusBot className="size-14" />
+        <p className="font-mono text-[13px] text-fg-faint tracking-tight">Ready when you are.</p>
       </div>
     );
   }

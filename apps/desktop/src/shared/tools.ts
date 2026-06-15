@@ -8,7 +8,7 @@ import type { PermissionAction } from "./contracts";
  */
 
 /** Named tool sets. A session is created with one profile's active tools. */
-export type ToolProfileName = "chat" | "review";
+export type ToolProfileName = "chat" | "review" | "plan";
 
 /** Stable icon identifiers; the renderer maps these to concrete components. */
 export type ToolIconName =
@@ -45,8 +45,9 @@ export type ToolPermissionDecl = {
  * - `diff`: a Cursor-style diff card (see `diffSource`).
  * - `terminal`: a terminal card with a live output preview (see `terminalFramed`).
  * - `todo`: rendered as the live to-do list, not as a tool row.
+ * - `question`: a collapsible "Asked N questions" card listing each question + the chosen answer.
  */
-export type ToolRenderKind = "flat" | "diff" | "terminal" | "todo";
+export type ToolRenderKind = "flat" | "diff" | "terminal" | "todo" | "question";
 
 /**
  * How a `render: "diff"` tool's diff is derived from its call arguments.
@@ -94,7 +95,7 @@ export const BUILTIN_TOOL_CATALOG: ToolCatalogEntry[] = [
   {
     name: "read",
     kind: "builtin",
-    profiles: ["chat", "review"],
+    profiles: ["chat", "review", "plan"],
     permission: { danger: "safe" },
     ui: { iconName: "file", verb: "Read", mono: false, primaryArgKey: "path" },
   },
@@ -143,21 +144,21 @@ export const BUILTIN_TOOL_CATALOG: ToolCatalogEntry[] = [
   {
     name: "grep",
     kind: "builtin",
-    profiles: ["chat", "review"],
+    profiles: ["chat", "review", "plan"],
     permission: { danger: "safe" },
     ui: { iconName: "search", verb: "Grepped", mono: true, primaryArgKey: "pattern" },
   },
   {
     name: "find",
     kind: "builtin",
-    profiles: ["chat", "review"],
+    profiles: ["chat", "review", "plan"],
     permission: { danger: "safe" },
     ui: { iconName: "file-search", verb: "Searched", mono: true, primaryArgKey: "pattern" },
   },
   {
     name: "ls",
     kind: "builtin",
-    profiles: ["chat", "review"],
+    profiles: ["chat", "review", "plan"],
     permission: { danger: "safe" },
     ui: { iconName: "folder", verb: "Listed", mono: false, primaryArgKey: "path" },
   },
@@ -229,6 +230,35 @@ export const TODO_TOOL_UI: ToolUiMeta = {
   verb: "Updated to-dos",
   mono: false,
   render: "todo",
+};
+
+/** Agent-facing Plan Mode tool — writes the single plan.md artifact. */
+export const PLAN_TOOL_NAME = "plan_write";
+/**
+ * UI metadata for the plan tool. It renders as an ordinary flat row whose
+ * label shimmers while running ("Creating plan …") — the deliberately minimal
+ * Cursor-style affordance, reusing the existing FlatToolRow/ShinyText, not a
+ * diff card.
+ */
+export const PLAN_TOOL_UI: ToolUiMeta = {
+  iconName: "todo",
+  verb: "Creating plan",
+  mono: false,
+  primaryArgKey: "title",
+};
+
+/** Agent-facing interactive question tool — asks the user, blocks on the answer. */
+export const ASK_USER_TOOL_NAME = "ask_user";
+/**
+ * UI metadata for the ask_user tool. Its call renders as a minimal flat row
+ * ("Asking …"); the real interaction is the QuestionsCard shown above the
+ * composer (same slot as the Review Plan card).
+ */
+export const ASK_USER_TOOL_UI: ToolUiMeta = {
+  iconName: "tool",
+  verb: "Asking",
+  mono: false,
+  render: "question",
 };
 
 /** Agent-facing web tool names (custom tools registered at runtime). */
@@ -361,6 +391,12 @@ export function getToolUiMeta(name: string): ToolUiMeta | undefined {
   }
   if (name === TODO_TOOL_NAME) {
     return TODO_TOOL_UI;
+  }
+  if (name === PLAN_TOOL_NAME) {
+    return PLAN_TOOL_UI;
+  }
+  if (name === ASK_USER_TOOL_NAME) {
+    return ASK_USER_TOOL_UI;
   }
   return (
     getBuiltinToolUiMeta(name) ??

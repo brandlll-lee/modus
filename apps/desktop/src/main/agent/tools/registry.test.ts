@@ -23,6 +23,34 @@ describe("ToolRegistry profiles", () => {
     );
   });
 
+  it("plan profile activates the read-only research tools (no edit/write/bash)", () => {
+    const registry = new ToolRegistry();
+    expect(new Set(registry.resolveActiveTools("plan"))).toEqual(
+      new Set(["read", "grep", "find", "ls"]),
+    );
+  });
+
+  it("flows a plan-profile custom tool (plan_write) into the active set and customTools", () => {
+    // Mirrors how plan_write is registered: a custom tool scoped to the plan
+    // profile must appear in plan's active names AND its custom definitions, so
+    // the session's customTools include it and setActiveToolsByName can enable it.
+    const registry = new ToolRegistry();
+    const definition = { name: "plan_write" } as never;
+    registry.registerTool({
+      entry: {
+        name: "plan_write",
+        profiles: ["plan"],
+        permission: { danger: "safe" },
+        ui: { iconName: "todo", verb: "Creating plan", mono: false },
+      },
+      definition,
+    });
+    expect(registry.resolveActiveTools("plan")).toContain("plan_write");
+    expect(registry.getCustomToolDefinitions("plan")).toContain(definition);
+    // And it must NOT leak into chat (so build mode stays full-tools, plan-only stays plan-only).
+    expect(registry.resolveActiveTools("chat")).not.toContain("plan_write");
+  });
+
   it("overrides enable and disable adjust the active set", () => {
     const registry = new ToolRegistry();
     expect(registry.resolveActiveTools("review", { disable: ["grep"] })).not.toContain("grep");

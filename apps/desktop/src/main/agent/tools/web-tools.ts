@@ -118,7 +118,7 @@ export function registerWebTools(): void {
   toolRegistry.registerTool({
     entry: {
       name: "web_search",
-      profiles: ["chat"],
+      profiles: ["chat", "plan"],
       permission: { danger: "safe" },
       ui: WEB_TOOL_UI.web_search,
     },
@@ -127,7 +127,7 @@ export function registerWebTools(): void {
   toolRegistry.registerTool({
     entry: {
       name: "web_fetch",
-      profiles: ["chat"],
+      profiles: ["chat", "plan"],
       permission: { danger: "safe" },
       ui: WEB_TOOL_UI.web_fetch,
     },

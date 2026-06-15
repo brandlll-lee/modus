@@ -116,6 +116,7 @@ function createMockPiSession(overrides: Record<string, unknown> = {}): Record<st
     sessionManager: { getLeafId: vi.fn(() => null) },
     setModel: vi.fn(async () => undefined),
     setThinkingLevel: vi.fn(),
+    setActiveToolsByName: vi.fn(),
     subscribe: vi.fn((callback) => {
       mocks.setPiSubscriber(callback);
       return vi.fn();

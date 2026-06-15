@@ -56,6 +56,7 @@ import {
 } from "./model-service";
 import { createPiEventNormalizer } from "./pi-event-normalizer";
 import { createModusPermissionExtension } from "./pi-permission-extension";
+import { planModePreamble, profileForMode } from "./plan-prompt";
 import { PI_ROOT_LEAF } from "./rollback-service";
 import type {
   AgentRuntime,
@@ -67,6 +68,8 @@ import { deriveSessionTitle, shouldReplaceSessionTitle } from "./session-title";
 import { describeAgentShellForPrompt, resolveAgentShell } from "./shell-resolver";
 import { registerAppTools } from "./tools/app-tools";
 import { registerBrowserTools } from "./tools/browser-tools";
+import { registerPlanTools } from "./tools/plan-tools";
+import { registerQuestionTools } from "./tools/question-tools";
 import { toolRegistry } from "./tools/registry";
 import { registerTerminalTools } from "./tools/terminal-tools";
 import { registerTodoTools } from "./tools/todo-tools";
@@ -86,6 +89,7 @@ Format substantive answers as clean GitHub-flavored Markdown so they render well
 - Use \`-\` bullet lists for 3+ related points; keep each bullet to one line.
 - Wrap file paths, commands, code identifiers, and values in backticks.
 - Use fenced code blocks with a language tag for code.
+- Draw directory or file trees inside a fenced code block using box-drawing connectors (\`├──\`, \`└──\`, \`│\`), one entry per line, with any trailing \`#\` comments aligned — never depict a tree with bare indentation alone.
 - Prefer short paragraphs and lists over a single dense block.
 Skip heavy formatting for one-line answers, greetings, or simple confirmations.
 </response_formatting>`;
@@ -110,6 +114,15 @@ type RunOutputTracker = {
  */
 const TOOL_DELTA_THROTTLE_MS = 100;
 
+/** Dedupe tool definitions by name (chat + plan custom-tool sets overlap). */
+function dedupeToolsByName<T extends { name: string }>(tools: T[]): T[] {
+  const byName = new Map<string, T>();
+  for (const tool of tools) {
+    byName.set(tool.name, tool);
+  }
+  return [...byName.values()];
+}
+
 export class PiSdkRuntime implements AgentRuntime {
   private sessions = new Map<string, SdkRuntimeSession>();
   private resumePromises = new Map<string, Promise<SdkRuntimeSession | undefined>>();
@@ -125,6 +138,8 @@ export class PiSdkRuntime implements AgentRuntime {
     registerBrowserTools();
     registerAppTools();
     registerTodoTools();
+    registerPlanTools();
+    registerQuestionTools();
   }
 
   private noteAssistantOutput(event: Parameters<EmitAgentEvent>[0]): void {
@@ -241,8 +256,23 @@ export class PiSdkRuntime implements AgentRuntime {
       sessionManager: params.sessionManager,
       settingsManager: params.settingsManager,
       scopedModels: listScopedModels(),
-      tools: toolRegistry.resolveActiveTools("chat"),
-      customTools: toolRegistry.getCustomToolDefinitions("chat"),
+      // `tools` is also the allowlist that gates which tools enter the session's
+      // registry (see createAgentSession in the pi SDK). It must be the UNION of
+      // every profile we may switch to per-turn, or setActiveToolsByName can't
+      // activate a tool that was filtered out — which is exactly why plan_write
+      // was invisible in plan mode. Per-turn narrowing happens in prompt().
+      tools: [
+        ...new Set([
+          ...toolRegistry.resolveActiveTools("chat"),
+          ...toolRegistry.resolveActiveTools("plan"),
+        ]),
+      ],
+      // Register chat + plan custom tools so a turn can switch its active set by
+      // mode (plan_write becomes available without recreating the session).
+      customTools: dedupeToolsByName([
+        ...toolRegistry.getCustomToolDefinitions("chat"),
+        ...toolRegistry.getCustomToolDefinitions("plan"),
+      ]),
     };
     if (params.model !== undefined) {
       sessionOptions.model = params.model;
@@ -448,6 +478,20 @@ export class PiSdkRuntime implements AgentRuntime {
       emit: runtimeSession.emit,
     });
 
+    // Per-turn mode: switch the active tool set (plan = read-only research +
+    // plan_write; build = full chat tools). setActiveToolsByName also rebuilds
+    // the system prompt for the new set, and takes effect on this turn.
+    runtimeSession.session.setActiveToolsByName(
+      toolRegistry.resolveActiveTools(profileForMode(input.mode)),
+    );
+
+    // Per-turn model + thinking: the composer's current selection travels with
+    // the prompt and is applied authoritatively here, so the turn never runs
+    // with stale model/thinking (mid-session switch, edit-and-resend, resume).
+    if (input.model !== undefined) {
+      await this.applyModelSelection(runtimeSession, input.model, input.thinkingLevel);
+    }
+
     const delivery = input.delivery ?? "normal";
     if (shouldReplaceSessionTitle(runtimeSession.info.title)) {
       const titled = updateAgentSessionTitle(input.sessionId, deriveSessionTitle(input.message));
@@ -543,7 +587,13 @@ export class PiSdkRuntime implements AgentRuntime {
       const awareness = digest ? `<active_terminals>\n${digest}\n</active_terminals>` : "";
       // Manually invoked skills (`/name`) are injected as instruction blocks.
       const skillsText = resolveSkillsPrompt(runtimeSession.info.cwd, input.skills ?? []);
-      const message = [skillsText, contextText, awareness, input.message]
+      const message = [
+        planModePreamble(input.mode),
+        skillsText,
+        contextText,
+        awareness,
+        input.message,
+      ]
         .filter(Boolean)
         .join("\n\n");
       const images = (input.attachments ?? []).map((attachment) => ({
@@ -680,6 +730,38 @@ export class PiSdkRuntime implements AgentRuntime {
     this.sessions.delete(sessionId);
   }
 
+  /**
+   * Apply a model + thinking selection to a live session and persist it to the
+   * record. The single place model/thinking are bound to a session — reused by
+   * `setModel` (explicit user switch) and by `prompt` (per-turn authoritative
+   * application), so there is exactly one code path and no drift between them.
+   */
+  private async applyModelSelection(
+    runtimeSession: SdkRuntimeSession,
+    modelId: string,
+    thinkingLevel?: string,
+  ): Promise<ReturnType<typeof findModel>> {
+    const model = findModel(modelId);
+    if (!model) {
+      return undefined;
+    }
+    await runtimeSession.session.setModel(model);
+    runtimeSession.session.setThinkingLevel(
+      toPiThinkingLevel(
+        thinkingLevel
+          ? getModelThinkingLevelFromInput(thinkingLevel)
+          : getModelThinkingLevel(modelId),
+      ),
+    );
+    const updated = updateAgentSessionMetadata(runtimeSession.info.id, {
+      model: modelToId(model),
+    });
+    if (updated) {
+      runtimeSession.info = updated;
+    }
+    return model;
+  }
+
   async setModel(
     window: BrowserWindowType,
     sessionId: string,
@@ -687,21 +769,14 @@ export class PiSdkRuntime implements AgentRuntime {
     thinkingLevel?: string,
   ): Promise<AgentSessionInfo> {
     const runtimeSession = await this.getOrResume(window, sessionId);
-    const model = findModel(modelId);
-    if (!runtimeSession || !model) {
+    if (!runtimeSession) {
       throw new Error(`Unable to set model: ${modelId}`);
     }
-
-    await runtimeSession.session.setModel(model);
-    const resolvedThinking = toPiThinkingLevel(
-      thinkingLevel
-        ? getModelThinkingLevelFromInput(thinkingLevel)
-        : getModelThinkingLevel(modelId),
-    );
-    runtimeSession.session.setThinkingLevel(resolvedThinking);
+    const model = await this.applyModelSelection(runtimeSession, modelId, thinkingLevel);
+    if (!model) {
+      throw new Error(`Unable to set model: ${modelId}`);
+    }
     setDefaultModel(modelToId(model));
-    const updated = updateAgentSessionMetadata(sessionId, { model: modelToId(model) });
-    runtimeSession.info = updated ?? runtimeSession.info;
     this.emitContextUsage(runtimeSession);
     return runtimeSession.info;
   }
