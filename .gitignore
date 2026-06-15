@@ -12,3 +12,7 @@ coverage/
 .env
 .env.*
 !.env.example
+.kiro/
+.tmp/
+.modus/
+.dev-smoke.log
