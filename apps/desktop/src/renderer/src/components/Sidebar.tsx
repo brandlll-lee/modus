@@ -1,15 +1,21 @@
+import { Menu } from "@base-ui/react/menu";
 import {
   IconArchive,
   IconChevronRight,
   IconClock,
+  IconDots,
   IconEdit,
   IconFolder,
+  IconFolderOpen,
   IconFolderPlus,
   IconGridDots,
-  IconGripHorizontal,
   IconLayoutSidebar,
+  IconPencil,
+  IconPin,
+  IconPinnedOff,
   IconSearch,
   IconSettings,
+  IconX,
 } from "@tabler/icons-react";
 import { animate, m, useMotionValue } from "motion/react";
 import {
@@ -48,6 +54,11 @@ type SidebarProps = {
   onNewSession(): void;
   onNewWorkspaceSession(workspace: WorkspaceInfo): void;
   onArchiveSession(session: AgentSessionInfo): void;
+  onPinProject(id: string, pinned: boolean): void;
+  onRenameProject(id: string, displayName: string): void;
+  onArchiveProjectChats(id: string): void;
+  onRemoveProject(id: string): void;
+  onRevealProject(id: string): void;
   onOpenSettings(): void;
   onOpenChange(open: boolean): void;
   onWidthChange(width: number): void;
@@ -69,12 +80,18 @@ export function Sidebar({
   onNewSession,
   onNewWorkspaceSession,
   onArchiveSession,
+  onPinProject,
+  onRenameProject,
+  onArchiveProjectChats,
+  onRemoveProject,
+  onRevealProject,
   onOpenSettings,
   onOpenChange,
   onWidthChange,
   canCreateSession,
 }: SidebarProps) {
   const [projectsExpanded, setProjectsExpanded] = useState(true);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
   const sessionsByWorkspace = groupSessionsByWorkspace(agentSessions);
 
   const dragStartRef = useRef<{ x: number; width: number } | null>(null);
@@ -196,6 +213,20 @@ export function Sidebar({
                   activeSessionId={activeSessionId}
                   sessions={sessionsByWorkspace.get(workspace.id) ?? []}
                   workspace={workspace}
+                  renaming={renamingId === workspace.id}
+                  onStartRename={() => setRenamingId(workspace.id)}
+                  onCommitRename={(name) => {
+                    setRenamingId(null);
+                    const next = name.trim();
+                    if (next && next !== workspace.displayName) {
+                      onRenameProject(workspace.id, next);
+                    }
+                  }}
+                  onCancelRename={() => setRenamingId(null)}
+                  onPin={() => onPinProject(workspace.id, !workspace.pinned)}
+                  onReveal={() => onRevealProject(workspace.id)}
+                  onArchiveChats={() => onArchiveProjectChats(workspace.id)}
+                  onRemove={() => onRemoveProject(workspace.id)}
                 />
               ))
             )}
@@ -250,6 +281,14 @@ function WorkspaceItem({
   onSelectSession,
   onNewSession,
   onArchiveSession,
+  renaming,
+  onStartRename,
+  onCommitRename,
+  onCancelRename,
+  onPin,
+  onReveal,
+  onArchiveChats,
+  onRemove,
 }: {
   workspace: WorkspaceInfo;
   isActive: boolean;
@@ -260,34 +299,58 @@ function WorkspaceItem({
   onSelectSession(session: AgentSessionInfo): void;
   onNewSession(): void;
   onArchiveSession(session: AgentSessionInfo): void;
+  renaming: boolean;
+  onStartRename(): void;
+  onCommitRename(name: string): void;
+  onCancelRename(): void;
+  onPin(): void;
+  onReveal(): void;
+  onArchiveChats(): void;
+  onRemove(): void;
 }) {
+  const [expanded, setExpanded] = useState(true);
   return (
     <>
       <ProjectRow
+        expanded={expanded}
         isActive={isActive}
-        onClick={onSelect}
+        pinned={workspace.pinned}
+        renaming={renaming}
+        onClick={() => {
+          setExpanded((value) => !value);
+          onSelect();
+        }}
         onCreate={(event) => {
           event.stopPropagation();
           onNewSession();
         }}
+        onStartRename={onStartRename}
+        onCommitRename={onCommitRename}
+        onCancelRename={onCancelRename}
+        onPin={onPin}
+        onReveal={onReveal}
+        onArchiveChats={onArchiveChats}
+        onRemove={onRemove}
         title={workspace.rootPath}
       >
         {workspace.displayName}
       </ProjectRow>
-      {sessions.map((session) => (
-        <SessionRow
-          activity={activityBySession[session.id]}
-          isActive={activeSessionId === session.id}
-          key={session.id}
-          onArchive={(event) => {
-            event.stopPropagation();
-            onArchiveSession(session);
-          }}
-          onSelect={() => onSelectSession(session)}
-          title={session.title}
-          updatedAt={session.updatedAt}
-        />
-      ))}
+      <CollapsibleMotion open={expanded} preset="default">
+        {sessions.map((session) => (
+          <SessionRow
+            activity={activityBySession[session.id]}
+            isActive={activeSessionId === session.id}
+            key={session.id}
+            onArchive={(event) => {
+              event.stopPropagation();
+              onArchiveSession(session);
+            }}
+            onSelect={() => onSelectSession(session)}
+            title={session.title}
+            updatedAt={session.updatedAt}
+          />
+        ))}
+      </CollapsibleMotion>
     </>
   );
 }
@@ -347,39 +410,162 @@ function SessionRow({
 
 function ProjectRow({
   children,
+  expanded,
   isActive,
+  pinned,
+  renaming,
   onClick,
   onCreate,
+  onStartRename,
+  onCommitRename,
+  onCancelRename,
+  onPin,
+  onReveal,
+  onArchiveChats,
+  onRemove,
   title,
 }: {
   children: ReactNode;
+  expanded: boolean;
   isActive: boolean;
+  pinned: boolean;
+  renaming: boolean;
   onClick(): void;
   onCreate(event: MouseEvent<HTMLButtonElement>): void;
+  onStartRename(): void;
+  onCommitRename(name: string): void;
+  onCancelRename(): void;
+  onPin(): void;
+  onReveal(): void;
+  onArchiveChats(): void;
+  onRemove(): void;
   title?: string;
 }) {
-  return (
-    <m.div
-      className={cn(
-        "group flex h-[36px] w-full items-center rounded-lg pr-1 text-sm font-normal transition-colors hover:bg-hover",
-        isActive ? "text-fg" : "text-fg-muted hover:text-fg",
-      )}
-      layout
-      transition={{ duration: 0.14, ease: "easeOut" }}
-    >
-      <button
-        className="flex min-w-0 flex-1 items-center gap-3 px-2 text-left"
-        onClick={onClick}
-        title={title}
-        type="button"
-      >
-        <span className={cn("shrink-0", isActive ? "text-fg" : "text-fg-subtle")}>
-          <IconFolder size={17} stroke={1.6} />
+  const FolderIcon = expanded ? IconFolderOpen : IconFolder;
+  const label = typeof children === "string" ? children : "";
+
+  if (renaming) {
+    return (
+      <div className="flex h-[36px] w-full items-center gap-3 rounded-lg px-2 text-sm">
+        <span className="shrink-0 text-fg-subtle">
+          <FolderIcon size={17} stroke={1.6} />
         </span>
-        <span className="min-w-0 flex-1 truncate">{children}</span>
-      </button>
-      <HoverActions onCreate={onCreate} />
-    </m.div>
+        <RenameInput initialValue={label} onCancel={onCancelRename} onCommit={onCommitRename} />
+      </div>
+    );
+  }
+
+  return (
+    <ProjectActions
+      onArchiveChats={onArchiveChats}
+      onPin={onPin}
+      onRemove={onRemove}
+      onRename={onStartRename}
+      onReveal={onReveal}
+      pinned={pinned}
+    >
+      {(menuOpen, trigger) => (
+        <m.div
+          className={cn(
+            "group flex h-[36px] w-full items-center rounded-lg pr-1 text-sm font-normal transition-colors hover:bg-hover",
+            menuOpen && "bg-hover",
+            isActive ? "text-fg" : "text-fg-muted hover:text-fg",
+          )}
+          layout
+          transition={{ duration: 0.14, ease: "easeOut" }}
+        >
+          <button
+            aria-expanded={expanded}
+            className="flex min-w-0 flex-1 items-center gap-3 px-2 text-left"
+            onClick={onClick}
+            title={title}
+            type="button"
+          >
+            <span className={cn("shrink-0", isActive ? "text-fg" : "text-fg-subtle")}>
+              <FolderIcon size={17} stroke={1.6} />
+            </span>
+            <span className="flex min-w-0 items-center gap-1.5">
+              <span className="min-w-0 truncate">{children}</span>
+              <m.span
+                animate={{ rotate: expanded ? 90 : 0 }}
+                className="flex size-3.5 shrink-0 items-center justify-center text-fg-faint"
+                transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+              >
+                <IconChevronRight size={13} stroke={1.7} />
+              </m.span>
+            </span>
+          </button>
+          <span
+            className={cn(
+              "ml-1 flex shrink-0 items-center gap-1 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100",
+              menuOpen ? "opacity-100" : "opacity-0",
+            )}
+          >
+            {trigger}
+            <IconButton label="New session" onClick={onCreate}>
+              <IconEdit size={14} stroke={1.8} />
+            </IconButton>
+          </span>
+        </m.div>
+      )}
+    </ProjectActions>
+  );
+}
+
+/**
+ * Inline rename editor. The `committedRef` guard makes commit idempotent so the
+ * Enter/Escape keydown and the subsequent blur can't both fire `onCommit`/
+ * `onCancel` and double-apply (or fight each other).
+ */
+function RenameInput({
+  initialValue,
+  onCommit,
+  onCancel,
+}: {
+  initialValue: string;
+  onCommit(name: string): void;
+  onCancel(): void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const committedRef = useRef(false);
+
+  const commit = (): void => {
+    if (committedRef.current) {
+      return;
+    }
+    committedRef.current = true;
+    onCommit(inputRef.current?.value ?? initialValue);
+  };
+
+  const cancel = (): void => {
+    if (committedRef.current) {
+      return;
+    }
+    committedRef.current = true;
+    onCancel();
+  };
+
+  return (
+    <input
+      // biome-ignore lint/a11y/noAutofocus: rename starts a focused edit by design
+      autoFocus
+      className="min-w-0 flex-1 rounded-md border border-composer-border bg-elevated px-1.5 py-1 text-fg text-sm outline-none focus:border-accent"
+      defaultValue={initialValue}
+      onBlur={commit}
+      onClick={(event) => event.stopPropagation()}
+      onFocusCapture={(event) => event.currentTarget.select()}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          commit();
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          cancel();
+        }
+      }}
+      ref={inputRef}
+      type="text"
+    />
   );
 }
 
@@ -441,16 +627,99 @@ function NavRow({
   );
 }
 
-function HoverActions({ onCreate }: { onCreate(event: MouseEvent<HTMLButtonElement>): void }) {
+/**
+ * The "…" project menu (Figure-2). Render-prop so the trigger lives inline with
+ * the hover actions while the row still knows whether the menu is open (to keep
+ * the actions pinned visible). Items are data-driven below — adding an action is
+ * one row, not a new branch.
+ */
+function ProjectActions({
+  pinned,
+  onPin,
+  onReveal,
+  onRename,
+  onArchiveChats,
+  onRemove,
+  children,
+}: {
+  pinned: boolean;
+  onPin(): void;
+  onReveal(): void;
+  onRename(): void;
+  onArchiveChats(): void;
+  onRemove(): void;
+  children(open: boolean, trigger: ReactNode): ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const trigger = (
+    <Menu.Trigger
+      aria-label="Project actions"
+      className="flex size-6 items-center justify-center rounded-md text-fg-faint outline-none transition-colors hover:bg-active hover:text-fg-muted data-popup-open:bg-active data-popup-open:text-fg-muted"
+      onClick={(event) => event.stopPropagation()}
+    >
+      <IconDots size={14} stroke={1.8} />
+    </Menu.Trigger>
+  );
   return (
-    <span className="ml-1 flex shrink-0 items-center gap-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
-      <IconButton label="More">
-        <IconGripHorizontal size={14} stroke={1.8} />
-      </IconButton>
-      <IconButton label="New session" onClick={onCreate}>
-        <IconEdit size={14} stroke={1.8} />
-      </IconButton>
-    </span>
+    <Menu.Root onOpenChange={setOpen} open={open}>
+      {children(open, trigger)}
+      <Menu.Portal>
+        <Menu.Positioner align="start" side="bottom" sideOffset={4}>
+          <Menu.Popup className="origin-(--transform-origin) min-w-[184px] rounded-lg border border-hairline bg-elevated p-1 shadow-popup">
+            <ProjectMenuItem
+              icon={
+                pinned ? (
+                  <IconPinnedOff size={15} stroke={1.7} />
+                ) : (
+                  <IconPin size={15} stroke={1.7} />
+                )
+              }
+              onClick={onPin}
+            >
+              {pinned ? "Unpin project" : "Pin project"}
+            </ProjectMenuItem>
+            <ProjectMenuItem icon={<IconFolderOpen size={15} stroke={1.7} />} onClick={onReveal}>
+              Open in Explorer
+            </ProjectMenuItem>
+            <ProjectMenuItem icon={<IconPencil size={15} stroke={1.7} />} onClick={onRename}>
+              Rename project
+            </ProjectMenuItem>
+            <ProjectMenuItem icon={<IconArchive size={15} stroke={1.7} />} onClick={onArchiveChats}>
+              Archive chats
+            </ProjectMenuItem>
+            <div className="my-1 h-px bg-hairline" />
+            <ProjectMenuItem danger icon={<IconX size={15} stroke={1.7} />} onClick={onRemove}>
+              Remove
+            </ProjectMenuItem>
+          </Menu.Popup>
+        </Menu.Positioner>
+      </Menu.Portal>
+    </Menu.Root>
+  );
+}
+
+function ProjectMenuItem({
+  icon,
+  children,
+  onClick,
+  danger = false,
+}: {
+  icon: ReactNode;
+  children: ReactNode;
+  onClick(): void;
+  danger?: boolean;
+}) {
+  return (
+    <Menu.Item
+      className={cn(
+        "flex cursor-default items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm outline-none select-none data-highlighted:bg-hover",
+        danger ? "text-danger" : "text-fg",
+      )}
+      onClick={onClick}
+    >
+      <span className="flex size-4 shrink-0 items-center justify-center">{icon}</span>
+      {children}
+    </Menu.Item>
   );
 }
 
