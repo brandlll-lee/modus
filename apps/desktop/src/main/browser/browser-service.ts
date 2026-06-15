@@ -121,6 +121,13 @@ export async function navigateBrowser(input: {
     // Agent navigations light the control glow; user address-bar navigations
     // (same code path via IPC) stay visually neutral.
     void tab.visual.engage();
+    // Authoritative "the agent is browsing" signal → renderer auto-reveals the
+    // browser panel if it isn't already showing.
+    emitBrowserEvent({
+      type: "browser.agent-activity",
+      workspaceId: info.workspaceId,
+      tabId: info.id,
+    });
   }
   // Bounded so a page that never fires did-finish-load can't hang the agent;
   // ERR_ABORTED (follow-up nav / redirect / our stop) is handled inside.
