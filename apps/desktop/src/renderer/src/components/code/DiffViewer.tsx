@@ -17,10 +17,46 @@ export type DiffViewerProps = {
   /** Side-by-side (true) or inline/unified (false). */
   sideBySide: boolean;
   wordWrap: boolean;
+  /** Treat trailing/leading whitespace-only changes as equal (Monaco ignoreTrimWhitespace). */
+  ignoreWhitespace?: boolean | undefined;
+  /**
+   * When set, the viewer sizes itself to its (collapsed) diff content up to
+   * `maxHeight`, instead of filling a fixed `className` height — the inline,
+   * stacked feel of Cursor's Source Control diffs.
+   */
+  autoHeight?: boolean | undefined;
+  maxHeight?: number | undefined;
   className?: string | undefined;
 };
 
 let instanceCounter = 0;
+
+/**
+ * Live registry of mounted diff editors. Lets the Source Control panel's
+ * "Find in Diff" act on the diff the user is actually looking at (focused),
+ * falling back to the first mounted one — Monaco owns the find widget, we just
+ * route the command to a real target.
+ */
+const mountedDiffEditors = new Set<MonacoDiffEditor>();
+
+export function triggerFindInActiveDiff(): boolean {
+  let target: MonacoDiffEditor | undefined;
+  for (const editor of mountedDiffEditors) {
+    if (editor.getModifiedEditor().hasTextFocus() || editor.getOriginalEditor().hasTextFocus()) {
+      target = editor;
+      break;
+    }
+  }
+  if (!target) {
+    const [first] = mountedDiffEditors;
+    target = first;
+  }
+  if (!target) return false;
+  const code = target.getModifiedEditor();
+  code.focus();
+  code.getAction("actions.find")?.run();
+  return true;
+}
 
 /** Model URI that keeps the real file extension last so monaco auto-detects the language. */
 function modelUri(monaco: Monaco, instance: number, side: "original" | "modified", path: string) {
@@ -42,12 +78,17 @@ export function DiffViewer({
   originalPath,
   sideBySide,
   wordWrap,
+  ignoreWhitespace,
+  autoHeight,
+  maxHeight = 600,
   className,
 }: DiffViewerProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<MonacoDiffEditor | null>(null);
   const modelsRef = useRef<{ original: MonacoTextModel; modified: MonacoTextModel } | null>(null);
   const [ready, setReady] = useState(false);
+  // Measured content height when autoHeight is on (collapsed diff dictates it).
+  const [contentHeight, setContentHeight] = useState<number | undefined>();
 
   // Create the editor once per mounted file; content updates reuse the models.
   // biome-ignore lint/correctness/useExhaustiveDependencies: original/modified/options are applied by the follow-up effects below.
@@ -57,6 +98,7 @@ export function DiffViewer({
 
     let cancelled = false;
     let disposeTheme: (() => void) | undefined;
+    const measureDisposers: import("monaco-editor").IDisposable[] = [];
     const instance = ++instanceCounter;
 
     void loadMonaco().then((monaco) => {
@@ -87,16 +129,22 @@ export function DiffViewer({
         renderSideBySide: sideBySide,
         useInlineViewWhenSpaceIsLimited: true,
         diffAlgorithm: "advanced",
-        renderIndicators: true,
+        renderIndicators: false,
         renderGutterMenu: false,
+        ignoreTrimWhitespace: ignoreWhitespace ?? false,
         hideUnchangedRegions: { enabled: true, contextLineCount: 3, minimumLineCount: 6 },
         renderOverviewRuler: false,
         renderMarginRevertIcon: false,
+        glyphMargin: false,
         minimap: { enabled: false },
         scrollBeyondLastLine: false,
-        scrollbar: { verticalScrollbarSize: 7, horizontalScrollbarSize: 7 },
-        lineNumbersMinChars: 3,
-        lineDecorationsWidth: 6,
+        scrollbar: {
+          verticalScrollbarSize: 8,
+          horizontalScrollbarSize: 8,
+          alwaysConsumeMouseWheel: false,
+        },
+        lineNumbersMinChars: 4,
+        lineDecorationsWidth: 16,
         folding: false,
         contextmenu: false,
         occurrencesHighlight: "off",
@@ -104,20 +152,41 @@ export function DiffViewer({
         renderLineHighlight: "none",
         fontFamily: fontMono,
         fontSize: 12.5,
-        lineHeight: 21,
+        lineHeight: 22,
         wordWrap: wordWrap ? "on" : "off",
         guides: { indentation: false },
-        padding: { top: 8, bottom: 10 },
+        padding: { top: 12, bottom: 14 },
       });
       editor.setModel({ original: originalModel, modified: modifiedModel });
       editorRef.current = editor;
+      mountedDiffEditors.add(editor);
       disposeTheme = watchModusTheme(monaco);
+
+      if (autoHeight) {
+        // Size to the collapsed diff: take the taller of the two panes' content
+        // heights (hideUnchangedRegions already shrinks them), clamp to maxHeight.
+        const measure = (): void => {
+          const modifiedHeight = editor.getModifiedEditor().getContentHeight();
+          const originalHeight = editor.getOriginalEditor().getContentHeight();
+          const next = Math.min(maxHeight, Math.max(modifiedHeight, originalHeight) + 2);
+          if (next > 0) setContentHeight(next);
+        };
+        measure();
+        measureDisposers.push(
+          editor.getModifiedEditor().onDidContentSizeChange(measure),
+          editor.getOriginalEditor().onDidContentSizeChange(measure),
+          editor.onDidUpdateDiff(measure),
+        );
+      }
+
       setReady(true);
     });
 
     return () => {
       cancelled = true;
       disposeTheme?.();
+      for (const disposer of measureDisposers) disposer.dispose();
+      if (editorRef.current) mountedDiffEditors.delete(editorRef.current);
       editorRef.current?.dispose();
       editorRef.current = null;
       modelsRef.current?.original.dispose();
@@ -140,11 +209,15 @@ export function DiffViewer({
     editorRef.current?.updateOptions({
       renderSideBySide: sideBySide,
       wordWrap: wordWrap ? "on" : "off",
+      ignoreTrimWhitespace: ignoreWhitespace ?? false,
     });
-  }, [sideBySide, wordWrap]);
+  }, [sideBySide, wordWrap, ignoreWhitespace]);
 
   return (
-    <div className={cn("relative min-h-0", className)}>
+    <div
+      className={cn("relative min-h-0", className)}
+      style={autoHeight ? { height: contentHeight ?? 120 } : undefined}
+    >
       <div className="absolute inset-0" ref={hostRef} />
       {!ready ? (
         <div className="absolute inset-0 flex items-center justify-center text-fg-faint text-xs">
