@@ -169,5 +169,4 @@ There is no formal contribution guide yet. For now:
 
 ## License
 
-No license file is present yet. Treat the repository as source-available for evaluation
-until a license is added.
+Licensed under the [Apache License 2.0](./LICENSE).

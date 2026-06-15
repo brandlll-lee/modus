@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "Local-first Modus desktop agent window.",
   "author": "Modus contributors",
+  "license": "Apache-2.0",
   "private": true,
   "type": "module",
   "main": "out/main/index.js",
