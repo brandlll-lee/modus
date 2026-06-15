@@ -29,6 +29,9 @@
   /* Composer 专属描边：比通用 hairline 明显一档，让输入框从主区"读"出来而不融进背景
      （Cursor 实测观感）。配合 shadow-composer-edge 的顶部内高光呈现精致浮起边缘。 */
   --color-composer-border: rgba(255, 255, 255, 0.11);
+  /* Composer border on hover/focus: just one notch brighter — a quiet "alive"
+     cue, never a glow. Replaces the old purple focus ring. */
+  --color-composer-border-strong: rgba(255, 255, 255, 0.2);
 
   /* 悬停 / 选中 半透明白叠层 */
   --color-hover: rgba(255, 255, 255, 0.04);
@@ -44,6 +47,12 @@
   --color-accent: #f54e00;
   --color-accent-hover: #ff5e12;
   --color-accent-active: #d04200;
+
+  /* 主操作卡片强调色（蓝色）：Plan 的 Build 按钮、ask_user 卡片的选中/提交共用。
+     与品牌橙(send)区分：这是"确认/提交"的沉稳蓝，配白色文字。单值即可适配明暗。 */
+  --color-build: #3b82f6;
+  --color-build-hover: #5a96f8;
+  --color-build-fg: #ffffff;
   --color-on-accent: #ffffff;
 
   /* 品牌紫：仅用于输入框聚焦态描边（focus-within），与灰阶基调形成克制的高亮 */
@@ -165,6 +174,8 @@
   /* Composer border on white: a clearly readable edge (stronger than hairline)
      so the input reads as a distinct surface above the off-white canvas. */
   --color-composer-border: rgba(0, 0, 0, 0.16);
+  /* Hover/focus: one notch darker edge — a subtle cue, no glow. */
+  --color-composer-border-strong: rgba(0, 0, 0, 0.26);
 
   /* Hover / active overlays — black-alpha */
   --color-hover: rgba(0, 0, 0, 0.045);
@@ -708,7 +719,7 @@ input {
 
 .modus-markdown :where(pre) {
   margin: 0;
-  line-height: 1.7;
+  line-height: 1.55;
 }
 
 /*
@@ -936,4 +947,19 @@ input {
  * while inline math stays inline-sized. */
 .modus-markdown :where(.katex-display) > .katex {
   font-size: 1.32em;
+}
+
+/* Whole-file add/remove tint for the Source Control preview of NEW or DELETED
+   files. One side is empty, so there is no diff to compute — we render the
+   non-empty side in a plain editor and wash every line. Margin uses the SAME
+   tint as the content so each line reads as one uniform full-width band (no
+   mismatched gutter strip, matching Cursor/VS Code). Global (un-layered) so
+   Monaco's injected line elements pick the classes up. */
+.modus-wholeline-add,
+.modus-wholeline-add-margin {
+  background-color: var(--color-diff-add-bg);
+}
+.modus-wholeline-del,
+.modus-wholeline-del-margin {
+  background-color: var(--color-diff-del-bg);
 }

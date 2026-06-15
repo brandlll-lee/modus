@@ -10,7 +10,10 @@ import {
   getStatusSummary,
   getWorkingChangeStats,
   listChanges,
+  listCommitChanges,
+  listCommitLog,
   readDiff,
+  readFileVersions,
   stageFile,
   unstageFile,
 } from "./git-service";
@@ -164,5 +167,46 @@ describe("git-service", () => {
     const stats = await getWorkingChangeStats(repo);
     expect(stats.removed).toBe(1);
     expect(stats.added).toBe(0);
+  });
+
+  it("lists commit history newest-first with metadata", async () => {
+    await writeFile(join(repo, "tracked.txt"), "second\n");
+    await git(["commit", "-am", "second commit"]);
+
+    const log = await listCommitLog(repo);
+
+    expect(log.length).toBe(2);
+    expect(log[0]?.subject).toBe("second commit");
+    expect(log[1]?.subject).toBe("initial");
+    expect(log[0]?.shortHash).toMatch(/^[0-9a-f]{7,}$/);
+    expect(log[0]?.author).toBe("Modus Test");
+    expect(log[0]?.relativeDate).toBeTruthy();
+  });
+
+  it("lists files changed by a specific commit", async () => {
+    await writeFile(join(repo, "tracked.txt"), "second\n");
+    await writeFile(join(repo, "added.txt"), "brand new\n");
+    await git(["add", "."]);
+    await git(["commit", "-m", "second commit"]);
+
+    const [head] = await listCommitLog(repo);
+    const files = await listCommitChanges(repo, head?.hash ?? "");
+
+    expect(files.map((file) => file.path).sort()).toEqual(["added.txt", "tracked.txt"]);
+    expect(files.find((file) => file.path === "added.txt")?.status).toBe("A");
+    expect(files.find((file) => file.path === "tracked.txt")?.status).toBe("M");
+    // Commit files are never stageable.
+    expect(files.every((file) => file.staged === false && file.unstaged === false)).toBe(true);
+  });
+
+  it("diffs a commit against its parent via file versions", async () => {
+    await writeFile(join(repo, "tracked.txt"), "second\n");
+    await git(["commit", "-am", "second commit"]);
+
+    const [head] = await listCommitLog(repo);
+    const versions = await readFileVersions(repo, "tracked.txt", "unstaged", undefined, head?.hash);
+
+    expect(versions.original).toBe("base\n");
+    expect(versions.modified).toBe("second\n");
   });
 });

@@ -104,13 +104,16 @@ export function defineModusTheme(monaco: Monaco): void {
       "scrollbarSlider.background": isLight ? "#00000026" : "#ffffff1f",
       "scrollbarSlider.hoverBackground": isLight ? "#00000040" : "#ffffff33",
       "scrollbarSlider.activeBackground": isLight ? "#00000040" : "#ffffff33",
-      "diffEditor.insertedTextBackground": `${success}${isLight ? "18" : "1f"}`,
-      "diffEditor.removedTextBackground": `${danger}${isLight ? "17" : "1f"}`,
-      "diffEditor.insertedLineBackground": `${success}${isLight ? "09" : "0f"}`,
-      "diffEditor.removedLineBackground": `${danger}${isLight ? "08" : "0f"}`,
-      "diffEditorGutter.insertedLineBackground": `${success}${isLight ? "30" : "3a"}`,
-      "diffEditorGutter.removedLineBackground": `${danger}${isLight ? "2e" : "3a"}`,
-      "diffEditor.diagonalFill": hairline,
+      "diffEditor.insertedTextBackground": `${success}${isLight ? "26" : "30"}`,
+      "diffEditor.removedTextBackground": `${danger}${isLight ? "24" : "30"}`,
+      "diffEditor.insertedLineBackground": `${success}${isLight ? "12" : "16"}`,
+      "diffEditor.removedLineBackground": `${danger}${isLight ? "11" : "16"}`,
+      // Gutter tint MUST equal the line tint so each changed line reads as one
+      // uniform full-width band (Cursor/VS Code look). A heavier gutter alpha
+      // here is exactly what produced the mismatched dark strip down the left.
+      "diffEditorGutter.insertedLineBackground": `${success}${isLight ? "12" : "16"}`,
+      "diffEditorGutter.removedLineBackground": `${danger}${isLight ? "11" : "16"}`,
+      "diffEditor.diagonalFill": "#00000000",
       "diffEditor.unchangedRegionBackground": canvas,
       "diffEditor.unchangedRegionForeground": fgSubtle,
       "diffEditor.unchangedCodeBackground": "#00000000",
@@ -121,9 +124,14 @@ export function defineModusTheme(monaco: Monaco): void {
 
 /**
  * Keep the monaco theme in lock-step with the app's `data-theme` attribute.
- * Returns a disposer; safe to call from multiple components (cheap re-define).
+ * Defines the theme from the CURRENT theme immediately (so an editor mounting
+ * after a theme change — or after monaco was first loaded under the other theme —
+ * paints with the right palette, not a stale one), then re-defines on every
+ * future `data-theme` flip. Returns a disposer; safe to call from multiple
+ * components (cheap re-define + global setTheme).
  */
 export function watchModusTheme(monaco: Monaco): () => void {
+  defineModusTheme(monaco);
   const observer = new MutationObserver(() => defineModusTheme(monaco));
   observer.observe(document.documentElement, {
     attributes: true,

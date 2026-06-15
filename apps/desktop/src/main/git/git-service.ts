@@ -11,6 +11,7 @@ import type {
   FileDiff,
   GitBranch,
   GitBranchSummary,
+  GitCommit,
   GitCommitResult,
   GitStatusSummary,
   WorkingChangeStats,
@@ -168,19 +169,24 @@ export async function readFileVersions(
   filePath: string,
   mode: "unstaged" | "staged" = "unstaged",
   originalPath?: string,
+  commit?: string,
 ): Promise<DiffFileVersions> {
   assertSafeRelativePath(filePath);
   const fromPath = originalPath ?? filePath;
 
-  const original =
-    mode === "staged"
-      ? await gitShowBlob(cwd, `HEAD:${fromPath}`)
-      : await gitShowBlob(cwd, `:0:${fromPath}`);
-
+  let original: string;
   let modified: string;
-  if (mode === "staged") {
+  if (commit) {
+    // Commit scope: compare the commit's parent snapshot against the commit
+    // itself — the authoritative "what this commit changed". `commit^` is empty
+    // for the root commit, so the original side resolves to "" (all-added).
+    original = await gitShowBlob(cwd, `${commit}^:${fromPath}`);
+    modified = await gitShowBlob(cwd, `${commit}:${filePath}`);
+  } else if (mode === "staged") {
+    original = await gitShowBlob(cwd, `HEAD:${fromPath}`);
     modified = await gitShowBlob(cwd, `:0:${filePath}`);
   } else {
+    original = await gitShowBlob(cwd, `:0:${fromPath}`);
     modified = await readFile(join(cwd, filePath), "utf8").catch(() => "");
   }
 
@@ -196,6 +202,88 @@ export async function readFileVersions(
     binary,
     truncated: cappedOriginal.truncated || cappedModified.truncated,
   };
+}
+
+/** Field separator unlikely to appear in commit metadata; record-terminated by NUL. */
+const LOG_SEP = "\u001f";
+
+/**
+ * Recent commit history for the Source Control "All commits" scope. One `git
+ * log` call; files per commit are fetched lazily via `listCommitChanges`.
+ */
+export async function listCommitLog(cwd: string, limit = 50): Promise<GitCommit[]> {
+  const format = ["%H", "%h", "%s", "%an", "%aI", "%ar"].join(LOG_SEP);
+  const output = await gitSafe(cwd, [
+    "log",
+    `--max-count=${Math.max(1, Math.min(limit, 500))}`,
+    `--format=${format}%x00`,
+  ]);
+  const commits: GitCommit[] = [];
+  for (const record of output.split("\0")) {
+    const line = record.trim();
+    if (!line) continue;
+    const [hash, shortHash, subject, author, date, relativeDate] = line.split(LOG_SEP);
+    if (!hash) continue;
+    commits.push({
+      hash,
+      shortHash: shortHash ?? hash.slice(0, 7),
+      subject: subject ?? "",
+      author: author ?? "",
+      date: date ?? "",
+      relativeDate: relativeDate ?? "",
+    });
+  }
+  return commits;
+}
+
+/**
+ * Files touched by a single commit (vs its first parent), as FileChange records
+ * keyed by git's authoritative name-status code. Commit files are not stageable,
+ * so staged/unstaged are left false — the renderer reads `status` for the badge.
+ */
+export async function listCommitChanges(cwd: string, commit: string): Promise<FileChange[]> {
+  const output = await gitSafe(cwd, [
+    "diff-tree",
+    "--no-commit-id",
+    "--name-status",
+    "-r",
+    "-z",
+    commit,
+  ]);
+  const parts = output.split("\0").filter(Boolean);
+  const changes: FileChange[] = [];
+  for (let index = 0; index < parts.length; index += 1) {
+    const status = parts[index];
+    if (!status) continue;
+    const code = status[0];
+    const renamed = code === "R" || code === "C";
+    if (renamed) {
+      const renamedFrom = parts[index + 1];
+      const path = parts[index + 2];
+      index += 2;
+      if (!path) continue;
+      changes.push({
+        path,
+        status: status.trim(),
+        staged: false,
+        unstaged: false,
+        untracked: false,
+        ...(renamedFrom !== undefined ? { renamedFrom } : {}),
+      });
+    } else {
+      const path = parts[index + 1];
+      index += 1;
+      if (!path) continue;
+      changes.push({
+        path,
+        status: status.trim(),
+        staged: false,
+        unstaged: false,
+        untracked: false,
+      });
+    }
+  }
+  return changes;
 }
 
 export async function revertFile(cwd: string, filePath: string): Promise<void> {
