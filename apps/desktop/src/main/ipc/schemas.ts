@@ -22,6 +22,20 @@ export const agentCreateSchema = z.object({
   model: optionalNonEmptyString,
 });
 
+export const workspacePinSchema = z.object({
+  id: nonEmptyString,
+  pinned: z.boolean(),
+});
+
+export const workspaceRenameSchema = z.object({
+  id: nonEmptyString,
+  displayName: z.string().trim().min(1).max(120),
+});
+
+export const workspaceIdSchema = z.object({
+  id: nonEmptyString,
+});
+
 /** ~10 MB of raw image bytes once base64-decoded. */
 const MAX_ATTACHMENT_BASE64_CHARS = 14_000_000;
 
@@ -43,6 +57,9 @@ export const agentPromptSchema = z.object({
   userMessageId: optionalNonEmptyString,
   attachments: z.array(promptImageAttachmentSchema).max(6).optional(),
   skills: z.array(nonEmptyString).max(10).optional(),
+  mode: z.enum(["build", "plan"]).optional(),
+  model: optionalNonEmptyString,
+  thinkingLevel: thinkingLevelSchema.optional(),
 });
 
 export const sessionIdSchema = nonEmptyString;
@@ -92,6 +109,16 @@ export const processKillSchema = z.object({
 });
 
 export const cwdSchema = nonEmptyString;
+
+export const filesListSchema = z.object({
+  cwd: nonEmptyString,
+  dir: optionalNonEmptyString,
+});
+
+export const filesReadSchema = z.object({
+  cwd: nonEmptyString,
+  path: nonEmptyString,
+});
 
 export const browserWorkspaceSchema = z.object({
   workspaceId: nonEmptyString,
@@ -194,6 +221,20 @@ export const diffFileVersionsSchema = z.object({
   path: nonEmptyString,
   mode: z.enum(["unstaged", "staged"]).optional(),
   originalPath: optionalNonEmptyString,
+  /** When set, diff the commit against its parent instead of the working tree. */
+  commit: optionalNonEmptyString,
+});
+
+/** List the files touched by a single commit (All commits scope). */
+export const diffCommitChangesSchema = z.object({
+  cwd: nonEmptyString,
+  commit: nonEmptyString,
+});
+
+/** Recent commit history for the All commits scope. */
+export const gitLogSchema = z.object({
+  cwd: nonEmptyString,
+  limit: z.number().int().positive().max(500).optional(),
 });
 
 export const diffCommitSchema = z.object({
@@ -245,6 +286,20 @@ export const permissionDecideSchema = z.object({
 
 export const approvalModeSchema = z.object({
   mode: z.enum(["request-approval", "auto", "full-access"]),
+});
+
+export const questionRespondSchema = z.object({
+  requestId: nonEmptyString,
+  skipped: z.boolean(),
+  answers: z
+    .array(
+      z.object({
+        questionId: nonEmptyString,
+        selected: z.array(z.string()).default([]),
+        custom: z.string().optional(),
+      }),
+    )
+    .default([]),
 });
 
 export const contextSearchSchema = z.object({

@@ -19,7 +19,9 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 import type { SecurityState } from "../../../preload/types";
 import type {
   AgentEvent,
+  AgentMode,
   AgentSessionInfo,
+  BrowserEvent,
   ContextItem,
   ContextUsageInfo,
   FileDiff,
@@ -75,12 +77,17 @@ export function App() {
   const [sidebarWidth, setSidebarWidth] = useState(300);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [inspectorWidth, setInspectorWidth] = useState(384);
+  const [inspectorTab, setInspectorTab] = useState("changes");
+  const [planDoc, setPlanDoc] = useState<
+    { path: string; title: string; content: string } | undefined
+  >();
   const [environmentStats, setEnvironmentStats] = useState({ added: 0, removed: 0 });
   const [sessionCreateError, setSessionCreateError] = useState<string | undefined>();
   const [layoutWidth, setLayoutWidth] = useState(0);
 
   const hubRef = useRef(new AgentEventHub());
   const activeSessionIdRef = useRef<string | undefined>(undefined);
+  const activeWorkspaceRef = useRef<WorkspaceInfo | null>(null);
   const layoutRowRef = useRef<HTMLDivElement>(null);
 
   // Track the panel row's live width so side-panel widths can be clamped to keep
@@ -104,6 +111,29 @@ export function App() {
   useEffect(() => {
     activeSessionIdRef.current = activeSessionId;
   }, [activeSessionId]);
+
+  useEffect(() => {
+    activeWorkspaceRef.current = activeWorkspace;
+  }, [activeWorkspace]);
+
+  // When the agent starts driving the browser (an agent-initiated navigation),
+  // auto-reveal the browser panel for the active workspace if it isn't already
+  // showing. Idempotent — no-op when the panel is open on the browser tab; only
+  // user/agent address-bar navigations without the agent flag are ignored.
+  useEffect(() => {
+    if (!window.modus) {
+      return;
+    }
+    return window.modus.browser.onEvent((event: BrowserEvent) => {
+      if (
+        event.type === "browser.agent-activity" &&
+        event.workspaceId === activeWorkspaceRef.current?.id
+      ) {
+        setInspectorTab("browser");
+        setInspectorOpen(true);
+      }
+    });
+  }, []);
 
   const refreshSessions = useCallback(async (): Promise<void> => {
     setAgentSessions(await window.modus.agent.list());
@@ -265,6 +295,41 @@ export function App() {
     await refreshSessions();
   }
 
+  /* ── Project (workspace) actions — sidebar "..." menu ──────────────────── */
+
+  async function pinProject(id: string, pinned: boolean): Promise<void> {
+    setWorkspaces(await window.modus.workspace.pin({ id, pinned }));
+  }
+
+  async function renameProject(id: string, displayName: string): Promise<void> {
+    setWorkspaces(await window.modus.workspace.rename({ id, displayName }));
+    setActiveWorkspace((current) =>
+      current && current.id === id ? { ...current, displayName } : current,
+    );
+  }
+
+  async function archiveProjectChats(id: string): Promise<void> {
+    await window.modus.workspace.archiveChats(id);
+    if (activeWorkspaceRef.current?.id === id) {
+      setActiveSessionId(undefined);
+    }
+    await refreshSessions();
+  }
+
+  async function removeProject(id: string): Promise<void> {
+    const next = await window.modus.workspace.remove(id);
+    setWorkspaces(next);
+    if (activeWorkspaceRef.current?.id === id) {
+      setActiveWorkspace(next[0] ?? null);
+      setActiveSessionId(undefined);
+    }
+    await refreshSessions();
+  }
+
+  async function revealProject(id: string): Promise<void> {
+    await window.modus.workspace.reveal(id).catch(() => {});
+  }
+
   /** Hero composer: create the session, open its pane, fire the first prompt. */
   async function submitHeroPrompt(
     message: string,
@@ -272,6 +337,7 @@ export function App() {
     _delivery?: PromptDelivery,
     attachments?: PromptImageAttachment[],
     skills?: string[],
+    mode?: AgentMode,
   ): Promise<void> {
     if (!message.trim()) {
       return;
@@ -290,6 +356,7 @@ export function App() {
         userMessageId: `local-user:${crypto.randomUUID()}`,
         ...(attachments && attachments.length > 0 ? { attachments } : {}),
         ...(skills && skills.length > 0 ? { skills } : {}),
+        ...(mode ? { mode } : {}),
       })
       .then(() => refreshSessions())
       .catch((error: unknown) => {
@@ -420,6 +487,11 @@ export function App() {
                       agentSessions={agentSessions}
                       canCreateSession={canCreateSession}
                       onArchiveSession={(session) => void archiveSession(session)}
+                      onPinProject={(id, pinned) => void pinProject(id, pinned)}
+                      onRenameProject={(id, displayName) => void renameProject(id, displayName)}
+                      onArchiveProjectChats={(id) => void archiveProjectChats(id)}
+                      onRemoveProject={(id) => void removeProject(id)}
+                      onRevealProject={(id) => void revealProject(id)}
                       onNewSession={() => void createSession(activeWorkspace)}
                       onNewWorkspaceSession={(workspace) => void createSession(workspace)}
                       onOpenChange={setSidebarOpen}
@@ -498,6 +570,15 @@ export function App() {
                                 void updateModelThinking(next, thinkingLevel)
                               }
                               onOpenReview={() => setInspectorOpen(true)}
+                              onPlanUpdated={(plan) => {
+                                setPlanDoc({
+                                  path: plan.path,
+                                  title: plan.title,
+                                  content: plan.content,
+                                });
+                                setInspectorTab("files");
+                                setInspectorOpen(true);
+                              }}
                               onSessionsChanged={() => void refreshSessions()}
                               session={activeSession}
                               workspace={
@@ -527,13 +608,14 @@ export function App() {
                                 onModelConfigChange={(next, thinkingLevel) =>
                                   void updateModelThinking(next, thinkingLevel)
                                 }
-                                onSubmit={(message, context, delivery, attachments, skills) =>
+                                onSubmit={(message, context, delivery, attachments, skills, mode) =>
                                   void submitHeroPrompt(
                                     message,
                                     context,
                                     delivery,
                                     attachments,
                                     skills,
+                                    mode,
                                   )
                                 }
                                 workspaceId={activeWorkspace?.id}
@@ -565,9 +647,12 @@ export function App() {
                         sessionId={activeSession?.id}
                         maxWidth={inspectorMaxWidth}
                         onOpenChange={setInspectorOpen}
+                        onTabChange={setInspectorTab}
                         onWidthChange={setInspectorWidth}
                         open={inspectorOpen}
+                        {...(planDoc ? { planDoc } : {})}
                         securityState={securityState}
+                        tab={inspectorTab}
                         width={inspectorWidth}
                       />
                     ) : null}

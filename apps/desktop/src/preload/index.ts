@@ -11,6 +11,11 @@ const api: ModusApi = {
   workspace: {
     open: () => ipcRenderer.invoke("workspace:open"),
     list: () => ipcRenderer.invoke("workspace:list"),
+    pin: (input) => ipcRenderer.invoke("workspace:pin", input),
+    rename: (input) => ipcRenderer.invoke("workspace:rename", input),
+    archiveChats: (id) => ipcRenderer.invoke("workspace:archive-chats", { id }),
+    remove: (id) => ipcRenderer.invoke("workspace:remove", { id }),
+    reveal: (id) => ipcRenderer.invoke("workspace:reveal", { id }),
   },
   file: {
     open: (input) => ipcRenderer.invoke("file:open", input),
@@ -90,6 +95,7 @@ const api: ModusApi = {
     list: (cwd) => ipcRenderer.invoke("diff:list", cwd),
     read: (input) => ipcRenderer.invoke("diff:read", input),
     fileVersions: (input) => ipcRenderer.invoke("diff:file-versions", input),
+    commitChanges: (input) => ipcRenderer.invoke("diff:commit-changes", input),
     revert: (input) => ipcRenderer.invoke("diff:revert", input),
     stage: (input) => ipcRenderer.invoke("diff:stage", input),
     unstage: (input) => ipcRenderer.invoke("diff:unstage", input),
@@ -100,18 +106,26 @@ const api: ModusApi = {
     stageAll: (cwd) => ipcRenderer.invoke("diff:stage-all", cwd),
     commitOrPush: (input) => ipcRenderer.invoke("diff:commit-or-push", input),
   },
+  files: {
+    list: (input) => ipcRenderer.invoke("files:list", input),
+    read: (input) => ipcRenderer.invoke("files:read", input),
+  },
   git: {
     branches: (cwd) => ipcRenderer.invoke("git:branches", cwd),
     checkout: (input) => ipcRenderer.invoke("git:checkout", input),
     createBranch: (input) => ipcRenderer.invoke("git:create-branch", input),
     pull: (cwd) => ipcRenderer.invoke("git:pull", cwd),
     fetch: (cwd) => ipcRenderer.invoke("git:fetch", cwd),
+    log: (input) => ipcRenderer.invoke("git:log", input),
   },
   permission: {
     decide: (input) => ipcRenderer.invoke("permission:decide", input),
     list: () => ipcRenderer.invoke("permission:list"),
     getMode: () => ipcRenderer.invoke("permission:get-mode"),
     setMode: (mode) => ipcRenderer.invoke("permission:set-mode", { mode }),
+  },
+  questions: {
+    respond: (input) => ipcRenderer.invoke("questions:respond", input),
   },
   context: {
     search: (input) => ipcRenderer.invoke("context:search", input),

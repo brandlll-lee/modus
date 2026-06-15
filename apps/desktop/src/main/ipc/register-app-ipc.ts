@@ -10,6 +10,7 @@ import {
 import { listAgentEvents, recordAgentEvent } from "../agent/agent-event-store";
 import { listAgentRuns } from "../agent/agent-run-store";
 import { deleteAgentSession, getAgentSession, listAgentSessions } from "../agent/agent-store";
+import { archiveAgentSession } from "../agent/session-lifecycle";
 import {
   deleteSessionCheckpoints,
   listCheckpoints,
@@ -50,6 +51,7 @@ import {
 } from "../browser/browser-service";
 import { resolveContext, searchContext } from "../context/context-service";
 import { addDocSource, indexWorkspaceDocs, listDocSources, searchDocs } from "../docs/docs-service";
+import { listDirectory, readWorkspaceFile } from "../files/files-service";
 import {
   checkoutBranch,
   commitChanges,
@@ -61,6 +63,8 @@ import {
   getWorkingChangeStats,
   listBranches,
   listChanges,
+  listCommitChanges,
+  listCommitLog,
   pullCurrentBranch,
   readDiff,
   readFileVersions,
@@ -69,6 +73,11 @@ import {
   stageFile,
   unstageFile,
 } from "../git/git-service";
+import {
+  denyPendingQuestionRequests,
+  denyPendingQuestionRequestsForSession,
+  resolveQuestionRequest,
+} from "../interaction/question-broker";
 import {
   deleteMcpServer,
   ensureMcpConfigFile,
@@ -101,8 +110,15 @@ import {
   resizeTerminal,
   writeTerminal,
 } from "../terminal/terminal-service";
-import { getRecentWorkspaces, openWorkspace } from "../workspace/workspace-service";
-import { IPC_CHANNELS } from "./channels";
+import {
+  archiveProjectChats,
+  getRecentWorkspaces,
+  openWorkspace,
+  removeProject,
+  renameProject,
+  revealProject,
+  setProjectPinned,
+} from "../workspace/workspace-service";import { IPC_CHANNELS } from "./channels";
 import {
   agentCreateSchema,
   agentCycleModelSchema,
@@ -123,6 +139,7 @@ import {
   contextResolveSchema,
   contextSearchSchema,
   cwdSchema,
+  diffCommitChangesSchema,
   diffCommitOrPushSchema,
   diffCommitSchema,
   diffFileVersionsSchema,
@@ -131,8 +148,11 @@ import {
   docsAddSchema,
   docsSearchSchema,
   fileOpenSchema,
+  filesListSchema,
+  filesReadSchema,
   gitCheckoutSchema,
   gitCreateBranchSchema,
+  gitLogSchema,
   mcpServerNameSchema,
   mcpSetEnabledSchema,
   mcpUpsertSchema,
@@ -140,6 +160,7 @@ import {
   permissionDecideSchema,
   processKillSchema,
   processListSchema,
+  questionRespondSchema,
   reviewStartSchema,
   sessionIdSchema,
   skillsCreateSchema,
@@ -150,6 +171,9 @@ import {
   testCustomProviderSchema,
   updateModelConfigSchema,
   upsertCustomProviderSchema,
+  workspaceIdSchema,
+  workspacePinSchema,
+  workspaceRenameSchema,
 } from "./schemas";
 
 const TRUSTED_DEV_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
@@ -221,6 +245,36 @@ export function registerAppIpc(): void {
     return getRecentWorkspaces();
   });
 
+  ipcMain.handle(IPC_CHANNELS.workspacePin, (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(workspacePinSchema, input, IPC_CHANNELS.workspacePin);
+    return setProjectPinned(parsed.id, parsed.pinned);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.workspaceRename, (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(workspaceRenameSchema, input, IPC_CHANNELS.workspaceRename);
+    return renameProject(parsed.id, parsed.displayName);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.workspaceArchiveChats, async (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(workspaceIdSchema, input, IPC_CHANNELS.workspaceArchiveChats);
+    return await archiveProjectChats(parsed.id);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.workspaceRemove, async (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(workspaceIdSchema, input, IPC_CHANNELS.workspaceRemove);
+    return await removeProject(parsed.id);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.workspaceReveal, async (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(workspaceIdSchema, input, IPC_CHANNELS.workspaceReveal);
+    await revealProject(parsed.id);
+  });
+
   // Open a file the agent touched in the OS default app. The path is sandboxed
   // to the session cwd so a compromised renderer can't coax the main process
   // into launching arbitrary files outside the workspace.
@@ -283,6 +337,9 @@ export function registerAppIpc(): void {
       ...(parsed.userMessageId !== undefined ? { userMessageId: parsed.userMessageId } : {}),
       ...(parsed.attachments !== undefined ? { attachments: parsed.attachments } : {}),
       ...(parsed.skills !== undefined ? { skills: parsed.skills } : {}),
+      ...(parsed.mode !== undefined ? { mode: parsed.mode } : {}),
+      ...(parsed.model !== undefined ? { model: parsed.model } : {}),
+      ...(parsed.thinkingLevel !== undefined ? { thinkingLevel: parsed.thinkingLevel } : {}),
     });
   });
 
@@ -305,14 +362,7 @@ export function registerAppIpc(): void {
   ipcMain.handle(IPC_CHANNELS.agentDelete, async (event, sessionId: string) => {
     assertTrustedSender(event);
     const id = parseIpcInput(sessionIdSchema, sessionId, IPC_CHANNELS.agentDelete);
-    // Tear down any live runtime first, then drop the record (events/runs cascade).
-    await getAgentRuntime().dispose(id);
-    const session = getAgentSession(id);
-    if (session) {
-      await deleteSessionCheckpoints(id, session.cwd).catch(() => {});
-    }
-    denyPendingPermissionRequestsForSession(id, "Session archived");
-    deleteAgentSession(id);
+    await archiveAgentSession(id);
   });
 
   ipcMain.handle(IPC_CHANNELS.agentSetModel, async (event, input) => {
@@ -550,7 +600,19 @@ export function registerAppIpc(): void {
   ipcMain.handle(IPC_CHANNELS.diffFileVersions, async (event, input) => {
     assertTrustedSender(event);
     const parsed = parseIpcInput(diffFileVersionsSchema, input, IPC_CHANNELS.diffFileVersions);
-    return await readFileVersions(parsed.cwd, parsed.path, parsed.mode, parsed.originalPath);
+    return await readFileVersions(
+      parsed.cwd,
+      parsed.path,
+      parsed.mode,
+      parsed.originalPath,
+      parsed.commit,
+    );
+  });
+
+  ipcMain.handle(IPC_CHANNELS.diffCommitChanges, async (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(diffCommitChangesSchema, input, IPC_CHANNELS.diffCommitChanges);
+    return await listCommitChanges(parsed.cwd, parsed.commit);
   });
 
   ipcMain.handle(IPC_CHANNELS.diffRevert, async (event, input) => {
@@ -610,6 +672,18 @@ export function registerAppIpc(): void {
     });
   });
 
+  ipcMain.handle(IPC_CHANNELS.filesList, async (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(filesListSchema, input, IPC_CHANNELS.filesList);
+    return listDirectory(parsed.cwd, parsed.dir);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.filesRead, async (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(filesReadSchema, input, IPC_CHANNELS.filesRead);
+    return readWorkspaceFile(parsed.cwd, parsed.path);
+  });
+
   ipcMain.handle(IPC_CHANNELS.gitBranches, async (event, cwd: string) => {
     assertTrustedSender(event);
     return await listBranches(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.gitBranches));
@@ -635,6 +709,12 @@ export function registerAppIpc(): void {
   ipcMain.handle(IPC_CHANNELS.gitFetch, async (event, cwd: string) => {
     assertTrustedSender(event);
     return { output: await fetchAll(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.gitFetch)) };
+  });
+
+  ipcMain.handle(IPC_CHANNELS.gitLog, async (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(gitLogSchema, input, IPC_CHANNELS.gitLog);
+    return await listCommitLog(parsed.cwd, parsed.limit);
   });
 
   ipcMain.handle(IPC_CHANNELS.permissionDecide, (event, input) => {
@@ -663,6 +743,22 @@ export function registerAppIpc(): void {
     assertTrustedSender(event);
     const parsed = parseIpcInput(approvalModeSchema, input, IPC_CHANNELS.permissionSetMode);
     return setApprovalMode(parsed.mode);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.questionsRespond, (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(questionRespondSchema, input, IPC_CHANNELS.questionsRespond);
+    return (
+      resolveQuestionRequest(
+        parsed.requestId,
+        parsed.answers.map((answer) => ({
+          questionId: answer.questionId,
+          selected: answer.selected,
+          ...(answer.custom !== undefined ? { custom: answer.custom } : {}),
+        })),
+        parsed.skipped,
+      ) ?? null
+    );
   });
 
   ipcMain.handle(IPC_CHANNELS.contextSearch, async (event, input) => {
@@ -939,6 +1035,7 @@ export function registerAppIpc(): void {
   ipcMain.handle(IPC_CHANNELS.windowClose, (event) => {
     assertTrustedSender(event);
     denyPendingPermissionRequests("Window closed");
+    denyPendingQuestionRequests();
     getSenderWindow(event).close();
   });
 
