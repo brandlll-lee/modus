@@ -1,3 +1,4 @@
+import { Popover } from "@base-ui/react/popover";
 import { Select } from "@base-ui/react/select";
 import {
   IconArrowUp,
@@ -5,7 +6,9 @@ import {
   IconChevronDown,
   IconCube,
   IconEdit,
+  IconListCheck,
   IconPlayerStopFilled,
+  IconPlus,
   IconX,
 } from "@tabler/icons-react";
 import { AnimatePresence, m } from "motion/react";
@@ -18,6 +21,7 @@ import {
   useState,
 } from "react";
 import type {
+  AgentMode,
   ContextItem,
   ContextSuggestion,
   ContextUsageInfo,
@@ -28,7 +32,6 @@ import type {
 } from "../../../../shared/contracts";
 import { BorderBeam } from "../../components/ui/BorderBeam";
 import { ImageThumb } from "../../components/ui/ImageViewer";
-import { Tooltip } from "../../components/ui/Tooltip";
 import { TypingAnimation } from "../../components/ui/TypingAnimation";
 import { cn } from "../../lib/cn";
 import { RunningProcessBar } from "../process/RunningProcessBar";
@@ -74,8 +77,12 @@ type ComposerProps = {
     delivery?: PromptDelivery,
     attachments?: PromptImageAttachment[],
     skills?: string[],
+    mode?: AgentMode,
   ): void;
   onAbort?(): void;
+  /** Controlled composer mode (build/plan); falls back to internal state. */
+  mode?: AgentMode;
+  onModeChange?(mode: AgentMode): void;
 };
 
 export function Composer({
@@ -94,11 +101,22 @@ export function Composer({
   onModelConfigChange,
   onContextChange,
   onSubmit,
+  mode: controlledMode,
+  onModeChange,
 }: ComposerProps) {
   const [value, setValue] = useState("");
   const [dragging, setDragging] = useState(false);
   const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
+  const [internalMode, setInternalMode] = useState<AgentMode>("build");
+  const mode = controlledMode ?? internalMode;
+  const setMode = (next: AgentMode): void => {
+    onModeChange?.(next);
+    if (controlledMode === undefined) {
+      setInternalMode(next);
+    }
+  };
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const { addFiles, clearImages, images, removeImage, toAttachments } = useComposerImages();
   const hasText = value.trim().length > 0;
   const hasImages = images.length > 0;
@@ -138,6 +156,7 @@ export function Composer({
       delivery,
       attachments.length > 0 ? attachments : undefined,
       invokedSkills.length > 0 ? invokedSkills : undefined,
+      mode,
     );
     setValue("");
     clearImages();
@@ -196,6 +215,13 @@ export function Composer({
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
+    // Shift+Tab rotates the composer mode (build ⇄ plan), mirroring Cursor.
+    if (event.key === "Tab" && event.shiftKey && !slash.isOpen && !isOpen) {
+      event.preventDefault();
+      setMode(mode === "plan" ? "build" : "plan");
+      return;
+    }
+
     if (slash.isOpen && event.key === "ArrowDown") {
       event.preventDefault();
       slash.setActiveIndex((index) => (index + 1) % slash.items.length);
@@ -285,11 +311,12 @@ export function Composer({
       {/* biome-ignore lint/a11y/noStaticElementInteractions: drag-drop is a pointer-only enhancement; keyboard users attach images via paste in the textarea. */}
       <div
         className={cn(
-          "relative rounded-[14px] border border-composer-border bg-surface shadow-composer-edge transition-[border-color,box-shadow] duration-150",
-          // agent 工作时不再用紫色聚焦描边，改由 Border Beam 光束动画呈现；
-          // 空闲时保留点击聚焦的品牌紫描边 + 发光。
-          !isRunning && "focus-within:border-focus-ring focus-within:shadow-composer-focus",
-          dragging && "border-focus-ring shadow-composer-focus",
+          "relative rounded-[14px] border border-composer-border bg-surface shadow-composer-edge transition-[border-color] duration-150",
+          // No focus glow: hover/focus only nudge the border one notch brighter
+          // (subtle, theme-aware). While running, the Border Beam carries motion.
+          !isRunning &&
+            "hover:border-composer-border-strong focus-within:border-composer-border-strong",
+          dragging && "border-composer-border-strong",
         )}
         onDragLeave={() => setDragging(false)}
         onDragOver={handleDragOver}
@@ -433,12 +460,30 @@ export function Composer({
         {/* @container: controls collapse their labels to icons as the composer
           narrows (responsive to the composer's own width, not the viewport). */}
         <div className="@container flex items-center gap-2 px-3 pt-1 pb-2.5">
-          <ApprovalModeSelect />
-
-          <ContextUsageIndicator
-            {...(currentModel?.contextWindow ? { contextWindow: currentModel.contextWindow } : {})}
-            {...(contextUsage ? { usage: contextUsage } : {})}
+          <button
+            aria-label="Attach files"
+            className="app-no-drag flex size-[26px] shrink-0 items-center justify-center rounded-md text-fg-subtle transition-colors hover:bg-hover hover:text-fg-muted"
+            onClick={() => fileInputRef.current?.click()}
+            title="Attach files"
+            type="button"
+          >
+            <IconPlus size={17} stroke={1.8} />
+          </button>
+          <input
+            accept="image/*"
+            className="hidden"
+            multiple
+            onChange={(event) => {
+              if (event.target.files?.length) {
+                void addFiles(event.target.files);
+              }
+              event.target.value = "";
+            }}
+            ref={fileInputRef}
+            type="file"
           />
+
+          {mode === "plan" ? <PlanModePill onExit={() => setMode("build")} /> : null}
 
           <ModelSelect
             model={model}
@@ -485,7 +530,39 @@ export function Composer({
           </AnimatePresence>
         </div>
       </div>
+
+      {/* Outside the box, Cursor-style: permission at bottom-left, context usage
+        at bottom-right — quiet metadata that doesn't crowd the input itself. */}
+      <div className="mt-1.5 flex items-center justify-between px-1.5">
+        <ApprovalModeSelect />
+        <ContextUsageIndicator
+          {...(currentModel?.contextWindow ? { contextWindow: currentModel.contextWindow } : {})}
+          {...(contextUsage ? { usage: contextUsage } : {})}
+        />
+      </div>
     </div>
+  );
+}
+
+function PlanModePill({ onExit }: { onExit: () => void }) {
+  // Cursor-style mode pill: a compact accent token that shows Plan Mode is
+  // active, with an inline dismiss. Shift+Tab also toggles it (see handleKeyDown).
+  return (
+    <span
+      className="app-no-drag inline-flex h-[26px] shrink-0 items-center gap-1 rounded-md border border-accent/30 bg-accent/10 pr-1 pl-1.5 text-accent"
+      title="Plan Mode — research read-only and draft a plan (Shift+Tab to toggle)"
+    >
+      <IconListCheck size={14} stroke={1.9} />
+      <span className="font-medium text-[12px]">Plan</span>
+      <button
+        aria-label="Exit Plan Mode"
+        className="flex size-4 items-center justify-center rounded-sm text-accent/70 transition-colors hover:bg-accent/15 hover:text-accent"
+        onClick={onExit}
+        type="button"
+      >
+        <IconX size={12} stroke={2} />
+      </button>
+    </span>
   );
 }
 
@@ -629,6 +706,34 @@ function ModelSelect({
   );
 }
 
+function ContextRing({ percent }: { percent: number }) {
+  const radius = 6.5;
+  const circumference = 2 * Math.PI * radius;
+  const dash = (clampPercent(percent) / 100) * circumference;
+  return (
+    <svg
+      aria-label={`${Math.round(clampPercent(percent))}% of context used`}
+      className="-rotate-90 shrink-0"
+      fill="none"
+      height="15"
+      role="img"
+      viewBox="0 0 16 16"
+      width="15"
+    >
+      <circle cx="8" cy="8" r={radius} stroke="var(--color-hairline-strong)" strokeWidth="1.6" />
+      <circle
+        cx="8"
+        cy="8"
+        r={radius}
+        stroke="currentColor"
+        strokeDasharray={`${dash} ${circumference}`}
+        strokeLinecap="round"
+        strokeWidth="1.6"
+      />
+    </svg>
+  );
+}
+
 function ContextUsageIndicator({
   contextWindow,
   usage,
@@ -637,35 +742,27 @@ function ContextUsageIndicator({
   usage?: ContextUsageInfo;
 }) {
   const label = formatUsagePercent(usage?.percent);
-  const ringPercent = clampPercent(usage?.percent);
 
   return (
-    <Tooltip
-      content={
-        <ContextUsageTooltip
-          {...(contextWindow ? { contextWindow } : {})}
-          {...(usage ? { usage } : {})}
-        />
-      }
-      motion="fade"
-      side="top"
-      sideOffset={10}
-    >
-      <button
+    <Popover.Root>
+      <Popover.Trigger
         aria-label={`Context usage ${label}`}
-        className="flex size-5 items-center justify-center rounded-full"
-        type="button"
+        className="app-no-drag flex h-[22px] items-center gap-1.5 rounded-md px-1.5 text-[10px] text-fg-faint transition-colors hover:bg-hover hover:text-fg-subtle data-popup-open:text-fg-subtle"
       >
-        <span
-          className="flex size-3.5 items-center justify-center rounded-full"
-          style={{
-            background: `conic-gradient(var(--color-focus-ring) ${ringPercent * 3.6}deg, var(--color-hairline-strong) 0deg)`,
-          }}
-        >
-          <span className="size-2.5 rounded-full bg-surface" />
-        </span>
-      </button>
-    </Tooltip>
+        <ContextRing percent={usage?.percent ?? 0} />
+        <span className="tabular-nums">{label} context</span>
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Positioner align="end" side="top" sideOffset={8}>
+          <Popover.Popup className="origin-(--transform-origin) rounded-lg border border-hairline bg-elevated p-2 shadow-popup transition-[transform,opacity] duration-100 data-ending-style:opacity-0 data-starting-style:opacity-0">
+            <ContextUsageTooltip
+              {...(contextWindow ? { contextWindow } : {})}
+              {...(usage ? { usage } : {})}
+            />
+          </Popover.Popup>
+        </Popover.Positioner>
+      </Popover.Portal>
+    </Popover.Root>
   );
 }
 

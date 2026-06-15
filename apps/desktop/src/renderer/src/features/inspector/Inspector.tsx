@@ -1,6 +1,7 @@
 import { Tabs } from "@base-ui/react/tabs";
 import {
   IconDots,
+  IconFileText,
   IconGitBranch,
   IconLayoutSidebarRight,
   IconShieldCheck,
@@ -17,6 +18,7 @@ import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
 import { BrowserPanel } from "../browser/BrowserPanel";
 import { DiffPanel } from "../diff/DiffPanel";
+import { FilesPanel } from "../files/FilesPanel";
 import { TerminalPanel } from "../terminal/TerminalPanel";
 
 type InspectorProps = {
@@ -28,6 +30,11 @@ type InspectorProps = {
   width: number;
   /** Upper bound from App so the panel can't crush the main column's min width. */
   maxWidth: number;
+  /** Controlled active tab (App drives it so events can switch to Files). */
+  tab?: string | undefined;
+  onTabChange?(tab: string): void;
+  /** A document to show in the Files panel that isn't in the tree (e.g. a plan). */
+  planDoc?: { path: string; title: string; content: string } | undefined;
   onOpenChange(open: boolean): void;
   onWidthChange(width: number): void;
 };
@@ -40,6 +47,7 @@ const INSPECTOR_TRANSITION = { duration: 0.18, ease: [0.22, 1, 0.36, 1] } as con
 
 const TABS = [
   { value: "changes", label: "Changes", icon: <IconGitBranch size={15} stroke={1.65} /> },
+  { value: "files", label: "Files", icon: <IconFileText size={15} stroke={1.65} /> },
   { value: "browser", label: "Browser", icon: <IconWorld size={15} stroke={1.65} /> },
   { value: "terminal", label: "Terminal", icon: <IconTerminal2 size={15} stroke={1.65} /> },
   { value: "security", label: "Security", icon: <IconShieldCheck size={15} stroke={1.65} /> },
@@ -53,13 +61,23 @@ export function Inspector({
   open,
   width,
   maxWidth,
+  tab: controlledTab,
+  onTabChange,
+  planDoc,
   onOpenChange,
   onWidthChange,
 }: InspectorProps) {
   const dragStartRef = useRef<{ x: number; width: number } | null>(null);
   const latestWidthRef = useRef(width);
   const [contentVisible, setContentVisible] = useState(open);
-  const [tab, setTab] = useState("changes");
+  const [internalTab, setInternalTab] = useState("changes");
+  const tab = controlledTab ?? internalTab;
+  const setTab = (value: string): void => {
+    onTabChange?.(value);
+    if (controlledTab === undefined) {
+      setInternalTab(value);
+    }
+  };
   // Width is a motion value, not React state: dragging calls `.set()` which
   // writes straight to the DOM (batched to a frame) WITHOUT re-rendering App and
   // its heavy Timeline on every pointermove. open/close still animates smoothly;
@@ -206,6 +224,9 @@ export function Inspector({
 
                 <Tabs.Panel className="min-h-0 flex-1 outline-none" value="changes">
                   <DiffPanel cwd={cwd} sessionId={sessionId} workspaceId={activeWorkspace?.id} />
+                </Tabs.Panel>
+                <Tabs.Panel className="min-h-0 flex-1 outline-none" keepMounted value="files">
+                  <FilesPanel cwd={cwd} {...(planDoc ? { activeDoc: planDoc } : {})} />
                 </Tabs.Panel>
                 <Tabs.Panel className="min-h-0 flex-1 outline-none" keepMounted value="browser">
                   <BrowserPanel active={tab === "browser"} workspaceId={activeWorkspace?.id} />
