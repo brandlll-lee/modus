@@ -5,16 +5,38 @@ import type {
   PermissionDecision,
   PermissionRequest,
 } from "../../shared/contracts";
+import { PendingRequestRegistry } from "../interaction/pending-requests";
 import { recordPermissionDecision } from "./permission-store";
 
-type PendingPermission = {
-  request: PermissionRequest;
-  emit(event: AgentEvent): void;
-  resolve(decision: PermissionDecision & { requestId: string }): void;
-  timeout: NodeJS.Timeout;
-};
+type PermissionResult = PermissionDecision & { requestId: string };
+type PermissionContext = { request: PermissionRequest; emit(event: AgentEvent): void };
 
-const pending = new Map<string, PendingPermission>();
+/** All blocking permission prompts share the generic interactive-request registry. */
+const registry = new PendingRequestRegistry<PermissionResult, PermissionContext>();
+
+function resolvedResult(
+  context: PermissionContext,
+  decision: PermissionDecision["decision"],
+  targetSuffix = "",
+): PermissionResult {
+  const result = {
+    ...recordPermissionDecision(
+      context.request.action,
+      `${context.request.target}${targetSuffix}`,
+      decision,
+    ),
+    requestId: context.request.id,
+  };
+  if (context.request.sessionId) {
+    context.emit({
+      type: "permission.resolved",
+      sessionId: context.request.sessionId,
+      requestId: context.request.id,
+      decision,
+    });
+  }
+  return result;
+}
 
 export async function requestPermission(input: {
   sessionId: string;
@@ -23,7 +45,7 @@ export async function requestPermission(input: {
   target: string;
   reason: string;
   emit(event: AgentEvent): void;
-}): Promise<PermissionDecision & { requestId: string }> {
+}): Promise<PermissionResult> {
   const request: PermissionRequest = {
     id: randomUUID(),
     sessionId: input.sessionId,
@@ -36,89 +58,28 @@ export async function requestPermission(input: {
 
   input.emit({ type: "permission.requested", sessionId: input.sessionId, request });
 
-  return await new Promise<PermissionDecision & { requestId: string }>((resolve) => {
-    const timeout = setTimeout(() => {
-      pending.delete(request.id);
-      const result = {
-        ...recordPermissionDecision(request.action, request.target, "deny"),
-        requestId: request.id,
-      };
-      input.emit({
-        type: "permission.resolved",
-        sessionId: input.sessionId,
-        requestId: request.id,
-        decision: "deny",
-      });
-      resolve(result);
-    }, 120_000);
-
-    pending.set(request.id, { request, emit: input.emit, resolve, timeout });
+  return await registry.open({
+    id: request.id,
+    sessionId: input.sessionId,
+    context: { request, emit: input.emit },
+    timeoutMs: 120_000,
+    onTimeout: (context) => resolvedResult(context, "deny"),
   });
 }
 
 export function resolvePermissionRequest(
   requestId: string,
   decision: PermissionDecision["decision"],
-): (PermissionDecision & { requestId: string }) | undefined {
-  const entry = pending.get(requestId);
-  if (!entry) {
-    return undefined;
-  }
-
-  clearTimeout(entry.timeout);
-  pending.delete(requestId);
-  const result = {
-    ...recordPermissionDecision(entry.request.action, entry.request.target, decision),
-    requestId,
-  };
-  if (entry.request.sessionId) {
-    entry.emit({
-      type: "permission.resolved",
-      sessionId: entry.request.sessionId,
-      requestId,
-      decision,
-    });
-  }
-  entry.resolve(result);
-  return result;
+): PermissionResult | undefined {
+  return registry.settle(requestId, (context) => resolvedResult(context, decision));
 }
 
 export function denyPendingPermissionRequests(reason = "Window closed"): void {
-  for (const [requestId, entry] of pending) {
-    denyPendingPermissionRequest(requestId, entry, reason);
-  }
+  registry.cancelAll((context) => resolvedResult(context, "deny", ` (${reason})`));
 }
 
 export function denyPendingPermissionRequestsForSession(sessionId: string, reason: string): void {
-  for (const [requestId, entry] of pending) {
-    if (entry.request.sessionId === sessionId) {
-      denyPendingPermissionRequest(requestId, entry, reason);
-    }
-  }
-}
-
-function denyPendingPermissionRequest(
-  requestId: string,
-  entry: PendingPermission,
-  reason: string,
-): void {
-  clearTimeout(entry.timeout);
-  pending.delete(requestId);
-  const result = {
-    ...recordPermissionDecision(
-      entry.request.action,
-      `${entry.request.target} (${reason})`,
-      "deny",
-    ),
-    requestId,
-  };
-  if (entry.request.sessionId) {
-    entry.emit({
-      type: "permission.resolved",
-      sessionId: entry.request.sessionId,
-      requestId,
-      decision: "deny",
-    });
-  }
-  entry.resolve(result);
+  registry.cancelForSession(sessionId, (context) =>
+    resolvedResult(context, "deny", ` (${reason})`),
+  );
 }
