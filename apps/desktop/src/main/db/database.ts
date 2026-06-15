@@ -157,6 +157,9 @@ function migrate(db: DatabaseSync): void {
   addColumn(db, "agent_sessions", "model", "text");
   addColumn(db, "agent_sessions", "pi_session_id", "text");
   addColumn(db, "agent_sessions", "pi_session_file", "text");
+  // Sidebar project pinning: pinned projects sort to the top (pinned_at breaks ties).
+  addColumn(db, "workspaces", "pinned", "integer not null default 0");
+  addColumn(db, "workspaces", "pinned_at", "text");
   if (hasColumn(db, "agent_sessions", "worktree_path")) {
     db.exec(`
       update agent_sessions
