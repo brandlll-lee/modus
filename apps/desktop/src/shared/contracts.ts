@@ -4,6 +4,8 @@ export type WorkspaceInfo = {
   displayName: string;
   isGitRepository: boolean;
   lastOpenedAt: string;
+  /** Pinned projects sort to the top of the sidebar's Projects list. */
+  pinned: boolean;
 };
 
 export type AgentSessionInfo = {
@@ -129,6 +131,51 @@ export type PermissionRequest = {
   severity?: "medium" | "high" | "danger";
 };
 
+/* ── Interactive questions (ask_user, Cursor-style) ────────────────────── */
+
+export type QuestionOption = {
+  /** Choice text shown on the option row and returned when selected. */
+  label: string;
+  /** Optional one-line clarifier under the label. */
+  description?: string;
+  /** Marks the planner's suggested default (rendered "— recommended"). */
+  recommended?: boolean;
+};
+
+export type QuestionPrompt = {
+  /** Stable id within the request (assigned by the ask_user tool). */
+  id: string;
+  /** The question itself, e.g. "Which rendering view?". */
+  header: string;
+  /** Optional context shown under the header. */
+  detail?: string;
+  /** true → multiple options may be chosen; false → single choice. */
+  multiSelect: boolean;
+  options: QuestionOption[];
+};
+
+export type QuestionRequest = {
+  id: string;
+  sessionId?: string;
+  runId?: string;
+  questions: QuestionPrompt[];
+};
+
+export type QuestionAnswer = {
+  questionId: string;
+  /** Labels of the chosen options (empty when only a custom answer was given). */
+  selected: string[];
+  /** Free-text "Other…" answer, when the user typed one. */
+  custom?: string;
+};
+
+/** Resolution of an ask_user round-trip — answers, or `skipped` when dismissed. */
+export type QuestionResponse = {
+  requestId: string;
+  answers: QuestionAnswer[];
+  skipped: boolean;
+};
+
 export type AgentEvent =
   | { type: "agent.started"; sessionId: string }
   | { type: "agent.ended"; sessionId: string }
@@ -198,6 +245,14 @@ export type AgentEvent =
       requestId: string;
       decision: PermissionDecision["decision"];
     }
+  | { type: "question.requested"; sessionId: string; request: QuestionRequest }
+  | {
+      type: "question.resolved";
+      sessionId: string;
+      requestId: string;
+      answers: QuestionAnswer[];
+      skipped: boolean;
+    }
   | { type: "queue.updated"; sessionId: string; steering: string[]; followUp: string[] }
   | { type: "compaction.started"; sessionId: string; reason: string }
   | { type: "compaction.ended"; sessionId: string; summary?: string; aborted: boolean }
@@ -205,6 +260,7 @@ export type AgentEvent =
   | { type: "review.started"; sessionId: string; reviewId: string }
   | { type: "review.completed"; sessionId: string; review: AgentReviewResult }
   | { type: "review.failed"; sessionId: string; reviewId: string; message: string }
+  | { type: "plan.updated"; sessionId: string; plan: PlanRef }
   | { type: "checkpoint.created"; sessionId: string; checkpoint: CheckpointInfo }
   | { type: "checkpoint.restored"; sessionId: string; checkpointId: string }
   | { type: "todos.updated"; sessionId: string; todos: TodoItem[] }
@@ -366,6 +422,13 @@ export type PermissionDecision = {
  */
 export type ApprovalMode = "request-approval" | "auto" | "full-access";
 
+/**
+ * Composer execution mode. `build` is the normal coding agent. `plan` runs the
+ * read-only planning harness (research + write a single plan.md via plan_write;
+ * no edit/write/bash). Carried per-prompt so the user can toggle it freely.
+ */
+export type AgentMode = "build" | "plan";
+
 /** Branch / remote / sync state for the git review panel header + commit dialog. */
 export type GitStatusSummary = {
   /** Current branch name, or undefined when HEAD is detached. */
@@ -424,6 +487,26 @@ export type GitBranchSummary = {
 export type GitActionResult = {
   /** Human-readable git output, shown on error or as a toast. */
   output: string;
+};
+
+/**
+ * One commit in the Source Control "All commits" scope. Files are fetched
+ * lazily per commit (on expand) via `diff.commitChanges`, mirroring how the
+ * working tree loads file versions on demand — keeps the log payload bounded.
+ */
+export type GitCommit = {
+  /** Full 40-char object id (used as the authoritative diff base). */
+  hash: string;
+  /** Abbreviated id for display. */
+  shortHash: string;
+  /** First line of the commit message. */
+  subject: string;
+  /** Author name. */
+  author: string;
+  /** Author date, ISO 8601. */
+  date: string;
+  /** Human relative date ("3 hours ago"), from git itself. */
+  relativeDate: string;
 };
 
 export type ContextKind =
@@ -559,6 +642,12 @@ export type BrowserEvent =
   | { type: "browser.updated"; tab: BrowserTabInfo }
   | { type: "browser.closed"; workspaceId: string; tabId: string }
   | { type: "browser.selected"; workspaceId: string; tabId: string }
+  | {
+      /** An agent-initiated navigation — the renderer auto-reveals the browser panel. */
+      type: "browser.agent-activity";
+      workspaceId: string;
+      tabId: string;
+    }
   | {
       type: "browser.find-result";
       workspaceId: string;
@@ -925,6 +1014,58 @@ export type AgentReviewResult = {
   summary: string;
   issues: AgentReviewIssue[];
   createdAt: string;
+};
+
+/* ── Workspace files (read-only file panel) ────────────────────────────── */
+
+/** One entry in a directory listing for the file panel's lazy tree. */
+export type FileEntry = {
+  name: string;
+  /** Absolute path. */
+  path: string;
+  /** Workspace-root-relative path with forward slashes (stable id + label). */
+  relativePath: string;
+  kind: "file" | "directory";
+};
+
+/** Result of reading a workspace file for preview. */
+export type FileReadResult = {
+  path: string;
+  relativePath: string;
+  size: number;
+  /** True when the file is binary (no text preview); `content` is empty. */
+  binary: boolean;
+  /** True when the file exceeded the read cap and `content` is a prefix. */
+  truncated: boolean;
+  content: string;
+};
+
+/* ── Plan Mode ─────────────────────────────────────────────────────────── */
+
+/**
+ * A plan produced by Plan Mode — a single markdown artifact that is the durable
+ * source of truth for a feature, editable by both human and agent, and the
+ * shared input to single-agent or fusion execution. Stored outside the repo by
+ * default (not version-controlled); `savedToWorkspace` flips when the user
+ * copies it into `<repo>/.modus/specs/<slug>/`.
+ */
+export type PlanRef = {
+  /** Stable id `${workspaceId}:${slug}`. */
+  id: string;
+  slug: string;
+  title: string;
+  /** Absolute path to the active `plan.md`. */
+  path: string;
+  /** Content fingerprint. */
+  hash: string;
+  workspaceId: string;
+  sessionId?: string;
+  /** Current markdown body. */
+  content: string;
+  createdAt: string;
+  updatedAt: string;
+  /** True once copied into the repository for version control. */
+  savedToWorkspace: boolean;
 };
 
 /* ── Skills (Agent Skills, 2026 SKILL.md standard) ─────────────────────── */

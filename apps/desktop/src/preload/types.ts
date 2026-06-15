@@ -1,6 +1,7 @@
 import type {
   AddDocInput,
   AgentEvent,
+  AgentMode,
   AgentReviewDepth,
   AgentReviewResult,
   AgentRollbackResult,
@@ -21,8 +22,11 @@ import type {
   DocSource,
   FileChange,
   FileDiff,
+  FileEntry,
+  FileReadResult,
   GitActionResult,
   GitBranchSummary,
+  GitCommit,
   GitCommitResult,
   GitStatusSummary,
   ManagedProcessInfo,
@@ -36,6 +40,8 @@ import type {
   PermissionDecision,
   PromptDelivery,
   PromptImageAttachment,
+  QuestionAnswer,
+  QuestionResponse,
   RawMcpEntry,
   ResolvedContext,
   RuleFileInfo,
@@ -81,6 +87,16 @@ export type ModusApi = {
   workspace: {
     open(): Promise<WorkspaceInfo | undefined>;
     list(): Promise<WorkspaceInfo[]>;
+    /** Pin / unpin a project; returns the re-sorted recents. */
+    pin(input: { id: string; pinned: boolean }): Promise<WorkspaceInfo[]>;
+    /** Rename a project's sidebar label; returns the updated recents. */
+    rename(input: { id: string; displayName: string }): Promise<WorkspaceInfo[]>;
+    /** Archive all of a project's chats; returns the number removed. */
+    archiveChats(id: string): Promise<number>;
+    /** Remove a project from Modus (files kept); returns the updated recents. */
+    remove(id: string): Promise<WorkspaceInfo[]>;
+    /** Reveal a project's root folder in the OS file manager. */
+    reveal(id: string): Promise<void>;
   };
   file: {
     /** Open a workspace file in the OS default app. Path may be relative to cwd or absolute. */
@@ -107,6 +123,9 @@ export type ModusApi = {
       userMessageId?: string;
       attachments?: PromptImageAttachment[];
       skills?: string[];
+      mode?: AgentMode;
+      model?: string;
+      thinkingLevel?: ThinkingLevel;
     }): Promise<void>;
     abort(sessionId: string): Promise<void>;
     /**
@@ -198,7 +217,11 @@ export type ModusApi = {
       path: string;
       mode?: "unstaged" | "staged";
       originalPath?: string;
+      /** When set, diff the commit against its parent instead of the working tree. */
+      commit?: string;
     }): Promise<DiffFileVersions>;
+    /** Files touched by a single commit (All commits scope). */
+    commitChanges(input: { cwd: string; commit: string }): Promise<FileChange[]>;
     revert(input: { cwd: string; path: string }): Promise<void>;
     stage(input: { cwd: string; path: string }): Promise<void>;
     unstage(input: { cwd: string; path: string }): Promise<void>;
@@ -216,12 +239,18 @@ export type ModusApi = {
       push: boolean;
     }): Promise<GitCommitResult>;
   };
+  files: {
+    list(input: { cwd: string; dir?: string }): Promise<FileEntry[]>;
+    read(input: { cwd: string; path: string }): Promise<FileReadResult>;
+  };
   git: {
     branches(cwd: string): Promise<GitBranchSummary>;
     checkout(input: { cwd: string; name: string; remote?: boolean }): Promise<GitActionResult>;
     createBranch(input: { cwd: string; name: string }): Promise<GitActionResult>;
     pull(cwd: string): Promise<GitActionResult>;
     fetch(cwd: string): Promise<GitActionResult>;
+    /** Recent commit history for the Source Control "All commits" scope. */
+    log(input: { cwd: string; limit?: number }): Promise<GitCommit[]>;
   };
   permission: {
     decide(input: {
@@ -234,6 +263,14 @@ export type ModusApi = {
     list(): Promise<PermissionDecision[]>;
     getMode(): Promise<ApprovalMode>;
     setMode(mode: ApprovalMode): Promise<ApprovalMode>;
+  };
+  questions: {
+    /** Resolve a pending ask_user request with the user's answers (or a skip). */
+    respond(input: {
+      requestId: string;
+      answers: QuestionAnswer[];
+      skipped: boolean;
+    }): Promise<QuestionResponse | null>;
   };
   context: {
     search(input: {
