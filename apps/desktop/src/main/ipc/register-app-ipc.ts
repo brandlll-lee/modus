@@ -10,7 +10,6 @@ import {
 import { listAgentEvents, recordAgentEvent } from "../agent/agent-event-store";
 import { listAgentRuns } from "../agent/agent-run-store";
 import { deleteAgentSession, getAgentSession, listAgentSessions } from "../agent/agent-store";
-import { archiveAgentSession } from "../agent/session-lifecycle";
 import {
   deleteSessionCheckpoints,
   listCheckpoints,
@@ -31,6 +30,7 @@ import {
 import { listAgentReviews, startAgentReview } from "../agent/review-service";
 import { rollbackToUserMessage } from "../agent/rollback-service";
 import { getAgentRuntime } from "../agent/runtime-registry";
+import { archiveAgentSession } from "../agent/session-lifecycle";
 import {
   closeBrowserTab,
   createBrowserTab,
@@ -54,25 +54,18 @@ import { addDocSource, indexWorkspaceDocs, listDocSources, searchDocs } from "..
 import { listDirectory, readWorkspaceFile } from "../files/files-service";
 import {
   checkoutBranch,
-  commitChanges,
   commitOrPush,
-  createBranch,
   discardFile,
-  fetchAll,
   getStatusSummary,
   getWorkingChangeStats,
   listBranches,
   listChanges,
   listCommitChanges,
   listCommitLog,
-  pullCurrentBranch,
   readDiff,
   readFileVersions,
-  revertFile,
-  stageAll,
-  stageFile,
-  unstageFile,
 } from "../git/git-service";
+import { unwatchRepo, watchRepo } from "../git/git-watcher";
 import {
   denyPendingQuestionRequests,
   denyPendingQuestionRequestsForSession,
@@ -118,7 +111,8 @@ import {
   renameProject,
   revealProject,
   setProjectPinned,
-} from "../workspace/workspace-service";import { IPC_CHANNELS } from "./channels";
+} from "../workspace/workspace-service";
+import { IPC_CHANNELS } from "./channels";
 import {
   agentCreateSchema,
   agentCycleModelSchema,
@@ -141,7 +135,6 @@ import {
   cwdSchema,
   diffCommitChangesSchema,
   diffCommitOrPushSchema,
-  diffCommitSchema,
   diffFileVersionsSchema,
   diffPathSchema,
   diffReadSchema,
@@ -151,7 +144,6 @@ import {
   filesListSchema,
   filesReadSchema,
   gitCheckoutSchema,
-  gitCreateBranchSchema,
   gitLogSchema,
   mcpServerNameSchema,
   mcpSetEnabledSchema,
@@ -615,34 +607,10 @@ export function registerAppIpc(): void {
     return await listCommitChanges(parsed.cwd, parsed.commit);
   });
 
-  ipcMain.handle(IPC_CHANNELS.diffRevert, async (event, input) => {
-    assertTrustedSender(event);
-    const parsed = parseIpcInput(diffPathSchema, input, IPC_CHANNELS.diffRevert);
-    await revertFile(parsed.cwd, parsed.path);
-  });
-
-  ipcMain.handle(IPC_CHANNELS.diffStage, async (event, input) => {
-    assertTrustedSender(event);
-    const parsed = parseIpcInput(diffPathSchema, input, IPC_CHANNELS.diffStage);
-    await stageFile(parsed.cwd, parsed.path);
-  });
-
-  ipcMain.handle(IPC_CHANNELS.diffUnstage, async (event, input) => {
-    assertTrustedSender(event);
-    const parsed = parseIpcInput(diffPathSchema, input, IPC_CHANNELS.diffUnstage);
-    await unstageFile(parsed.cwd, parsed.path);
-  });
-
   ipcMain.handle(IPC_CHANNELS.diffDiscard, async (event, input) => {
     assertTrustedSender(event);
     const parsed = parseIpcInput(diffPathSchema, input, IPC_CHANNELS.diffDiscard);
     await discardFile(parsed.cwd, parsed.path);
-  });
-
-  ipcMain.handle(IPC_CHANNELS.diffCommit, async (event, input) => {
-    assertTrustedSender(event);
-    const parsed = parseIpcInput(diffCommitSchema, input, IPC_CHANNELS.diffCommit);
-    return await commitChanges(parsed.cwd, parsed.message);
   });
 
   ipcMain.handle(IPC_CHANNELS.diffStatus, async (event, cwd: string) => {
@@ -656,17 +624,11 @@ export function registerAppIpc(): void {
     return await getWorkingChangeStats(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.diffStats));
   });
 
-  ipcMain.handle(IPC_CHANNELS.diffStageAll, async (event, cwd: string) => {
-    assertTrustedSender(event);
-    await stageAll(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.diffStageAll));
-  });
-
   ipcMain.handle(IPC_CHANNELS.diffCommitOrPush, async (event, input) => {
     assertTrustedSender(event);
     const parsed = parseIpcInput(diffCommitOrPushSchema, input, IPC_CHANNELS.diffCommitOrPush);
     return await commitOrPush(parsed.cwd, {
       ...(parsed.message !== undefined ? { message: parsed.message } : {}),
-      ...(parsed.stageAll !== undefined ? { stageAll: parsed.stageAll } : {}),
       commit: parsed.commit,
       push: parsed.push,
     });
@@ -695,26 +657,20 @@ export function registerAppIpc(): void {
     return { output: await checkoutBranch(parsed.cwd, parsed.name, parsed.remote ?? false) };
   });
 
-  ipcMain.handle(IPC_CHANNELS.gitCreateBranch, async (event, input) => {
-    assertTrustedSender(event);
-    const parsed = parseIpcInput(gitCreateBranchSchema, input, IPC_CHANNELS.gitCreateBranch);
-    return { output: await createBranch(parsed.cwd, parsed.name) };
-  });
-
-  ipcMain.handle(IPC_CHANNELS.gitPull, async (event, cwd: string) => {
-    assertTrustedSender(event);
-    return { output: await pullCurrentBranch(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.gitPull)) };
-  });
-
-  ipcMain.handle(IPC_CHANNELS.gitFetch, async (event, cwd: string) => {
-    assertTrustedSender(event);
-    return { output: await fetchAll(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.gitFetch)) };
-  });
-
   ipcMain.handle(IPC_CHANNELS.gitLog, async (event, input) => {
     assertTrustedSender(event);
     const parsed = parseIpcInput(gitLogSchema, input, IPC_CHANNELS.gitLog);
     return await listCommitLog(parsed.cwd, parsed.limit);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.gitWatch, (event, cwd: string) => {
+    assertTrustedSender(event);
+    return watchRepo(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.gitWatch));
+  });
+
+  ipcMain.handle(IPC_CHANNELS.gitUnwatch, (event, cwd: string) => {
+    assertTrustedSender(event);
+    unwatchRepo(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.gitUnwatch));
   });
 
   ipcMain.handle(IPC_CHANNELS.permissionDecide, (event, input) => {

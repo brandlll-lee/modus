@@ -1,6 +1,6 @@
 import type { IpcRendererEvent } from "electron";
 import { contextBridge, ipcRenderer } from "electron";
-import type { AgentEvent, BrowserEvent, TerminalEvent } from "../shared/contracts";
+import type { AgentEvent, BrowserEvent, GitChangeEvent, TerminalEvent } from "../shared/contracts";
 import type { ModusApi, SecurityState } from "./types";
 
 const api: ModusApi = {
@@ -96,14 +96,9 @@ const api: ModusApi = {
     read: (input) => ipcRenderer.invoke("diff:read", input),
     fileVersions: (input) => ipcRenderer.invoke("diff:file-versions", input),
     commitChanges: (input) => ipcRenderer.invoke("diff:commit-changes", input),
-    revert: (input) => ipcRenderer.invoke("diff:revert", input),
-    stage: (input) => ipcRenderer.invoke("diff:stage", input),
-    unstage: (input) => ipcRenderer.invoke("diff:unstage", input),
     discard: (input) => ipcRenderer.invoke("diff:discard", input),
-    commit: (input) => ipcRenderer.invoke("diff:commit", input),
     status: (cwd) => ipcRenderer.invoke("diff:status", cwd),
     stats: (cwd) => ipcRenderer.invoke("diff:stats", cwd),
-    stageAll: (cwd) => ipcRenderer.invoke("diff:stage-all", cwd),
     commitOrPush: (input) => ipcRenderer.invoke("diff:commit-or-push", input),
   },
   files: {
@@ -113,10 +108,15 @@ const api: ModusApi = {
   git: {
     branches: (cwd) => ipcRenderer.invoke("git:branches", cwd),
     checkout: (input) => ipcRenderer.invoke("git:checkout", input),
-    createBranch: (input) => ipcRenderer.invoke("git:create-branch", input),
-    pull: (cwd) => ipcRenderer.invoke("git:pull", cwd),
-    fetch: (cwd) => ipcRenderer.invoke("git:fetch", cwd),
     log: (input) => ipcRenderer.invoke("git:log", input),
+    watch: (cwd) => ipcRenderer.invoke("git:watch", cwd),
+    unwatch: (cwd) => ipcRenderer.invoke("git:unwatch", cwd),
+    onChanged: (callback) => {
+      const listener = (_event: IpcRendererEvent, payload: unknown) =>
+        callback(payload as GitChangeEvent);
+      ipcRenderer.on("git:event", listener);
+      return () => ipcRenderer.removeListener("git:event", listener);
+    },
   },
   permission: {
     decide: (input) => ipcRenderer.invoke("permission:decide", input),

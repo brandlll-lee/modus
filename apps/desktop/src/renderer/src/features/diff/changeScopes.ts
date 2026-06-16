@@ -1,17 +1,12 @@
 import type { FileChange } from "../../../../shared/contracts";
 
 /**
- * Source-control scope selector (Cursor's "Uncommitted / Unstaged / Staged /
- * All commits" dropdown). A scope is a *projection* over authoritative git data,
- * not a special case: the three working-tree scopes are pure predicates over the
- * `staged`/`unstaged`/`untracked` flags git already reports, and the history
- * scope flips the data source to the commit log. Adding a scope is one row in
- * `SCOPE_META` — callers never branch on the scope value.
+ * Source-control scope selector. Two scopes only: the working tree's
+ * uncommitted changes, and the commit history. There is no staging in Modus, so
+ * there is no staged/unstaged distinction — a scope is a projection over
+ * authoritative git data, never a per-case branch.
  */
-export type ChangeScope = "uncommitted" | "unstaged" | "staged" | "all-commits";
-
-/** Tri-state staging of a file, derived from git's two independent flags. */
-export type StageState = "staged" | "unstaged" | "partial";
+export type ChangeScope = "uncommitted" | "all-commits";
 
 /** Coarse change class for the row badge, derived from git's status code. */
 export type ChangeBadge = "new" | "deleted" | "renamed" | "copied" | "modified";
@@ -31,30 +26,13 @@ export type ScopeMeta = {
 };
 
 /** Display + iteration order of the scope menu. */
-export const CHANGE_SCOPES: readonly ChangeScope[] = [
-  "uncommitted",
-  "unstaged",
-  "staged",
-  "all-commits",
-] as const;
+export const CHANGE_SCOPES: readonly ChangeScope[] = ["uncommitted", "all-commits"] as const;
 
 export const SCOPE_META: Record<ChangeScope, ScopeMeta> = {
   uncommitted: {
     label: "Uncommitted",
     noun: "Uncommitted",
     predicate: (change) => Boolean(change.staged || change.unstaged || change.untracked),
-    commitHistory: false,
-  },
-  unstaged: {
-    label: "Unstaged",
-    noun: "Unstaged",
-    predicate: (change) => Boolean(change.unstaged || change.untracked),
-    commitHistory: false,
-  },
-  staged: {
-    label: "Staged",
-    noun: "Staged",
-    predicate: (change) => Boolean(change.staged),
     commitHistory: false,
   },
   "all-commits": {
@@ -68,18 +46,6 @@ export const SCOPE_META: Record<ChangeScope, ScopeMeta> = {
 export function filterByScope(changes: FileChange[], scope: ChangeScope): FileChange[] {
   const { predicate } = SCOPE_META[scope];
   return predicate ? changes.filter(predicate) : [];
-}
-
-/**
- * Authoritative staging tri-state. `staged` and `unstaged` are independent git
- * facts, so a file edited *after* being staged is genuinely both — surfaced as
- * `partial` rather than guessing one wins (the exact ambiguity that bites the
- * "shows as fully staged" diff viewers).
- */
-export function stageState(change: FileChange): StageState {
-  if (change.staged && (change.unstaged || change.untracked)) return "partial";
-  if (change.staged) return "staged";
-  return "unstaged";
 }
 
 /**

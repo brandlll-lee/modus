@@ -1,24 +1,49 @@
 import { describe, expect, it } from "vitest";
 import {
   agentPromptSchema,
-  diffCommitSchema,
+  diffCommitOrPushSchema,
   parseIpcInput,
   permissionDecideSchema,
 } from "./schemas";
 
 describe("IPC schemas", () => {
-  it("accepts valid diff commit payloads", () => {
+  it("accepts a commit-and-push payload", () => {
     expect(
-      parseIpcInput(diffCommitSchema, { cwd: "repo", message: "commit" }, "diff:commit"),
-    ).toEqual({
-      cwd: "repo",
-      message: "commit",
-    });
+      parseIpcInput(
+        diffCommitOrPushSchema,
+        { cwd: "repo", message: "commit", commit: true, push: true },
+        "diff:commit-or-push",
+      ),
+    ).toEqual({ cwd: "repo", message: "commit", commit: true, push: true });
   });
 
-  it("rejects invalid diff commit payloads", () => {
+  it("accepts a push-only payload (no message)", () => {
+    expect(
+      parseIpcInput(
+        diffCommitOrPushSchema,
+        { cwd: "repo", commit: false, push: true },
+        "diff:commit-or-push",
+      ),
+    ).toEqual({ cwd: "repo", commit: false, push: true });
+  });
+
+  it("rejects committing without a message", () => {
     expect(() =>
-      parseIpcInput(diffCommitSchema, { cwd: "repo", message: "" }, "diff:commit"),
+      parseIpcInput(
+        diffCommitOrPushSchema,
+        { cwd: "repo", message: "", commit: true, push: false },
+        "diff:commit-or-push",
+      ),
+    ).toThrow("Invalid IPC payload");
+  });
+
+  it("rejects a no-op (neither commit nor push)", () => {
+    expect(() =>
+      parseIpcInput(
+        diffCommitOrPushSchema,
+        { cwd: "repo", commit: false, push: false },
+        "diff:commit-or-push",
+      ),
     ).toThrow("Invalid IPC payload");
   });
 

@@ -1,8 +1,6 @@
-import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
-import { promisify } from "node:util";
 import type {
   DiffFileVersions,
   DiffMode,
@@ -16,51 +14,26 @@ import type {
   GitStatusSummary,
   WorkingChangeStats,
 } from "../../shared/contracts";
+import { GitError, messageForCode } from "./git-errors";
+import { resolveRepo } from "./git-repo";
+import { isIndexLocked, resolveUserPath, runGit, runGitSafe, runGitSafeRaw } from "./git-runner";
 
-const execFileAsync = promisify(execFile);
-
-async function git(
-  cwd: string,
-  args: string[],
-  extraEnv?: Record<string, string>,
-): Promise<string> {
-  try {
-    const { stdout } = await execFileAsync("git", args, {
-      cwd,
-      windowsHide: true,
-      maxBuffer: 1024 * 1024 * 20,
-      // Never block the Electron main process on an interactive credential or
-      // editor prompt — network ops (push/pull/fetch) fail fast instead of hanging.
-      env: {
-        ...process.env,
-        GIT_TERMINAL_PROMPT: "0",
-        GIT_OPTIONAL_LOCKS: "0",
-        GIT_EDITOR: "true",
-        ...extraEnv,
-      },
-    });
-
-    return stdout;
-  } catch (error) {
-    // execFile rejects with stdout/stderr attached; surface the human-readable
-    // git message (stderr) rather than the opaque "Command failed: git …".
-    const stderr =
-      typeof error === "object" && error !== null && "stderr" in error
-        ? String((error as { stderr?: unknown }).stderr ?? "").trim()
-        : "";
-    if (stderr) {
-      throw new Error(stderr);
-    }
-    throw error;
-  }
+/**
+ * Thin shim over the hardened runner (`git-runner.ts`), preserving the historical
+ * `(cwd, args, extraEnv)` call shape used throughout this module. Flags,
+ * cross-platform binary resolution, and structured errors live in the runner.
+ */
+function git(cwd: string, args: string[], extraEnv?: Record<string, string>): Promise<string> {
+  return runGit(cwd, args, extraEnv ? { env: extraEnv } : {});
 }
 
-/** Run git tolerantly: never throws, returns trimmed stdout ("" on failure). */
-async function gitSafe(cwd: string, args: string[]): Promise<string> {
-  try {
-    return (await git(cwd, args)).trim();
-  } catch {
-    return "";
+const gitSafe = runGitSafe;
+
+/** Reject writes while another git process holds the index lock (worktree-aware). */
+function assertWritable(cwd: string): void {
+  const repo = resolveRepo(cwd);
+  if (repo && isIndexLocked(repo.gitDir)) {
+    throw new GitError("index-locked", messageForCode("index-locked"));
   }
 }
 
@@ -132,16 +105,7 @@ const MAX_VERSION_BYTES = 4 * 1024 * 1024;
 
 /** Read a blob from the object database ("" when the spec doesn't resolve, e.g. new files). */
 async function gitShowBlob(cwd: string, spec: string): Promise<string> {
-  return await gitSafeRaw(cwd, ["show", spec]);
-}
-
-/** Like gitSafe but preserves trailing whitespace (blob contents are not trimmed). */
-async function gitSafeRaw(cwd: string, args: string[]): Promise<string> {
-  try {
-    return await git(cwd, args);
-  } catch {
-    return "";
-  }
+  return await runGitSafeRaw(cwd, ["show", spec]);
 }
 
 function capVersion(text: string): { text: string; truncated: boolean } {
@@ -286,16 +250,9 @@ export async function listCommitChanges(cwd: string, commit: string): Promise<Fi
   return changes;
 }
 
-export async function revertFile(cwd: string, filePath: string): Promise<void> {
-  await git(cwd, ["restore", "--source=HEAD", "--", filePath]);
-}
-
-export async function stageFile(cwd: string, filePath: string): Promise<void> {
-  await git(cwd, ["add", "--", filePath]);
-}
-
-export async function unstageFile(cwd: string, filePath: string): Promise<void> {
-  await git(cwd, ["restore", "--staged", "--", filePath]);
+/** True when the repo has at least one commit (HEAD resolves); false on an unborn branch. */
+async function hasHead(cwd: string): Promise<boolean> {
+  return Boolean(await gitSafe(cwd, ["rev-parse", "--verify", "--quiet", "HEAD"]));
 }
 
 function assertSafeRelativePath(filePath: string): void {
@@ -316,6 +273,7 @@ function assertSafeRelativePath(filePath: string): void {
 
 export async function discardFile(cwd: string, filePath: string): Promise<void> {
   assertSafeRelativePath(filePath);
+  assertWritable(cwd);
   const change = (await listChanges(cwd)).find((item) => item.path === filePath);
   if (!change) {
     throw new Error(`No local change found for ${filePath}.`);
@@ -326,14 +284,24 @@ export async function discardFile(cwd: string, filePath: string): Promise<void> 
     );
   }
 
-  await git(cwd, ["restore", "--staged", "--worktree", "--", filePath]);
+  if (await hasHead(cwd)) {
+    await git(cwd, ["restore", "--staged", "--worktree", "--", filePath]);
+  } else {
+    // Unborn branch: no HEAD to restore to. The only changes possible are staged
+    // new files — unstage them (working contents kept), don't fail.
+    await git(cwd, ["rm", "--cached", "--quiet", "--", filePath]);
+  }
 }
 
-export async function stageAll(cwd: string): Promise<void> {
+/** Stage every working-tree change. Internal — `commitOrPush` always stages all
+ * before committing (there is no per-file staging UI). */
+async function stageAll(cwd: string): Promise<void> {
+  assertWritable(cwd);
   await git(cwd, ["add", "-A"]);
 }
 
-export async function commitChanges(cwd: string, message: string): Promise<string> {
+async function commitChanges(cwd: string, message: string): Promise<string> {
+  assertWritable(cwd);
   const trimmed = message.trim();
   if (!trimmed) {
     throw new Error("Commit message is required.");
@@ -342,7 +310,9 @@ export async function commitChanges(cwd: string, message: string): Promise<strin
   if (!stagedDiff.trim()) {
     throw new Error("No staged changes to commit.");
   }
-  return await git(cwd, ["commit", "-m", trimmed]);
+  // Run with the user's login-shell PATH so commit/commit-msg hooks can find
+  // user-installed binaries even in a packaged GUI build.
+  return await runGit(cwd, ["commit", "-m", trimmed], { hookPath: await resolveUserPath() });
 }
 
 /* ── Change stats (numstat summaries for the changes card / composer strip) ─ */
@@ -461,16 +431,6 @@ export async function getWorkingChangeStats(cwd: string): Promise<WorkingChangeS
   return await getChangeStatsSince(cwd, "HEAD");
 }
 
-function countDiffLines(diff: string): { added: number; removed: number } {
-  let added = 0;
-  let removed = 0;
-  for (const line of diff.split("\n")) {
-    if (line.startsWith("+") && !line.startsWith("+++")) added += 1;
-    else if (line.startsWith("-") && !line.startsWith("---")) removed += 1;
-  }
-  return { added, removed };
-}
-
 /**
  * Branch / remote / ahead-behind summary for the review panel.
  *
@@ -510,8 +470,9 @@ export async function getStatusSummary(cwd: string): Promise<GitStatusSummary> {
   const stagedCount = changes.filter((change) => change.staged).length;
   const unstagedCount = changes.filter((change) => change.unstaged || change.untracked).length;
 
-  const staged = countDiffLines(await gitSafe(cwd, ["diff", "--cached"]));
-  const unstaged = countDiffLines(await gitSafe(cwd, ["diff"]));
+  // added/removed reflect the WHOLE working tree (incl. untracked new files),
+  // so the commit dialog header matches the panel summary — one source of truth.
+  const working = await getWorkingChangeStats(cwd);
 
   return {
     ...(branch ? { branch } : {}),
@@ -519,8 +480,8 @@ export async function getStatusSummary(cwd: string): Promise<GitStatusSummary> {
     hasUpstream,
     ahead,
     behind,
-    added: staged.added + unstaged.added,
-    removed: staged.removed + unstaged.removed,
+    added: working.added,
+    removed: working.removed,
     stagedCount,
     unstagedCount,
   };
@@ -534,39 +495,39 @@ export async function getStatusSummary(cwd: string): Promise<GitStatusSummary> {
 export async function pushCurrentBranch(cwd: string): Promise<string> {
   const summary = await getStatusSummary(cwd);
   if (!summary.branch) {
-    throw new Error("Cannot push from a detached HEAD. Check out a branch first.");
+    throw new GitError("detached-head", messageForCode("detached-head"));
   }
   if (!summary.hasRemote) {
-    throw new Error("No git remote configured. Add a remote before pushing.");
+    throw new GitError("no-remote", messageForCode("no-remote"));
   }
 
   if (summary.hasUpstream) {
-    return await git(cwd, ["push"]);
+    return await runGit(cwd, ["push"], { hookPath: await resolveUserPath() });
   }
 
   const remotes = (await gitSafe(cwd, ["remote"])).split("\n").filter(Boolean);
   const remote = remotes.includes("origin") ? "origin" : (remotes[0] as string);
-  return await git(cwd, ["push", "--set-upstream", remote, summary.branch]);
+  return await runGit(cwd, ["push", "--set-upstream", remote, summary.branch], {
+    hookPath: await resolveUserPath(),
+  });
 }
 
 /**
- * High-level entry for the commit dialog. Optionally stages everything,
- * commits (when a message is given and staged changes exist), then optionally
- * pushes. Any sub-step may be a no-op so callers can request push-only,
- * commit-only, or commit-and-push from one place.
+ * High-level entry for the commit dialog. When committing, always stages the
+ * whole working tree first (there is no per-file staging UI), commits, then
+ * optionally pushes. Any sub-step may be a no-op so callers can request
+ * push-only, commit-only, or commit-and-push from one place.
  */
 export async function commitOrPush(
   cwd: string,
-  options: { message?: string; stageAll?: boolean; commit: boolean; push: boolean },
+  options: { message?: string; commit: boolean; push: boolean },
 ): Promise<GitCommitResult> {
   const outputs: string[] = [];
   let committed = false;
   let commitHash: string | undefined;
 
   if (options.commit) {
-    if (options.stageAll) {
-      await stageAll(cwd);
-    }
+    await stageAll(cwd);
     const message = options.message?.trim();
     if (!message) {
       throw new Error("Commit message is required.");
@@ -639,29 +600,6 @@ export async function listBranches(cwd: string): Promise<GitBranchSummary> {
   };
 }
 
-const BRANCH_NAME_PATTERN = /^[^\s~^:?*[\\]+$/;
-
-function assertSafeBranchName(name: string): string {
-  const trimmed = name.trim();
-  if (!trimmed) {
-    throw new Error("Branch name is required.");
-  }
-  // Reject characters git itself forbids in ref names up front, with a friendlier message.
-  if (
-    !BRANCH_NAME_PATTERN.test(trimmed) ||
-    trimmed.startsWith("-") ||
-    trimmed.startsWith(".") ||
-    trimmed.endsWith(".") ||
-    trimmed.endsWith(".lock") ||
-    trimmed.includes("..") ||
-    trimmed.includes("@{") ||
-    trimmed.includes("//")
-  ) {
-    throw new Error(`Invalid branch name: ${name}`);
-  }
-  return trimmed;
-}
-
 async function branchExistsLocally(cwd: string, name: string): Promise<boolean> {
   try {
     await git(cwd, ["show-ref", "--verify", `refs/heads/${name}`]);
@@ -691,49 +629,6 @@ export async function checkoutBranch(cwd: string, name: string, remote = false):
     return await git(cwd, ["switch", localName]);
   }
   return await git(cwd, ["switch", "--track", target]);
-}
-
-/** Create a new branch from the current HEAD and switch to it. */
-export async function createBranch(cwd: string, name: string): Promise<string> {
-  const safe = assertSafeBranchName(name);
-  return await git(cwd, ["switch", "--create", safe]);
-}
-
-/**
- * Fast-forward the current branch from its upstream. `--ff-only` keeps the
- * action predictable in a GUI: no surprise merge commits, no editor, no
- * half-finished merge state — it errors cleanly when a plain pull would diverge.
- */
-export async function pullCurrentBranch(cwd: string): Promise<string> {
-  const summary = await getStatusSummary(cwd);
-  if (!summary.branch) {
-    throw new Error("Cannot pull from a detached HEAD. Check out a branch first.");
-  }
-  if (!summary.hasUpstream) {
-    throw new Error("Current branch has no upstream to pull from.");
-  }
-  return await git(cwd, ["pull", "--ff-only"]);
-}
-
-/** Fetch all remotes and prune deleted remote-tracking refs. */
-export async function fetchAll(cwd: string): Promise<string> {
-  if (!(await gitSafe(cwd, ["remote"])).trim()) {
-    throw new Error("No git remote configured.");
-  }
-  // stderr carries fetch progress; return it so the toast shows what changed.
-  const { stdout, stderr } = await execFileAsync("git", ["fetch", "--all", "--prune"], {
-    cwd,
-    windowsHide: true,
-    maxBuffer: 1024 * 1024 * 20,
-    env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0" },
-  }).catch((error: unknown) => {
-    const message =
-      typeof error === "object" && error !== null && "stderr" in error
-        ? String((error as { stderr?: unknown }).stderr ?? "").trim()
-        : "";
-    throw new Error(message || "git fetch failed");
-  });
-  return `${stdout}${stderr}`.trim();
 }
 
 /* ── Agent checkpoints ───────────────────────────────────────────────────

@@ -1,13 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FileChange } from "../../../../shared/contracts";
-import {
-  CHANGE_SCOPES,
-  changeBadge,
-  filterByScope,
-  SCOPE_META,
-  splitPath,
-  stageState,
-} from "./changeScopes";
+import { CHANGE_SCOPES, changeBadge, filterByScope, SCOPE_META, splitPath } from "./changeScopes";
 
 /** Build a synthetic change; only the fields under test are overridden. */
 function change(over: Partial<FileChange> & { path: string; status: string }): FileChange {
@@ -35,22 +28,6 @@ describe("changeScopes", () => {
     ]);
   });
 
-  it("staged scope shows files with any staged content (incl. partial + rename)", () => {
-    expect(filterByScope(tree, "staged").map((c) => c.path)).toEqual([
-      "staged-only.ts",
-      "partial.ts",
-      "renamed.ts",
-    ]);
-  });
-
-  it("unstaged scope shows unstaged + untracked (incl. partial)", () => {
-    expect(filterByScope(tree, "unstaged").map((c) => c.path)).toEqual([
-      "unstaged-only.ts",
-      "partial.ts",
-      "fresh.ts",
-    ]);
-  });
-
   it("history scope is not a working-tree filter", () => {
     expect(filterByScope(tree, "all-commits")).toEqual([]);
     expect(SCOPE_META["all-commits"].commitHistory).toBe(true);
@@ -61,15 +38,6 @@ describe("changeScopes", () => {
       expect(SCOPE_META[scope].label).toBeTruthy();
       expect(SCOPE_META[scope].noun).toBeTruthy();
     }
-  });
-
-  it("derives tri-state staging from independent git flags", () => {
-    expect(stageState(change({ path: "a", status: "M", staged: true }))).toBe("staged");
-    expect(stageState(change({ path: "b", status: "M", unstaged: true }))).toBe("unstaged");
-    expect(stageState(change({ path: "c", status: "??", untracked: true }))).toBe("unstaged");
-    expect(stageState(change({ path: "d", status: "MM", staged: true, unstaged: true }))).toBe(
-      "partial",
-    );
   });
 
   it("classifies the badge from the status code, not the file name", () => {

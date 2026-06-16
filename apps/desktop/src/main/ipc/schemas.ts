@@ -237,16 +237,10 @@ export const gitLogSchema = z.object({
   limit: z.number().int().positive().max(500).optional(),
 });
 
-export const diffCommitSchema = z.object({
-  cwd: nonEmptyString,
-  message: nonEmptyString,
-});
-
 export const diffCommitOrPushSchema = z
   .object({
     cwd: nonEmptyString,
     message: optionalNonEmptyString,
-    stageAll: z.boolean().optional(),
     commit: z.boolean(),
     push: z.boolean(),
   })
@@ -261,11 +255,6 @@ export const gitCheckoutSchema = z.object({
   cwd: nonEmptyString,
   name: nonEmptyString,
   remote: z.boolean().optional(),
-});
-
-export const gitCreateBranchSchema = z.object({
-  cwd: nonEmptyString,
-  name: nonEmptyString,
 });
 
 export const permissionDecideSchema = z.object({

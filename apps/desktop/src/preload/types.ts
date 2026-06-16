@@ -26,6 +26,7 @@ import type {
   FileReadResult,
   GitActionResult,
   GitBranchSummary,
+  GitChangeEvent,
   GitCommit,
   GitCommitResult,
   GitStatusSummary,
@@ -222,19 +223,13 @@ export type ModusApi = {
     }): Promise<DiffFileVersions>;
     /** Files touched by a single commit (All commits scope). */
     commitChanges(input: { cwd: string; commit: string }): Promise<FileChange[]>;
-    revert(input: { cwd: string; path: string }): Promise<void>;
-    stage(input: { cwd: string; path: string }): Promise<void>;
-    unstage(input: { cwd: string; path: string }): Promise<void>;
     discard(input: { cwd: string; path: string }): Promise<void>;
-    commit(input: { cwd: string; message: string }): Promise<string>;
     status(cwd: string): Promise<GitStatusSummary>;
     /** File list + ± line counters for the changes strip / apply review. */
     stats(cwd: string): Promise<WorkingChangeStats>;
-    stageAll(cwd: string): Promise<void>;
     commitOrPush(input: {
       cwd: string;
       message?: string;
-      stageAll?: boolean;
       commit: boolean;
       push: boolean;
     }): Promise<GitCommitResult>;
@@ -246,11 +241,14 @@ export type ModusApi = {
   git: {
     branches(cwd: string): Promise<GitBranchSummary>;
     checkout(input: { cwd: string; name: string; remote?: boolean }): Promise<GitActionResult>;
-    createBranch(input: { cwd: string; name: string }): Promise<GitActionResult>;
-    pull(cwd: string): Promise<GitActionResult>;
-    fetch(cwd: string): Promise<GitActionResult>;
     /** Recent commit history for the Source Control "All commits" scope. */
     log(input: { cwd: string; limit?: number }): Promise<GitCommit[]>;
+    /** Start live-watching the repo containing cwd (ref-counted). */
+    watch(cwd: string): Promise<string | undefined>;
+    /** Stop live-watching (ref-counted). */
+    unwatch(cwd: string): Promise<void>;
+    /** Subscribe to debounced repository-change events. Returns an unsubscribe fn. */
+    onChanged(callback: (event: GitChangeEvent) => void): () => void;
   };
   permission: {
     decide(input: {

@@ -490,6 +490,17 @@ export type GitActionResult = {
 };
 
 /**
+ * Broadcast when a watched repository changes on disk (commit, stage, branch
+ * switch, fetch, or a working-tree edit). Drives live refresh of the Changes
+ * panel + commit dialog. `kind` is the most-specific area that changed in the
+ * debounced burst, so the renderer can refresh narrowly if it wants.
+ */
+export type GitChangeEvent = {
+  cwd: string;
+  kind: "working" | "index" | "head" | "refs" | "remote-refs" | "config" | "lock";
+};
+
+/**
  * One commit in the Source Control "All commits" scope. Files are fetched
  * lazily per commit (on expand) via `diff.commitChanges`, mirroring how the
  * working tree loads file versions on demand — keeps the log payload bounded.

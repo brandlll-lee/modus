@@ -1,18 +1,18 @@
 import { Menu } from "@base-ui/react/menu";
 import {
+  IconAlertTriangle,
   IconCheck,
   IconChevronDown,
   IconChevronRight,
   IconCopy,
-  IconDeviceDesktop,
   IconDots,
   IconFileDiff,
   IconFolder,
+  IconGitBranch,
   IconGitCommit,
-  IconGitPullRequest,
   IconList,
   IconListTree,
-  IconMinus,
+  IconLoader2,
   IconRefresh,
   IconReportSearch,
   IconRotateClockwise,
@@ -21,6 +21,8 @@ import { memo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState
 import type {
   FileChange,
   FileChangeStat,
+  GitBranchSummary,
+  GitChangeEvent,
   GitCommit,
   GitStatusSummary,
 } from "../../../../shared/contracts";
@@ -37,9 +39,7 @@ import {
   changeBadge,
   filterByScope,
   SCOPE_META,
-  type StageState,
   splitPath,
-  stageState,
 } from "./changeScopes";
 import { FileDiffPreview } from "./FileDiffPreview";
 import { iconForPath } from "./fileIcon";
@@ -93,6 +93,8 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
   const [commitFiles, setCommitFiles] = useState<Record<string, FileChange[]>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [expandedCommits, setExpandedCommits] = useState<Set<string>>(new Set());
+  // Surfaces a failed stage/unstage/discard/revert so it is never a silent no-op.
+  const [actionError, setActionError] = useState<string | undefined>();
   const [refreshToken, setRefreshToken] = useState(0);
 
   const refresh = useCallback(async (targetCwd: string | undefined): Promise<void> => {
@@ -126,10 +128,36 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
     void refresh(cwd);
   }, [cwd, refresh]);
 
+  // Live refresh: watch the repo and refresh on debounced on-disk changes
+  // (agent edits, terminal commits, external git ops) — no manual refresh.
+  useEffect(() => {
+    if (!cwd) return;
+    let watchedRoot: string | undefined;
+    void window.modus.git.watch(cwd).then((root: string | undefined) => {
+      watchedRoot = root ?? undefined;
+    });
+    const off = window.modus.git.onChanged((event: GitChangeEvent) => {
+      if (!watchedRoot || event.cwd === watchedRoot) {
+        void refresh(cwd);
+      }
+    });
+    return () => {
+      off();
+      void window.modus.git.unwatch(cwd);
+    };
+  }, [cwd, refresh]);
+
   const meta = SCOPE_META[scope];
   const scopeFiles = useMemo(
     () => (meta.commitHistory ? [] : filterByScope(changes, scope)),
     [changes, scope, meta.commitHistory],
+  );
+
+  // Build the tree once per change set — not on every expand/collapse (which
+  // only flips a Set in state and would otherwise re-run this in render).
+  const changeTree = useMemo(
+    () => (treeView && !meta.commitHistory ? buildChangeTree(scopeFiles) : []),
+    [treeView, meta.commitHistory, scopeFiles],
   );
 
   const totals = useMemo(
@@ -147,49 +175,37 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
     [scopeFiles, statsByPath],
   );
 
-  const stageAllState: StageState = useMemo(() => {
-    if (scopeFiles.length === 0) return "unstaged";
-    const states = scopeFiles.map(stageState);
-    if (states.every((s) => s === "staged")) return "staged";
-    if (states.every((s) => s === "unstaged")) return "unstaged";
-    return "partial";
-  }, [scopeFiles]);
-
   const count = meta.commitHistory ? commits.length : scopeFiles.length;
 
-  async function runChangeAction(
-    action: "stage" | "unstage" | "discard",
-    path: string,
-  ): Promise<void> {
-    if (!cwd) return;
-    if (action === "stage") await window.modus.diff.stage({ cwd, path });
-    if (action === "unstage") await window.modus.diff.unstage({ cwd, path });
-    if (action === "discard") await window.modus.diff.discard({ cwd, path });
-    await refresh(cwd);
-  }
+  const discardChange = useCallback(
+    async (path: string): Promise<void> => {
+      if (!cwd) return;
+      setActionError(undefined);
+      try {
+        await window.modus.diff.discard({ cwd, path });
+      } catch (cause) {
+        setActionError(cause instanceof Error ? cause.message : String(cause));
+      } finally {
+        await refresh(cwd);
+      }
+    },
+    [cwd, refresh],
+  );
 
-  async function toggleStageAll(): Promise<void> {
-    if (!cwd || scopeFiles.length === 0) return;
-    const shouldStage = stageAllState !== "staged";
-    await Promise.all(
-      scopeFiles.map((change) =>
-        shouldStage
-          ? window.modus.diff.stage({ cwd, path: change.path })
-          : window.modus.diff.unstage({ cwd, path: change.path }),
-      ),
-    );
-    await refresh(cwd);
-  }
-
-  async function revertAll(): Promise<void> {
-    if (!cwd) return;
-    // Revert only tracked files; untracked have nothing in HEAD to restore to.
-    const revertable = scopeFiles.filter((change) => !change.untracked);
-    await Promise.all(
-      revertable.map((change) => window.modus.diff.discard({ cwd, path: change.path })),
-    );
-    await refresh(cwd);
-  }
+  const switchBranch = useCallback(
+    async (name: string): Promise<void> => {
+      if (!cwd) return;
+      setActionError(undefined);
+      try {
+        await window.modus.git.checkout({ cwd, name });
+      } catch (cause) {
+        setActionError(cause instanceof Error ? cause.message : String(cause));
+      } finally {
+        await refresh(cwd);
+      }
+    },
+    [cwd, refresh],
+  );
 
   async function toggleCommit(hash: string): Promise<void> {
     setExpandedCommits((prev) => toggleKey(prev, hash));
@@ -247,6 +263,7 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
               branch={status?.branch}
               cwd={cwd}
               onRefresh={onCommitRefresh}
+              onSwitchBranch={switchBranch}
               onToggleTree={() => setTreeView(!treeView)}
               status={status}
               treeView={treeView}
@@ -270,15 +287,22 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
               added={totals.added}
               count={count}
               noun={meta.noun}
-              onRevertAll={() => void revertAll()}
               onScope={setScope}
-              onToggleStageAll={() => void toggleStageAll()}
               removed={totals.removed}
               scope={scope}
-              showStaging={!meta.commitHistory}
               showStats={!meta.commitHistory}
-              stageAllState={stageAllState}
             />
+            {actionError ? (
+              <button
+                className="flex w-full items-start gap-2 border-hairline-soft border-b bg-danger/8 px-3 py-2 text-left text-danger text-xs"
+                onClick={() => setActionError(undefined)}
+                title="Dismiss"
+                type="button"
+              >
+                <IconAlertTriangle className="mt-0.5 shrink-0" size={13} stroke={1.8} />
+                <span className="min-w-0 flex-1 wrap-break-word">{actionError}</span>
+              </button>
+            ) : null}
           </>
         ) : null}
 
@@ -316,8 +340,8 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
             depth={0}
             expanded={expanded}
             ignoreWhitespace={ignoreWhitespace}
-            nodes={buildChangeTree(scopeFiles)}
-            onAction={runChangeAction}
+            nodes={changeTree}
+            onDiscard={discardChange}
             onToggleFile={toggleFile}
             refreshToken={refreshToken}
             sideBySide={sideBySide}
@@ -332,11 +356,11 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
               expanded={expanded.has(change.path)}
               ignoreWhitespace={ignoreWhitespace}
               key={`${change.status}:${change.path}`}
-              onAction={runChangeAction}
-              onToggle={() => toggleFile(change.path)}
+              onDiscard={discardChange}
+              onToggle={toggleFile}
               refreshToken={refreshToken}
+              rowKey={change.path}
               sideBySide={sideBySide}
-              stageable
               stat={statsByPath.get(change.path)}
             />
           ))
@@ -362,7 +386,7 @@ function toggleKey(set: Set<string>, key: string): Set<string> {
   return next;
 }
 
-/* ── Row 1: comparison context (≡ list/tree · Local {branch}) + commit + ⋯ ── */
+/* ── Row 1: list/tree toggle · branch switcher · Commit or push · ⋯ ── */
 
 function ComparisonBar({
   branch,
@@ -371,6 +395,7 @@ function ComparisonBar({
   treeView,
   onToggleTree,
   onRefresh,
+  onSwitchBranch,
   children,
 }: {
   branch: string | undefined;
@@ -379,6 +404,7 @@ function ComparisonBar({
   treeView: boolean;
   onToggleTree(): void;
   onRefresh(): void;
+  onSwitchBranch(name: string): void;
   children: ReactNode;
 }) {
   return (
@@ -394,7 +420,7 @@ function ComparisonBar({
           {treeView ? <IconListTree size={15} stroke={1.7} /> : <IconList size={15} stroke={1.7} />}
         </button>
       </Tooltip>
-      <SourceMenu branch={branch} cwd={cwd} />
+      <BranchMenu branch={branch} cwd={cwd} onSwitch={onSwitchBranch} />
       <div className="ml-auto flex shrink-0 items-center gap-1">
         <CommitLauncher cwd={cwd} onRefresh={onRefresh} status={status} />
         {children}
@@ -404,44 +430,74 @@ function ComparisonBar({
 }
 
 /**
- * The comparison-source switcher (Cursor's "Local main" control). Opens a menu
- * to switch between local changes and pull requests. PR review needs a forge
- * provider Modus doesn't integrate yet, so that path is shown disabled-with-
- * reason rather than faked — the Local source is the live, working option.
+ * Branch viewer + switcher. Lists local branches lazily on open; clicking a
+ * branch checks it out (the panel then refreshes to that branch's changes).
  */
-function SourceMenu({ branch, cwd }: { branch: string | undefined; cwd: string }) {
+function BranchMenu({
+  branch,
+  cwd,
+  onSwitch,
+}: {
+  branch: string | undefined;
+  cwd: string;
+  onSwitch(name: string): void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [branches, setBranches] = useState<GitBranchSummary | undefined>();
+  const [busy, setBusy] = useState<string | undefined>();
+
+  useEffect(() => {
+    if (!open) return;
+    setBranches(undefined);
+    void window.modus.git
+      .branches(cwd)
+      .then(setBranches)
+      .catch(() => setBranches({ local: [], remote: [] }));
+  }, [open, cwd]);
+
   const label = branch ?? "detached";
+  const locals = branches?.local ?? [];
+
   return (
-    <Menu.Root>
-      <Menu.Trigger
-        className="flex min-w-0 items-center gap-1.5 rounded-md py-0.5 pr-1.5 pl-0.5 text-sm outline-none transition-colors hover:bg-hover data-popup-open:bg-hover"
-        title={`Switch between local changes and PRs — ${cwd}`}
-      >
-        <span className="flex items-center gap-1 rounded-md bg-chip px-1.5 py-0.5 text-fg-subtle">
-          <IconDeviceDesktop size={13} stroke={1.7} />
-          <span className="text-xs">Local</span>
-        </span>
-        <span className="max-w-[120px] truncate text-fg-muted">{label}</span>
+    <Menu.Root onOpenChange={setOpen} open={open}>
+      <Menu.Trigger className="flex min-w-0 items-center gap-1.5 rounded-md py-0.5 pr-1.5 pl-1 text-sm outline-none transition-colors hover:bg-hover data-popup-open:bg-hover">
+        <IconGitBranch className="shrink-0 text-fg-subtle" size={13} stroke={1.7} />
+        <span className="max-w-[160px] truncate text-fg-muted">{label}</span>
         <IconChevronDown className="shrink-0 text-fg-faint" size={12} stroke={1.8} />
       </Menu.Trigger>
       <Menu.Portal>
         <Menu.Positioner align="start" side="bottom" sideOffset={6}>
-          <Menu.Popup className="origin-(--transform-origin) min-w-[240px] rounded-lg border border-hairline bg-elevated p-1 shadow-popup">
-            <Menu.Item className="flex cursor-default items-center gap-2.5 rounded-md px-2.5 py-1.5 text-fg text-sm outline-none select-none data-highlighted:bg-hover">
-              <IconDeviceDesktop className="shrink-0 text-fg-subtle" size={15} stroke={1.7} />
-              <span className="flex-1 truncate">
-                Local <span className="font-medium">{label}</span>
-              </span>
-              <IconCheck className="shrink-0 text-accent" size={14} stroke={2} />
-            </Menu.Item>
-            <Menu.Item
-              className="flex cursor-default items-center gap-2.5 rounded-md px-2.5 py-1.5 text-fg-faint text-sm outline-none select-none data-disabled:opacity-100"
-              disabled
-            >
-              <IconGitPullRequest className="shrink-0" size={15} stroke={1.7} />
-              <span className="flex-1">Pull Requests</span>
-              <span className="text-2xs text-fg-faint">soon</span>
-            </Menu.Item>
+          <Menu.Popup className="scroll-thin origin-(--transform-origin) max-h-[320px] min-w-[240px] overflow-y-auto rounded-lg border border-hairline bg-elevated p-1 shadow-popup">
+            {locals.length === 0 ? (
+              <div className="px-2.5 py-3 text-center text-2xs text-fg-faint">
+                {branches ? "No branches" : "Loading…"}
+              </div>
+            ) : (
+              locals.map((b) => (
+                <Menu.Item
+                  className="flex cursor-default items-center gap-2 rounded-md px-2.5 py-1.5 text-fg text-sm outline-none transition-colors select-none data-highlighted:bg-hover"
+                  closeOnClick={!b.current}
+                  key={b.name}
+                  onClick={() => {
+                    if (b.current) return;
+                    setBusy(b.name);
+                    onSwitch(b.name);
+                  }}
+                >
+                  <span className="flex size-4 shrink-0 items-center justify-center text-accent">
+                    {busy === b.name ? (
+                      <IconLoader2 className="animate-spin" size={13} stroke={1.8} />
+                    ) : b.current ? (
+                      <IconCheck size={14} stroke={2} />
+                    ) : null}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate">{b.name}</span>
+                  {b.current ? (
+                    <span className="shrink-0 text-2xs text-fg-faint">current</span>
+                  ) : null}
+                </Menu.Item>
+              ))
+            )}
           </Menu.Popup>
         </Menu.Positioner>
       </Menu.Portal>
@@ -631,7 +687,7 @@ function MenuChoice({
   );
 }
 
-/* ── Row 2: "{N} {Noun} Changes ⌄ +X -Y" + revert-all + stage-all checkbox ── */
+/* ── Row 2: "{N} {Noun} Changes ⌄ +X -Y" (scope switch + counts) ── */
 
 function SummaryRow({
   scope,
@@ -640,11 +696,7 @@ function SummaryRow({
   added,
   removed,
   showStats,
-  showStaging,
-  stageAllState,
   onScope,
-  onRevertAll,
-  onToggleStageAll,
 }: {
   scope: ChangeScope;
   noun: string;
@@ -652,11 +704,7 @@ function SummaryRow({
   added: number;
   removed: number;
   showStats: boolean;
-  showStaging: boolean;
-  stageAllState: StageState;
   onScope(scope: ChangeScope): void;
-  onRevertAll(): void;
-  onToggleStageAll(): void;
 }) {
   const label = noun === "Commit" ? (count === 1 ? "Commit" : "Commits") : `${noun} Changes`;
   return (
@@ -686,89 +734,22 @@ function SummaryRow({
           <span className="text-danger">-{removed}</span>
         </span>
       ) : null}
-
-      {showStaging ? (
-        <div className="ml-auto flex shrink-0 items-center gap-1">
-          <Tooltip content="Revert all changes" side="bottom" sideOffset={6}>
-            <button
-              aria-label="Revert all changes"
-              className="flex size-6 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-hover hover:text-fg-subtle disabled:opacity-30"
-              disabled={count === 0}
-              onClick={onRevertAll}
-              type="button"
-            >
-              <IconRotateClockwise size={14} stroke={1.7} />
-            </button>
-          </Tooltip>
-          <Tooltip
-            content={stageAllState === "staged" ? "Unstage all" : "Stage all"}
-            side="bottom"
-            sideOffset={6}
-          >
-            <span>
-              <StageCheckbox
-                disabled={count === 0}
-                onToggle={onToggleStageAll}
-                state={stageAllState}
-              />
-            </span>
-          </Tooltip>
-        </div>
-      ) : null}
     </div>
   );
 }
 
-/** Tri-state staging control: checked (all staged) · dash (partial) · empty. */
-function StageCheckbox({
-  state,
-  onToggle,
-  disabled,
-}: {
-  state: StageState;
-  onToggle(): void;
-  disabled?: boolean;
-}) {
-  return (
-    <button
-      aria-label="Stage"
-      aria-pressed={state === "staged" ? true : state === "partial" ? "mixed" : false}
-      className={cn(
-        "flex size-[15px] items-center justify-center rounded-[4px] border transition-colors disabled:opacity-30",
-        state === "unstaged"
-          ? "border-hairline-strong text-transparent hover:border-fg-faint"
-          : "border-accent bg-accent text-white",
-      )}
-      disabled={disabled}
-      onClick={(event) => {
-        event.stopPropagation();
-        onToggle();
-      }}
-      type="button"
-    >
-      {state === "staged" ? (
-        <IconCheck size={11} stroke={2.6} />
-      ) : state === "partial" ? (
-        <IconMinus size={11} stroke={2.6} />
-      ) : null}
-    </button>
-  );
-}
+/* ── File row: icon · path · badge/±  · hover copy + discard ── */
 
-/* ── File row (Figure 2/6): icon · path · badge/±  ·hover copy + revert ── */
-
-type RunChangeAction = (action: "stage" | "unstage" | "discard", path: string) => Promise<void>;
-
-function ChangeRow({
+const ChangeRow = memo(function ChangeRow({
   change,
   cwd,
   display,
   depth = 0,
   expanded,
+  rowKey,
   onToggle,
-  onAction,
+  onDiscard,
   stat,
-  stageable,
   commit,
   sideBySide,
   ignoreWhitespace,
@@ -780,10 +761,12 @@ function ChangeRow({
   display: "full" | "name";
   depth?: number;
   expanded: boolean;
-  onToggle(): void;
-  onAction?: RunChangeAction;
+  /** Stable expand key: the path, or `${hash}:${path}` under a commit. */
+  rowKey: string;
+  onToggle(key: string): void;
+  /** Discard a working-tree change. Absent for commit-history rows (read-only). */
+  onDiscard?: (path: string) => void;
   stat?: LineStat | undefined;
-  stageable: boolean;
   commit?: string | undefined;
   sideBySide: boolean;
   ignoreWhitespace: boolean;
@@ -791,7 +774,13 @@ function ChangeRow({
 }) {
   const { dir, name } = splitPath(change.path);
   const badge = changeBadge(change);
-  const state = stageState(change);
+  // Defer mounting the heavy Monaco body until the expand animation finishes —
+  // otherwise the height animation re-lays-out a still-mounting editor every
+  // frame. Resets when the row collapses so the next open re-defers.
+  const [bodyReady, setBodyReady] = useState(false);
+  useEffect(() => {
+    if (!expanded) setBodyReady(false);
+  }, [expanded]);
 
   return (
     <div className="border-hairline-soft border-b">
@@ -804,7 +793,7 @@ function ChangeRow({
       >
         <button
           className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
-          onClick={onToggle}
+          onClick={() => onToggle(rowKey)}
           type="button"
         >
           <span className="flex size-4 shrink-0 items-center justify-center text-fg-faint">
@@ -831,17 +820,17 @@ function ChangeRow({
           >
             <IconCopy size={13} stroke={1.7} />
           </IconBtn>
-          {stageable && onAction ? (
+          {onDiscard ? (
             <Tooltip
-              content={change.untracked ? "New file — delete manually" : "Revert file"}
+              content={change.untracked ? "New file — delete manually" : "Discard changes"}
               side="bottom"
               sideOffset={6}
             >
               <span>
                 <IconBtn
                   disabled={Boolean(change.untracked)}
-                  label="Revert file"
-                  onClick={() => void onAction("discard", change.path)}
+                  label="Discard changes"
+                  onClick={() => onDiscard(change.path)}
                 >
                   <IconRotateClockwise size={13} stroke={1.7} />
                 </IconBtn>
@@ -849,24 +838,35 @@ function ChangeRow({
             </Tooltip>
           ) : null}
         </span>
-
-        {stageable && onAction ? (
-          <StageCheckbox
-            onToggle={() => void onAction(state === "staged" ? "unstage" : "stage", change.path)}
-            state={state}
-          />
-        ) : null}
       </div>
-      <CollapsibleMotion open={expanded} preset="default">
-        <FileDiffPreview
-          change={change}
-          commit={commit}
-          cwd={cwd}
-          ignoreWhitespace={ignoreWhitespace}
-          refreshToken={refreshToken}
-          sideBySide={sideBySide}
-        />
+      <CollapsibleMotion
+        onOpenAnimationComplete={() => setBodyReady(true)}
+        open={expanded}
+        preset="default"
+      >
+        {bodyReady ? (
+          <FileDiffPreview
+            change={change}
+            commit={commit}
+            cwd={cwd}
+            ignoreWhitespace={ignoreWhitespace}
+            refreshToken={refreshToken}
+            sideBySide={sideBySide}
+          />
+        ) : (
+          <DiffBodyPlaceholder />
+        )}
       </CollapsibleMotion>
+    </div>
+  );
+});
+
+/** Fixed-height placeholder shown while the row expands, before the (heavy)
+ * Monaco diff is mounted — keeps the open animation cheap and smooth. */
+function DiffBodyPlaceholder() {
+  return (
+    <div className="flex h-[120px] items-center justify-center border-hairline-soft border-t text-fg-faint text-xs">
+      Loading diff…
     </div>
   );
 }
@@ -963,10 +963,10 @@ function CommitRow({
                 expanded={expandedFiles.has(key)}
                 ignoreWhitespace={ignoreWhitespace}
                 key={key}
-                onToggle={() => onToggleFile(key)}
+                onToggle={onToggleFile}
                 refreshToken={refreshToken}
+                rowKey={key}
                 sideBySide={sideBySide}
-                stageable={false}
               />
             );
           })
@@ -984,7 +984,7 @@ function TreeRows({
   depth,
   expanded,
   onToggleFile,
-  onAction,
+  onDiscard,
   statsByPath,
   sideBySide,
   ignoreWhitespace,
@@ -995,7 +995,7 @@ function TreeRows({
   depth: number;
   expanded: Set<string>;
   onToggleFile(key: string): void;
-  onAction: RunChangeAction;
+  onDiscard(path: string): void;
   statsByPath: Map<string, LineStat>;
   sideBySide: boolean;
   ignoreWhitespace: boolean;
@@ -1012,7 +1012,7 @@ function TreeRows({
             ignoreWhitespace={ignoreWhitespace}
             key={`dir:${node.path}`}
             node={node}
-            onAction={onAction}
+            onDiscard={onDiscard}
             onToggleFile={onToggleFile}
             refreshToken={refreshToken}
             sideBySide={sideBySide}
@@ -1027,11 +1027,11 @@ function TreeRows({
             expanded={expanded.has(node.change.path)}
             ignoreWhitespace={ignoreWhitespace}
             key={`${node.change.status}:${node.change.path}`}
-            onAction={onAction}
-            onToggle={() => onToggleFile(node.change.path)}
+            onDiscard={onDiscard}
+            onToggle={onToggleFile}
             refreshToken={refreshToken}
+            rowKey={node.change.path}
             sideBySide={sideBySide}
-            stageable
             stat={statsByPath.get(node.change.path)}
           />
         ),
@@ -1046,7 +1046,7 @@ function TreeFolder({
   depth,
   expanded,
   onToggleFile,
-  onAction,
+  onDiscard,
   statsByPath,
   sideBySide,
   ignoreWhitespace,
@@ -1057,7 +1057,7 @@ function TreeFolder({
   depth: number;
   expanded: Set<string>;
   onToggleFile(key: string): void;
-  onAction: RunChangeAction;
+  onDiscard(path: string): void;
   statsByPath: Map<string, LineStat>;
   sideBySide: boolean;
   ignoreWhitespace: boolean;
@@ -1089,7 +1089,7 @@ function TreeFolder({
           expanded={expanded}
           ignoreWhitespace={ignoreWhitespace}
           nodes={node.children}
-          onAction={onAction}
+          onDiscard={onDiscard}
           onToggleFile={onToggleFile}
           refreshToken={refreshToken}
           sideBySide={sideBySide}

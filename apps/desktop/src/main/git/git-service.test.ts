@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  commitChanges,
   commitOrPush,
   discardFile,
   getStatusSummary,
@@ -14,8 +13,6 @@ import {
   listCommitLog,
   readDiff,
   readFileVersions,
-  stageFile,
-  unstageFile,
 } from "./git-service";
 
 const execFileAsync = promisify(execFile);
@@ -44,7 +41,7 @@ describe("git-service", () => {
   it("lists staged, unstaged, and untracked changes", async () => {
     await writeFile(join(repo, "tracked.txt"), "changed\n");
     await writeFile(join(repo, "new.txt"), "new\n");
-    await stageFile(repo, "tracked.txt");
+    await git(["add", "tracked.txt"]);
 
     const changes = await listChanges(repo);
 
@@ -52,26 +49,11 @@ describe("git-service", () => {
     expect(changes.find((change) => change.path === "new.txt")?.untracked).toBe(true);
   });
 
-  it("stages, unstages, and reads staged diff", async () => {
+  it("reads a staged diff", async () => {
     await writeFile(join(repo, "tracked.txt"), "changed\n");
-    await stageFile(repo, "tracked.txt");
+    await git(["add", "tracked.txt"]);
+
     expect((await readDiff(repo, "tracked.txt", "staged")).diff).toContain("+changed");
-
-    await unstageFile(repo, "tracked.txt");
-    expect((await readDiff(repo, "tracked.txt", "staged")).diff).toBe("");
-  });
-
-  it("rejects commits without staged changes", async () => {
-    await expect(commitChanges(repo, "no changes")).rejects.toThrow("No staged changes");
-  });
-
-  it("commits staged changes", async () => {
-    await writeFile(join(repo, "tracked.txt"), "changed\n");
-    await stageFile(repo, "tracked.txt");
-
-    await commitChanges(repo, "update tracked");
-
-    expect(await listChanges(repo)).toEqual([]);
   });
 
   it("disables untracked discard", async () => {
@@ -90,7 +72,7 @@ describe("git-service", () => {
 
   it("summarizes branch, counts, and stat without an upstream", async () => {
     await writeFile(join(repo, "tracked.txt"), "changed\n");
-    await stageFile(repo, "tracked.txt");
+    await git(["add", "tracked.txt"]);
     await writeFile(join(repo, "new.txt"), "new\n");
 
     const summary = await getStatusSummary(repo);
@@ -102,13 +84,18 @@ describe("git-service", () => {
     expect(summary.added).toBeGreaterThan(0);
   });
 
+  it("rejects commitOrPush with nothing to commit", async () => {
+    await expect(
+      commitOrPush(repo, { message: "no changes", commit: true, push: false }),
+    ).rejects.toThrow("No staged changes");
+  });
+
   it("stages all and commits via commitOrPush", async () => {
     await writeFile(join(repo, "tracked.txt"), "changed\n");
     await writeFile(join(repo, "new.txt"), "new\n");
 
     const result = await commitOrPush(repo, {
       message: "commit everything",
-      stageAll: true,
       commit: true,
       push: false,
     });
@@ -128,7 +115,6 @@ describe("git-service", () => {
       await writeFile(join(repo, "tracked.txt"), "changed\n");
       const result = await commitOrPush(repo, {
         message: "push me",
-        stageAll: true,
         commit: true,
         push: true,
       });
@@ -208,5 +194,25 @@ describe("git-service", () => {
 
     expect(versions.original).toBe("base\n");
     expect(versions.modified).toBe("second\n");
+  });
+
+  it("discards a staged new file on an unborn branch (no commits yet)", async () => {
+    // A brand-new repo with NO initial commit — `git restore` would fail here
+    // (no HEAD), which was the silent "discard does nothing" bug.
+    const fresh = await mkdtemp(join(process.cwd(), "modus-git-unborn-"));
+    try {
+      await execFileAsync("git", ["init"], { cwd: fresh, windowsHide: true });
+      await execFileAsync("git", ["config", "user.email", "t@e.com"], { cwd: fresh });
+      await execFileAsync("git", ["config", "user.name", "T"], { cwd: fresh });
+      await writeFile(join(fresh, "new.txt"), "hello\n");
+      await execFileAsync("git", ["add", "new.txt"], { cwd: fresh, windowsHide: true });
+
+      await discardFile(fresh, "new.txt"); // must not throw on unborn HEAD
+      const after = (await listChanges(fresh)).find((c) => c.path === "new.txt");
+      expect(after?.staged).toBe(false);
+      expect(after?.untracked).toBe(true);
+    } finally {
+      await rm(fresh, { recursive: true, force: true });
+    }
   });
 });
