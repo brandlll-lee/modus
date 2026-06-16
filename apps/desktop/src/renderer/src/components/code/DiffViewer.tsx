@@ -163,19 +163,36 @@ export function DiffViewer({
       disposeTheme = watchModusTheme(monaco);
 
       if (autoHeight) {
-        // Size to the collapsed diff: take the taller of the two panes' content
-        // heights (hideUnchangedRegions already shrinks them), clamp to maxHeight.
+        // Size to the collapsed diff. Measuring on every content-size tick
+        // caused a setState storm during tokenization (each re-render relays
+        // out Monaco, which fires another tick). Instead: measure once the diff
+        // is computed, and debounce any later size changes (e.g. the user
+        // expanding a hidden region) so we settle without thrashing.
+        let raf = 0;
+        let debounce: ReturnType<typeof setTimeout> | undefined;
         const measure = (): void => {
           const modifiedHeight = editor.getModifiedEditor().getContentHeight();
           const originalHeight = editor.getOriginalEditor().getContentHeight();
           const next = Math.min(maxHeight, Math.max(modifiedHeight, originalHeight) + 2);
           if (next > 0) setContentHeight(next);
         };
-        measure();
+        const measureSoon = (): void => {
+          cancelAnimationFrame(raf);
+          raf = requestAnimationFrame(measure);
+        };
+        const measureDebounced = (): void => {
+          if (debounce) clearTimeout(debounce);
+          debounce = setTimeout(measureSoon, 120);
+        };
         measureDisposers.push(
-          editor.getModifiedEditor().onDidContentSizeChange(measure),
-          editor.getOriginalEditor().onDidContentSizeChange(measure),
-          editor.onDidUpdateDiff(measure),
+          editor.onDidUpdateDiff(measureSoon),
+          editor.getModifiedEditor().onDidContentSizeChange(measureDebounced),
+          {
+            dispose: () => {
+              cancelAnimationFrame(raf);
+              if (debounce) clearTimeout(debounce);
+            },
+          },
         );
       }
 

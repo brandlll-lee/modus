@@ -117,12 +117,28 @@ export function CodeViewer({
       disposeTheme = watchModusTheme(monaco);
 
       if (autoHeight) {
+        // Measure once content lays out, then debounce later size changes —
+        // avoids the per-tick setState storm during tokenization.
+        let raf = 0;
+        let debounce: ReturnType<typeof setTimeout> | undefined;
         const measure = (): void => {
           const next = Math.min(maxHeight, editor.getContentHeight() + 2);
           if (next > 0) setContentHeight(next);
         };
-        measure();
-        measureDisposers.push(editor.onDidContentSizeChange(measure));
+        const measureDebounced = (): void => {
+          if (debounce) clearTimeout(debounce);
+          debounce = setTimeout(() => {
+            cancelAnimationFrame(raf);
+            raf = requestAnimationFrame(measure);
+          }, 120);
+        };
+        raf = requestAnimationFrame(measure);
+        measureDisposers.push(editor.onDidContentSizeChange(measureDebounced), {
+          dispose: () => {
+            cancelAnimationFrame(raf);
+            if (debounce) clearTimeout(debounce);
+          },
+        });
       }
       setReady(true);
     });
