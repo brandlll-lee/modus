@@ -1,11 +1,11 @@
+import { Menu } from "@base-ui/react/menu";
 import { Popover } from "@base-ui/react/popover";
-import { Select } from "@base-ui/react/select";
 import {
   IconArrowUp,
   IconCheck,
   IconChevronDown,
+  IconChevronRight,
   IconCube,
-  IconEdit,
   IconListCheck,
   IconPlayerStopFilled,
   IconPlus,
@@ -615,17 +615,32 @@ function ModelSelect({
   onModelChange(model: string): void;
   onModelConfigChange?(model: string, thinkingVariant: string): Promise<void> | void;
 }) {
-  const [editingModel, setEditingModel] = useState<string | null>(null);
   const current = models.find((item) => item.id === model) ?? models[0];
-  const editingItem = models.find((item) => item.id === editingModel);
-  const editingOptions = editingItem ? modelThinkingOptions(editingItem) : [];
-  const editingSelection = editingItem ? selectedThinkingOption(editingItem) : undefined;
+  const thinkingOptions = current ? modelThinkingOptions(current) : [];
+  const thinkingSelection = current ? selectedThinkingOption(current) : undefined;
+  const providerGroups = Array.from(
+    models
+      .reduce((groups, item) => {
+        const key = item.provider;
+        const group = groups.get(key);
+        if (group) {
+          group.models.push(item);
+        } else {
+          groups.set(key, {
+            provider: item.provider,
+            name: item.providerName ?? item.provider,
+            models: [item],
+          });
+        }
+        return groups;
+      }, new Map<string, { provider: string; name: string; models: ModelInfo[] }>())
+      .values(),
+  );
   const tag = current?.name ?? "No model configured";
 
   return current ? (
-    <Select.Root onValueChange={(next) => onModelChange(String(next))} value={model}>
-      {/* Provider shown as its (frameless) logo, then the model + thinking. */}
-      <Select.Trigger className="app-no-drag flex h-[26px] min-w-0 items-center gap-1.5 rounded-md px-2 text-sm font-normal transition-colors hover:bg-hover data-popup-open:bg-hover">
+    <Menu.Root>
+      <Menu.Trigger className="app-no-drag flex h-[26px] min-w-0 items-center gap-1.5 rounded-md px-2 text-sm font-normal outline-none transition-colors hover:bg-hover data-popup-open:bg-hover">
         <ProviderLogo
           framed={false}
           name={current.providerName ?? current.provider}
@@ -636,108 +651,83 @@ function ModelSelect({
         <span className="hidden shrink-0 whitespace-nowrap text-fg-faint @md:inline">
           {selectedThinkingLabel(current)}
         </span>
-        <Select.Icon>
-          <IconChevronDown className="shrink-0 text-fg-faint" size={12} stroke={2} />
-        </Select.Icon>
-      </Select.Trigger>
-      <Select.Portal>
-        {/* alignItemWithTrigger=false：禁用 base-ui Select 默认的"item 居中对齐 trigger"行为，
-            popup 改为正常 anchor positioning，紧贴 trigger 下方弹出，不再覆盖触发器文字。 */}
-        <Select.Positioner
-          align="start"
-          alignItemWithTrigger={false}
-          collisionAvoidance={{ side: "flip", align: "shift", fallbackAxisSide: "none" }}
-          side="bottom"
-          sideOffset={4}
-        >
-          <Select.Popup
-            className="scroll-thin origin-(--transform-origin) w-[340px] max-w-[calc(100vw-24px)] overflow-y-auto rounded-lg border border-hairline bg-elevated p-1 shadow-popup transition-[transform,opacity] duration-100 data-[side=bottom]:data-ending-style:translate-y-[-4px] data-[side=bottom]:data-starting-style:translate-y-[-4px] data-[side=top]:data-ending-style:translate-y-[4px] data-[side=top]:data-starting-style:translate-y-[4px] data-ending-style:opacity-0 data-starting-style:opacity-0"
-            style={{ maxHeight: "min(320px, var(--available-height))" }}
-          >
-            {models.map((item) => (
-              <Select.Item
-                className={cn(
-                  "group/model flex h-8 cursor-default items-center gap-1.5 rounded-md px-2 text-sm outline-none select-none",
-                  "data-highlighted:bg-hover",
-                )}
-                key={item.id}
-                value={item.id}
+        <IconChevronDown className="shrink-0 text-fg-faint" size={12} stroke={2} />
+      </Menu.Trigger>
+      <Menu.Portal>
+        <Menu.Positioner align="start" side="bottom" sideOffset={4}>
+          <Menu.Popup className="origin-(--transform-origin) w-[260px] max-w-[calc(100vw-24px)] rounded-lg border border-hairline bg-elevated p-1 shadow-popup">
+            <div className="px-2.5 pt-1.5 pb-1 text-fg-faint text-xs">Reasoning</div>
+            {thinkingOptions.map((option) => (
+              <Menu.Item
+                className="flex h-8 cursor-default items-center justify-between gap-3 rounded-md px-2.5 text-fg-subtle text-sm outline-none select-none data-highlighted:bg-hover"
+                disabled={!onModelConfigChange}
+                key={option.value}
+                onClick={() => void onModelConfigChange?.(current.id, option.value)}
               >
-                <ProviderLogo
-                  framed={false}
-                  name={item.providerName ?? item.provider}
-                  provider={item.provider}
-                  size="sm"
-                />
-                <span className="shrink-0 text-sm text-fg-muted">
-                  {item.providerName ?? item.provider}
-                </span>
-                <Select.ItemText className="min-w-0 truncate text-sm text-fg-subtle">
-                  {item.name}
-                </Select.ItemText>
-                {!item.available ? (
-                  <span className="ml-1 shrink-0 rounded bg-chip px-1 text-2xs text-fg-faint">
-                    off
-                  </span>
+                <span>{option.label}</span>
+                {thinkingSelection?.value === option.value ? (
+                  <IconCheck className="text-fg-muted" size={15} stroke={1.8} />
                 ) : null}
-                <span className="ml-1 shrink-0 text-2xs text-fg-faint">
-                  {selectedThinkingLabel(item)}
-                </span>
-                <button
-                  aria-label={`Edit ${item.name}`}
-                  className="ml-auto flex size-6 shrink-0 items-center justify-center rounded-md text-fg-faint opacity-0 transition-opacity hover:bg-active hover:text-fg-muted group-hover/model:opacity-100 data-[open=true]:opacity-100"
-                  data-open={editingModel === item.id}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    setEditingModel((current) => (current === item.id ? null : item.id));
-                  }}
-                  type="button"
-                >
-                  <IconEdit size={13} stroke={1.8} />
-                </button>
-                <span className="flex w-3.5 shrink-0 justify-center text-fg">
-                  <Select.ItemIndicator>
-                    <IconCheck size={13} stroke={2} />
-                  </Select.ItemIndicator>
-                </span>
-              </Select.Item>
+              </Menu.Item>
             ))}
-            {editingItem ? (
-              <div className="mt-1 border-hairline-soft border-t px-1 pt-2 pb-1">
-                <div className="mb-1 flex items-center justify-between px-1">
-                  <span className="truncate text-xs text-fg-faint">
-                    Thinking · {editingItem.name}
-                  </span>
-                </div>
-                <div className="flex flex-wrap gap-1">
-                  {editingOptions.map((option) => (
-                    <button
-                      className={cn(
-                        "h-7 rounded-md px-2 text-xs transition-colors",
-                        editingSelection?.value === option.value
-                          ? "bg-active text-fg"
-                          : "text-fg-subtle hover:bg-hover hover:text-fg",
-                      )}
-                      key={option.value}
-                      onClick={(event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        void onModelConfigChange?.(editingItem.id, option.value);
-                        setEditingModel(null);
-                      }}
-                      type="button"
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-          </Select.Popup>
-        </Select.Positioner>
-      </Select.Portal>
-    </Select.Root>
+
+            <div className="my-1 h-px bg-hairline" />
+
+            <Menu.SubmenuRoot>
+              <Menu.SubmenuTrigger className="flex h-8 cursor-default items-center justify-between gap-3 rounded-md px-2.5 text-sm outline-none select-none data-highlighted:bg-hover data-popup-open:bg-hover">
+                <span className="text-fg-subtle">Model</span>
+                <span className="flex min-w-0 items-center gap-1 text-fg-faint text-xs">
+                  <span className="max-w-[150px] truncate">{tag}</span>
+                  <IconChevronRight size={13} stroke={1.8} />
+                </span>
+              </Menu.SubmenuTrigger>
+              <Menu.Portal>
+                <Menu.Positioner align="start" side="right" sideOffset={5}>
+                  <Menu.Popup
+                    className="scroll-thin origin-(--transform-origin) w-[280px] max-w-[calc(100vw-24px)] overflow-y-auto rounded-lg border border-hairline bg-elevated p-1 shadow-popup"
+                    style={{ maxHeight: "min(320px, var(--available-height))" }}
+                  >
+                    <div className="px-2.5 pt-1.5 pb-1 text-fg-faint text-xs">Model</div>
+                    {providerGroups.map((group) => (
+                      <div key={group.provider}>
+                        <div className="flex items-center gap-1.5 px-2.5 pt-2 pb-1 text-fg-faint text-2xs uppercase">
+                          <ProviderLogo
+                            framed={false}
+                            name={group.name}
+                            provider={group.provider}
+                            size="sm"
+                          />
+                          <span className="truncate">{group.name}</span>
+                        </div>
+                        {group.models.map((item) => (
+                          <Menu.Item
+                            className="flex h-8 cursor-default items-center justify-between gap-3 rounded-md px-2.5 text-fg-subtle text-sm outline-none select-none data-highlighted:bg-hover"
+                            key={item.id}
+                            onClick={() => onModelChange(item.id)}
+                          >
+                            <span className="min-w-0 truncate">{item.name}</span>
+                            <span className="flex shrink-0 items-center gap-2">
+                              {!item.available ? (
+                                <span className="rounded bg-chip px-1 text-2xs text-fg-faint">
+                                  off
+                                </span>
+                              ) : null}
+                              {item.id === current.id ? (
+                                <IconCheck className="text-fg-muted" size={15} stroke={1.8} />
+                              ) : null}
+                            </span>
+                          </Menu.Item>
+                        ))}
+                      </div>
+                    ))}
+                  </Menu.Popup>
+                </Menu.Positioner>
+              </Menu.Portal>
+            </Menu.SubmenuRoot>
+          </Menu.Popup>
+        </Menu.Positioner>
+      </Menu.Portal>
+    </Menu.Root>
   ) : (
     <button
       className="app-no-drag flex h-[26px] items-center gap-1 rounded-md px-2 text-sm font-normal text-fg-faint transition-colors hover:bg-hover hover:text-fg-subtle"
