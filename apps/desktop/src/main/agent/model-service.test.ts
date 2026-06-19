@@ -6,7 +6,10 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 let userData: string;
 let getDatabase: typeof import("../db/database").getDatabase;
 let configureProvider: typeof import("./model-service").configureProvider;
+let findModel: typeof import("./model-service").findModel;
 let getCustomProviderConfig: typeof import("./model-service").getCustomProviderConfig;
+let listModels: typeof import("./model-service").listModels;
+let resolveModelThinking: typeof import("./model-service").resolveModelThinking;
 let updateModelConfig: typeof import("./model-service").updateModelConfig;
 let upsertCustomProvider: typeof import("./model-service").upsertCustomProvider;
 
@@ -19,8 +22,15 @@ vi.mock("electron", () => ({
 beforeAll(async () => {
   userData = await mkdtemp(join(tmpdir(), "modus-model-service-test-"));
   ({ getDatabase } = await import("../db/database"));
-  ({ configureProvider, getCustomProviderConfig, updateModelConfig, upsertCustomProvider } =
-    await import("./model-service"));
+  ({
+    configureProvider,
+    findModel,
+    getCustomProviderConfig,
+    listModels,
+    resolveModelThinking,
+    updateModelConfig,
+    upsertCustomProvider,
+  } = await import("./model-service"));
 }, 60_000);
 
 afterAll(async () => {
@@ -67,9 +77,18 @@ describe("model-service custom provider config", () => {
           contextWindow: 262_144,
           maxTokens: 65_536,
           reasoning: true,
+          thinkingOptions: expect.arrayContaining([
+            expect.objectContaining({ value: "high", level: "high" }),
+            expect.objectContaining({ value: "max", level: "xhigh" }),
+          ]),
         }),
       ]),
     );
+    expect(
+      listModels()
+        .find((model) => model.id === `${provider}/qwen3-coder`)
+        ?.thinkingOptions?.map((option) => option.value),
+    ).toContain("max");
 
     const modelsJson = await readFile(join(userData, "pi-agent", "models.json"), "utf-8");
     const parsedModelsJson = JSON.parse(modelsJson);
@@ -163,7 +182,7 @@ describe("model-service custom provider config", () => {
   it("persists anthropic thinking compat switches and round-trips them for editing", async () => {
     const provider = `relay-${crypto.randomUUID().slice(0, 8)}`;
 
-    await upsertCustomProvider({
+    const detail = await upsertCustomProvider({
       provider,
       name: "Claude Relay",
       baseUrl: "https://claude-relay.example.test",
@@ -186,7 +205,7 @@ describe("model-service custom provider config", () => {
             low: "low",
             medium: "medium",
             high: "high",
-            xhigh: "max",
+            xhigh: "xhigh",
           },
         },
       ],
@@ -207,8 +226,16 @@ describe("model-service custom provider config", () => {
       low: "low",
       medium: "medium",
       high: "high",
-      xhigh: "max",
+      xhigh: "xhigh",
     });
+    expect(detail.models[0]?.thinkingOptions?.map((option) => option.value)).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
 
     const roundTrip = getCustomProviderConfig(provider);
     expect(roundTrip?.api).toBe("anthropic-messages");
@@ -216,7 +243,20 @@ describe("model-service custom provider config", () => {
       forceAdaptiveThinking: true,
       allowEmptySignature: true,
     });
-    expect(roundTrip?.models[0]?.thinkingLevelMap).toMatchObject({ xhigh: "max" });
+    expect(roundTrip?.models[0]?.thinkingLevelMap).toMatchObject({ xhigh: "xhigh" });
+    const modelId = `${provider}/claude-opus-4-7`;
+    const updated = updateModelConfig({ model: modelId, thinkingVariant: "max" });
+    expect(updated.thinkingVariant).toBe("max");
+    expect(updated.thinkingLevel).toBe("xhigh");
+
+    const model = findModel(modelId);
+    if (!model) {
+      throw new Error(`expected model ${modelId}`);
+    }
+    const resolved = resolveModelThinking(model, "max");
+    expect(resolved.variant).toBe("max");
+    expect(resolved.thinkingLevel).toBe("xhigh");
+    expect(resolved.model.thinkingLevelMap?.xhigh).toBe("max");
   });
 
   it("accepts the string-thinking format for OpenAI-compatible relays", async () => {

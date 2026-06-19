@@ -176,6 +176,7 @@ function migrate(db: DatabaseSync): void {
   // branch point used to rewind the conversation when the message is edited.
   // "root" marks an empty tree (first message); NULL marks legacy runs.
   addColumn(db, "agent_runs", "pi_leaf_before", "text");
+  addColumn(db, "model_configs", "thinking_variant", "text");
 }
 
 export function getDatabase(): DatabaseSync {

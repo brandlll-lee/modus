@@ -24,6 +24,7 @@ import type {
   TestCustomProviderInput,
   TestCustomProviderResult,
   ThinkingLevel,
+  ThinkingOption,
   UpdateModelConfigInput,
   UpsertCustomProviderInput,
 } from "../../shared/contracts";
@@ -40,6 +41,7 @@ type ModelConfigRow = {
   max_tokens: number | null;
   reasoning: number;
   thinking_level: ThinkingLevel;
+  thinking_variant: string | null;
   thinking_level_map_json: string | null;
 };
 
@@ -265,7 +267,7 @@ function listModelConfigRows(): ModelConfigRow[] {
   return getDatabase()
     .prepare(
       `select id, provider_id, model_id, display_name, source, enabled, context_window, max_tokens,
-        reasoning, thinking_level, thinking_level_map_json
+        reasoning, thinking_level, thinking_variant, thinking_level_map_json
        from model_configs`,
     )
     .all() as ModelConfigRow[];
@@ -275,7 +277,7 @@ function getModelConfig(modelId: string): ModelConfigRow | undefined {
   return getDatabase()
     .prepare(
       `select id, provider_id, model_id, display_name, source, enabled, context_window, max_tokens,
-        reasoning, thinking_level, thinking_level_map_json
+        reasoning, thinking_level, thinking_variant, thinking_level_map_json
        from model_configs
        where id = ?`,
     )
@@ -353,6 +355,7 @@ function upsertModelConfig(input: {
   maxTokens?: number;
   reasoning?: boolean;
   thinkingLevel?: ThinkingLevel;
+  thinkingVariant?: string;
   thinkingLevelMap?: Partial<Record<ThinkingLevel, string | null>>;
 }): void {
   const now = new Date().toISOString();
@@ -361,9 +364,9 @@ function upsertModelConfig(input: {
     .prepare(
       `insert into model_configs (
         id, provider_id, model_id, display_name, source, enabled, context_window, max_tokens,
-        reasoning, thinking_level, thinking_level_map_json, created_at, updated_at
+        reasoning, thinking_level, thinking_variant, thinking_level_map_json, created_at, updated_at
        )
-       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        on conflict(id) do update set
          display_name = excluded.display_name,
          source = excluded.source,
@@ -372,6 +375,7 @@ function upsertModelConfig(input: {
          max_tokens = excluded.max_tokens,
          reasoning = excluded.reasoning,
          thinking_level = excluded.thinking_level,
+         thinking_variant = excluded.thinking_variant,
          thinking_level_map_json = excluded.thinking_level_map_json,
          updated_at = excluded.updated_at`,
     )
@@ -386,6 +390,7 @@ function upsertModelConfig(input: {
       input.maxTokens ?? existing?.max_tokens ?? null,
       (input.reasoning ?? Boolean(existing?.reasoning)) ? 1 : 0,
       normalizeThinkingLevel(input.thinkingLevel ?? existing?.thinking_level ?? "off"),
+      normalizeThinkingVariant(input.thinkingVariant ?? existing?.thinking_variant),
       input.thinkingLevelMap
         ? JSON.stringify(input.thinkingLevelMap)
         : (existing?.thinking_level_map_json ?? null),
@@ -398,19 +403,112 @@ function normalizeThinkingLevel(value: string | undefined): ThinkingLevel {
   return THINKING_LEVELS.includes(value as ThinkingLevel) ? (value as ThinkingLevel) : "off";
 }
 
+function normalizeThinkingVariant(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
+function thinkingLevelMapForModel(
+  model: Model<Api> | undefined,
+  config: ModelConfigRow | undefined,
+): Partial<Record<ThinkingLevel, string | null>> | undefined {
+  if (config?.thinking_level_map_json) {
+    return normalizeThinkingLevelMap(
+      parseJson<Partial<Record<ThinkingLevel, string | null>>>(
+        config.thinking_level_map_json,
+        {},
+      ),
+    );
+  }
+
+  return normalizeThinkingLevelMap(model?.thinkingLevelMap);
+}
+
+function adaptiveAnthropicEfforts(model: Model<Api> | undefined): string[] | undefined {
+  const forceAdaptive =
+    ((model?.compat as { forceAdaptiveThinking?: unknown } | undefined)?.forceAdaptiveThinking ??
+      false) === true;
+  if (!model?.reasoning || !forceAdaptive) {
+    return undefined;
+  }
+  const name = `${model.id} ${model.name ?? ""}`.toLowerCase().replace(/[\s_.:]+/g, "-");
+  const match = /opus-(\d+)-(\d+)(?:[/-]|$)/i.exec(name);
+  if (!match) return undefined;
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  if (major < 4 || (major === 4 && minor < 7)) return undefined;
+  return ["low", "medium", "high", "xhigh", "max"];
+}
+
+function thinkingOptionsForModel(
+  model: Model<Api> | undefined,
+  config: ModelConfigRow | undefined,
+  levels = thinkingLevelsForModel(model, config),
+): ThinkingOption[] {
+  const map = thinkingLevelMapForModel(model, config);
+  const base = levels.map((level) => {
+    const mapped = map?.[level];
+    const value = typeof mapped === "string" && mapped.trim() ? mapped.trim() : level;
+    return { value, label: value, level };
+  });
+  const adaptive = adaptiveAnthropicEfforts(model);
+  if (!adaptive) {
+    return base;
+  }
+
+  const off = base.find((option) => option.level === "off");
+  return [
+    ...(off ? [off] : []),
+    ...adaptive.map((value) => ({
+      value,
+      label: value,
+      level: value === "max" ? "xhigh" : (value as ThinkingLevel),
+    })),
+  ];
+}
+
+function clampThinkingVariant(
+  value: string | null | undefined,
+  options: ThinkingOption[],
+): ThinkingOption {
+  const normalized = normalizeThinkingVariant(value);
+  return (
+    options.find((option) => option.value === normalized) ??
+    options.find((option) => option.value === "off") ??
+    options[0] ?? { value: "off", label: "off", level: "off" }
+  );
+}
+
+function selectedThinkingOption(
+  variant: string | null | undefined,
+  level: ThinkingLevel,
+  options: ThinkingOption[],
+): ThinkingOption {
+  const normalized = normalizeThinkingVariant(variant);
+  return (
+    options.find((option) => option.value === normalized) ??
+    options.find((option) => option.level === level) ??
+    clampThinkingVariant(undefined, options)
+  );
+}
+
 function thinkingLevelsForModel(
   model: Model<Api> | undefined,
   config: ModelConfigRow | undefined,
 ): ThinkingLevel[] {
-  if (config?.thinking_level_map_json) {
-    const map =
-      normalizeThinkingLevelMap(
-        parseJson<Partial<Record<ThinkingLevel, string | null>>>(
-          config.thinking_level_map_json,
-          {},
-        ),
-      ) ?? {};
-    return THINKING_LEVELS.filter((level) => map[level] !== null);
+  const reasoning = Boolean(config?.reasoning || model?.reasoning || (!model && !config));
+  if (!reasoning) {
+    return ["off"];
+  }
+
+  const map = thinkingLevelMapForModel(model, config);
+  if (map) {
+    return THINKING_LEVELS.filter((level) => {
+      const mapped = map[level];
+      if (mapped === null) return false;
+      if (level === "xhigh") return mapped !== undefined;
+      return true;
+    });
   }
 
   if (!model) {
@@ -424,13 +522,23 @@ function clampThinkingLevel(value: ThinkingLevel, levels: ThinkingLevel[]): Thin
   return levels.includes(value) ? value : (levels[0] ?? "off");
 }
 
+function thinkingStateForModel(model: Model<Api> | undefined, config: ModelConfigRow | undefined) {
+  const levels = thinkingLevelsForModel(model, config);
+  const options = thinkingOptionsForModel(model, config, levels);
+  const selected = selectedThinkingOption(
+    config?.thinking_variant,
+    clampThinkingLevel(config?.thinking_level ?? "off", levels),
+    options,
+  );
+  return { levels, options, selected };
+}
+
 function modelToInfo(model: Model<Api>, available: boolean, config?: ModelConfigRow): ModelInfo {
   const id = modelToId(model);
-  const levels = thinkingLevelsForModel(model, config);
+  const thinking = thinkingStateForModel(model, config);
   const source = config?.source ?? "builtin";
   const contextWindow = config?.context_window ?? model.contextWindow;
   const maxTokens = config?.max_tokens ?? model.maxTokens;
-  const thinkingLevel = clampThinkingLevel(config?.thinking_level ?? "off", levels);
   return {
     id,
     provider: model.provider,
@@ -442,14 +550,16 @@ function modelToInfo(model: Model<Api>, available: boolean, config?: ModelConfig
     source,
     ...(contextWindow !== undefined ? { contextWindow } : {}),
     ...(maxTokens !== undefined ? { maxTokens } : {}),
-    supportsThinking: model.reasoning || levels.some((level) => level !== "off"),
-    thinkingLevel,
-    thinkingLevels: levels,
+    supportsThinking: model.reasoning || thinking.levels.some((level) => level !== "off"),
+    thinkingLevel: thinking.selected.level,
+    thinkingLevels: thinking.levels,
+    thinkingVariant: thinking.selected.value,
+    thinkingOptions: thinking.options,
   };
 }
 
 function configToInfo(config: ModelConfigRow, available: boolean): ModelInfo {
-  const levels = thinkingLevelsForModel(undefined, config);
+  const thinking = thinkingStateForModel(undefined, config);
   const contextWindow = config.context_window ?? undefined;
   const maxTokens = config.max_tokens ?? undefined;
   return {
@@ -463,9 +573,11 @@ function configToInfo(config: ModelConfigRow, available: boolean): ModelInfo {
     source: config.source,
     ...(contextWindow !== undefined ? { contextWindow } : {}),
     ...(maxTokens !== undefined ? { maxTokens } : {}),
-    supportsThinking: Boolean(config.reasoning) || levels.some((level) => level !== "off"),
-    thinkingLevel: clampThinkingLevel(config.thinking_level, levels),
-    thinkingLevels: levels,
+    supportsThinking: Boolean(config.reasoning) || thinking.levels.some((level) => level !== "off"),
+    thinkingLevel: thinking.selected.level,
+    thinkingLevels: thinking.levels,
+    thinkingVariant: thinking.selected.value,
+    thinkingOptions: thinking.options,
   };
 }
 
@@ -502,7 +614,7 @@ export function listAllProviderModels(provider: string): ProviderModelConfig[] {
   for (const model of models) {
     const id = modelToId(model);
     const config = configs.get(id);
-    const levels = thinkingLevelsForModel(model, config);
+    const thinking = thinkingStateForModel(model, config);
     const contextWindow = config?.context_window ?? model.contextWindow;
     const maxTokens = config?.max_tokens ?? model.maxTokens;
     items.set(model.id, {
@@ -512,8 +624,10 @@ export function listAllProviderModels(provider: string): ProviderModelConfig[] {
       ...(contextWindow !== undefined ? { contextWindow } : {}),
       ...(maxTokens !== undefined ? { maxTokens } : {}),
       reasoning: config?.reasoning ? true : Boolean(model.reasoning),
-      thinkingLevel: clampThinkingLevel(config?.thinking_level ?? "off", levels),
-      thinkingLevels: levels,
+      thinkingLevel: thinking.selected.level,
+      thinkingLevels: thinking.levels,
+      thinkingVariant: thinking.selected.value,
+      thinkingOptions: thinking.options,
     });
   }
 
@@ -521,7 +635,7 @@ export function listAllProviderModels(provider: string): ProviderModelConfig[] {
     if (config.provider_id !== provider || items.has(config.model_id)) {
       continue;
     }
-    const levels = thinkingLevelsForModel(undefined, config);
+    const thinking = thinkingStateForModel(undefined, config);
     const contextWindow = config.context_window ?? undefined;
     const maxTokens = config.max_tokens ?? undefined;
     items.set(config.model_id, {
@@ -531,8 +645,10 @@ export function listAllProviderModels(provider: string): ProviderModelConfig[] {
       ...(contextWindow !== undefined ? { contextWindow } : {}),
       ...(maxTokens !== undefined ? { maxTokens } : {}),
       reasoning: Boolean(config.reasoning),
-      thinkingLevel: clampThinkingLevel(config.thinking_level, levels),
-      thinkingLevels: levels,
+      thinkingLevel: thinking.selected.level,
+      thinkingLevels: thinking.levels,
+      thinkingVariant: thinking.selected.value,
+      thinkingOptions: thinking.options,
     });
   }
 
@@ -1138,10 +1254,13 @@ export function updateModelConfig(input: UpdateModelConfigInput): ModelInfo {
     throw new Error(`Unknown model: ${input.model}`);
   }
 
-  const levels = thinkingLevelsForModel(model, existing);
-  const thinkingLevel = input.thinkingLevel
-    ? clampThinkingLevel(input.thinkingLevel, levels)
-    : (existing?.thinking_level ?? "off");
+  const thinking = thinkingStateForModel(model, existing);
+  const selected =
+    input.thinkingVariant !== undefined
+      ? clampThinkingVariant(input.thinkingVariant, thinking.options)
+      : input.thinkingLevel
+        ? selectedThinkingOption(undefined, input.thinkingLevel, thinking.options)
+        : thinking.selected;
   const providerConfig = getProviderConfig(parsed.provider);
   upsertProviderConfig({
     provider: parsed.provider,
@@ -1157,7 +1276,8 @@ export function updateModelConfig(input: UpdateModelConfigInput): ModelInfo {
     source: existing?.source ?? "builtin",
     enabled: input.enabled ?? Boolean(existing?.enabled),
     reasoning: Boolean(existing?.reasoning ?? model?.reasoning),
-    thinkingLevel,
+    thinkingLevel: selected.level,
+    thinkingVariant: selected.value,
   };
   const contextWindow = input.contextWindow ?? existing?.context_window ?? model?.contextWindow;
   const maxTokens = input.maxTokens ?? existing?.max_tokens ?? model?.maxTokens;
@@ -1197,13 +1317,11 @@ export function listScopedModels(): Array<{
   thinkingLevel: ModelThinkingLevel;
 }> {
   return listModels()
-    .map((info) => {
+    .flatMap((info) => {
       const model = findModel(info.id);
-      return model ? { model, thinkingLevel: toPiThinkingLevel(info.thinkingLevel) } : undefined;
+      return model ? [resolveModelThinking(model, info.thinkingVariant)] : [];
     })
-    .filter((item): item is { model: Model<Api>; thinkingLevel: ModelThinkingLevel } =>
-      Boolean(item),
-    );
+    .map(({ model, thinkingLevel }) => ({ model, thinkingLevel }));
 }
 
 export function getDefaultModel(): Model<Api> | undefined {
@@ -1229,7 +1347,38 @@ export function getModelThinkingLevel(modelId: string | undefined): ThinkingLeve
   if (!modelId) {
     return "off";
   }
-  return getModelConfig(modelId)?.thinking_level ?? "off";
+  return getModelInfo(modelId)?.thinkingLevel ?? "off";
+}
+
+export function getModelThinkingVariant(modelId: string | undefined): string | undefined {
+  return getModelInfo(modelId)?.thinkingVariant;
+}
+
+export function resolveModelThinking(
+  model: Model<Api>,
+  thinkingVariant?: string,
+): { model: Model<Api>; thinkingLevel: ModelThinkingLevel; variant: string } {
+  const config = getModelConfig(modelToId(model));
+  const thinking = thinkingStateForModel(model, config);
+  const selected = thinkingVariant
+    ? clampThinkingVariant(thinkingVariant, thinking.options)
+    : thinking.selected;
+
+  if (selected.level === "off" || selected.value === selected.level) {
+    return { model, thinkingLevel: toPiThinkingLevel(selected.level), variant: selected.value };
+  }
+
+  return {
+    model: {
+      ...model,
+      thinkingLevelMap: {
+        ...(model.thinkingLevelMap ?? {}),
+        [selected.level]: selected.value,
+      },
+    },
+    thinkingLevel: toPiThinkingLevel(selected.level),
+    variant: selected.value,
+  };
 }
 
 export function setDefaultModel(modelId: string | undefined): void {

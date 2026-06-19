@@ -799,9 +799,16 @@ export type ModelInfo = {
   supportsThinking: boolean;
   thinkingLevel: ThinkingLevel;
   thinkingLevels: ThinkingLevel[];
+  thinkingVariant?: string;
+  thinkingOptions?: ThinkingOption[];
 };
 
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+export type ThinkingOption = {
+  value: string;
+  label: string;
+  level: ThinkingLevel;
+};
 export type ModelInputKind = "text" | "image";
 
 export type JsonObject = Record<string, unknown>;
@@ -836,6 +843,8 @@ export type ProviderModelConfig = {
   reasoning: boolean;
   thinkingLevel: ThinkingLevel;
   thinkingLevels: ThinkingLevel[];
+  thinkingVariant?: string;
+  thinkingOptions?: ThinkingOption[];
 };
 
 export type ModelProviderDetail = ModelProviderInfo & {
@@ -954,6 +963,7 @@ export type UpdateModelConfigInput = {
   model: string;
   enabled?: boolean | undefined;
   thinkingLevel?: ThinkingLevel | undefined;
+  thinkingVariant?: string | undefined;
   contextWindow?: number | undefined;
   maxTokens?: number | undefined;
 };
