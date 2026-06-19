@@ -1,3 +1,8 @@
+import {
+  type AgentEventItem,
+  appendAgentEvents,
+  foldAgentEvents,
+} from "../../../../shared/agent-events";
 import type { AgentEvent } from "../../../../shared/contracts";
 
 /**
@@ -8,9 +13,12 @@ import type { AgentEvent } from "../../../../shared/contracts";
  * active session and (b) folds a tiny per-session activity
  * summary (running / needs-input / unread / failed) that powers the sidebar
  * status indicators.
+ *
+ * Delta accumulation lives in `shared/agent-events` (re-exported here) so the
+ * renderer and the main-process event store fold identically.
  */
 
-export type AgentEventItem = { id: string; event: AgentEvent; createdAt?: string };
+export { type AgentEventItem, appendAgentEvents, foldAgentEvents };
 
 export type SessionActivity = {
   /** A run is currently executing. */
@@ -85,81 +93,6 @@ export function affectsActivity(event: AgentEvent): boolean {
     default:
       return false;
   }
-}
-
-/**
- * Append freshly streamed items onto an event list, merging adjacent deltas of
- * the same message/tool so long token streams don't balloon the array (and the
- * timeline's block builder) one element per chunk.
- */
-export function appendAgentEvents(
-  events: AgentEventItem[],
-  nextItems: AgentEventItem[],
-): AgentEventItem[] {
-  const result = events.slice();
-  for (const item of nextItems) {
-    const previous = result.at(-1);
-    const merged = previous ? mergeAdjacentAgentEvent(previous, item) : undefined;
-    if (merged) {
-      result[result.length - 1] = merged;
-      continue;
-    }
-    result.push(item);
-  }
-  return result;
-}
-
-function mergeAdjacentAgentEvent(
-  previous: AgentEventItem,
-  next: AgentEventItem,
-): AgentEventItem | undefined {
-  const previousEvent = previous.event;
-  const nextEvent = next.event;
-  if (
-    previousEvent.type === "message.delta" &&
-    nextEvent.type === "message.delta" &&
-    previousEvent.sessionId === nextEvent.sessionId &&
-    previousEvent.messageId === nextEvent.messageId
-  ) {
-    return {
-      ...previous,
-      event: { ...previousEvent, delta: previousEvent.delta + nextEvent.delta },
-    };
-  }
-  if (
-    previousEvent.type === "thinking.delta" &&
-    nextEvent.type === "thinking.delta" &&
-    previousEvent.sessionId === nextEvent.sessionId &&
-    previousEvent.messageId === nextEvent.messageId
-  ) {
-    return {
-      ...previous,
-      event: { ...previousEvent, delta: previousEvent.delta + nextEvent.delta },
-    };
-  }
-  if (
-    previousEvent.type === "tool.output" &&
-    nextEvent.type === "tool.output" &&
-    previousEvent.sessionId === nextEvent.sessionId &&
-    previousEvent.toolCallId === nextEvent.toolCallId
-  ) {
-    return {
-      ...previous,
-      event: { ...previousEvent, output: previousEvent.output + nextEvent.output },
-    };
-  }
-  // Live tool-call streaming: each `tool.delta` carries the full args-so-far,
-  // so a run of them for the same call collapses to the latest (keeps the
-  // in-memory stream bounded while the diff +/- still ticks up).
-  if (
-    previousEvent.type === "tool.delta" &&
-    nextEvent.type === "tool.delta" &&
-    previousEvent.sessionId === nextEvent.sessionId &&
-    previousEvent.toolCallId === nextEvent.toolCallId
-  ) {
-    return next;
-  }
-  return undefined;
 }
 
 type Subscriber = (item: AgentEventItem) => void;

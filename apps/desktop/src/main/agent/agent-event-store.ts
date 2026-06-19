@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { foldAgentEvents } from "../../shared/agent-events";
 import type { AgentEvent, TodoItem } from "../../shared/contracts";
 import { getDatabase } from "../db/database";
 
@@ -79,7 +80,10 @@ export function listAgentEvents(
     )
     .all(sessionId) as AgentRunPromptRow[];
 
-  return backfillUserPromptEvents(sessionId, events, runs);
+  // Fold streamed deltas into one accumulated item per part before they cross
+  // IPC, so opening a long session ships O(parts) rows, not O(deltas) — the
+  // renderer parses and builds blocks over the bounded set.
+  return foldAgentEvents(backfillUserPromptEvents(sessionId, events, runs));
 }
 
 function backfillUserPromptEvents(

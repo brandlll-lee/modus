@@ -5,6 +5,7 @@ import {
   type AgentEventItem,
   affectsActivity,
   appendAgentEvents,
+  foldAgentEvents,
   IDLE_ACTIVITY,
   reduceActivity,
 } from "./agentEventHub";
@@ -155,6 +156,43 @@ describe("appendAgentEvents", () => {
       ],
     );
     expect(merged).toHaveLength(2);
+  });
+
+  it("folds interleaved deltas of the same stream regardless of position", () => {
+    // A real turn interleaves thinking / answer / tool output. Adjacency-based
+    // merging would leave one item per non-adjacent run; keying on the part id
+    // collapses each stream to a single accumulated item.
+    const folded = foldAgentEvents([
+      item({ type: "message.started", sessionId: "s", messageId: "m", role: "assistant" }),
+      item({ type: "thinking.delta", sessionId: "s", messageId: "m", delta: "th-1 " }),
+      item({ type: "message.delta", sessionId: "s", messageId: "m", delta: "ans-1 " }),
+      item({ type: "tool.output", sessionId: "s", toolCallId: "t", output: "out-1" }),
+      item({ type: "thinking.delta", sessionId: "s", messageId: "m", delta: "th-2" }),
+      item({ type: "message.delta", sessionId: "s", messageId: "m", delta: "ans-2" }),
+      item({ type: "tool.output", sessionId: "s", toolCallId: "t", output: "-out-2" }),
+    ]);
+
+    // started + one folded thinking + one folded message + one folded tool.output.
+    expect(folded).toHaveLength(4);
+    expect(folded.find((f) => f.event.type === "thinking.delta")?.event).toMatchObject({
+      delta: "th-1 th-2",
+    });
+    expect(folded.find((f) => f.event.type === "message.delta")?.event).toMatchObject({
+      delta: "ans-1 ans-2",
+    });
+    expect(folded.find((f) => f.event.type === "tool.output")?.event).toMatchObject({
+      output: "out-1-out-2",
+    });
+  });
+
+  it("is idempotent — folding already-folded events changes nothing", () => {
+    const once = foldAgentEvents([
+      item({ type: "message.delta", sessionId: "s", messageId: "m", delta: "a" }),
+      item({ type: "message.delta", sessionId: "s", messageId: "m", delta: "b" }),
+    ]);
+    const twice = foldAgentEvents(once);
+    expect(twice).toHaveLength(1);
+    expect(twice[0]?.event).toMatchObject({ type: "message.delta", delta: "ab" });
   });
 });
 
