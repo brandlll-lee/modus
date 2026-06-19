@@ -188,7 +188,12 @@ describe("normalizePiEvent", () => {
     ).toEqual([]);
   });
 
-  it("surfaces assistant message errors from PI message end events", () => {
+  it("does not surface a runtime error for a mid-turn assistant error (retry/fatal handled elsewhere)", () => {
+    // A message that ends with stopReason "error" is no longer painted red
+    // here: if the runtime retries, `auto_retry_start` reports a non-fatal retry
+    // status; if it gives up, the backend surfaces a single fatal `run.failed`
+    // from the last assistant stopReason. Emitting here too would double every
+    // transient failure.
     const normalize = createPiEventNormalizer("session-1");
 
     const [start] = normalize(
@@ -217,11 +222,55 @@ describe("normalizePiEvent", () => {
         sessionId: "session-1",
         messageId: id,
       },
-      {
-        type: "runtime.error",
-        sessionId: "session-1",
-        message: "403 Your request was blocked.",
-      },
     ]);
+  });
+
+  it("maps an auto-retry start to a non-fatal retry status with attempt/countdown", () => {
+    const before = Date.now();
+    const [statusEvent, ...rest] = normalizePiEvent(
+      "session-1",
+      event({
+        type: "auto_retry_start",
+        attempt: 2,
+        maxAttempts: 5,
+        delayMs: 4000,
+        errorMessage: "Request timed out",
+      }),
+    );
+    expect(rest).toEqual([]);
+    expect(statusEvent).toMatchObject({
+      type: "session.status",
+      sessionId: "session-1",
+      status: {
+        type: "retry",
+        attempt: 2,
+        maxAttempts: 5,
+        message: "Request timed out",
+      },
+    });
+    // `nextAt` is the wall-clock deadline for the countdown.
+    const next =
+      statusEvent && statusEvent.type === "session.status" && statusEvent.status.type === "retry"
+        ? statusEvent.status.nextAt
+        : 0;
+    expect(next).toBeGreaterThanOrEqual(before + 4000);
+  });
+
+  it("maps a successful auto-retry end back to busy, and a failed one to nothing", () => {
+    expect(
+      normalizePiEvent("session-1", event({ type: "auto_retry_end", success: true, attempt: 2 })),
+    ).toEqual([{ type: "session.status", sessionId: "session-1", status: { type: "busy" } }]);
+
+    expect(
+      normalizePiEvent(
+        "session-1",
+        event({
+          type: "auto_retry_end",
+          success: false,
+          attempt: 5,
+          finalError: "Request timed out",
+        }),
+      ),
+    ).toEqual([]);
   });
 });

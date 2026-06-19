@@ -60,6 +60,7 @@ export const agentPromptSchema = z.object({
   mode: z.enum(["build", "plan"]).optional(),
   model: optionalNonEmptyString,
   thinkingLevel: thinkingLevelSchema.optional(),
+  planId: optionalNonEmptyString,
 });
 
 export const sessionIdSchema = nonEmptyString;
@@ -303,6 +304,7 @@ export const contextSearchSchema = z.object({
       "terminal",
       "browser",
       "git-diff",
+      "past-chat",
       "project-summary",
       "recent-changes",
       "rules",

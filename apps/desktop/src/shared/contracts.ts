@@ -176,6 +176,32 @@ export type QuestionResponse = {
   skipped: boolean;
 };
 
+/**
+ * Authoritative run-status for a session, mirrored from the runtime's real
+ * processing state (pi's streaming turn + its internal auto-retry). This — not
+ * a reconstruction from the run-event log — is the single source of truth the
+ * composer's lock/border follow. Aligned with opencode's SessionStatus:
+ *
+ * - `idle`  — no turn is processing; the composer accepts a new prompt.
+ * - `busy`  — a turn is streaming; the composer is locked, border animates.
+ * - `retry` — a transient error was hit and the runtime is auto-retrying. The
+ *   turn is STILL working, so the composer stays locked; the UI shows a single
+ *   non-fatal line ("retrying … attempt N/M") instead of a red error. Carries
+ *   the authoritative `attempt`/`maxAttempts` from the runtime and `nextAt` for
+ *   a live countdown.
+ */
+export type SessionRunStatus =
+  | { type: "idle" }
+  | { type: "busy" }
+  | {
+      type: "retry";
+      attempt: number;
+      maxAttempts: number;
+      message: string;
+      /** Epoch ms when the next attempt fires, for a live countdown. */
+      nextAt: number;
+    };
+
 export type AgentEvent =
   | { type: "agent.started"; sessionId: string }
   | { type: "agent.ended"; sessionId: string }
@@ -210,6 +236,14 @@ export type AgentEvent =
        * stays visible after sending (Cursor parity).
        */
       contextChips?: MessageContextChip[];
+      /** User only: original context items, used when edit-and-resend reopens the prompt. */
+      contextItems?: ContextItem[];
+      /**
+       * User only: present when this message is a "Build this plan" action. The
+       * timeline renders it as a compact Build card (title + N To-dos) instead
+       * of the raw build instruction text.
+       */
+      planBuild?: { planId: string; title: string; todoCount: number };
     }
   | { type: "message.delta"; sessionId: string; messageId: string; delta: string }
   | { type: "message.completed"; sessionId: string; messageId: string }
@@ -264,6 +298,7 @@ export type AgentEvent =
   | { type: "checkpoint.created"; sessionId: string; checkpoint: CheckpointInfo }
   | { type: "checkpoint.restored"; sessionId: string; checkpointId: string }
   | { type: "todos.updated"; sessionId: string; todos: TodoItem[] }
+  | { type: "session.status"; sessionId: string; status: SessionRunStatus }
   | { type: "runtime.error"; sessionId: string; message: string };
 
 export type TerminalStatus = "running" | "exited";
@@ -527,6 +562,7 @@ export type ContextKind =
   | "terminal"
   | "browser"
   | "git-diff"
+  | "past-chat"
   | "project-summary"
   | "recent-changes"
   | "rules"
@@ -540,6 +576,7 @@ export type ContextItem =
   | { type: "terminal"; terminalId: string; range?: { fromLine?: number; toLine?: number } }
   | { type: "browser"; workspaceId?: string; viewId?: string }
   | { type: "git-diff"; mode: "working-state" | "branch"; base?: string }
+  | { type: "past-chat"; sessionId: string; title: string }
   | { type: "project-summary" }
   | { type: "recent-changes"; limit?: number }
   | { type: "rules" }
@@ -1060,11 +1097,28 @@ export type FileReadResult = {
  * default (not version-controlled); `savedToWorkspace` flips when the user
  * copies it into `<repo>/.modus/specs/<slug>/`.
  */
+/**
+ * A single plan task. Authored by the planner via `plan_write` (structured, not
+ * parsed from markdown), so it is the authoritative source for the Build card's
+ * "N To-dos" and the Plan panel's checklist. `status` is `pending` until the
+ * v2 runtime binds live `todo_write` progress; v1 never fakes completion.
+ */
+export type PlanTodo = { id: string; content: string; status: "pending" | "completed" };
+
+/**
+ * Build lifecycle of a plan, driven authoritatively by the build turn's run
+ * lifecycle (run.started → building, run.completed → built, failure/cancel/
+ * disconnect → not_built). The Review card shows only while `not_built`.
+ */
+export type PlanBuildStatus = "not_built" | "building" | "built";
+
 export type PlanRef = {
   /** Stable id `${workspaceId}:${slug}`. */
   id: string;
   slug: string;
   title: string;
+  /** One-paragraph summary (Review card subtitle). */
+  overview: string;
   /** Absolute path to the active `plan.md`. */
   path: string;
   /** Content fingerprint. */
@@ -1073,6 +1127,10 @@ export type PlanRef = {
   sessionId?: string;
   /** Current markdown body. */
   content: string;
+  /** Structured task list — the source of the Build card count + Plan checklist. */
+  todos: PlanTodo[];
+  /** Build lifecycle state (see PlanBuildStatus). */
+  buildStatus: PlanBuildStatus;
   createdAt: string;
   updatedAt: string;
   /** True once copied into the repository for version control. */

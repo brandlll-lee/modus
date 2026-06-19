@@ -17,23 +17,23 @@ import { useEffect, useRef, useState } from "react";
 /*
  * Pacing knobs. Tuned for a slow, silky reveal that never bursts.
  *
- * The earlier values (90–480 cps, 64-grapheme frame cap) revealed large chunks
+ * The earlier values (90-480 cps, 64-grapheme frame cap) revealed large chunks
  * per frame during catch-up; with Streamdown's per-word blurIn fade that reads
  * as a brief "flash" when many words mount in one frame. We slow the steady
- * pace and — most importantly — drop the frame cap so a single frame can only
+ * pace and, most importantly, drop the frame cap so a single frame can only
  * ever reveal a handful of graphemes, turning catch-up into a smooth ramp
  * instead of a jump. Smaller per-frame slices also mean smaller Streamdown
  * re-parse deltas, so this is cheaper per frame, not more expensive.
  *
  * Calibrated against the 2026 references this hook is modelled on:
- * coder/coder#22503 (72–420 cps, 48 frame cap), onyx#10093 (~120 cps,
+ * coder/coder#22503 (72-420 cps, 48 frame cap), onyx#10093 (~120 cps,
  * 2 chars/frame), AI SDK v5 / Upstash (~200 cps "readable, not too slow").
  */
-const MIN_CPS = 48; // chars/sec when nearly caught up — unhurried, readable
-const MAX_CPS = 300; // chars/sec ceiling when far behind — drains bursts calmly
-const PRESSURE_SCALE = 420; // backlog (chars) that maps to full speed — gentle ramp
+const MIN_CPS = 48; // chars/sec when nearly caught up, unhurried, readable
+const MAX_CPS = 300; // chars/sec ceiling when far behind, drains bursts calmly
+const PRESSURE_SCALE = 420; // backlog (chars) that maps to full speed, gentle ramp
 const MAX_LAG = 480; // hard cap: never lag more than this many chars
-const FRAME_CAP = 12; // max graphemes revealed in a single frame — kills the burst/flash
+const FRAME_CAP = 12; // max graphemes revealed in a single frame, kills the burst/flash
 const MAX_DT = 0.05; // clamp frame delta (s) to avoid jumps after tab blur
 
 const segmenter =
@@ -105,7 +105,7 @@ export function useSmoothStreamingText(fullText: string, isStreaming: boolean): 
 
       let index = indexRef.current;
       if (index > total) {
-        // Content was reset/replaced with something shorter — restart.
+        // Content was reset/replaced with something shorter, restart.
         index = 0;
         budgetRef.current = 0;
       }

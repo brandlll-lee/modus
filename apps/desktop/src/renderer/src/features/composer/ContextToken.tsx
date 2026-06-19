@@ -1,87 +1,27 @@
-import {
-  IconBook2,
-  IconFileText,
-  IconFolder,
-  IconGitBranch,
-  IconListSearch,
-  IconNotebook,
-  IconReportSearch,
-  IconSearch,
-  IconTerminal2,
-  IconWorld,
-  IconX,
-} from "@tabler/icons-react";
-import type { ReactNode } from "react";
 import type { ContextItem } from "../../../../shared/contracts";
+import { TokenContent, tokenMeta } from "./composerTokens";
 
 type ContextTokenProps = {
   item: ContextItem;
   onRemove(): void;
 };
 
-function basename(path: string): string {
-  return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
-}
-
-function tokenMeta(item: ContextItem): {
-  icon: ReactNode;
-  label: string;
-} {
-  if (item.type === "file") {
-    return { icon: <IconFileText size={12} stroke={1.7} />, label: basename(item.path) };
-  }
-
-  if (item.type === "folder") {
-    return { icon: <IconFolder size={12} stroke={1.7} />, label: `${basename(item.path)}/` };
-  }
-
-  if (item.type === "doc") {
-    return { icon: <IconBook2 size={12} stroke={1.7} />, label: item.title };
-  }
-
-  if (item.type === "terminal") {
-    return {
-      icon: <IconTerminal2 size={12} stroke={1.7} />,
-      label: `terminal:${item.terminalId.slice(0, 6)}`,
-    };
-  }
-
-  if (item.type === "browser") {
-    return { icon: <IconWorld size={12} stroke={1.7} />, label: "browser" };
-  }
-
-  if (item.type === "project-summary") {
-    return { icon: <IconReportSearch size={12} stroke={1.7} />, label: "project summary" };
-  }
-
-  if (item.type === "recent-changes") {
-    return { icon: <IconListSearch size={12} stroke={1.7} />, label: "recent changes" };
-  }
-
-  if (item.type === "rules") {
-    return { icon: <IconNotebook size={12} stroke={1.7} />, label: "project rules" };
-  }
-
-  if (item.type === "search") {
-    return { icon: <IconSearch size={12} stroke={1.7} />, label: `search:${item.query}` };
-  }
-
-  return { icon: <IconGitBranch size={12} stroke={1.7} />, label: "working diff" };
-}
-
+/**
+ * Composer context chip (Cursor parity): a colored inline `icon · label` token,
+ * no pill background or border at rest. The whole chip is clickable to remove.
+ */
 export function ContextToken({ item, onRemove }: ContextTokenProps) {
   const meta = tokenMeta(item);
 
   return (
     <button
-      className="flex h-6 max-w-[180px] items-center gap-1 rounded-md bg-chip px-1.5 text-xs text-fg-subtle transition-colors hover:bg-hover hover:text-fg"
+      aria-label={`Remove ${meta.label}`}
+      className="inline-flex h-6 max-w-[220px] items-center rounded-md px-0.5 text-sm font-medium transition-colors hover:bg-focus-ring-soft/10"
       onClick={onRemove}
-      title="Remove context"
+      title={`Remove ${meta.label}`}
       type="button"
     >
-      <span className="shrink-0 text-fg-faint">{meta.icon}</span>
-      <span className="truncate">{meta.label}</span>
-      <IconX className="shrink-0 text-fg-faint" size={11} stroke={1.7} />
+      <TokenContent item={item} />
     </button>
   );
 }

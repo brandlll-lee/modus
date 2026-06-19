@@ -22,7 +22,8 @@ import { resolveAgentToolContext } from "./tool-context";
  * user opts into "save to workspace" separately.
  */
 
-function planRoot(): string {
+/** Shared plans root (`<userData>/plans`), reused by the runtime's build-state updates. */
+export function plansRoot(): string {
   return join(app.getPath("userData"), "plans");
 }
 
@@ -35,15 +36,38 @@ const planParams = Type.Object({
     minLength: 1,
     description: "Short feature title for this plan (also used to name the plan file).",
   }),
+  overview: Type.String({
+    minLength: 1,
+    description:
+      "One-paragraph summary of the approach (what gets built and how), shown as the plan's " +
+      "subtitle in the Review card. Keep it to 1–3 sentences.",
+  }),
   content: Type.String({
     minLength: 1,
     description:
       "The full plan as Markdown — decision-complete, so an executor implements it making no further " +
       "design decisions. Pin the concrete contracts they would otherwise have to invent: key data " +
       "shapes/interfaces, the core algorithm(s) stated precisely, real config values (and where they " +
-      "live), how the pieces wire together, and testable acceptance criteria. Choose a structure that " +
-      "fits THIS task (no fixed template). Rewrite the whole document on each call — single source of truth.",
+      "live), how the pieces wire together, and testable acceptance criteria. Use tables, a mermaid " +
+      "diagram for non-trivial architecture/flow, file trees, and fenced code for signatures/config. " +
+      "Choose a structure that fits THIS task (no fixed template). Rewrite the whole document on each " +
+      "call — single source of truth.",
   }),
+  todos: Type.Array(
+    Type.Object({
+      content: Type.String({
+        minLength: 1,
+        description: "One implementation step, action-oriented (e.g. 'Scaffold the Vite project').",
+      }),
+    }),
+    {
+      minItems: 1,
+      description:
+        "The ordered implementation steps as a structured checklist — the same steps the plan body " +
+        "describes, broken into discrete tasks. These drive the Build card count and the Plan panel " +
+        "checklist, so make each a self-contained unit of work.",
+    },
+  ),
 });
 
 const planTool: ToolDefinition = defineTool({
@@ -56,7 +80,8 @@ const planTool: ToolDefinition = defineTool({
     "and resolve open questions with the user BEFORE writing, then call this once with the " +
     "complete plan. Call it again to revise. Do not implement anything in Plan Mode.",
   promptSnippet:
-    "plan_write(title, content) — write/update the single plan.md for this session (Goal, Acceptance Criteria, Tasks, ...).",
+    "plan_write(title, overview, content, todos) — write/update the single plan for this session: a " +
+    "rich Markdown body plus a structured todo checklist (the executable steps).",
   promptGuidelines: [
     "Plan Mode is read-only on the codebase: research with read/grep/find/ls, never edit/run. Your only output is plan_write.",
     "Front-load clarifying questions so the plan is self-contained — a separate executor (or two parallel ones) must be able to build from it without asking the user again.",
@@ -69,11 +94,13 @@ const planTool: ToolDefinition = defineTool({
     if (!context.workspaceId) {
       throw new Error("No active Modus workspace for this plan.");
     }
-    const plan = writePlan(planRoot(), {
+    const plan = writePlan(plansRoot(), {
       workspaceId: context.workspaceId,
       slug: slugify(params.title),
       title: params.title,
+      overview: params.overview,
       content: params.content,
+      todos: params.todos,
       ...(context.sessionId ? { sessionId: context.sessionId } : {}),
     });
     if (context.sessionId) {

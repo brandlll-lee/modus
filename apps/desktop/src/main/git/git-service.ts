@@ -108,6 +108,44 @@ async function gitShowBlob(cwd: string, spec: string): Promise<string> {
   return await runGitSafeRaw(cwd, ["show", spec]);
 }
 
+/**
+ * The repo's default branch — `origin/HEAD` when set, else a local `main`/
+ * `master` that actually resolves. Returns undefined when none can be
+ * determined (e.g. unborn branch with no conventional default).
+ */
+async function defaultBranch(cwd: string): Promise<string | undefined> {
+  const head = await gitSafe(cwd, [
+    "symbolic-ref",
+    "--quiet",
+    "--short",
+    "refs/remotes/origin/HEAD",
+  ]);
+  if (head) {
+    return head.replace(/^origin\//, "");
+  }
+  for (const name of ["main", "master"]) {
+    if (await gitSafe(cwd, ["rev-parse", "--verify", "--quiet", name])) {
+      return name;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Diff of the current branch against the repo's default branch, computed from
+ * their merge-base (`git diff base...HEAD`) — the "what this branch changed"
+ * view. `base` is undefined when no default branch can be determined; `diff`
+ * is empty when there is no divergence. Never throws (safe runner).
+ */
+export async function readBranchDiff(cwd: string): Promise<{ base?: string; diff: string }> {
+  const base = await defaultBranch(cwd);
+  if (!base) {
+    return { diff: "" };
+  }
+  const diff = await runGitSafeRaw(cwd, ["diff", `${base}...HEAD`]);
+  return { base, diff };
+}
+
 function capVersion(text: string): { text: string; truncated: boolean } {
   if (Buffer.byteLength(text, "utf8") <= MAX_VERSION_BYTES) {
     return { text, truncated: false };

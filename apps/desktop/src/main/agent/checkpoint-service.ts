@@ -57,6 +57,25 @@ function getLastCheckpoint(sessionId: string): CheckpointInfo | undefined {
   return row ? toInfo(row) : undefined;
 }
 
+/**
+ * The session's baseline: the earliest checkpoint, captured before the first
+ * run touched the working tree. Diffing the checkout against it yields exactly
+ * the changes this session produced — the authoritative base for the composer
+ * changes strip (vs. the whole repo's uncommitted state). `restore-backup`
+ * checkpoints are excluded so a restore never shifts the baseline forward.
+ */
+export function getSessionBaseCheckpoint(sessionId: string): CheckpointInfo | undefined {
+  const row = getDatabase()
+    .prepare(
+      `select * from agent_checkpoints
+       where session_id = ? and kind != 'restore-backup'
+       order by created_at asc, rowid asc
+       limit 1`,
+    )
+    .get(sessionId) as CheckpointRow | undefined;
+  return row ? toInfo(row) : undefined;
+}
+
 export type CreateCheckpointInput = {
   sessionId: string;
   cwd: string;

@@ -3,7 +3,6 @@ import { m } from "motion/react";
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
 import { cn } from "../../lib/cn";
-import { MarkdownMessage } from "./MarkdownMessage";
 import { ShinyText } from "./TextEffects";
 import type { ActivityItem } from "./Timeline";
 import { ToolCard } from "./ToolCard";
@@ -22,12 +21,23 @@ function estimateThinkingSeconds(text: string): number {
 export function ThoughtRow({ text, streaming = false }: { text: string; streaming?: boolean }) {
   const [open, setOpen] = useState(false);
   const interactedRef = useRef(false);
+  const preRef = useRef<HTMLPreElement | null>(null);
 
   useEffect(() => {
     if (!interactedRef.current) {
       setOpen(streaming);
     }
   }, [streaming]);
+
+  // Stick the streaming thought to its newest line inside the fixed-height box
+  // (same stick-to-bottom pattern as ActivityGroup's live viewport), so the
+  // latest tokens stay visible instead of being clipped below the fold.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: text is the content-growth signal that should retrigger the scroll; the node is read via ref.
+  useLayoutEffect(() => {
+    if (streaming && open && preRef.current) {
+      preRef.current.scrollTop = preRef.current.scrollHeight;
+    }
+  }, [streaming, open, text]);
 
   if (!streaming && !text.trim()) {
     return null;
@@ -56,7 +66,10 @@ export function ThoughtRow({ text, streaming = false }: { text: string; streamin
         {streaming ? <ShinyText>{label}</ShinyText> : <span>{label}</span>}
       </button>
       <CollapsibleMotion open={open} preset="timeline">
-        <pre className="scroll-thin mt-1 max-h-44 max-w-full overflow-x-auto overflow-y-auto whitespace-pre-wrap font-mono text-2xs text-fg-faint leading-relaxed">
+        <pre
+          className="scroll-thin mt-1 max-h-44 max-w-full overflow-x-auto overflow-y-auto whitespace-pre-wrap font-mono text-2xs text-fg-faint leading-relaxed"
+          ref={preRef}
+        >
           {text}
         </pre>
       </CollapsibleMotion>
@@ -64,25 +77,41 @@ export function ThoughtRow({ text, streaming = false }: { text: string; streamin
   );
 }
 
-const ACTIVE_LABEL = { explore: "Exploring", browser: "Browser using" } as const;
+const ACTIVE_LABEL = {
+  explore: "Exploring",
+  browser: "Browser using",
+  shell: "Running command",
+} as const;
 
-/** Cheap content-length signature so the streaming viewport can stick to bottom. */
-function streamLength(items: ActivityItem[]): number {
-  let total = 0;
+/**
+ * Growth signature for the live viewport's stick-to-bottom. It must move on
+ * EVERY change that can push the newest tool down, not just streamed output:
+ *  - the item COUNT, so a freshly-called tool (entering with empty output, and
+ *    often a flat one-line card) scrolls into view the instant it appears;
+ *  - each tool's streaming args + output;
+ *  - streamed thought text.
+ * Counting only output (the old bug) left a just-called tool clipped below the
+ * fade until it produced output, so the preview lagged the latest tool.
+ */
+function streamSignature(items: ActivityItem[]): number {
+  let total = items.length;
   for (const item of items) {
-    if (item.type === "tool") total += item.output.length;
-    else if (item.type === "thought") total += item.text.length;
-    else total += item.content.length;
+    if (item.type === "tool") {
+      total += item.output.length;
+      if (item.args) total += JSON.stringify(item.args).length;
+    } else if (item.type === "thought") {
+      total += item.text.length;
+    }
   }
   return total;
 }
 
 /**
- * Cursor-style folded activity run (read-only exploration or browser control).
+ * Cursor-style folded activity run (read-only exploration, shell, or browser control).
  *
  * While the agent is still working the group is forced open and streams its
- * members — interleaved thoughts, intermediate assistant text, and flat tool
- * rows — inside a fixed-height viewport that fades out at the edges (no hard
+ * members — interleaved thoughts and flat tool rows — inside a fixed-height
+ * viewport that fades out at the edges (no hard
  * border) and sticks to the latest line. Once the run seals it collapses to a
  * one-line digest ("Explored 4 files…" / "Browser used 2 pages"); re-opening it
  * restores the full, freely-scrolling transcript.
@@ -94,7 +123,7 @@ export const ActivityGroup = memo(function ActivityGroup({
   items,
   isError = false,
 }: {
-  kind: "explore" | "browser";
+  kind: "explore" | "browser" | "shell";
   active: boolean;
   summary: string;
   items: ActivityItem[];
@@ -112,8 +141,8 @@ export const ActivityGroup = memo(function ActivityGroup({
     }
   }, [active]);
 
-  // Stick the live viewport to the bottom so the newest line stays in view.
-  const signature = streamLength(items);
+  // Stick the live viewport to the bottom so the newest tool stays in view.
+  const signature = streamSignature(items);
   // biome-ignore lint/correctness/useExhaustiveDependencies: signature is the content-growth signal that should retrigger the scroll; the node is read via ref.
   useLayoutEffect(() => {
     if (active && open && viewportRef.current) {
@@ -134,6 +163,14 @@ export const ActivityGroup = memo(function ActivityGroup({
         }}
         type="button"
       >
+        {/* Dropdown caret leads the row (图3), rotating down as it opens. */}
+        <m.span
+          animate={{ rotate: open ? 90 : 0 }}
+          className="flex size-3 shrink-0 items-center justify-center text-fg-faint"
+          transition={{ duration: 0.16, ease: "easeOut" }}
+        >
+          <IconChevronRight size={12} stroke={1.8} />
+        </m.span>
         {isError ? (
           <IconAlertCircle className="shrink-0 text-danger" size={14} stroke={1.7} />
         ) : null}
@@ -143,49 +180,42 @@ export const ActivityGroup = memo(function ActivityGroup({
           <span
             className={cn(
               "min-w-0 truncate transition-colors",
-              isError ? "text-danger" : "text-fg-muted group-hover/activity:text-fg",
+              isError ? "text-danger" : "text-fg-subtle group-hover/activity:text-fg-muted",
             )}
           >
             {label}
           </span>
         )}
-        <IconChevronRight
-          className={cn(
-            "shrink-0 text-fg-faint transition-transform duration-150",
-            open && "rotate-90",
-          )}
-          size={13}
-          stroke={1.7}
-        />
       </button>
       <CollapsibleMotion open={open} preset="timeline">
-        <div
-          className={cn(
-            "space-y-1 pt-0.5 pb-1.5",
-            active
-              ? "activity-fade max-h-[200px] overflow-hidden"
-              : "scroll-thin max-h-96 overflow-y-auto",
-          )}
-          ref={viewportRef}
-        >
-          {items.map((item) =>
-            item.type === "thought" ? (
-              <ThoughtRow key={item.id} streaming={item.streaming ?? false} text={item.text} />
-            ) : item.type === "tool" ? (
-              <ToolCard
-                args={item.args}
-                isComplete={item.isComplete ?? false}
-                isError={item.isError ?? false}
-                key={item.id}
-                name={item.name}
-                output={item.output}
-              />
-            ) : item.content.trim() ? (
-              <div className="text-sm leading-relaxed text-fg-muted" key={item.id}>
-                <MarkdownMessage content={item.content} />
-              </div>
-            ) : null,
-          )}
+        {/* Guide line in the caret gutter: its height tracks the rendered content
+            (it wraps the viewport), so the rail reads as "this much was folded". */}
+        <div className="mt-0.5 ml-[6px] border-hairline-strong border-l pl-3">
+          <div
+            className={cn(
+              "space-y-1 pt-0.5 pb-1",
+              active
+                ? "activity-fade max-h-[200px] overflow-hidden"
+                : "scroll-thin max-h-96 overflow-y-auto",
+            )}
+            ref={viewportRef}
+          >
+            {items.map((item) =>
+              item.type === "thought" ? (
+                <ThoughtRow key={item.id} streaming={item.streaming ?? false} text={item.text} />
+              ) : (
+                <ToolCard
+                  args={item.args}
+                  isComplete={item.isComplete ?? false}
+                  isError={item.isError ?? false}
+                  key={item.id}
+                  name={item.name}
+                  output={item.output}
+                  {...(kind === "shell" ? { variant: "group" as const } : {})}
+                />
+              ),
+            )}
+          </div>
         </div>
       </CollapsibleMotion>
     </div>

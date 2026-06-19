@@ -6,7 +6,7 @@ import { cn } from "../../lib/cn";
 
 /**
  * Cursor-style "Review Plan" card shown above the composer once Plan Mode has
- * written a plan. Clicking the body opens the plan in the file panel.
+ * written a plan. Clicking the body opens the plan in the Plan panel.
  *
  * The Build split-button is the user's explicit authorization to execute:
  * - "Build Locally" runs a single agent against the plan (M3, active; also the
@@ -14,17 +14,6 @@ import { cn } from "../../lib/cn";
  * - "Build in Parallel" runs the fusion pipeline (M4, disabled until built —
  *   shown disabled, never faked).
  */
-
-/** First meaningful non-heading line of the plan, for a one-line summary. */
-function planSummary(content: string): string {
-  for (const raw of content.split("\n")) {
-    const line = raw.trim();
-    if (line && !line.startsWith("#") && !line.startsWith("```")) {
-      return line.replace(/^[-*]\s+/, "");
-    }
-  }
-  return "Plan ready to review.";
-}
 
 export function ReviewPlanCard({
   plan,
@@ -56,7 +45,7 @@ export function ReviewPlanCard({
           <div className="text-fg-faint text-xs">Review Plan</div>
           <div className="mt-1 truncate font-semibold text-fg text-[15px]">{plan.title}</div>
           <div className="mt-1 line-clamp-2 text-fg-subtle text-xs leading-relaxed">
-            {planSummary(plan.content)}
+            {plan.overview}
           </div>
         </button>
         <button

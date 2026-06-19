@@ -1,9 +1,9 @@
 import {
+  forwardRef,
   type ReactNode,
-  type RefObject,
-  type UIEvent,
   useCallback,
   useEffect,
+  useImperativeHandle,
   useMemo,
   useRef,
   useState,
@@ -27,15 +27,23 @@ import type {
 } from "../../../../shared/contracts";
 import { CollapsibleMotionProvider } from "../../components/ui/CollapsibleMotion";
 import { Composer } from "../composer/Composer";
+import { buildPlanMessage, effectiveBuildStatus, normalizePlan } from "../plan/planState";
 import { QuestionsCard } from "../plan/QuestionsCard";
 import { ReviewPlanCard } from "../plan/ReviewPlanCard";
 import { ApprovalPanel } from "./ApprovalPanel";
-import { type AgentEventHub, type AgentEventItem, appendAgentEvents } from "./agentEventHub";
+import {
+  type AgentEventHub,
+  type AgentEventItem,
+  appendAgentEvents,
+  foldAgentEvents,
+} from "./agentEventHub";
 import { ChangesStrip } from "./changes/ChangesStrip";
 import { latestPendingPermissionRequest } from "./permissionRequests";
 import { latestPendingQuestionRequest } from "./questionRequests";
-import { isRunActive, isTerminalRunEvent } from "./runState";
+import { RetryStatusBar } from "./RetryStatusBar";
+import { latestSessionStatus } from "./runState";
 import { Timeline } from "./Timeline";
+import { useAutoScroll } from "./useAutoScroll";
 
 /**
  * Full conversation surface bound to one active session.
@@ -62,19 +70,24 @@ type ChatPaneProps = {
   onPlanUpdated(plan: PlanRef): void;
 };
 
-export function ChatPane({
-  session,
-  hub,
-  models,
-  defaultModel,
-  contextUsage,
-  workspace,
-  onSessionsChanged,
-  onModelChange,
-  onModelConfigChange,
-  onOpenReview,
-  onPlanUpdated,
-}: ChatPaneProps) {
+export type ChatPaneHandle = { buildActivePlan(): void };
+
+export const ChatPane = forwardRef<ChatPaneHandle, ChatPaneProps>(function ChatPane(
+  {
+    session,
+    hub,
+    models,
+    defaultModel,
+    contextUsage,
+    workspace,
+    onSessionsChanged,
+    onModelChange,
+    onModelConfigChange,
+    onOpenReview,
+    onPlanUpdated,
+  },
+  ref,
+) {
   const sessionId = session.id;
   const [agentEvents, setAgentEvents] = useState<AgentEventItem[]>([]);
   const [contextItems, setContextItems] = useState<ContextItem[]>([]);
@@ -82,70 +95,82 @@ export function ChatPane({
   const [pendingPrompt, setPendingPrompt] = useState(false);
   const [aborting, setAborting] = useState(false);
   const [workingStats, setWorkingStats] = useState<WorkingChangeStats | undefined>();
-  const [reviewPlan, setReviewPlan] = useState<PlanRef | undefined>();
-  const lastPlanHashRef = useRef<string | undefined>(undefined);
+  const [dismissedPlanHash, setDismissedPlanHash] = useState<string | undefined>(undefined);
   const [composerMode, setComposerMode] = useState<AgentMode>("build");
 
   const queuedRef = useRef<AgentEventItem[]>([]);
   const flushTimerRef = useRef<number | undefined>(undefined);
-  const viewportRef = useRef<HTMLDivElement | null>(null);
-  const shouldFollowRef = useRef(true);
-  const scrollFollowPauseTimerRef = useRef<number | undefined>(undefined);
   const statsTimerRef = useRef<number | undefined>(undefined);
   const statsCwdRef = useRef(session.cwd);
   statsCwdRef.current = session.cwd;
 
-  // When Plan Mode writes/updates a plan, surface a Review card and open it in
-  // the file panel. Keyed by content hash so we react once per distinct plan.
-  useEffect(() => {
+  // The session's authoritative run-status (busy/retry/idle), read from the
+  // runtime's `session.status` events. The composer locks while the session is
+  // working (anything but idle), so a transient error never unlocks input
+  // mid-turn. `pendingPrompt` is the optimistic bridge until the first status.
+  const sessionStatus = useMemo(() => latestSessionStatus(agentEvents), [agentEvents]);
+  const isRunning = !aborting && (sessionStatus.type !== "idle" || pendingPrompt);
+
+  // Stick-to-bottom follows the bottom only while the session is working; idle
+  // viewing/scrolling never snaps back (opencode's createAutoScroll model).
+  const autoScroll = useAutoScroll(isRunning);
+
+  // The latest plan written/updated in this session. Surfaced to the Plan panel
+  // (data) on every change; the panel auto-opens only on a new plan (App gates
+  // on hash). Build-status transitions re-emit plan.updated with the same hash.
+  const latestPlan = useMemo<PlanRef | undefined>(() => {
     let latest: PlanRef | undefined;
     for (const item of agentEvents) {
       if (item.event.type === "plan.updated") {
         latest = item.event.plan;
       }
     }
-    if (latest && latest.hash !== lastPlanHashRef.current) {
-      lastPlanHashRef.current = latest.hash;
-      setReviewPlan(latest);
-      onPlanUpdated(latest);
+    // Old sessions recorded plan.updated before todos/overview/buildStatus
+    // existed; normalize so the Plan panel and Review card can trust the shape.
+    return latest ? normalizePlan(latest) : undefined;
+  }, [agentEvents]);
+
+  useEffect(() => {
+    if (latestPlan) {
+      onPlanUpdated(latestPlan);
     }
-  }, [agentEvents, onPlanUpdated]);
+  }, [latestPlan, onPlanUpdated]);
+
+  // The Plan panel (rendered in the Inspector, outside this pane) triggers a
+  // build through this handle, so it runs the SAME path as the Review card.
+  // No dep array: the handle stays fresh (always builds the current latestPlan
+  // with the current model/mode) without stale-closure risk.
+  useImperativeHandle(ref, () => ({
+    buildActivePlan() {
+      if (latestPlan) {
+        buildPlanLocally(latestPlan);
+      }
+    },
+  }));
 
   /**
-   * Build Locally: the user's explicit authorization to execute an approved
-   * plan with a single agent. Switches the composer to build mode and sends a
-   * self-contained build prompt anchored on the plan (the plan, not the
-   * planning chatter, is the source of truth — concise-history by construction).
-   * Capability is build mode's full tool set; the plan's Acceptance Criteria are
-   * the verification contract the agent is told to check before finishing.
+   * Build Locally: the user's explicit authorization to execute the approved
+   * plan. Sends a CONCISE build message — the plan title, its to-dos, and a
+   * pointer to the full plan.md — not the whole plan pasted inline. The agent
+   * reads the file for full detail. Passing the plan id binds this turn's run
+   * lifecycle to the plan's build status (building → built/not_built).
    */
   function buildPlanLocally(plan: PlanRef): void {
     setComposerMode("build");
-    setReviewPlan(undefined);
-    const message = [
-      "Implement the following approved plan. Treat it as the single source of truth:",
-      "work through its Tasks, satisfy every Acceptance Criterion, and verify the result",
-      "against those criteria (build/tests where applicable) before reporting done.",
-      "",
-      `<plan title="${plan.title}">`,
-      plan.content,
-      "</plan>",
-    ].join("\n");
-    submitPrompt(message, [], "normal", undefined, undefined, "build");
+    submitPrompt(buildPlanMessage(plan), [], "normal", undefined, undefined, "build", plan.id);
   }
 
   /** Refresh the working-tree change summary shown above the composer. */
   const refreshStats = useCallback((): void => {
-    const cwd = statsCwdRef.current;
     void window.modus.diff
-      .stats(cwd)
+      .sessionStats(sessionId)
       .then((stats: WorkingChangeStats) => {
-        if (statsCwdRef.current === cwd) {
+        if (statsCwdRef.current === session.cwd) {
           setWorkingStats(stats);
         }
       })
       .catch(() => {});
-  }, []);
+  }, [sessionId, session.cwd]);
 
   /** Debounced refresh for mid-run updates (file-edit tools landing). */
   const scheduleStatsRefresh = useCallback((): void => {
@@ -161,7 +186,6 @@ export function ChatPane({
   useEffect(
     () => () => {
       window.clearTimeout(statsTimerRef.current);
-      window.clearTimeout(scrollFollowPauseTimerRef.current);
     },
     [],
   );
@@ -210,7 +234,6 @@ export function ChatPane({
   // biome-ignore lint/correctness/useExhaustiveDependencies: see above.
   useEffect(() => {
     let cancelled = false;
-    shouldFollowRef.current = true;
     setAgentEvents([]);
     setPromptError(undefined);
     setPendingPrompt(false);
@@ -231,10 +254,15 @@ export function ChatPane({
       if (event.type === "tool.ended") {
         scheduleStatsRefresh();
       }
-      if (isTerminalRunEvent(event)) {
+      // Authoritative run-status drives the composer. Once the runtime reports
+      // real status, the optimistic pre-turn flag has done its job; on idle the
+      // turn is fully over, so also clear any abort-in-flight and refresh stats.
+      if (event.type === "session.status") {
         setPendingPrompt(false);
-        setAborting(false);
-        scheduleStatsRefresh();
+        if (event.status.type === "idle") {
+          setAborting(false);
+          scheduleStatsRefresh();
+        }
       }
     });
 
@@ -250,7 +278,10 @@ export function ChatPane({
         queuedRef.current = [];
       }
       if (!cancelled) {
-        setAgentEvents(items);
+        setAgentEvents(foldAgentEvents(items));
+        // Land at the latest message when opening a session. Idle sessions
+        // never auto-follow, so this initial pin is explicit.
+        requestAnimationFrame(() => autoScroll.resume());
       }
     })();
     void window.modus.agent
@@ -269,67 +300,20 @@ export function ChatPane({
     };
   }, [sessionId, hub, flushQueued, clearQueued]);
 
-  /* ── Scroll follow ─────────────────────────────────────────────────── */
-
-  function handleScroll(event: UIEvent<HTMLDivElement>): void {
-    const container = event.currentTarget;
-    const distanceFromBottom =
-      container.scrollHeight - container.scrollTop - container.clientHeight;
-    shouldFollowRef.current = distanceFromBottom < 96;
-  }
-
-  const pauseScrollFollow = useCallback((durationMs: number): void => {
-    const container = viewportRef.current;
-    if (!container) {
-      return;
-    }
-    const distanceFromBottom =
-      container.scrollHeight - container.scrollTop - container.clientHeight;
-    if (distanceFromBottom >= 96) {
-      return;
-    }
-    shouldFollowRef.current = false;
-    window.clearTimeout(scrollFollowPauseTimerRef.current);
-    scrollFollowPauseTimerRef.current = window.setTimeout(() => {
-      const latest = viewportRef.current;
-      if (!latest) {
-        return;
-      }
-      const latestDistance = latest.scrollHeight - latest.scrollTop - latest.clientHeight;
-      shouldFollowRef.current = latestDistance < 96;
-    }, durationMs);
-  }, []);
-
-  useEffect(() => {
-    const container = viewportRef.current;
-    if (!container || !shouldFollowRef.current) {
-      return;
-    }
-    requestAnimationFrame(() => {
-      container.scrollTop = container.scrollHeight;
-    });
-  });
-
-  useEffect(() => {
-    const container = viewportRef.current;
-    const content = container?.firstElementChild;
-    if (!container || !content) {
-      return;
-    }
-    const observer = new ResizeObserver(() => {
-      if (shouldFollowRef.current) {
-        container.scrollTop = container.scrollHeight;
-      }
-    });
-    observer.observe(content);
-    return () => observer.disconnect();
-  }, []);
-
   /* ── Conversation actions ──────────────────────────────────────────── */
 
   const paneModel = session.model ?? defaultModel;
   const activeCwd = session.cwd;
-  const isRunning = !aborting && (isRunActive(agentEvents) || pendingPrompt);
+  const retryStatus = sessionStatus.type === "retry" ? sessionStatus : undefined;
+  // The Review card shows only while the plan is unbuilt and not dismissed.
+  // Reading the plan's authoritative build status (not a remembered hash) is
+  // what stops the card from re-appearing after a build on session re-open.
+  const reviewPlan =
+    latestPlan &&
+    latestPlan.hash !== dismissedPlanHash &&
+    effectiveBuildStatus(latestPlan, sessionStatus.type !== "idle") === "not_built"
+      ? latestPlan
+      : undefined;
   const pendingPermission = useMemo(
     () => latestPendingPermissionRequest(agentEvents),
     [agentEvents],
@@ -343,11 +327,12 @@ export function ChatPane({
     attachments?: PromptImageAttachment[],
     skills?: string[],
     mode?: AgentMode,
+    planId?: string,
   ): void {
     if (!message.trim()) {
       return;
     }
-    shouldFollowRef.current = true;
+    autoScroll.resume();
     setPromptError(undefined);
     setPendingPrompt(true);
     // Design-element context carries an element screenshot. Send it to the model
@@ -393,6 +378,7 @@ export function ChatPane({
         ...(mode ? { mode } : {}),
         ...(paneModel ? { model: paneModel } : {}),
         ...(turnThinking ? { thinkingLevel: turnThinking } : {}),
+        ...(planId ? { planId } : {}),
       })
       .then(() => onSessionsChanged())
       .catch((error: unknown) => {
@@ -443,6 +429,8 @@ export function ChatPane({
     messageId: string,
     message: string,
     attachments?: PromptImageAttachment[],
+    contextItems?: ContextItem[],
+    skills?: string[],
   ): Promise<void> {
     if (!paneModel) {
       throw new Error("No model is configured. Connect a provider in Settings first.");
@@ -455,7 +443,7 @@ export function ChatPane({
     // Resend under the composer's CURRENT mode (plan/build); submitPrompt also
     // attaches the current model+thinking. Dropping mode here was why an edited
     // resend silently fell back to build mode.
-    submitPrompt(message, [], "normal", attachments, undefined, composerMode);
+    submitPrompt(message, contextItems ?? [], "normal", attachments, skills, composerMode);
   }
 
   async function changeModel(nextModel: string): Promise<void> {
@@ -476,8 +464,12 @@ export function ChatPane({
         </div>
       ) : null}
 
-      <CollapsibleMotionProvider onLayoutAnimationStart={pauseScrollFollow}>
-        <ChatViewport onScroll={handleScroll} viewportRef={viewportRef}>
+      <CollapsibleMotionProvider>
+        <ChatViewport
+          contentRef={autoScroll.contentRef}
+          onScroll={autoScroll.handleScroll}
+          scrollRef={autoScroll.scrollRef}
+        >
           <Timeline
             agentEvents={agentEvents}
             cwd={activeCwd}
@@ -486,6 +478,7 @@ export function ChatPane({
               await window.modus.checkpoint.restore({ checkpointId });
               refreshStats();
             }}
+            workspaceId={workspace?.id}
           />
         </ChatViewport>
       </CollapsibleMotionProvider>
@@ -510,7 +503,7 @@ export function ChatPane({
               ) : reviewPlan ? (
                 <ReviewPlanCard
                   onBuildLocally={() => buildPlanLocally(reviewPlan)}
-                  onDismiss={() => setReviewPlan(undefined)}
+                  onDismiss={() => setDismissedPlanHash(reviewPlan.hash)}
                   onOpen={() => onPlanUpdated(reviewPlan)}
                   plan={reviewPlan}
                 />
@@ -524,6 +517,7 @@ export function ChatPane({
                   stats={workingStats}
                 />
               ) : null}
+              {retryStatus ? <RetryStatusBar status={retryStatus} /> : null}
               <Composer
                 canSubmit={Boolean(workspace) && Boolean(paneModel)}
                 contextItems={contextItems}
@@ -551,24 +545,28 @@ export function ChatPane({
       </div>
     </section>
   );
-}
+});
 
 function ChatViewport({
   children,
   onScroll,
-  viewportRef,
+  scrollRef,
+  contentRef,
 }: {
   children: ReactNode;
-  onScroll(event: UIEvent<HTMLDivElement>): void;
-  viewportRef: RefObject<HTMLDivElement | null>;
+  onScroll(): void;
+  scrollRef: (el: HTMLDivElement | null) => void;
+  contentRef: (el: HTMLElement | null) => void;
 }) {
   return (
     <div
       className="scroll-thin min-h-0 min-w-0 max-w-full flex-1 overflow-y-auto overflow-x-clip overscroll-contain [scrollbar-gutter:stable_both-edges]"
       onScroll={onScroll}
-      ref={viewportRef}
+      ref={scrollRef}
     >
-      <div className="flex min-h-full min-w-0 w-full max-w-full flex-col">{children}</div>
+      <div className="flex min-h-full min-w-0 w-full max-w-full flex-col" ref={contentRef}>
+        {children}
+      </div>
     </div>
   );
 }

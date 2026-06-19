@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseTerminalOutput, tailLines, terminalCommand } from "./parseTerminal";
+import { parseTerminalOutput, terminalCommand } from "./parseTerminal";
 
 describe("terminalCommand", () => {
   it("pulls the command from bash/terminal_run args", () => {
@@ -52,22 +52,5 @@ describe("parseTerminalOutput", () => {
     expect(parsed.truncated).toBe(true);
     expect(parsed.body).not.toContain("earlier output truncated");
     expect(parsed.body).toBe("tail");
-  });
-});
-
-describe("tailLines", () => {
-  it("returns the whole body when within the cap", () => {
-    expect(tailLines("a\nb\nc", 5)).toEqual({ text: "a\nb\nc", hidden: 0 });
-  });
-
-  it("keeps only the last N lines and reports how many were hidden", () => {
-    const body = Array.from({ length: 10 }, (_, i) => `L${i}`).join("\n");
-    const result = tailLines(body, 3);
-    expect(result.text).toBe("L7\nL8\nL9");
-    expect(result.hidden).toBe(7);
-  });
-
-  it("handles an empty body", () => {
-    expect(tailLines("", 5)).toEqual({ text: "", hidden: 0 });
   });
 });

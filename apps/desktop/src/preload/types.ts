@@ -127,6 +127,8 @@ export type ModusApi = {
       mode?: AgentMode;
       model?: string;
       thinkingLevel?: ThinkingLevel;
+      /** Set when this prompt is a "Build this plan" action; binds the turn to the plan. */
+      planId?: string;
     }): Promise<void>;
     abort(sessionId: string): Promise<void>;
     /**
@@ -227,6 +229,12 @@ export type ModusApi = {
     status(cwd: string): Promise<GitStatusSummary>;
     /** File list + ± line counters for the changes strip / apply review. */
     stats(cwd: string): Promise<WorkingChangeStats>;
+    /**
+     * Session-scoped change summary: changes since this session's baseline
+     * (its first checkpoint), for the composer strip. Empty when the session
+     * has no baseline yet (it has changed nothing).
+     */
+    sessionStats(sessionId: string): Promise<WorkingChangeStats>;
     commitOrPush(input: {
       cwd: string;
       message?: string;

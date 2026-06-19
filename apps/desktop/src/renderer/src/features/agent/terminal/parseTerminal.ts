@@ -106,18 +106,3 @@ function extractStatus(line: string): string | undefined {
   }
   return undefined;
 }
-
-/** Last `maxLines` non-trailing-empty lines of `body`, for the collapsed preview. */
-export function tailLines(body: string, maxLines: number): { text: string; hidden: number } {
-  if (!body) {
-    return { text: "", hidden: 0 };
-  }
-  const lines = body.split("\n");
-  if (lines.length <= maxLines) {
-    return { text: body, hidden: 0 };
-  }
-  return {
-    text: lines.slice(-maxLines).join("\n"),
-    hidden: lines.length - maxLines,
-  };
-}

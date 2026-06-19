@@ -15,7 +15,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { PlanRef } from "../../shared/contracts";
+import type { PlanBuildStatus, PlanRef, PlanTodo } from "../../shared/contracts";
 
 const PLAN_FILE = "plan.md";
 const META_FILE = "plan.json";
@@ -49,13 +49,32 @@ function sanitizeSegment(value: string): string {
 
 type PlanMeta = Omit<PlanRef, "content">;
 
+/** Stable, unique ids for a plan's todos, derived from their content + index. */
+function buildTodos(items: ReadonlyArray<{ content: string }>): PlanTodo[] {
+  return items.map((item, index) => ({
+    id: `${slugify(item.content).slice(0, 40)}-${index}`,
+    content: item.content,
+    status: "pending",
+  }));
+}
+
+/**
+ * Read meta, tolerating plans written before `overview`/`todos`/`buildStatus`
+ * existed by defaulting them — so old plans load instead of crashing.
+ */
 function readMeta(dir: string): PlanMeta | undefined {
   const metaPath = join(dir, META_FILE);
   if (!existsSync(metaPath)) {
     return undefined;
   }
   try {
-    return JSON.parse(readFileSync(metaPath, "utf8")) as PlanMeta;
+    const raw = JSON.parse(readFileSync(metaPath, "utf8")) as Partial<PlanMeta>;
+    return {
+      ...(raw as PlanMeta),
+      overview: raw.overview ?? "",
+      todos: raw.todos ?? [],
+      buildStatus: raw.buildStatus ?? "not_built",
+    };
   } catch {
     return undefined;
   }
@@ -72,7 +91,9 @@ export function writePlan(
     workspaceId: string;
     slug: string;
     title: string;
+    overview: string;
     content: string;
+    todos: ReadonlyArray<{ content: string }>;
     sessionId?: string;
   },
 ): PlanRef {
@@ -87,9 +108,13 @@ export function writePlan(
     id: existing?.id ?? `${input.workspaceId}:${input.slug}`,
     slug: input.slug,
     title: input.title,
+    overview: input.overview,
     path,
     hash: hashContent(input.content),
     workspaceId: input.workspaceId,
+    todos: buildTodos(input.todos),
+    // A (re)written plan is always unbuilt — editing a plan re-opens it for review.
+    buildStatus: "not_built",
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
     savedToWorkspace: existing?.savedToWorkspace ?? false,
@@ -97,6 +122,30 @@ export function writePlan(
   };
   writeFileSync(join(dir, META_FILE), JSON.stringify(meta, null, 2), "utf8");
   return { ...meta, content: input.content };
+}
+
+/**
+ * Transition a plan's build status by its `${workspaceId}:${slug}` id (the
+ * authoritative state the Review card and Plan panel read). Returns the updated
+ * reference, or undefined if the id is malformed or the plan is gone.
+ */
+export function setPlanBuildStatusById(
+  rootDir: string,
+  id: string,
+  buildStatus: PlanBuildStatus,
+): PlanRef | undefined {
+  const sep = id.indexOf(":");
+  if (sep < 0) {
+    return undefined;
+  }
+  const dir = planDir(rootDir, id.slice(0, sep), id.slice(sep + 1));
+  const meta = readMeta(dir);
+  if (!meta || !existsSync(meta.path)) {
+    return undefined;
+  }
+  const next: PlanMeta = { ...meta, buildStatus, updatedAt: new Date().toISOString() };
+  writeFileSync(join(dir, META_FILE), JSON.stringify(next, null, 2), "utf8");
+  return { ...next, content: readFileSync(meta.path, "utf8") };
 }
 
 /** Read a plan's current markdown + reference, or undefined if it is gone. */
@@ -107,6 +156,15 @@ export function readPlan(rootDir: string, workspaceId: string, slug: string): Pl
     return undefined;
   }
   return { ...meta, content: readFileSync(meta.path, "utf8") };
+}
+
+/** Read a plan by its `${workspaceId}:${slug}` id. */
+export function readPlanById(rootDir: string, id: string): PlanRef | undefined {
+  const sep = id.indexOf(":");
+  if (sep < 0) {
+    return undefined;
+  }
+  return readPlan(rootDir, id.slice(0, sep), id.slice(sep + 1));
 }
 
 /**

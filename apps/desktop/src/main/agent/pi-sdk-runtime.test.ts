@@ -97,6 +97,7 @@ vi.mock("./model-service", () => ({
 
 const { getDatabase } = await import("../db/database");
 const { PiSdkRuntime } = await import("./pi-sdk-runtime");
+const { writePlan, readPlanById } = await import("../plan/plan-store");
 
 function createMockPiSession(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -112,6 +113,11 @@ function createMockPiSession(overrides: Record<string, unknown> = {}): Record<st
     prompt: vi.fn(async () => undefined),
     sessionFile: join(userData, "pi-sessions", "resumed.jsonl"),
     sessionId: "pi-resumed",
+    // Authoritative turn state read by the runtime: whether a turn is streaming
+    // (so a steer/follow-up joins it instead of opening a run) and the message
+    // log (so the end-of-turn outcome reads the last assistant stopReason).
+    isStreaming: false,
+    state: { messages: [] },
     // Rollback anchor source: an empty tree reads as the "root" sentinel.
     sessionManager: { getLeafId: vi.fn(() => null) },
     setModel: vi.fn(async () => undefined),
@@ -368,6 +374,240 @@ describe("PiSdkRuntime", () => {
     expect(run).toEqual({ status: "completed", error: null });
     expect(events.map((event) => event.type)).toContain("message.delta");
     expect(events.map((event) => event.type)).toContain("run.completed");
+  });
+
+  it("publishes busy then idle run-status around a turn", async () => {
+    const sessionId = `session-${crypto.randomUUID()}`;
+    const workspaceId = `workspace-${crypto.randomUUID()}`;
+    insertSession(sessionId, workspaceId, join(userData, "missing.jsonl"), "New chat");
+    const runtime = new PiSdkRuntime();
+    const window = createWindowStub();
+
+    await runtime.prompt(window, {
+      context: [],
+      delivery: "normal",
+      message: "hi",
+      sessionId,
+      userMessageId: "local-user-status",
+    });
+
+    const statuses = (
+      getDatabase()
+        .prepare(
+          "select payload_json from agent_events where session_id = ? and type = 'session.status' order by created_at asc, rowid asc",
+        )
+        .all(sessionId) as Array<{ payload_json: string }>
+    ).map((row) => JSON.parse(row.payload_json).status.type);
+    // The composer's lock follows this: working while the turn runs, released
+    // exactly once it ends.
+    expect(statuses).toEqual(["busy", "idle"]);
+  });
+
+  it("queues a steer message into the live turn without opening a phantom run", async () => {
+    const sessionId = `session-${crypto.randomUUID()}`;
+    const workspaceId = `workspace-${crypto.randomUUID()}`;
+    insertSession(sessionId, workspaceId, join(userData, "missing.jsonl"), "New chat");
+    const prompt = vi.fn(async () => undefined);
+    // A turn is already streaming: a steer message must JOIN it (pi queues it
+    // and resolves immediately), never get its own run lifecycle — that phantom
+    // run.started→run.failed is exactly what used to unlock the composer mid-turn.
+    mocks.createAgentSession.mockImplementationOnce(async () => ({
+      session: createMockPiSession({ isStreaming: true, prompt }),
+    }));
+    const runtime = new PiSdkRuntime();
+    const window = createWindowStub();
+
+    await runtime.prompt(window, {
+      context: [],
+      delivery: "steer",
+      message: "actually use bun",
+      sessionId,
+      userMessageId: "local-user-steer",
+    });
+
+    const runCount = getDatabase()
+      .prepare("select count(*) as count from agent_runs where session_id = ?")
+      .get(sessionId);
+    expect(runCount).toEqual({ count: 0 });
+
+    const types = (
+      getDatabase()
+        .prepare(
+          "select type from agent_events where session_id = ? order by created_at asc, rowid asc",
+        )
+        .all(sessionId) as Array<{ type: string }>
+    ).map((row) => row.type);
+    expect(types).toContain("message.started");
+    expect(types).not.toContain("run.started");
+    expect(types).not.toContain("run.failed");
+    expect(types).not.toContain("session.status");
+    expect(prompt).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ streamingBehavior: "steer" }),
+    );
+  });
+
+  it("fails the run from the last assistant error when the turn ends in error", async () => {
+    const sessionId = `session-${crypto.randomUUID()}`;
+    const workspaceId = `workspace-${crypto.randomUUID()}`;
+    insertSession(sessionId, workspaceId, join(userData, "missing.jsonl"), "New chat");
+    // The turn streams some text, then ends with the last assistant message
+    // carrying stopReason "error" — i.e. auto-retries were exhausted. The
+    // authoritative outcome is read from that message, surfaced once as a fatal
+    // run.failed (never doubled, never a red retry line).
+    mocks.createAgentSession.mockImplementationOnce(async () => ({
+      session: createMockPiSession({
+        state: {
+          messages: [
+            { role: "assistant", stopReason: "error", errorMessage: "Provider is overloaded" },
+          ],
+        },
+        prompt: vi.fn(async () => {
+          mocks.emitPiEvent({ type: "message_start", message: { role: "assistant" } });
+          mocks.emitPiEvent({
+            type: "message_update",
+            message: { role: "assistant" },
+            assistantMessageEvent: { type: "text_delta", delta: "partial" },
+          });
+          mocks.emitPiEvent({ type: "message_end", message: { role: "assistant" } });
+        }),
+      }),
+    }));
+    const runtime = new PiSdkRuntime();
+    const window = createWindowStub();
+
+    await runtime.prompt(window, {
+      context: [],
+      delivery: "normal",
+      message: "go",
+      sessionId,
+      userMessageId: "local-user-fatal",
+    });
+
+    const run = getDatabase()
+      .prepare(
+        "select status, error from agent_runs where session_id = ? order by started_at desc limit 1",
+      )
+      .get(sessionId) as { status: string; error: string };
+    const types = (
+      getDatabase()
+        .prepare(
+          "select type from agent_events where session_id = ? order by created_at asc, rowid asc",
+        )
+        .all(sessionId) as Array<{ type: string }>
+    ).map((row) => row.type);
+
+    expect(run.status).toBe("failed");
+    expect(run.error).toContain("Provider is overloaded");
+    expect(types).toContain("run.failed");
+    expect(types).not.toContain("run.completed");
+  });
+
+  it("drives a plan's build status from the build turn lifecycle and tags the message", async () => {
+    const sessionId = `session-${crypto.randomUUID()}`;
+    const workspaceId = `workspace-${crypto.randomUUID()}`;
+    insertSession(sessionId, workspaceId, join(userData, "missing.jsonl"), "New chat");
+    const plansRoot = join(userData, "plans");
+    const plan = writePlan(plansRoot, {
+      workspaceId,
+      slug: "feat",
+      title: "Feat",
+      overview: "Build the thing.",
+      content: "# Feat\n",
+      todos: [{ content: "Step one" }, { content: "Step two" }],
+      sessionId,
+    });
+    expect(plan.buildStatus).toBe("not_built");
+
+    // The build turn produces output and completes cleanly.
+    mocks.createAgentSession.mockImplementationOnce(async () => ({
+      session: createMockPiSession({
+        prompt: vi.fn(async () => {
+          mocks.emitPiEvent({ type: "message_start", message: { role: "assistant" } });
+          mocks.emitPiEvent({
+            type: "message_update",
+            message: { role: "assistant" },
+            assistantMessageEvent: { type: "text_delta", delta: "building" },
+          });
+          mocks.emitPiEvent({ type: "message_end", message: { role: "assistant" } });
+        }),
+      }),
+    }));
+    const runtime = new PiSdkRuntime();
+    const window = createWindowStub();
+
+    await runtime.prompt(window, {
+      context: [],
+      delivery: "normal",
+      message: `Build the approved plan "Feat".`,
+      sessionId,
+      userMessageId: "local-user-build",
+      planId: plan.id,
+    });
+
+    // Completed build turn → plan is built.
+    expect(readPlanById(plansRoot, plan.id)?.buildStatus).toBe("built");
+
+    const rows = getDatabase()
+      .prepare(
+        "select type, payload_json from agent_events where session_id = ? order by created_at asc, rowid asc",
+      )
+      .all(sessionId) as Array<{ type: string; payload_json: string }>;
+    // The build user message is tagged so the timeline renders a Build card.
+    const userMessage = rows.find((row) => row.type === "message.started");
+    expect(JSON.parse(userMessage?.payload_json ?? "{}").planBuild).toEqual({
+      planId: plan.id,
+      title: "Feat",
+      todoCount: 2,
+    });
+    // Status transitions are broadcast so the Plan panel + Review card react.
+    expect(rows.filter((row) => row.type === "plan.updated").length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("reverts a plan to not_built when the build turn fails", async () => {
+    const sessionId = `session-${crypto.randomUUID()}`;
+    const workspaceId = `workspace-${crypto.randomUUID()}`;
+    insertSession(sessionId, workspaceId, join(userData, "missing.jsonl"), "New chat");
+    const plansRoot = join(userData, "plans");
+    const plan = writePlan(plansRoot, {
+      workspaceId,
+      slug: "feat",
+      title: "Feat",
+      overview: "o",
+      content: "# Feat\n",
+      todos: [{ content: "Step one" }],
+      sessionId,
+    });
+
+    // The build turn ends in error (last assistant stopReason = error).
+    mocks.createAgentSession.mockImplementationOnce(async () => ({
+      session: createMockPiSession({
+        state: { messages: [{ role: "assistant", stopReason: "error", errorMessage: "boom" }] },
+        prompt: vi.fn(async () => {
+          mocks.emitPiEvent({ type: "message_start", message: { role: "assistant" } });
+          mocks.emitPiEvent({
+            type: "message_update",
+            message: { role: "assistant" },
+            assistantMessageEvent: { type: "text_delta", delta: "partial" },
+          });
+          mocks.emitPiEvent({ type: "message_end", message: { role: "assistant" } });
+        }),
+      }),
+    }));
+    const runtime = new PiSdkRuntime();
+    const window = createWindowStub();
+
+    await runtime.prompt(window, {
+      context: [],
+      delivery: "normal",
+      message: "build",
+      sessionId,
+      userMessageId: "local-user-build-fail",
+      planId: plan.id,
+    });
+
+    // A failed build turn re-opens the plan for building.
+    expect(readPlanById(plansRoot, plan.id)?.buildStatus).toBe("not_built");
   });
 
   it("keeps an aborted in-flight run cancelled instead of failed", async () => {

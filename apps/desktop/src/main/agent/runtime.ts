@@ -38,6 +38,8 @@ export type PromptAgentInput = {
    */
   model?: string;
   thinkingLevel?: ThinkingLevel;
+  /** Set when this prompt is a "Build this plan" action; binds the turn to the plan. */
+  planId?: string;
 };
 
 export type AgentRuntime = {

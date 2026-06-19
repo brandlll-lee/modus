@@ -23,7 +23,6 @@ import {
 import type {
   AgentMode,
   ContextItem,
-  ContextSuggestion,
   ContextUsageInfo,
   ModelInfo,
   PromptDelivery,
@@ -42,7 +41,7 @@ import { ContextToken } from "./ContextToken";
 import { DesignElementToken } from "./DesignElementToken";
 import { SlashMenu } from "./SlashMenu";
 import { useComposerImages } from "./useComposerImages";
-import { useComposerMentions } from "./useComposerMentions";
+import { type MentionRow, useComposerMentions } from "./useComposerMentions";
 import { type SlashItem, useComposerSlash } from "./useComposerSlash";
 
 const HERO_PLACEHOLDER_WORDS = [
@@ -121,9 +120,22 @@ export function Composer({
   const hasText = value.trim().length > 0;
   const hasImages = images.length > 0;
   const hasSelectedSkills = selectedSkills.length > 0;
+  const inlineContextItems = contextItems.filter((item) => item.type !== "design-element");
+  const hasInlineTokens = inlineContextItems.length > 0 || hasSelectedSkills;
   const hasContent = hasText || hasImages || hasSelectedSkills;
   const currentModel = models.find((item) => item.id === model) ?? models[0];
-  const { activeIndex, isOpen, mention, setActiveIndex, suggestions } = useComposerMentions({
+  const {
+    activeIndex,
+    isOpen,
+    mention,
+    rows: mentionRows,
+    setActiveIndex,
+    moveActive,
+    openCategory,
+    backToRoot,
+    atCategoryRoot,
+    expandMore,
+  } = useComposerMentions({
     cwd,
     value,
     workspaceId,
@@ -202,15 +214,26 @@ export function Composer({
     }
   }
 
-  function addContext(suggestion: ContextSuggestion): void {
-    const key = contextItemKey(suggestion.item);
-    if (!contextItems.some((item) => contextItemKey(item) === key)) {
-      onContextChange([...contextItems, suggestion.item]);
+  function addContextItem(item: ContextItem): void {
+    const key = contextItemKey(item);
+    if (!contextItems.some((existing) => contextItemKey(existing) === key)) {
+      onContextChange([...contextItems, item]);
     }
     if (mention) {
       setValue(
         `${value.slice(0, mention.start)}${value.slice(mention.start).replace(/@[^\s]*$/, "")}`,
       );
+    }
+  }
+
+  /** Route an @-menu row: drill into a category, add an item, or expand "more". */
+  function selectMentionRow(row: MentionRow): void {
+    if (row.row === "nav") {
+      openCategory(row.target);
+    } else if (row.row === "add") {
+      addContextItem(row.item);
+    } else if (row.row === "more") {
+      expandMore();
     }
   }
 
@@ -228,10 +251,19 @@ export function Composer({
       return;
     }
 
-    if (!value && selectedSkills.length > 0 && event.key === "Backspace") {
-      event.preventDefault();
-      setSelectedSkills((current) => current.slice(0, -1));
-      return;
+    if (!value && event.key === "Backspace") {
+      if (selectedSkills.length > 0) {
+        event.preventDefault();
+        setSelectedSkills((current) => current.slice(0, -1));
+        return;
+      }
+      const lastContextItem = inlineContextItems.at(-1);
+      if (lastContextItem) {
+        event.preventDefault();
+        const key = contextItemKey(lastContextItem);
+        onContextChange(contextItems.filter((item) => contextItemKey(item) !== key));
+        return;
+      }
     }
 
     if (slash.isOpen && event.key === "ArrowUp") {
@@ -257,13 +289,20 @@ export function Composer({
 
     if (isOpen && event.key === "ArrowDown") {
       event.preventDefault();
-      setActiveIndex((index) => (index + 1) % suggestions.length);
+      moveActive(1);
       return;
     }
 
     if (isOpen && event.key === "ArrowUp") {
       event.preventDefault();
-      setActiveIndex((index) => (index - 1 + suggestions.length) % suggestions.length);
+      moveActive(-1);
+      return;
+    }
+
+    // Backspace at a category's empty query pops back to the root @ menu.
+    if (isOpen && atCategoryRoot && event.key === "Backspace") {
+      event.preventDefault();
+      backToRoot();
       return;
     }
 
@@ -273,10 +312,13 @@ export function Composer({
       return;
     }
 
-    if (isOpen && event.key === "Enter" && suggestions[activeIndex]) {
-      event.preventDefault();
-      addContext(suggestions[activeIndex]);
-      return;
+    if (isOpen && (event.key === "Enter" || event.key === "Tab")) {
+      const row = mentionRows[activeIndex];
+      if (row && row.row !== "header") {
+        event.preventDefault();
+        selectMentionRow(row);
+        return;
+      }
     }
 
     if (event.key === "Escape" && isRunning && onAbort) {
@@ -324,7 +366,7 @@ export function Composer({
       >
         {isRunning ? <BorderBeam /> : null}
         <div className="relative">
-          {!hasText && !hasSelectedSkills ? (
+          {!hasText && !hasInlineTokens ? (
             <div
               aria-hidden
               className="pointer-events-none absolute inset-x-0 top-0 px-4 pt-4 text-md font-normal text-fg-subtle"
@@ -348,11 +390,22 @@ export function Composer({
           ) : null}
           <div
             className={cn(
-              hasSelectedSkills
-                ? "flex min-h-[68px] flex-wrap items-start gap-x-2 gap-y-1 px-4 pt-4"
+              hasInlineTokens
+                ? "flex min-h-[68px] flex-wrap items-start gap-x-1 gap-y-1 px-4 pt-4"
                 : "",
             )}
           >
+            {inlineContextItems.map((item) => (
+              <ContextToken
+                item={item}
+                key={contextItemKey(item)}
+                onRemove={() =>
+                  onContextChange(
+                    contextItems.filter((other) => contextItemKey(other) !== contextItemKey(item)),
+                  )
+                }
+              />
+            ))}
             {hasSelectedSkills
               ? selectedSkills.map((skill) => (
                   <span
@@ -367,7 +420,7 @@ export function Composer({
             <textarea
               className={cn(
                 "scroll-thin block max-h-[260px] resize-none overflow-y-auto bg-transparent text-md font-normal text-fg leading-[1.5] outline-none",
-                hasSelectedSkills
+                hasInlineTokens
                   ? "min-h-[28px] min-w-[180px] flex-1 pt-px"
                   : "min-h-[68px] w-full px-4 pt-4",
               )}
@@ -380,8 +433,9 @@ export function Composer({
           </div>
           <ContextMentionMenu
             activeIndex={activeIndex}
-            onSelect={addContext}
-            suggestions={isOpen ? suggestions : []}
+            onHover={setActiveIndex}
+            onSelect={selectMentionRow}
+            rows={isOpen ? mentionRows : []}
           />
           {slash.isOpen ? (
             <SlashMenu
@@ -422,26 +476,6 @@ export function Composer({
               .map((item) => (
                 <DesignElementToken
                   element={item.element}
-                  key={contextItemKey(item)}
-                  onRemove={() =>
-                    onContextChange(
-                      contextItems.filter(
-                        (other) => contextItemKey(other) !== contextItemKey(item),
-                      ),
-                    )
-                  }
-                />
-              ))}
-          </div>
-        ) : null}
-
-        {contextItems.some((item) => item.type !== "design-element") ? (
-          <div className="flex flex-wrap gap-1.5 px-3 pt-1">
-            {contextItems
-              .filter((item) => item.type !== "design-element")
-              .map((item) => (
-                <ContextToken
-                  item={item}
                   key={contextItemKey(item)}
                   onRemove={() =>
                     onContextChange(

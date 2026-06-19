@@ -38,28 +38,6 @@ function messageRole(message: unknown): MessageRole | undefined {
   return role === "user" || role === "assistant" ? role : undefined;
 }
 
-function messageError(message: unknown): string | undefined {
-  if (!message || typeof message !== "object") {
-    return undefined;
-  }
-
-  if ("errorMessage" in message) {
-    const errorMessage = (message as { errorMessage?: unknown }).errorMessage;
-    if (typeof errorMessage === "string" && errorMessage.trim()) {
-      return errorMessage;
-    }
-  }
-
-  if ("stopReason" in message) {
-    const stopReason = (message as { stopReason?: unknown }).stopReason;
-    if (stopReason === "error") {
-      return "The model returned an error without additional details.";
-    }
-  }
-
-  return undefined;
-}
-
 function messageId(message: unknown, role: MessageRole, state: NormalizerState): string {
   const explicit = explicitMessageId(message);
   if (explicit) {
@@ -196,11 +174,13 @@ export function normalizePiEvent(
       }
       const id = messageId(event.message, role, state);
       delete state.activeMessageIds[role];
-      const completed = { type: "message.completed", sessionId, messageId: id } as const;
-      const error = messageError(event.message);
-      return error
-        ? [completed, { type: "runtime.error", sessionId, message: error }]
-        : [completed];
+      // A message that ends with `stopReason: "error"` is NOT surfaced here.
+      // If the runtime will auto-retry, `auto_retry_start` reports it as a
+      // (non-fatal) retry status; if it won't, the turn ends and the backend
+      // surfaces the final error once as `run.failed` (read authoritatively
+      // from the last assistant message's stopReason). Emitting an error here
+      // too would double every transient failure and paint retries red.
+      return [{ type: "message.completed", sessionId, messageId: id }];
     }
     case "tool_execution_start":
       return [
@@ -253,11 +233,30 @@ export function normalizePiEvent(
           ]
         : [{ type: "compaction.ended", sessionId, aborted: event.aborted }];
     case "auto_retry_start":
-      return [{ type: "runtime.error", sessionId, message: event.errorMessage }];
+      // The runtime hit a transient error and will retry — the turn is still
+      // working. Report it as an authoritative `retry` status (drives the
+      // composer lock + a single non-fatal "retrying … attempt N/M" line),
+      // carrying the runtime's own attempt/maxAttempts and a `nextAt` deadline
+      // for the countdown. NOT a red error.
+      return [
+        {
+          type: "session.status",
+          sessionId,
+          status: {
+            type: "retry",
+            attempt: event.attempt,
+            maxAttempts: event.maxAttempts,
+            message: event.errorMessage,
+            nextAt: Date.now() + event.delayMs,
+          },
+        },
+      ];
     case "auto_retry_end":
-      return event.finalError
-        ? [{ type: "runtime.error", sessionId, message: event.finalError }]
-        : [];
+      // Success → the turn resumed streaming, drop back to `busy`. Failure →
+      // retries are exhausted and the turn is about to end; the backend emits
+      // the single fatal `run.failed` (from the last assistant stopReason), so
+      // nothing is surfaced here to avoid a duplicate error line.
+      return event.success ? [{ type: "session.status", sessionId, status: { type: "busy" } }] : [];
     default:
       return [];
   }

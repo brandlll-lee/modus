@@ -8,14 +8,26 @@ import type {
   ContextSuggestion,
   ResolvedContext,
 } from "../../shared/contracts";
+import { listAgentEvents } from "../agent/agent-event-store";
+import { listAgentSessions } from "../agent/agent-store";
 import { activeBrowserContext } from "../browser/browser-service";
-import { getDocChunk, searchDocs } from "../docs/docs-service";
-import { readDiff } from "../git/git-service";
-import { getTerminalOutput, listTerminals } from "../terminal/terminal-service";
+import { getDocChunk } from "../docs/docs-service";
+import { isGitRepository, readBranchDiff, readDiff } from "../git/git-service";
+import { getTerminalOutput } from "../terminal/terminal-service";
 
 const MAX_FILE_BYTES = 64 * 1024;
 const MAX_FOLDER_ENTRIES = 80;
+/** Byte cap for a branch/working diff or a past-chat transcript injected as context. */
+const MAX_CONTEXT_TEXT_BYTES = 60 * 1024;
 const execFileAsync = promisify(execFile);
+
+/** Cap large context text so a single @ item can't blow the context window. */
+function capText(text: string): string {
+  if (Buffer.byteLength(text, "utf8") <= MAX_CONTEXT_TEXT_BYTES) {
+    return text;
+  }
+  return `${Buffer.from(text, "utf8").subarray(0, MAX_CONTEXT_TEXT_BYTES).toString("utf8")}\n…(truncated)`;
+}
 
 function inside(root: string, target: string): boolean {
   const rootPath = resolve(root);
@@ -51,13 +63,15 @@ async function searchFiles(cwd: string, query: string): Promise<ContextSuggestio
     .slice(0, 30)
     .map((entry) => {
       const path = join(baseDir, entry.name);
-      const rel = toRelative(cwd, path);
       const type: ContextKind = entry.isDirectory() ? "folder" : "file";
+      // Cursor parity: label is the bare name; detail is the containing
+      // directory (empty at the workspace root → a clean single-line row).
+      const dir = relative(cwd, baseDir).replace(/\\/g, "/");
       return {
         id: `${type}:${path}`,
         type,
-        label: entry.isDirectory() ? `${rel}/` : rel,
-        detail: entry.isDirectory() ? "folder" : "file",
+        label: entry.isDirectory() ? `${entry.name}/` : entry.name,
+        detail: dir,
         item: entry.isDirectory() ? { type: "folder", path } : { type: "file", path },
       };
     });
@@ -106,100 +120,63 @@ export async function searchContext(input: {
 }): Promise<ContextSuggestion[]> {
   const query = input.query.trim();
 
-  if (input.kind === "project-summary" || /project|summary|overview/i.test(query)) {
-    return [
-      {
-        id: "project-summary",
-        type: "project-summary",
-        label: "Project Summary",
-        detail: "Top-level files and folders",
-        item: { type: "project-summary" },
-      },
-    ];
+  // Route by the category the user explicitly opened in the @ menu — never by
+  // guessing intent from the query text. Past Chats lists this workspace's
+  // sessions; every other category (and root free-typing) lists files/folders.
+  if (input.kind === "past-chat") {
+    return searchPastChats(input.workspaceId, query);
   }
-
-  if (input.kind === "recent-changes" || /recent|history/i.test(query)) {
-    return [
-      {
-        id: "recent-changes",
-        type: "recent-changes",
-        label: "Recent Changes",
-        detail: "Recent Git commits",
-        item: { type: "recent-changes", limit: 20 },
-      },
-    ];
-  }
-
-  if (input.kind === "rules" || /rules?|instructions?/i.test(query)) {
-    return [
-      {
-        id: "rules",
-        type: "rules",
-        label: "Project Rules",
-        detail: "AGENTS, CLAUDE, Cursor rules",
-        item: { type: "rules" },
-      },
-    ];
-  }
-
-  if (input.kind === "search" || /^search\s+/i.test(query)) {
-    const searchQuery = query.replace(/^search\s+/i, "").trim();
-    return [
-      {
-        id: `search:${searchQuery}`,
-        type: "search",
-        label: `Search: ${searchQuery || query}`,
-        detail: "Project text search",
-        item: { type: "search", query: searchQuery || query },
-      },
-    ];
-  }
-
-  if (input.kind === "terminal" || /terminals?/i.test(query)) {
-    return listTerminals().map((terminal) => ({
-      id: `terminal:${terminal.id}`,
-      type: "terminal",
-      label: terminal.shell,
-      detail: terminal.cwd,
-      item: { type: "terminal", terminalId: terminal.id },
-    }));
-  }
-
-  if (input.kind === "browser" || /browser|page|url|tab/i.test(query)) {
-    return [
-      {
-        id: "browser:active",
-        type: "browser",
-        label: "Current Browser Page",
-        detail: "Active in-app browser tab",
-        item: { type: "browser", workspaceId: input.workspaceId },
-      },
-    ];
-  }
-
-  if (input.kind === "doc" || /^docs?/i.test(query)) {
-    return searchDocs(input.workspaceId, query.replace(/^docs?/i, "").trim()).map((hit) => ({
-      id: `doc:${hit.chunkId}`,
-      type: "doc",
-      label: hit.heading ? `${hit.title} / ${hit.heading}` : hit.title,
-      detail: hit.snippet,
-      item: { type: "doc", docId: hit.chunkId, title: hit.title, query },
-    }));
-  }
-
-  if (input.kind === "git-diff" || /diff|changes?/i.test(query)) {
-    return [
-      {
-        id: "git-diff:working-state",
-        type: "git-diff",
-        label: "Working State Diff",
-        detail: "Uncommitted changes in this workspace",
-        item: { type: "git-diff", mode: "working-state" },
-      },
-    ];
-  }
-
   return searchFiles(input.cwd, query);
+}
+
+/** Sessions in this workspace, newest-first, for the @ Past Chats category. */
+function searchPastChats(workspaceId: string, query: string): ContextSuggestion[] {
+  const needle = query.toLowerCase();
+  return listAgentSessions()
+    .filter((session) => session.workspaceId === workspaceId)
+    .filter((session) => !needle || (session.title ?? "").toLowerCase().includes(needle))
+    .slice(0, 30)
+    .map((session) => {
+      const title = session.title?.trim() || "New chat";
+      return {
+        id: `past-chat:${session.id}`,
+        type: "past-chat" as const,
+        label: title,
+        detail: "Past Chat",
+        item: { type: "past-chat", sessionId: session.id, title },
+      };
+    });
+}
+
+/**
+ * Flatten a session's persisted events into a "User: …/Assistant: …" transcript
+ * (capped). Reconstructed from the same event stream the timeline replays, so it
+ * reflects exactly what was said — no separate storage to drift.
+ */
+function readSessionTranscript(sessionId: string): string {
+  const parts: string[] = [];
+  let role: "user" | "assistant" | undefined;
+  let buffer = "";
+  const flush = (): void => {
+    const text = buffer.trim();
+    if (role && text) {
+      parts.push(`${role === "user" ? "User" : "Assistant"}: ${text}`);
+    }
+    buffer = "";
+  };
+  for (const { event } of listAgentEvents(sessionId)) {
+    if (event.type === "message.started") {
+      flush();
+      role = event.role;
+    } else if (event.type === "message.delta" && role) {
+      buffer += event.delta;
+    } else if (event.type === "message.completed") {
+      flush();
+      role = undefined;
+    }
+  }
+  flush();
+  return capText(parts.join("\n\n"));
 }
 
 export async function resolveContext(
@@ -229,14 +206,17 @@ export async function resolveContext(
         continue;
       }
       const entries = await readdir(item.path, { withFileTypes: true }).catch(() => []);
+      const listing = entries
+        .filter((entry) => entry.name !== "node_modules" && entry.name !== ".git")
+        .slice(0, MAX_FOLDER_ENTRIES)
+        .map((entry) => `${entry.isDirectory() ? "dir " : "file"} ${entry.name}`)
+        .join("\n");
       resolvedItems.push({
         item,
         title: `folder:${toRelative(cwd, item.path)}`,
-        content: entries
-          .filter((entry) => entry.name !== "node_modules" && entry.name !== ".git")
-          .slice(0, MAX_FOLDER_ENTRIES)
-          .map((entry) => `${entry.isDirectory() ? "dir " : "file"} ${entry.name}`)
-          .join("\n"),
+        // Reference, not a dump: list the folder and let the agent read the
+        // specific files it needs with its tools (keeps the window lean).
+        content: `${listing}\n\n(Directory listing — read the specific files you need with the read tool.)`,
       });
     }
 
@@ -249,20 +229,27 @@ export async function resolveContext(
     }
 
     if (item.type === "browser") {
-      const content = item.workspaceId ? activeBrowserContext(item.workspaceId) : undefined;
+      // Guidance, not content: @Browser signals the turn should use the in-app
+      // browser tools; we add the active page as a lightweight hint when present.
+      const page = item.workspaceId ? activeBrowserContext(item.workspaceId) : undefined;
       resolvedItems.push({
         item,
-        title: "browser:active",
-        content: content ?? "No active browser tab.",
+        title: "browser",
+        content: page
+          ? `This turn should use the in-app browser tools (navigate, click, read, screenshot). Active page:\n${page}`
+          : "This turn should use the in-app browser tools (navigate, click, read, screenshot). No browser tab is open yet — open one with the browser tools.",
       });
     }
 
     if (item.type === "git-diff") {
-      const diff = await readDiff(cwd);
+      resolvedItems.push(await resolveGitDiff(cwd, item));
+    }
+
+    if (item.type === "past-chat") {
       resolvedItems.push({
         item,
-        title: "git-diff:working-state",
-        content: diff.diff,
+        title: `past-chat:${item.title}`,
+        content: readSessionTranscript(item.sessionId) || "This conversation has no messages yet.",
       });
     }
 
@@ -376,6 +363,42 @@ export async function resolveContext(
   }
 
   return resolvedItems;
+}
+
+/**
+ * Resolve a git-diff context item, reporting the authoritative git state:
+ * non-repo → an honest "not a git repo" note; branch → diff vs the default
+ * branch; working-state → uncommitted diff. Never throws.
+ */
+async function resolveGitDiff(
+  cwd: string,
+  item: Extract<ContextItem, { type: "git-diff" }>,
+): Promise<ResolvedContext> {
+  if (!(await isGitRepository(cwd))) {
+    return {
+      item,
+      title: "branch-diff",
+      content:
+        "This workspace is not a git repository (no .git found), so no diff is available. Open the project inside a git repo, or run `git init` / `git clone` first.",
+    };
+  }
+
+  if (item.mode === "branch") {
+    const { base, diff } = await readBranchDiff(cwd);
+    const content = !base
+      ? "Could not determine a default branch (origin HEAD / main / master) to diff against."
+      : diff.trim()
+        ? `Diff of the current branch vs ${base} (base your answer on these changes):\n\n${capText(diff)}`
+        : `No differences from the default branch (${base}).`;
+    return { item, title: "branch-diff", content };
+  }
+
+  const diff = await readDiff(cwd);
+  return {
+    item,
+    title: "git-diff:working-state",
+    content: diff.diff.trim() ? capText(diff.diff) : "No uncommitted changes in this workspace.",
+  };
 }
 
 export function formatResolvedContext(items: ResolvedContext[]): string {

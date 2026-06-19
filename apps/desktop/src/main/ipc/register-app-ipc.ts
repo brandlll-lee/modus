@@ -12,6 +12,7 @@ import { listAgentRuns } from "../agent/agent-run-store";
 import { deleteAgentSession, getAgentSession, listAgentSessions } from "../agent/agent-store";
 import {
   deleteSessionCheckpoints,
+  getSessionBaseCheckpoint,
   listCheckpoints,
   restoreCheckpoint,
 } from "../agent/checkpoint-service";
@@ -50,12 +51,13 @@ import {
   toggleBrowserDevtools,
 } from "../browser/browser-service";
 import { resolveContext, searchContext } from "../context/context-service";
-import { addDocSource, indexWorkspaceDocs, listDocSources, searchDocs } from "../docs/docs-service";
+import { addDocSource, listDocSources, searchDocs } from "../docs/docs-service";
 import { listDirectory, readWorkspaceFile } from "../files/files-service";
 import {
   checkoutBranch,
   commitOrPush,
   discardFile,
+  getChangeStatsSince,
   getStatusSummary,
   getWorkingChangeStats,
   listBranches,
@@ -332,6 +334,7 @@ export function registerAppIpc(): void {
       ...(parsed.mode !== undefined ? { mode: parsed.mode } : {}),
       ...(parsed.model !== undefined ? { model: parsed.model } : {}),
       ...(parsed.thinkingLevel !== undefined ? { thinkingLevel: parsed.thinkingLevel } : {}),
+      ...(parsed.planId !== undefined ? { planId: parsed.planId } : {}),
     });
   });
 
@@ -624,6 +627,19 @@ export function registerAppIpc(): void {
     return await getWorkingChangeStats(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.diffStats));
   });
 
+  // Session-scoped change summary for the composer strip: changes made since
+  // THIS session's baseline (its first checkpoint), not the whole repo's
+  // uncommitted state. No baseline yet → empty (the session changed nothing).
+  ipcMain.handle(IPC_CHANNELS.diffSessionStats, async (event, sessionId: string) => {
+    assertTrustedSender(event);
+    const id = parseIpcInput(sessionIdSchema, sessionId, IPC_CHANNELS.diffSessionStats);
+    const base = getSessionBaseCheckpoint(id);
+    if (!base) {
+      return { files: [], added: 0, removed: 0, fileCount: 0, truncated: false };
+    }
+    return await getChangeStatsSince(base.cwd, base.commitHash);
+  });
+
   ipcMain.handle(IPC_CHANNELS.diffCommitOrPush, async (event, input) => {
     assertTrustedSender(event);
     const parsed = parseIpcInput(diffCommitOrPushSchema, input, IPC_CHANNELS.diffCommitOrPush);
@@ -720,9 +736,6 @@ export function registerAppIpc(): void {
   ipcMain.handle(IPC_CHANNELS.contextSearch, async (event, input) => {
     assertTrustedSender(event);
     const parsed = parseIpcInput(contextSearchSchema, input, IPC_CHANNELS.contextSearch);
-    if (parsed.kind === "doc" || /^docs?/i.test(parsed.query)) {
-      await indexWorkspaceDocs(parsed.workspaceId, parsed.cwd);
-    }
     return await searchContext({
       workspaceId: parsed.workspaceId,
       cwd: parsed.cwd,

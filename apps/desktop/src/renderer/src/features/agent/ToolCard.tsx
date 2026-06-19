@@ -6,7 +6,7 @@ import { cn } from "../../lib/cn";
 import { DiffToolCard } from "./diff/DiffToolCard";
 import { QuestionToolCard } from "./QuestionToolCard";
 import { ShinyText } from "./TextEffects";
-import { TerminalToolCard } from "./terminal/TerminalToolCard";
+import { TerminalToolCard, type TerminalToolVariant } from "./terminal/TerminalToolCard";
 import { toolIcon } from "./toolIcons";
 
 type ToolCardProps = {
@@ -15,6 +15,7 @@ type ToolCardProps = {
   output: string;
   isError?: boolean;
   isComplete?: boolean;
+  variant?: TerminalToolVariant;
   /** Session cwd, threaded to the diff card so it can open the edited file. */
   cwd?: string | undefined;
 };
@@ -38,6 +39,7 @@ export const ToolCard = memo(
     output,
     isComplete = false,
     isError = false,
+    variant,
     cwd,
   }: ToolCardProps) {
     // The catalog declares how each tool renders; route on that capability
@@ -59,6 +61,7 @@ export const ToolCard = memo(
           isError={isError}
           name={name}
           output={output}
+          {...(variant ? { variant } : {})}
         />
       );
     }
@@ -82,6 +85,7 @@ export const ToolCard = memo(
     prev.output === next.output &&
     prev.isComplete === next.isComplete &&
     prev.isError === next.isError &&
+    prev.variant === next.variant &&
     prev.cwd === next.cwd &&
     argsEqual(prev.args, next.args),
 );
@@ -123,7 +127,7 @@ function FlatToolRow({
         </ShinyText>
       ) : (
         <>
-          <span className={cn("shrink-0 font-medium", isError ? "text-danger" : "text-fg-muted")}>
+          <span className={cn("shrink-0 font-medium", isError ? "text-danger" : "text-fg-subtle")}>
             {view.verb}
           </span>
           <span

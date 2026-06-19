@@ -96,18 +96,13 @@ function buildMermaidConfig(theme: ThemeMode): MermaidConfig {
  * (b) saturates the main thread → text + tool spinner stutter.
  * Hoisting these to module-level constants keeps the references stable so only
  * the last streaming block re-renders incrementally.
- * Refs: https://streamdown.ai/docs/memoization, vercel/streamdown#435, deer-flow#2824
+ * Refs: https://streamdown.ai/docs/memoization, vercel/streamdown#435
  *
- * Animation tuning: per Streamdown's animation guide, fast models that dump many
- * tokens per commit look smoother with `blurIn` + a longer duration (200-300ms),
- * which masks batch arrivals far better than a short fadeIn. Especially relevant
- * for CJK content where `sep: "word"` splits coarsely.
- *
- * stagger MUST stay 0: Streamdown 2.5's `stagger` (default 40ms) has no
- * inter-block coordination, so sibling blocks/lines animate concurrently and
- * the reveal looks out of order (vercel/streamdown#482, #437 — open). 0 is the
- * official workaround. Smooth pacing is instead handled upstream by the
- * client-side typewriter (useSmoothStreamingText). */
+ * Per-word reveal: `blurIn` fades each streamed word in. Paired with the
+ * client-side typewriter (useSmoothStreamingText) this is what makes streaming
+ * read as smooth real-time output rather than batches popping in. stagger stays
+ * 0 (Streamdown 2.5's stagger has no inter-block coordination → out-of-order
+ * reveal, vercel/streamdown#482/#437); pacing comes from the typewriter. */
 const STREAMING_ANIMATION: NonNullable<StreamdownProps["animated"]> = {
   animation: "blurIn",
   duration: 220,

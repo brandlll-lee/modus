@@ -1,10 +1,12 @@
 import {
   IconBook2,
+  IconCube,
   IconFile,
   IconFolder,
   IconGitBranch,
   IconLayoutList,
   IconLoader2,
+  IconMessage2,
   IconPencil,
   IconSearch,
   IconTerminal2,
@@ -12,15 +14,25 @@ import {
 } from "@tabler/icons-react";
 import { m } from "motion/react";
 import { type KeyboardEvent, memo, useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { MessageContextChip, PromptImageAttachment } from "../../../../shared/contracts";
+import type {
+  ContextItem,
+  MessageContextChip,
+  PromptImageAttachment,
+} from "../../../../shared/contracts";
 import { CopyButton } from "../../components/ui/CopyButton";
 import { ImageThumb } from "../../components/ui/ImageViewer";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
 import { formatClock } from "../../lib/formatClock";
 import { useSmoothStreamingText } from "../../lib/useSmoothStreamingText";
+import { ContextMentionMenu } from "../composer/ContextMentionMenu";
+import { ContextToken } from "../composer/ContextToken";
+import { SlashMenu } from "../composer/SlashMenu";
+import { type MentionRow, useComposerMentions } from "../composer/useComposerMentions";
+import { type SlashItem, useComposerSlash } from "../composer/useComposerSlash";
 import { CheckpointRestoreButton } from "./CheckpointRestoreButton";
 import { MarkdownMessage } from "./MarkdownMessage";
+import { splitSkillPrefix } from "./messageDisplay";
 
 type MessageBlockProps = {
   messageRole: "assistant" | "user";
@@ -30,8 +42,6 @@ type MessageBlockProps = {
   streaming?: boolean;
   /** Epoch ms — user send time. */
   createdAt?: number;
-  /** Assistant only: present on the last message of a turn → shows one footer. */
-  actions?: { content: string; createdAt?: number };
   /** User only: pre-run snapshot this message can roll the files back to. */
   checkpointId?: string;
   onRestoreCheckpoint?(checkpointId: string): Promise<void> | void;
@@ -42,11 +52,17 @@ type MessageBlockProps = {
     messageId: string,
     message: string,
     attachments?: PromptImageAttachment[],
+    contextItems?: ContextItem[],
+    skills?: string[],
   ): Promise<void>;
+  workspaceId?: string | undefined;
+  cwd?: string | undefined;
   /** User only: images attached to the prompt, rendered as thumbnails. */
   attachments?: PromptImageAttachment[];
   /** User only: context chips attached to the prompt, kept visible after send. */
   contextChips?: MessageContextChip[];
+  /** User only: original context items for edit-and-resend. */
+  contextItems?: ContextItem[];
 };
 
 export const MessageBlock = memo(function MessageBlock({
@@ -55,13 +71,15 @@ export const MessageBlock = memo(function MessageBlock({
   content,
   streaming = false,
   createdAt,
-  actions,
   checkpointId,
   onRestoreCheckpoint,
   editable = false,
   onEditResend,
+  workspaceId,
+  cwd,
   attachments,
   contextChips,
+  contextItems,
 }: MessageBlockProps) {
   const [editing, setEditing] = useState(false);
   // Smoothly reveal assistant text like a typewriter, decoupled from bursty
@@ -70,22 +88,30 @@ export const MessageBlock = memo(function MessageBlock({
 
   if (messageRole === "user") {
     if (!content.trim()) return null;
+    const { skills, text: visibleContent } = splitSkillPrefix(content);
 
     if (editing && onEditResend) {
+      const editableContextItems =
+        contextItems ?? contextItemsFromChips(contextChips ?? [], workspaceId);
       return (
         <UserMessageEditor
           {...(attachments ? { attachments } : {})}
           canRestoreFiles={Boolean(checkpointId)}
+          cwd={cwd}
+          initialContextItems={editableContextItems}
           initialText={content}
           onCancel={() => setEditing(false)}
-          onSend={(text) => onEditResend(messageId, text, attachments)}
+          onSend={(text, nextContextItems, nextSkills) =>
+            onEditResend(messageId, text, attachments, nextContextItems, nextSkills)
+          }
+          workspaceId={workspaceId}
         />
       );
     }
 
     return (
       <div className="group flex min-w-0 max-w-full flex-col items-end gap-1">
-        <div className="min-w-0 max-w-[78%] rounded-xl border border-hairline bg-surface/95 px-4 py-2.5 text-sm text-fg leading-relaxed shadow-composer">
+        <div className="min-w-0 max-w-[78%] rounded-xl border border-hairline-soft bg-surface/95 px-4 py-2.5 text-sm text-fg leading-relaxed shadow-composer">
           {attachments && attachments.length > 0 ? (
             <div className="mb-2 flex flex-wrap justify-end gap-1.5">
               {attachments.map((attachment, index) => (
@@ -99,14 +125,18 @@ export const MessageBlock = memo(function MessageBlock({
               ))}
             </div>
           ) : null}
-          {contextChips && contextChips.length > 0 ? (
-            <div className="mb-2 flex flex-wrap justify-end gap-1.5">
-              {contextChips.map((chip) => (
-                <ContextChip chip={chip} key={`${chip.kind}:${chip.label}:${chip.detail ?? ""}`} />
-              ))}
-            </div>
-          ) : null}
-          <div className="whitespace-pre-wrap">{content}</div>
+          <div className="whitespace-pre-wrap wrap-break-word">
+            {contextChips?.map((chip) => (
+              <InlineContextToken
+                chip={chip}
+                key={`${chip.kind}:${chip.label}:${chip.detail ?? ""}`}
+              />
+            ))}
+            {skills.map((skill) => (
+              <InlineSkillToken key={skill} name={skill} />
+            ))}
+            {visibleContent}
+          </div>
         </div>
         <div className="flex h-6 max-w-full items-center gap-1 pr-0.5 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
           <span className="text-2xs text-fg-faint tabular-nums">{formatClock(createdAt)}</span>
@@ -132,28 +162,23 @@ export const MessageBlock = memo(function MessageBlock({
   }
 
   return (
-    <div className="group min-w-0 max-w-full text-sm leading-relaxed">
+    <div className="min-w-0 max-w-full text-sm leading-relaxed">
       {content ? <MarkdownMessage content={displayContent} streaming={streaming} /> : null}
-      {actions ? (
-        <div className="mt-1.5 flex h-6 items-center gap-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
-          <CopyButton label="Copy response" text={actions.content} />
-          <span className="text-2xs text-fg-faint tabular-nums">
-            {formatClock(actions.createdAt)}
-          </span>
-        </div>
-      ) : null}
     </div>
   );
 });
 
 type UserMessageEditorProps = {
   initialText: string;
+  initialContextItems: ContextItem[];
+  workspaceId: string | undefined;
+  cwd: string | undefined;
   /** Original attachments, kept read-only and resent with the edited text. */
   attachments?: PromptImageAttachment[];
   /** A pre-run snapshot exists, so sending also restores workspace files. */
   canRestoreFiles: boolean;
   onCancel(): void;
-  onSend(text: string): Promise<void>;
+  onSend(text: string, contextItems: ContextItem[], skills: string[]): Promise<void>;
 };
 
 /**
@@ -166,15 +191,37 @@ type UserMessageEditorProps = {
  */
 function UserMessageEditor({
   initialText,
+  initialContextItems,
+  workspaceId,
+  cwd,
   attachments,
   canRestoreFiles,
   onCancel,
   onSend,
 }: UserMessageEditorProps) {
-  const [draft, setDraft] = useState(initialText);
+  const initial = splitSkillPrefix(initialText);
+  const [draft, setDraft] = useState(initial.text);
+  const [contextItems, setContextItems] = useState<ContextItem[]>(initialContextItems);
+  const [selectedSkills, setSelectedSkills] = useState<string[]>(initial.skills);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const {
+    activeIndex,
+    isOpen,
+    mention,
+    rows: mentionRows,
+    setActiveIndex,
+    moveActive,
+    openCategory,
+    backToRoot,
+    atCategoryRoot,
+    expandMore,
+  } = useComposerMentions({ cwd, value: draft, workspaceId });
+  const slash = useComposerSlash({ cwd, value: draft });
+  const hasText = draft.trim().length > 0;
+  const hasSelectedSkills = selectedSkills.length > 0;
+  const hasInlineTokens = contextItems.length > 0 || hasSelectedSkills;
 
   // Composer-style autosize: grow with content up to a cap, then scroll.
   useLayoutEffect(() => {
@@ -196,7 +243,7 @@ function UserMessageEditor({
     textarea.setSelectionRange(textarea.value.length, textarea.value.length);
   }, []);
 
-  const canSend = draft.trim().length > 0 && !sending;
+  const canSend = (hasText || hasSelectedSkills) && !sending;
 
   async function send(): Promise<void> {
     if (!canSend) {
@@ -207,14 +254,115 @@ function UserMessageEditor({
     try {
       // On success this block unmounts (the timeline reloads truncated
       // events), so the spinner holds until the rolled-back view replaces it.
-      await onSend(draft.trim());
+      await onSend(messageFromEditorValue(draft, selectedSkills), contextItems, selectedSkills);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
       setSending(false);
     }
   }
 
+  function selectSlashItem(item: SlashItem): void {
+    if (item.kind === "skill") {
+      setSelectedSkills((current) =>
+        current.includes(item.name) ? current : [...current, item.name],
+      );
+      setDraft("");
+      return;
+    }
+    setDraft(item.command.prefix);
+  }
+
+  function addContextItem(item: ContextItem): void {
+    const key = contextItemKey(item);
+    setContextItems((current) =>
+      current.some((existing) => contextItemKey(existing) === key) ? current : [...current, item],
+    );
+    if (mention) {
+      setDraft(
+        `${draft.slice(0, mention.start)}${draft.slice(mention.start).replace(/@[^\s]*$/, "")}`,
+      );
+    }
+  }
+
+  function selectMentionRow(row: MentionRow): void {
+    if (row.row === "nav") {
+      openCategory(row.target);
+    } else if (row.row === "add") {
+      addContextItem(row.item);
+    } else if (row.row === "more") {
+      expandMore();
+    }
+  }
+
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
+    if (slash.isOpen && event.key === "ArrowDown") {
+      event.preventDefault();
+      slash.setActiveIndex((index) => (index + 1) % slash.items.length);
+      return;
+    }
+    if (slash.isOpen && event.key === "ArrowUp") {
+      event.preventDefault();
+      slash.setActiveIndex((index) => (index - 1 + slash.items.length) % slash.items.length);
+      return;
+    }
+    if (slash.isOpen && event.key === "Escape") {
+      event.preventDefault();
+      setDraft("");
+      return;
+    }
+    if (slash.isOpen && (event.key === "Enter" || event.key === "Tab")) {
+      const item = slash.items[slash.activeIndex];
+      if (item) {
+        event.preventDefault();
+        selectSlashItem(item);
+        return;
+      }
+    }
+
+    if (!draft && event.key === "Backspace") {
+      if (selectedSkills.length > 0) {
+        event.preventDefault();
+        setSelectedSkills((current) => current.slice(0, -1));
+        return;
+      }
+      const lastContextItem = contextItems.at(-1);
+      if (lastContextItem) {
+        event.preventDefault();
+        const key = contextItemKey(lastContextItem);
+        setContextItems((current) => current.filter((item) => contextItemKey(item) !== key));
+        return;
+      }
+    }
+
+    if (isOpen && event.key === "ArrowDown") {
+      event.preventDefault();
+      moveActive(1);
+      return;
+    }
+    if (isOpen && event.key === "ArrowUp") {
+      event.preventDefault();
+      moveActive(-1);
+      return;
+    }
+    if (isOpen && atCategoryRoot && event.key === "Backspace") {
+      event.preventDefault();
+      backToRoot();
+      return;
+    }
+    if (isOpen && event.key === "Escape") {
+      event.preventDefault();
+      setDraft((current) => (mention ? current.slice(0, mention.start) : current));
+      return;
+    }
+    if (isOpen && (event.key === "Enter" || event.key === "Tab")) {
+      const row = mentionRows[activeIndex];
+      if (row && row.row !== "header") {
+        event.preventDefault();
+        selectMentionRow(row);
+        return;
+      }
+    }
+
     if (event.key === "Escape" && !sending) {
       event.preventDefault();
       onCancel();
@@ -250,16 +398,59 @@ function UserMessageEditor({
           ))}
         </div>
       ) : null}
-      <textarea
-        aria-label="Edit message"
-        className="scroll-thin block max-h-[300px] w-full resize-none overflow-y-auto bg-transparent text-sm text-fg leading-relaxed outline-none disabled:opacity-60"
-        disabled={sending}
-        onChange={(event) => setDraft(event.target.value)}
-        onKeyDown={handleKeyDown}
-        ref={textareaRef}
-        rows={1}
-        value={draft}
-      />
+      <div className="relative">
+        <div
+          className={cn(
+            "flex flex-wrap items-start gap-x-1 gap-y-1",
+            hasInlineTokens ? "min-h-7" : "",
+          )}
+        >
+          {contextItems.map((item) => (
+            <ContextToken
+              item={item}
+              key={contextItemKey(item)}
+              onRemove={() => {
+                const key = contextItemKey(item);
+                setContextItems((current) =>
+                  current.filter((other) => contextItemKey(other) !== key),
+                );
+              }}
+            />
+          ))}
+          {selectedSkills.map((skill) => (
+            <span
+              className="inline-flex h-6 items-center gap-1.5 font-medium text-focus-ring text-sm"
+              key={skill}
+            >
+              <IconCube size={15} stroke={1.8} />
+              <span>{skill}</span>
+            </span>
+          ))}
+          <textarea
+            aria-label="Edit message"
+            className="scroll-thin block min-h-7 min-w-[180px] flex-1 resize-none overflow-y-auto bg-transparent text-sm text-fg leading-relaxed outline-none disabled:opacity-60"
+            disabled={sending}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={handleKeyDown}
+            ref={textareaRef}
+            rows={1}
+            value={draft}
+          />
+        </div>
+        <ContextMentionMenu
+          activeIndex={activeIndex}
+          onHover={setActiveIndex}
+          onSelect={selectMentionRow}
+          rows={isOpen ? mentionRows : []}
+        />
+        {slash.isOpen ? (
+          <SlashMenu
+            activeIndex={slash.activeIndex}
+            items={slash.items}
+            onSelect={selectSlashItem}
+          />
+        ) : null}
+      </div>
       <div className="mt-2 flex items-center gap-2">
         <span
           className={cn(
@@ -295,27 +486,83 @@ function UserMessageEditor({
   );
 }
 
-/**
- * Read-only chip echoing one context item attached to a sent user message
- * (Cursor parity — the chips stay in the bubble after sending). Design-element
- * chips get the brand-token inspect glyph + brand text to match their composer
- * token; every other kind uses a muted icon + label. All colors are Modus theme
- * tokens, so the row reads correctly in light and dark mode.
- */
-function ContextChip({ chip }: { chip: MessageContextChip }) {
-  const isDesign = chip.kind === "design-element";
+function messageFromEditorValue(value: string, selectedSkills: string[]): string {
+  const skillText = selectedSkills.map((skill) => `"${skill}"`).join(" ");
+  return [skillText, value.trim()].filter(Boolean).join(" ");
+}
+
+function contextItemKey(item: ContextItem): string {
+  if (item.type === "file" || item.type === "folder") {
+    return `${item.type}:${item.path}`;
+  }
+  if (item.type === "doc") {
+    return `doc:${item.docId}`;
+  }
+  if (item.type === "terminal") {
+    return `terminal:${item.terminalId}:${item.range?.fromLine ?? ""}:${item.range?.toLine ?? ""}`;
+  }
+  if (item.type === "git-diff") {
+    return `git-diff:${item.mode}:${item.base ?? ""}`;
+  }
+  if (item.type === "recent-changes") {
+    return `recent-changes:${item.limit ?? ""}`;
+  }
+  if (item.type === "search") {
+    return `search:${item.query}`;
+  }
+  if (item.type === "design-element") {
+    return `design-element:${item.element.id}`;
+  }
+  return item.type;
+}
+
+function contextItemsFromChips(
+  chips: MessageContextChip[],
+  workspaceId: string | undefined,
+): ContextItem[] {
+  return chips.flatMap((chip): ContextItem[] => {
+    if (chip.kind === "git-diff") {
+      return [{ type: "git-diff", mode: chip.label === "Branch" ? "branch" : "working-state" }];
+    }
+    if (chip.kind === "browser") {
+      return [{ type: "browser", ...(workspaceId ? { workspaceId } : {}) }];
+    }
+    if (chip.kind === "project-summary") {
+      return [{ type: "project-summary" }];
+    }
+    if (chip.kind === "recent-changes") {
+      return [{ type: "recent-changes" }];
+    }
+    if (chip.kind === "rules") {
+      return [{ type: "rules" }];
+    }
+    if (chip.kind === "search" && chip.label.startsWith("search:")) {
+      return [{ type: "search", query: chip.label.slice("search:".length) }];
+    }
+    return [];
+  });
+}
+
+function InlineContextToken({ chip }: { chip: MessageContextChip }) {
   return (
     <span
-      className={cn(
-        "flex max-w-full items-center gap-1.5 rounded-md border px-1.5 py-0.5 text-2xs",
-        isDesign
-          ? "border-focus-ring/30 bg-focus-ring-soft/10 text-focus-ring"
-          : "border-hairline bg-chip text-fg-muted",
-      )}
+      className="mr-1 inline-flex max-w-[220px] items-center gap-1 align-[-0.15em] font-medium text-focus-ring text-sm"
       title={chip.detail ? `${chip.label} — ${chip.detail}` : chip.label}
     >
-      {isDesign ? <InspectGlyph /> : <ContextKindIcon kind={chip.kind} />}
-      <span className="truncate font-medium">{chip.label}</span>
+      {chip.kind === "design-element" ? <InspectGlyph /> : <ContextKindIcon kind={chip.kind} />}
+      <span className="truncate">{chip.label}</span>
+    </span>
+  );
+}
+
+function InlineSkillToken({ name }: { name: string }) {
+  return (
+    <span
+      className="mr-1 inline-flex max-w-[220px] items-center gap-1 align-[-0.15em] font-medium text-focus-ring text-sm"
+      title={name}
+    >
+      <IconCube className="size-3.5 shrink-0" stroke={1.8} />
+      <span className="truncate">{name}</span>
     </span>
   );
 }
@@ -333,6 +580,8 @@ function ContextKindIcon({ kind }: { kind: MessageContextChip["kind"] }) {
       return <IconTerminal2 {...props} />;
     case "browser":
       return <IconWorld {...props} />;
+    case "past-chat":
+      return <IconMessage2 {...props} />;
     case "git-diff":
     case "recent-changes":
       return <IconGitBranch {...props} />;

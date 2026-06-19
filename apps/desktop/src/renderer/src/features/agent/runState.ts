@@ -1,52 +1,32 @@
-import type { AgentEvent } from "../../../../shared/contracts";
+import type { AgentEvent, SessionRunStatus } from "../../../../shared/contracts";
 
 /**
- * Run-lifecycle is the single source of truth for "is this run active". These
- * helpers are pure so the composer's running state (border + input lock) and
- * any list/refresh logic derive from one tested definition instead of ad-hoc,
- * drift-prone inline checks.
+ * The composer's lock + streaming border follow ONE authoritative fact: the
+ * session's run-status, which the runtime publishes as `session.status` events
+ * derived from pi's real streaming turn and its internal auto-retry.
  *
- * Crucially, `runtime.error` is NOT terminal. It is an informational, often
- * recoverable notice — a transient request error, an auto-retry, or a mid-run
- * model error — emitted while the run keeps going (pi retries internally). The
- * run only ends when a settling event below is emitted (the backend always
- * emits exactly one). Treating `runtime.error` as terminal is what unlocked the
- * composer and dropped the streaming border while the agent was still working.
+ * This deliberately replaces the old "scan the run-event log to guess if a run
+ * is active" approach. That guess was fragile: a queued steer/follow-up message
+ * used to open its own run and immediately settle it, dropping a phantom
+ * terminal event into the log that unlocked the composer while the real turn
+ * kept streaming. Reading the runtime's explicit status removes the guess
+ * entirely — there is nothing to re-derive.
  */
-export const TERMINAL_RUN_EVENT_TYPES = [
-  "run.completed",
-  "run.failed",
-  "run.cancelled",
-] as const satisfies readonly AgentEvent["type"][];
 
-type TerminalRunEventType = (typeof TERMINAL_RUN_EVENT_TYPES)[number];
-
-/** A run-lifecycle event that ends the run (so the optimistic flags clear). */
-export function isTerminalRunEvent(event: AgentEvent): boolean {
-  return (TERMINAL_RUN_EVENT_TYPES as readonly string[]).includes(event.type);
-}
+export const IDLE_STATUS: SessionRunStatus = { type: "idle" };
 
 /**
- * Whether the most recent run is still active, derived purely from the run
- * lifecycle. A run becomes active at `run.started` and stays active (including
- * while `run.blocked`, i.e. awaiting permission) until a settling event. Scans
- * newest-first and returns at the first lifecycle event it meets; anything
- * else (messages, tools, `runtime.error`) is ignored.
+ * The latest run-status for the session, read newest-first from the recorded
+ * `session.status` events. Defaults to idle when none has been seen yet. The
+ * composer is locked whenever this is not idle (busy OR auto-retrying), so a
+ * transient error never unlocks input mid-turn.
  */
-export function isRunActive(events: Array<{ event: AgentEvent }>): boolean {
+export function latestSessionStatus(events: Array<{ event: AgentEvent }>): SessionRunStatus {
   for (let index = events.length - 1; index >= 0; index -= 1) {
-    const type = events[index]?.event.type;
-    if (type === undefined) {
-      continue;
-    }
-    if (type === "run.started" || type === "run.blocked") {
-      return true;
-    }
-    if ((TERMINAL_RUN_EVENT_TYPES as readonly string[]).includes(type)) {
-      return false;
+    const event = events[index]?.event;
+    if (event?.type === "session.status") {
+      return event.status;
     }
   }
-  return false;
+  return IDLE_STATUS;
 }
-
-export type { TerminalRunEventType };

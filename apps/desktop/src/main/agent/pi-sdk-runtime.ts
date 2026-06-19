@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -16,12 +17,14 @@ import type {
   ContextUsageInfo,
   MessageContextChip,
   ModelInfo,
+  PlanBuildStatus,
 } from "../../shared/contracts";
 import { releaseAgentBrowserControl } from "../browser/browser-service";
 import { formatResolvedContext, resolveContext } from "../context/context-service";
 import { getChangeStatsSince } from "../git/git-service";
 import { IPC_CHANNELS } from "../ipc/channels";
 import { maybeNotifyAgentEvent } from "../notifications/agent-notifications";
+import { readPlanById, setPlanBuildStatusById } from "../plan/plan-store";
 import { summarizeApps } from "../process/app-process-service";
 import { resolveAlwaysRulesPrompt } from "../rules/rules-service";
 import { resolveSkillsPrompt } from "../skills/skills-service";
@@ -68,7 +71,7 @@ import { deriveSessionTitle, shouldReplaceSessionTitle } from "./session-title";
 import { describeAgentShellForPrompt, resolveAgentShell } from "./shell-resolver";
 import { registerAppTools } from "./tools/app-tools";
 import { registerBrowserTools } from "./tools/browser-tools";
-import { registerPlanTools } from "./tools/plan-tools";
+import { plansRoot, registerPlanTools } from "./tools/plan-tools";
 import { registerQuestionTools } from "./tools/question-tools";
 import { toolRegistry } from "./tools/registry";
 import { registerTerminalTools } from "./tools/terminal-tools";
@@ -105,6 +108,7 @@ type SdkRuntimeSession = {
 type RunOutputTracker = {
   runId: string;
   hasVisibleOutput: boolean;
+  startedAt: number;
 };
 
 /**
@@ -149,6 +153,9 @@ export class PiSdkRuntime implements AgentRuntime {
     }
 
     if ((event.type === "message.delta" || event.type === "thinking.delta") && event.delta.trim()) {
+      if (!tracker.hasVisibleOutput) {
+        console.info(`[modus-timing] first visible output +${Date.now() - tracker.startedAt}ms`);
+      }
       tracker.hasVisibleOutput = true;
       return;
     }
@@ -156,8 +163,7 @@ export class PiSdkRuntime implements AgentRuntime {
     if (
       event.type === "tool.started" ||
       event.type === "tool.output" ||
-      event.type === "tool.ended" ||
-      event.type === "runtime.error"
+      event.type === "tool.ended"
     ) {
       tracker.hasVisibleOutput = true;
     }
@@ -493,6 +499,18 @@ export class PiSdkRuntime implements AgentRuntime {
     }
 
     const delivery = input.delivery ?? "normal";
+
+    // Authoritative turn boundary: if a turn is already streaming, this message
+    // JOINS it — pi queues it (steer/followUp) and resolves prompt() the moment
+    // it is enqueued. A queued message is NOT a new run; wrapping it in a run
+    // lifecycle would emit a phantom run.started→run.completed/failed that
+    // settles the composer while the real turn is still streaming. We trust
+    // pi's own `isStreaming`, never a guess from the delivery label.
+    if (delivery !== "normal" && runtimeSession.session.isStreaming) {
+      await this.enqueueTurnMessage(runtimeSession, input, delivery);
+      return;
+    }
+
     if (shouldReplaceSessionTitle(runtimeSession.info.title)) {
       const titled = updateAgentSessionTitle(input.sessionId, deriveSessionTitle(input.message));
       if (titled) {
@@ -505,41 +523,32 @@ export class PiSdkRuntime implements AgentRuntime {
     };
     if (input.userMessageId !== undefined) runInput.userMessageId = input.userMessageId;
     if (runtimeSession.info.model !== undefined) runInput.model = runtimeSession.info.model;
-    // Rollback anchor: the session-tree leaf right before this prompt. Only
-    // captured for normal delivery — steer/follow-up messages are appended at
-    // an unpredictable point of the live stream, so they get no anchor (and no
-    // edit affordance in the timeline).
-    if (delivery === "normal") {
-      runInput.piLeafBefore = runtimeSession.session.sessionManager.getLeafId() ?? PI_ROOT_LEAF;
-    }
+    // Rollback anchor: the session-tree leaf right before this prompt. Reaching
+    // here means a fresh turn (normal delivery, or a steer/follow-up that found
+    // no live turn to join), so the anchor is always meaningful.
+    runInput.piLeafBefore = runtimeSession.session.sessionManager.getLeafId() ?? PI_ROOT_LEAF;
     const run = createAgentRun(runInput);
-    const outputTracker: RunOutputTracker = { runId: run.id, hasVisibleOutput: false };
+    const outputTracker: RunOutputTracker = {
+      runId: run.id,
+      hasVisibleOutput: false,
+      startedAt: Date.now(),
+    };
     this.runOutputTrackers.set(input.sessionId, outputTracker);
 
     updateAgentSessionStatus(input.sessionId, "running");
     const userMessageId = input.userMessageId ?? `user:${run.id}`;
-    const contextChips = buildContextChips(input.context ?? []);
-    runtimeSession.emit({
-      type: "message.started",
-      sessionId: input.sessionId,
-      messageId: userMessageId,
-      role: "user",
-      ...(input.attachments && input.attachments.length > 0
-        ? { attachments: input.attachments }
-        : {}),
-      ...(contextChips.length > 0 ? { contextChips } : {}),
-    });
-    runtimeSession.emit({
-      type: "message.delta",
-      sessionId: input.sessionId,
-      messageId: userMessageId,
-      delta: input.message,
-    });
-    runtimeSession.emit({
-      type: "message.completed",
-      sessionId: input.sessionId,
-      messageId: userMessageId,
-    });
+    // A "Build this plan" turn carries planId: tag the user message so the
+    // timeline renders a compact Build card, and bind the plan's build status to
+    // this run's authoritative lifecycle (building now → built/not_built later).
+    const buildPlan = input.planId ? readPlanById(plansRoot(), input.planId) : undefined;
+    this.emitUserMessage(
+      runtimeSession,
+      input,
+      userMessageId,
+      buildPlan
+        ? { planId: buildPlan.id, title: buildPlan.title, todoCount: buildPlan.todos.length }
+        : undefined,
+    );
     const startedEvent = {
       type: "run.started",
       sessionId: input.sessionId,
@@ -551,6 +560,17 @@ export class PiSdkRuntime implements AgentRuntime {
         ? { ...startedEvent, userMessageId: input.userMessageId }
         : startedEvent,
     );
+    // The turn is now streaming: publish the authoritative `busy` status that
+    // the composer's lock + border follow. `idle` is published in `finally`,
+    // and `retry` arrives (from the normalizer) if the runtime auto-retries.
+    runtimeSession.emit({
+      type: "session.status",
+      sessionId: input.sessionId,
+      status: { type: "busy" },
+    });
+    if (input.planId) {
+      this.transitionPlanBuild(runtimeSession, input.planId, "building");
+    }
     // Snapshot the working tree before the agent touches anything, so this
     // message gets a one-click restore point in the timeline. Never blocks
     // the run: failures (non-git cwd, git missing) degrade to "no checkpoint".
@@ -562,6 +582,7 @@ export class PiSdkRuntime implements AgentRuntime {
         runId: run.id,
         userMessageId,
       });
+      console.info(`[modus-timing] createCheckpoint +${Date.now() - outputTracker.startedAt}ms`);
       if (runCheckpoint) {
         runtimeSession.emit({
           type: "checkpoint.created",
@@ -573,34 +594,9 @@ export class PiSdkRuntime implements AgentRuntime {
       console.warn("[modus] checkpoint failed:", error);
     }
     try {
-      const resolved = await resolveContext(runtimeSession.info.cwd, input.context);
-      const contextText = formatResolvedContext(resolved);
-      // Passive terminal awareness (like Cursor's terminal status): tell the
-      // model what's running so it can decide to read/restart instead of
-      // blindly re-launching. Covers both PTY terminals and launched GUI apps.
-      const terminalDigest = summarizeTerminals({
-        sessionId: runtimeSession.info.id,
-        workspaceId: runtimeSession.info.workspaceId,
-      });
-      const appDigest = summarizeApps({ sessionId: runtimeSession.info.id });
-      const digest = [terminalDigest, appDigest].filter(Boolean).join("\n");
-      const awareness = digest ? `<active_terminals>\n${digest}\n</active_terminals>` : "";
-      // Manually invoked skills (`/name`) are injected as instruction blocks.
-      const skillsText = resolveSkillsPrompt(runtimeSession.info.cwd, input.skills ?? []);
-      const message = [
-        planModePreamble(input.mode),
-        skillsText,
-        contextText,
-        awareness,
-        input.message,
-      ]
-        .filter(Boolean)
-        .join("\n\n");
-      const images = (input.attachments ?? []).map((attachment) => ({
-        type: "image" as const,
-        data: attachment.data,
-        mimeType: attachment.mimeType,
-      }));
+      const message = await this.composeTurnMessage(runtimeSession, input);
+      console.info(`[modus-timing] composeTurnMessage done +${Date.now() - outputTracker.startedAt}ms`);
+      const images = buildTurnImages(input);
       await runtimeSession.session.prompt(message, {
         source: "rpc",
         ...(images.length > 0 ? { images } : {}),
@@ -608,10 +604,29 @@ export class PiSdkRuntime implements AgentRuntime {
           ? {}
           : { streamingBehavior: delivery === "follow-up" ? "followUp" : "steer" }),
       });
+      console.info(`[modus-timing] prompt() resolved +${Date.now() - outputTracker.startedAt}ms`);
       this.emitContextUsage(runtimeSession);
       const currentRun = getAgentRun(run.id);
       if (currentRun?.status === "running") {
-        if (outputTracker.hasVisibleOutput) {
+        // Authoritative end-of-turn outcome, read from pi's own record: if the
+        // last assistant message ended with `stopReason: "error"`, the turn
+        // failed after exhausting any auto-retries. This is the SINGLE place a
+        // model error becomes a fatal `run.failed` (red), so transient retries
+        // never paint red and the final error is never doubled.
+        const turnError = lastAssistantTurnError(runtimeSession.session);
+        if (turnError) {
+          updateAgentRunStatus(run.id, "failed", turnError);
+          updateAgentSessionStatus(input.sessionId, "error");
+          runtimeSession.emit({
+            type: "run.failed",
+            sessionId: input.sessionId,
+            runId: run.id,
+            message: turnError,
+          });
+          if (input.planId) {
+            this.transitionPlanBuild(runtimeSession, input.planId, "not_built");
+          }
+        } else if (outputTracker.hasVisibleOutput) {
           updateAgentRunStatus(run.id, "completed");
           // Per-turn change summary (Codex-style "N files changed" card):
           // diff the checkout against the pre-run snapshot. Never blocks or
@@ -623,12 +638,17 @@ export class PiSdkRuntime implements AgentRuntime {
               runCheckpoint.commitHash,
             ).catch(() => undefined);
           }
+          console.info(`[modus-timing] getChangeStatsSince +${Date.now() - outputTracker.startedAt}ms`);
           runtimeSession.emit({
             type: "run.completed",
             sessionId: input.sessionId,
             runId: run.id,
             ...(changes && changes.fileCount > 0 ? { changes } : {}),
           });
+          // The build turn completed cleanly → the plan is built.
+          if (input.planId) {
+            this.transitionPlanBuild(runtimeSession, input.planId, "built");
+          }
         } else {
           const message =
             "The selected model finished without returning any assistant output. Check the custom provider URL, model id, API type, and reasoning compatibility settings.";
@@ -641,9 +661,17 @@ export class PiSdkRuntime implements AgentRuntime {
             message,
           });
           runtimeSession.emit({ type: "runtime.error", sessionId: input.sessionId, message });
+          if (input.planId) {
+            this.transitionPlanBuild(runtimeSession, input.planId, "not_built");
+          }
         }
       }
     } catch (error) {
+      // The build turn ended without completing (manual stop, disconnect, or a
+      // real failure) → the plan reverts to not_built so it can be built again.
+      if (input.planId) {
+        this.transitionPlanBuild(runtimeSession, input.planId, "not_built");
+      }
       // A missing run row means a rollback removed this run while it was being
       // aborted — swallow the rejection instead of resurrecting ghost
       // run.failed / runtime.error events into the rolled-back timeline.
@@ -671,15 +699,135 @@ export class PiSdkRuntime implements AgentRuntime {
       throw error;
     } finally {
       this.runOutputTrackers.delete(input.sessionId);
+      console.info(`[modus-timing] turn end (idle emit) +${Date.now() - outputTracker.startedAt}ms`);
       const session = getAgentSession(input.sessionId);
       if (session?.status !== "error") {
         updateAgentSessionStatus(input.sessionId, "idle");
       }
-      // The run is over (completed/failed/cancelled all funnel through here):
+      // The turn is over (completed/failed/cancelled all funnel through here):
+      // publish the authoritative `idle` status so the composer unlocks, and
       // dim the in-app browser's "AI in control" glow + cursor.
+      runtimeSession.emit({
+        type: "session.status",
+        sessionId: input.sessionId,
+        status: { type: "idle" },
+      });
       if (session?.workspaceId) {
         releaseAgentBrowserControl(session.workspaceId);
       }
+    }
+  }
+
+  /**
+   * Emit the user's message into the timeline (started → full text → completed),
+   * carrying any attachments and context chips. Shared by a fresh turn and a
+   * queued steer/follow-up so the sent message always shows the same way.
+   */
+  private emitUserMessage(
+    runtimeSession: SdkRuntimeSession,
+    input: PromptAgentInput,
+    userMessageId: string,
+    planBuild?: { planId: string; title: string; todoCount: number },
+  ): void {
+    const contextChips = buildContextChips(input.context ?? []);
+    runtimeSession.emit({
+      type: "message.started",
+      sessionId: input.sessionId,
+      messageId: userMessageId,
+      role: "user",
+      ...(input.attachments && input.attachments.length > 0
+        ? { attachments: input.attachments }
+        : {}),
+      ...(contextChips.length > 0 ? { contextChips } : {}),
+      ...(input.context && input.context.length > 0 ? { contextItems: input.context } : {}),
+      ...(planBuild ? { planBuild } : {}),
+    });
+    runtimeSession.emit({
+      type: "message.delta",
+      sessionId: input.sessionId,
+      messageId: userMessageId,
+      delta: input.message,
+    });
+    runtimeSession.emit({
+      type: "message.completed",
+      sessionId: input.sessionId,
+      messageId: userMessageId,
+    });
+  }
+
+  /**
+   * Build the full prompt text for a turn: plan-mode preamble, manually invoked
+   * skills, resolved context, passive terminal/app awareness, then the user's
+   * message. Shared by fresh and queued turns so a steered message carries the
+   * same context envelope as a normal one.
+   */
+  private async composeTurnMessage(
+    runtimeSession: SdkRuntimeSession,
+    input: PromptAgentInput,
+  ): Promise<string> {
+    const resolved = await resolveContext(runtimeSession.info.cwd, input.context);
+    const contextText = formatResolvedContext(resolved);
+    // Passive terminal awareness (like Cursor's terminal status): tell the model
+    // what's running so it can decide to read/restart instead of blindly
+    // re-launching. Covers both PTY terminals and launched GUI apps.
+    const terminalDigest = summarizeTerminals({
+      sessionId: runtimeSession.info.id,
+      workspaceId: runtimeSession.info.workspaceId,
+    });
+    const appDigest = summarizeApps({ sessionId: runtimeSession.info.id });
+    const digest = [terminalDigest, appDigest].filter(Boolean).join("\n");
+    const awareness = digest ? `<active_terminals>\n${digest}\n</active_terminals>` : "";
+    const skillsText = resolveSkillsPrompt(runtimeSession.info.cwd, input.skills ?? []);
+    return [planModePreamble(input.mode), skillsText, contextText, awareness, input.message]
+      .filter(Boolean)
+      .join("\n\n");
+  }
+
+  /**
+   * Queue a steer/follow-up message into the turn that is already streaming.
+   * pi resolves `prompt()` as soon as the message is enqueued, so there is no
+   * run to open or settle — the owning turn keeps its single run lifecycle and
+   * its `busy` status. If queueing fails (e.g. the turn ended in the gap), the
+   * error surfaces as a plain `runtime.error`, never a phantom run.failed.
+   */
+  private async enqueueTurnMessage(
+    runtimeSession: SdkRuntimeSession,
+    input: PromptAgentInput,
+    delivery: NonNullable<PromptAgentInput["delivery"]>,
+  ): Promise<void> {
+    const userMessageId = input.userMessageId ?? `local-user:${randomUUID()}`;
+    this.emitUserMessage(runtimeSession, input, userMessageId);
+    try {
+      const message = await this.composeTurnMessage(runtimeSession, input);
+      const images = buildTurnImages(input);
+      await runtimeSession.session.prompt(message, {
+        source: "rpc",
+        ...(images.length > 0 ? { images } : {}),
+        streamingBehavior: delivery === "follow-up" ? "followUp" : "steer",
+      });
+      this.emitContextUsage(runtimeSession);
+    } catch (error) {
+      runtimeSession.emit({
+        type: "runtime.error",
+        sessionId: input.sessionId,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  /**
+   * Drive a plan's build status from the build turn's authoritative run
+   * lifecycle and notify the UI. The composer's Review card and the Plan panel
+   * read this status — building/built hide the card, not_built re-opens it.
+   */
+  private transitionPlanBuild(
+    runtimeSession: SdkRuntimeSession,
+    planId: string,
+    status: PlanBuildStatus,
+  ): void {
+    const plan = setPlanBuildStatusById(plansRoot(), planId, status);
+    if (plan) {
+      runtimeSession.emit({ type: "plan.updated", sessionId: runtimeSession.info.id, plan });
     }
   }
 
@@ -808,6 +956,49 @@ export class PiSdkRuntime implements AgentRuntime {
   }
 }
 
+/**
+ * Map the prompt's image attachments to pi's image content shape. Shared by
+ * fresh and queued turns.
+ */
+function buildTurnImages(
+  input: PromptAgentInput,
+): Array<{ type: "image"; data: string; mimeType: string }> {
+  return (input.attachments ?? []).map((attachment) => ({
+    type: "image" as const,
+    data: attachment.data,
+    mimeType: attachment.mimeType,
+  }));
+}
+
+/**
+ * The authoritative end-of-turn error, read from pi's own message log: the last
+ * assistant message's `stopReason`. Returns its error text when the turn ended
+ * in an unrecovered error (after auto-retries are exhausted or for a
+ * non-retryable error), and `undefined` when the latest assistant message ended
+ * cleanly. This is pi's recorded fact, not a guess — so it is the single source
+ * for surfacing a fatal turn failure.
+ */
+function lastAssistantTurnError(session: AgentSession): string | undefined {
+  const messages = session.state.messages as ReadonlyArray<{
+    role?: unknown;
+    stopReason?: unknown;
+    errorMessage?: unknown;
+  }>;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role !== "assistant") {
+      continue;
+    }
+    if (message.stopReason !== "error") {
+      return undefined;
+    }
+    return typeof message.errorMessage === "string" && message.errorMessage.trim()
+      ? message.errorMessage
+      : "The model returned an error without additional details.";
+  }
+  return undefined;
+}
+
 function createContextUsageEvent(sessionId: string, session: AgentSession): AgentEvent | undefined {
   const usage = session.getContextUsage();
   if (!usage) {
@@ -876,7 +1067,9 @@ function contextChipFor(item: ContextItem): MessageContextChip {
     case "browser":
       return { kind: "browser", label: "browser" };
     case "git-diff":
-      return { kind: "git-diff", label: item.mode === "branch" ? "branch diff" : "working diff" };
+      return { kind: "git-diff", label: item.mode === "branch" ? "Branch" : "working diff" };
+    case "past-chat":
+      return { kind: "past-chat", label: item.title };
     case "project-summary":
       return { kind: "project-summary", label: "project summary" };
     case "recent-changes":
