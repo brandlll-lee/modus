@@ -1,5 +1,6 @@
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { interpolateEnv, parseMcpConfig } from "./mcp-config";
+import { defaultMcpConfigPath, interpolateEnv, mcpConfigPaths, parseMcpConfig } from "./mcp-config";
 
 /** Literal "${env:NAME}" built from parts so lint doesn't read it as a template placeholder. */
 const envRef = (name: string): string => ["${", "env:", name, "}"].join("");
@@ -17,6 +18,19 @@ describe("interpolateEnv", () => {
 
   it("leaves plain strings untouched", () => {
     expect(interpolateEnv("no placeholders", {} as NodeJS.ProcessEnv)).toBe("no placeholders");
+  });
+});
+
+describe("mcpConfigPaths", () => {
+  it("only discovers Modus-owned config files", () => {
+    expect(mcpConfigPaths("workspace", "home")).toEqual([
+      join("home", ".modus", "mcp.json"),
+      join("workspace", ".modus", "mcp.json"),
+    ]);
+  });
+
+  it("creates new servers in the project Modus config", () => {
+    expect(defaultMcpConfigPath("workspace")).toBe(join("workspace", ".modus", "mcp.json"));
   });
 });
 
@@ -71,6 +85,20 @@ describe("parseMcpConfig", () => {
       url: "https://example.com/mcp",
       headers: { Authorization: "k-123" },
     });
+  });
+
+  it("parses common MCP JSON wrapper shapes", () => {
+    for (const config of [
+      { mcp: { servers: { nested: { command: "run" } } } },
+      { servers: { vscode: { command: "run" } } },
+      { mcp_servers: { snake: { command: "run" } } },
+      { bare: { command: "run" } },
+    ]) {
+      const { servers, errors } = parseMcpConfig(JSON.stringify(config), "test.json", env);
+      expect(errors).toEqual([]);
+      expect(servers).toHaveLength(1);
+      expect(servers[0]).toMatchObject({ command: "run" });
+    }
   });
 
   it("honors disabled/enabled flags", () => {

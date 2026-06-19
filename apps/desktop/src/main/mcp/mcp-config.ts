@@ -6,15 +6,15 @@ import type { McpServerUpsertInput, RawMcpEntry } from "../../shared/contracts";
 /**
  * MCP configuration discovery — pure functions, unit-testable without Electron.
  *
- * The on-disk format is Cursor's `mcp.json` so existing configs work verbatim:
+ * The on-disk format is the common MCP JSON shape, scoped to Modus-owned
+ * config files only:
  *
  *   { "mcpServers": { "<name>": { "command": "npx", "args": [...], "env": {...} }
  *                     | { "url": "https://...", "headers": {...} } } }
  *
  * Search order (later sources override earlier ones on name conflicts):
- *   1. ~/.modus/mcp.json            (user)
- *   2. <workspace>/.cursor/mcp.json (project, Cursor-compatible)
- *   3. <workspace>/.modus/mcp.json  (project, Modus-native)
+ *   1. ~/.modus/mcp.json
+ *   2. <workspace>/.modus/mcp.json
  */
 
 export type McpStdioConfig = {
@@ -69,6 +69,31 @@ function asStringRecord(value: unknown): Record<string, string> {
   );
 }
 
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function looksLikeServerMap(record: Record<string, unknown>): boolean {
+  return Object.values(record).some((value) => {
+    const server = asRecord(value);
+    return typeof server?.command === "string" || typeof server?.url === "string";
+  });
+}
+
+function findServerMap(root: unknown): Record<string, unknown> | undefined {
+  const record = asRecord(root);
+  const nestedMcp = asRecord(record?.mcp);
+  return (
+    asRecord(nestedMcp?.servers) ??
+    asRecord(record?.servers) ??
+    asRecord(record?.mcpServers) ??
+    asRecord(record?.mcp_servers) ??
+    (record && looksLikeServerMap(record) ? record : undefined)
+  );
+}
+
 /** Parse one mcp.json document into server configs (tolerant: skips bad entries). */
 export function parseMcpConfig(
   jsonText: string,
@@ -85,15 +110,18 @@ export function parseMcpConfig(
     };
   }
 
-  const root = parsed as { mcpServers?: Record<string, unknown> };
-  if (typeof root !== "object" || root === null || typeof root.mcpServers !== "object") {
-    return { servers: [], errors: [{ source, message: 'Missing "mcpServers" object.' }] };
+  const serverMap = findServerMap(parsed);
+  if (!serverMap) {
+    return {
+      servers: [],
+      errors: [{ source, message: 'Missing "mcpServers", "servers" or "mcp.servers" object.' }],
+    };
   }
 
   const servers: McpServerConfig[] = [];
   const errors: McpConfigLoadResult["errors"] = [];
 
-  for (const [name, raw] of Object.entries(root.mcpServers ?? {})) {
+  for (const [name, raw] of Object.entries(serverMap)) {
     if (typeof raw !== "object" || raw === null) {
       errors.push({ source, message: `Server "${name}" must be an object.` });
       continue;
@@ -138,11 +166,7 @@ export function parseMcpConfig(
 
 /** Candidate config paths for a workspace, lowest precedence first. */
 export function mcpConfigPaths(cwd: string, home: string = homedir()): string[] {
-  return [
-    join(home, ".modus", "mcp.json"),
-    join(cwd, ".cursor", "mcp.json"),
-    join(cwd, ".modus", "mcp.json"),
-  ];
+  return [join(home, ".modus", "mcp.json"), join(cwd, ".modus", "mcp.json")];
 }
 
 /** Load + merge every mcp.json that exists for this workspace. */
@@ -179,10 +203,6 @@ export function loadWorkspaceMcpConfig(
 
 /** Default file a "Open mcp.json" action should create/edit for a workspace. */
 export function defaultMcpConfigPath(cwd: string): string {
-  const cursorPath = join(cwd, ".cursor", "mcp.json");
-  if (existsSync(cursorPath)) {
-    return cursorPath;
-  }
   return join(cwd, ".modus", "mcp.json");
 }
 
@@ -194,7 +214,7 @@ export function defaultMcpConfigPath(cwd: string): string {
  * connect time.
  */
 
-type McpDocument = { mcpServers: Record<string, unknown> } & Record<string, unknown>;
+type McpDocument = Record<string, unknown>;
 
 function readMcpDocument(path: string): McpDocument {
   if (!existsSync(path)) {
@@ -210,10 +230,16 @@ function readMcpDocument(path: string): McpDocument {
     );
   }
   const doc = (typeof parsed === "object" && parsed !== null ? parsed : {}) as McpDocument;
-  if (typeof doc.mcpServers !== "object" || doc.mcpServers === null) {
-    doc.mcpServers = {};
-  }
   return doc;
+}
+
+function editableServerMap(doc: McpDocument): Record<string, unknown> {
+  const existing = findServerMap(doc);
+  if (existing) {
+    return existing;
+  }
+  doc.mcpServers = {};
+  return doc.mcpServers as Record<string, unknown>;
 }
 
 function writeMcpDocument(path: string, doc: McpDocument): void {
@@ -233,7 +259,7 @@ export function findRawMcpEntry(
     }
     try {
       const doc = readMcpDocument(path);
-      const entry = doc.mcpServers[name];
+      const entry = editableServerMap(doc)[name];
       if (typeof entry === "object" && entry !== null) {
         return { source: path, entry: entry as Record<string, unknown> };
       }
@@ -281,11 +307,12 @@ export function upsertMcpServerEntry(
   const previous = findRawMcpEntry(cwd, input.originalName ?? name, home);
   const target = previous?.source ?? defaultMcpConfigPath(cwd);
   const doc = readMcpDocument(target);
+  const serverMap = editableServerMap(doc);
 
   if (input.originalName && input.originalName !== name) {
-    delete doc.mcpServers[input.originalName];
+    delete serverMap[input.originalName];
   }
-  doc.mcpServers[name] = buildRawEntry(input);
+  serverMap[name] = buildRawEntry(input);
   writeMcpDocument(target, doc);
   return target;
 }
@@ -297,7 +324,7 @@ export function removeMcpServerEntry(cwd: string, name: string, home: string = h
     throw new Error(`No editable entry found for "${name}".`);
   }
   const doc = readMcpDocument(found.source);
-  delete doc.mcpServers[name];
+  delete editableServerMap(doc)[name];
   writeMcpDocument(found.source, doc);
   return found.source;
 }
@@ -314,7 +341,7 @@ export function setMcpServerEnabledEntry(
     throw new Error(`No editable entry found for "${name}".`);
   }
   const doc = readMcpDocument(found.source);
-  const entry = doc.mcpServers[name];
+  const entry = editableServerMap(doc)[name];
   if (typeof entry === "object" && entry !== null) {
     const record = entry as Record<string, unknown>;
     delete record.enabled;

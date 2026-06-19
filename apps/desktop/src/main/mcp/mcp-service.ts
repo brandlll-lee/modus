@@ -36,11 +36,9 @@ import {
  * permission / UI pipeline as every other agent tool), and reports status to
  * the Settings UI.
  *
- * Every MCP call is classified by the server's `readOnlyHint` capability: a
- * read-only tool is `safe` and available in Plan Mode (like web_search, itself
- * an Exa MCP call), while anything that can mutate is `mcp.call` + dangerous, so
- * the permission broker prompts on first use and honors workspace-level "always
- * allow". Absent hint ⇒ treated as mutating (conservative default).
+ * MCP servers are third-party code, so every bridged tool goes through the same
+ * `mcp.call` permission path. Tool annotations remain UI hints only; they never
+ * silently bypass user approval.
  */
 
 const CONNECT_TIMEOUT_MS = 15_000;
@@ -228,29 +226,18 @@ async function refreshServerTools(managed: ManagedServer): Promise<void> {
   if (!client) {
     return;
   }
-  const listed = await withTimeout(
-    client.listTools(),
-    CONNECT_TIMEOUT_MS,
-    `list tools ${managed.config.name}`,
-  );
+  const listedTools = await listAllMcpTools(client, managed.config.name);
 
   unregisterServerTools(managed.config.name);
   const names: string[] = [];
   const tools: McpToolInfo[] = [];
-  for (const tool of listed.tools) {
+  for (const tool of listedTools) {
     const definition = buildToolDefinition(managed.config.name, client, tool);
-    // Classify by the server's authoritative capability hint, not by tool name:
-    // a tool that declares `readOnlyHint` is a research tool (like web_search,
-    // itself an Exa MCP call classified `safe`), so it is `safe` and available
-    // in read-only Plan Mode. Anything that can mutate stays `dangerous` +
-    // chat-only. Absent hint ⇒ treat as mutating (conservative default).
-    const readOnly =
-      (tool as { annotations?: { readOnlyHint?: boolean } }).annotations?.readOnlyHint === true;
     toolRegistry.registerTool({
       entry: {
         name: definition.name,
-        profiles: readOnly ? ["chat", "plan"] : ["chat"],
-        permission: readOnly ? { danger: "safe" } : { danger: "dangerous", action: "mcp.call" },
+        profiles: ["chat"],
+        permission: { danger: "dangerous", action: "mcp.call" },
         ui: getMcpToolUiMeta(definition.name),
       },
       definition,
@@ -264,6 +251,24 @@ async function refreshServerTools(managed: ManagedServer): Promise<void> {
   }
   registeredTools.set(managed.config.name, names);
   managed.tools = tools;
+}
+
+export async function listAllMcpTools(
+  client: Pick<Client, "listTools">,
+  serverName: string,
+): Promise<Awaited<ReturnType<Client["listTools"]>>["tools"]> {
+  const tools: Awaited<ReturnType<Client["listTools"]>>["tools"] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await withTimeout(
+      client.listTools(cursor === undefined ? undefined : { cursor }),
+      CONNECT_TIMEOUT_MS,
+      `list tools ${serverName}`,
+    );
+    tools.push(...page.tools);
+    cursor = page.nextCursor;
+  } while (cursor);
+  return tools;
 }
 
 async function connectServer(managed: ManagedServer): Promise<void> {
@@ -315,7 +320,9 @@ async function disposeServer(name: string): Promise<void> {
  * down; new ones connect in parallel. Returns the resulting status list.
  */
 export async function syncWorkspaceMcp(cwd: string): Promise<McpServerInfo[]> {
-  const { servers: configs } = loadWorkspaceMcpConfig(cwd);
+  const configs = loadWorkspaceMcpConfig(cwd).servers.map((config) =>
+    config.transport === "stdio" && config.cwd === undefined ? { ...config, cwd } : config,
+  );
   const desired = new Map(configs.map((config) => [config.name, config]));
 
   const removals: Promise<void>[] = [];

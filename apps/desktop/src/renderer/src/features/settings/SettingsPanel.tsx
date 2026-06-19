@@ -174,10 +174,7 @@ export function SettingsPanel({
     }
   }
 
-  async function editModel(
-    model: ProviderModelConfig,
-    patch: ModelConfigPatch,
-  ): Promise<void> {
+  async function editModel(model: ProviderModelConfig, patch: ModelConfigPatch): Promise<void> {
     if (!detail) {
       return;
     }
@@ -496,10 +493,7 @@ function ModelProviderSettingsPanel({
   onCustomComplete(provider: string): void;
   onCustomOpen(): void;
   onDeleteProvider(provider: ModelProviderInfo): void;
-  onEditModel(
-    model: ProviderModelConfig,
-    patch: ModelConfigPatch,
-  ): void;
+  onEditModel(model: ProviderModelConfig, patch: ModelConfigPatch): void;
   onEditProvider(providerId: string): void;
   onError(message: string | undefined): void;
   onKeyChange(apiKey: string): void;
@@ -769,10 +763,7 @@ function ProviderDetailDialog({
   open: boolean;
   onClose(): void;
   onConnectProvider(provider: ModelProviderInfo, apiKey?: string, baseUrl?: string): void;
-  onEditModel(
-    model: ProviderModelConfig,
-    patch: ModelConfigPatch,
-  ): void;
+  onEditModel(model: ProviderModelConfig, patch: ModelConfigPatch): void;
   onEditProvider(providerId: string): void;
   onKeyChange(apiKey: string): void;
   onToggleModel(model: ProviderModelConfig, enabled: boolean): void;
@@ -953,6 +944,21 @@ const recordToPairs = (record: unknown): KeyValuePair[] =>
         .map(([key, value]) => pair(key, value))
     : [];
 
+const mcpInitial = (name: string): string => name.trim().slice(0, 1).toUpperCase() || "?";
+
+function mcpCount(count: number, label: string): string {
+  return `${count} ${label}${count === 1 ? "" : "s"} enabled`;
+}
+
+function mcpServerSummary(server: McpServerInfo): string {
+  if (server.status === "disabled") return "Disabled";
+  if (server.status === "connecting") return "Connecting";
+  if (server.status === "failed") {
+    return server.error?.toLowerCase().includes("auth") ? "Needs authentication" : "Failed";
+  }
+  return server.tools.length > 0 ? mcpCount(server.tools.length, "tool") : "Connected";
+}
+
 /**
  * MCP server management — fully graphical. Add/edit/toggle/delete servers
  * without touching JSON; Modus writes the Cursor-compatible mcp.json behind
@@ -965,6 +971,14 @@ function McpSettingsPanel({ cwd }: { cwd: string | undefined }) {
   const [mcpError, setMcpError] = useState<string | undefined>();
   const [form, setForm] = useState<McpFormState | undefined>();
   const [confirmingDelete, setConfirmingDelete] = useState<string | undefined>();
+  const serverGroups = useMemo(() => {
+    const userServers = serverList.filter((server) => !cwd || !server.source.startsWith(cwd));
+    const projectServers = serverList.filter((server) => cwd && server.source.startsWith(cwd));
+    const groups: Array<[string, McpServerInfo[]]> = [];
+    if (userServers.length > 0) groups.push(["User MCP Servers", userServers]);
+    if (projectServers.length > 0) groups.push(["Project MCP Servers", projectServers]);
+    return groups;
+  }, [cwd, serverList]);
 
   async function refresh(sync: boolean): Promise<void> {
     setMcpError(undefined);
@@ -1061,9 +1075,9 @@ function McpSettingsPanel({ cwd }: { cwd: string | undefined }) {
 
   function sourceBadge(source: string): string {
     if (cwd && source.startsWith(cwd)) {
-      return source.includes(".cursor") ? "project · .cursor" : "project";
+      return "Project";
     }
-    return "user";
+    return "User";
   }
 
   return (
@@ -1117,127 +1131,123 @@ function McpSettingsPanel({ cwd }: { cwd: string | undefined }) {
         ) : null}
       </CollapsibleMotion>
 
-      <SettingsSection title="Servers">
-        {serverList.length === 0 ? (
-          <div className="flex flex-col items-start gap-3 rounded-lg border border-hairline-soft bg-panel px-5 py-6">
-            <p className="text-sm text-fg-muted">
-              {cwd
-                ? "No MCP servers yet. Add one to unlock extra agent tools — try a starter:"
-                : "Open a workspace to configure MCP servers."}
-            </p>
-            {cwd ? (
-              <div className="flex flex-wrap gap-1.5">
-                {MCP_PRESETS.map((preset) => (
-                  <button
-                    className="flex h-7 items-center gap-1.5 rounded-md border border-hairline bg-surface px-2.5 text-xs text-fg transition-colors hover:bg-hover"
-                    key={preset.name}
-                    onClick={() =>
-                      setForm({
-                        ...emptyMcpForm(),
-                        name: preset.name,
-                        commandLine: preset.command,
-                      })
-                    }
-                    type="button"
-                  >
-                    <IconPlus size={12} stroke={2} />
-                    {preset.label}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-          </div>
-        ) : (
-          <SettingsList>
-            {serverList.map((server) => {
-              const status = MCP_STATUS_STYLE[server.status];
-              const deleting = confirmingDelete === server.name;
-              return (
-                <div
-                  className="group/mcp border-hairline-soft border-b px-4 py-3 last:border-b-0"
-                  key={server.name}
-                >
-                  <div className="flex items-center gap-2.5">
-                    <span aria-hidden className={cn("size-2 shrink-0 rounded-full", status.dot)} />
-                    <span className="min-w-0 truncate text-sm text-fg">{server.name}</span>
-                    <span className="shrink-0 rounded bg-chip px-1.5 py-px font-mono text-2xs text-fg-subtle">
-                      {server.transport === "stdio" ? "local" : "remote"}
-                    </span>
-                    <span className="shrink-0 rounded bg-chip-faint px-1.5 py-px text-2xs text-fg-faint">
-                      {sourceBadge(server.source)}
-                    </span>
-                    <span className="shrink-0 text-2xs text-fg-faint">{status.label}</span>
-                    <span className="ml-auto flex shrink-0 items-center gap-0.5">
-                      {deleting ? (
-                        <button
-                          className="flex h-6 items-center gap-1 rounded-md bg-danger/10 px-1.5 text-2xs text-danger transition-colors hover:bg-danger/20"
-                          onClick={() => void deleteServer(server)}
-                          type="button"
-                        >
-                          <IconTrash size={12} stroke={1.9} />
-                          Delete “{server.name}”?
-                        </button>
-                      ) : (
-                        <>
-                          <span className="text-2xs text-fg-faint">
-                            {server.tools.length > 0
-                              ? `${server.tools.length} tool${server.tools.length === 1 ? "" : "s"}`
-                              : ""}
-                          </span>
-                          <Tooltip content="Edit server" side="bottom" sideOffset={6}>
-                            <button
-                              aria-label={`Edit ${server.name}`}
-                              className="flex size-6 items-center justify-center rounded-md text-fg-faint opacity-0 transition-all hover:bg-hover hover:text-fg-muted group-hover/mcp:opacity-100"
-                              onClick={() => void openEdit(server)}
-                              type="button"
-                            >
-                              <IconEdit size={13} stroke={1.8} />
-                            </button>
-                          </Tooltip>
-                          <Tooltip content="Remove server" side="bottom" sideOffset={6}>
-                            <button
-                              aria-label={`Remove ${server.name}`}
-                              className="flex size-6 items-center justify-center rounded-md text-fg-faint opacity-0 transition-all hover:bg-danger/10 hover:text-danger group-hover/mcp:opacity-100"
-                              onClick={() => setConfirmingDelete(server.name)}
-                              type="button"
-                            >
-                              <IconTrash size={13} stroke={1.8} />
-                            </button>
-                          </Tooltip>
-                          <Switch.Root
-                            checked={server.status !== "disabled"}
-                            className="ml-1 flex h-4.5 w-8 shrink-0 cursor-pointer rounded-full bg-chip-strong p-0.5 transition-colors data-checked:bg-success/70"
-                            onCheckedChange={(checked) => void toggleServer(server, checked)}
-                          >
-                            <Switch.Thumb className="size-3.5 rounded-full bg-fg transition-transform data-checked:translate-x-3.5" />
-                          </Switch.Root>
-                        </>
-                      )}
-                    </span>
-                  </div>
-                  {server.error ? (
-                    <p className="mt-1.5 pl-[18px] text-danger text-xs leading-relaxed">
-                      {server.error}
-                    </p>
-                  ) : null}
-                  {server.tools.length > 0 ? (
-                    <div className="mt-2 flex flex-wrap gap-1 pl-[18px]">
-                      {server.tools.map((tool) => (
+      <SettingsSection title="Home MCP Servers">
+        <SettingsList>
+          {serverGroups.length > 0 ? (
+            serverGroups.map(([group, servers]) => (
+              <div className="border-hairline-soft border-b last:border-b-0" key={group}>
+                <div className="px-4 pt-3 pb-1 text-fg text-xs">{group}</div>
+                {servers.map((server) => {
+                  const status = MCP_STATUS_STYLE[server.status];
+                  const deleting = confirmingDelete === server.name;
+                  return (
+                    <div
+                      className="group/mcp flex items-center gap-3 border-hairline-soft border-b px-4 py-3 last:border-b-0"
+                      key={server.name}
+                    >
+                      <span className="relative flex size-10 shrink-0 items-center justify-center rounded-lg bg-chip-strong font-mono text-fg-muted text-xs">
+                        {mcpInitial(server.name)}
                         <span
-                          className="rounded bg-chip-faint px-1.5 py-0.5 font-mono text-2xs text-fg-subtle"
-                          key={tool.registeredName}
-                          title={tool.description}
+                          aria-hidden
+                          className={cn(
+                            "-right-0.5 absolute bottom-1 size-2.5 rounded-full border border-panel",
+                            status.dot,
+                          )}
+                        />
+                      </span>
+                      <button
+                        className="min-w-0 flex-1 text-left"
+                        onClick={() => void openEdit(server)}
+                        type="button"
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="truncate text-fg text-sm">{server.name}</span>
+                          <span className="shrink-0 text-2xs text-fg-faint">
+                            {sourceBadge(server.source)}
+                          </span>
+                        </div>
+                        <div
+                          className={cn(
+                            "flex items-center gap-1 text-xs",
+                            server.status === "failed" ? "text-danger" : "text-fg-muted",
+                          )}
                         >
-                          {tool.name}
-                        </span>
-                      ))}
+                          <span>{mcpServerSummary(server)}</span>
+                          {server.tools.length > 0 ? (
+                            <IconChevronRight size={12} stroke={1.8} />
+                          ) : null}
+                        </div>
+                      </button>
+                      <span className="flex shrink-0 items-center gap-1">
+                        {deleting ? (
+                          <button
+                            className="flex h-7 items-center gap-1 rounded-md bg-danger/10 px-2 text-danger text-xs transition-colors hover:bg-danger/20"
+                            onClick={() => void deleteServer(server)}
+                            type="button"
+                          >
+                            <IconTrash size={13} stroke={1.9} />
+                            Delete
+                          </button>
+                        ) : (
+                          <>
+                            <Tooltip content="Edit server" side="bottom" sideOffset={6}>
+                              <button
+                                aria-label={`Edit ${server.name}`}
+                                className="flex size-7 items-center justify-center rounded-md text-fg-faint opacity-0 transition-all hover:bg-hover hover:text-fg-muted group-hover/mcp:opacity-100"
+                                onClick={() => void openEdit(server)}
+                                type="button"
+                              >
+                                <IconEdit size={14} stroke={1.8} />
+                              </button>
+                            </Tooltip>
+                            <Tooltip content="Remove server" side="bottom" sideOffset={6}>
+                              <button
+                                aria-label={`Remove ${server.name}`}
+                                className="flex size-7 items-center justify-center rounded-md text-fg-faint opacity-0 transition-all hover:bg-danger/10 hover:text-danger group-hover/mcp:opacity-100"
+                                onClick={() => setConfirmingDelete(server.name)}
+                                type="button"
+                              >
+                                <IconTrash size={14} stroke={1.8} />
+                              </button>
+                            </Tooltip>
+                            <Switch.Root
+                              checked={server.status !== "disabled"}
+                              className="ml-1 flex h-5 w-9 shrink-0 cursor-pointer rounded-full bg-chip-strong p-0.5 transition-colors data-checked:bg-success/70"
+                              onCheckedChange={(checked) => void toggleServer(server, checked)}
+                            >
+                              <Switch.Thumb className="size-4 rounded-full bg-fg transition-transform data-checked:translate-x-4" />
+                            </Switch.Root>
+                          </>
+                        )}
+                      </span>
                     </div>
-                  ) : null}
-                </div>
-              );
-            })}
-          </SettingsList>
-        )}
+                  );
+                })}
+              </div>
+            ))
+          ) : (
+            <div className="px-4 pt-3 pb-1 text-fg text-xs">User MCP Servers</div>
+          )}
+          <button
+            className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-hover disabled:opacity-40"
+            disabled={!cwd}
+            onClick={() => {
+              setConfirmingDelete(undefined);
+              setForm(emptyMcpForm());
+            }}
+            type="button"
+          >
+            <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-chip-strong text-fg-muted">
+              <IconPlus size={18} stroke={1.8} />
+            </span>
+            <span className="min-w-0">
+              <span className="block text-fg text-sm">New MCP Server</span>
+              <span className="block text-fg-muted text-xs">
+                {cwd ? "Add a Custom MCP Server" : "Open a workspace to configure MCP servers"}
+              </span>
+            </span>
+          </button>
+        </SettingsList>
         <div className="flex items-center justify-between">
           <p className="text-fg-faint text-xs leading-relaxed">
             MCP tools always ask for permission first; “Always allow” trusts a tool for this
@@ -2113,10 +2123,7 @@ function ProviderDetail({
   busy: boolean;
   keyValue: string;
   onConnect(apiKey: string, baseUrl?: string): void;
-  onEditModel(
-    model: ProviderModelConfig,
-    patch: ModelConfigPatch,
-  ): void;
+  onEditModel(model: ProviderModelConfig, patch: ModelConfigPatch): void;
   onEditProvider(providerId: string): void;
   onKeyChange(apiKey: string): void;
   onToggleModel(model: ProviderModelConfig, enabled: boolean): void;
@@ -2362,10 +2369,7 @@ function ModelGroupSection({
   group: ReturnType<typeof groupProviderModels>[number];
   busy: boolean;
   editableLimits: boolean;
-  onEditModel(
-    model: ProviderModelConfig,
-    patch: ModelConfigPatch,
-  ): void;
+  onEditModel(model: ProviderModelConfig, patch: ModelConfigPatch): void;
   onToggleModel(model: ProviderModelConfig, enabled: boolean): void;
 }) {
   return (
@@ -2403,10 +2407,7 @@ function ModelRow({
   model: ProviderModelConfig;
   busy: boolean;
   editableLimits: boolean;
-  onEditModel(
-    model: ProviderModelConfig,
-    patch: ModelConfigPatch,
-  ): void;
+  onEditModel(model: ProviderModelConfig, patch: ModelConfigPatch): void;
   onToggleModel(model: ProviderModelConfig, enabled: boolean): void;
 }) {
   const [open, setOpen] = useState(false);
@@ -2460,9 +2461,7 @@ function ModelRow({
               <span>{`${model.contextWindow.toLocaleString()} ctx`}</span>
             ) : null}
             {model.maxTokens ? <span>{`${model.maxTokens.toLocaleString()} out`}</span> : null}
-            {thinkingSelection.value !== "off" ? (
-              <span>{thinkingSelection.label}</span>
-            ) : null}
+            {thinkingSelection.value !== "off" ? <span>{thinkingSelection.label}</span> : null}
           </div>
         </div>
         <div className="flex items-center gap-2">
