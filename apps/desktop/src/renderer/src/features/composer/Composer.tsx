@@ -27,12 +27,16 @@ import type {
   ModelInfo,
   PromptDelivery,
   PromptImageAttachment,
-  ThinkingLevel,
 } from "../../../../shared/contracts";
 import { BorderBeam } from "../../components/ui/BorderBeam";
 import { ImageThumb } from "../../components/ui/ImageViewer";
 import { TypingAnimation } from "../../components/ui/TypingAnimation";
 import { cn } from "../../lib/cn";
+import {
+  modelThinkingOptions,
+  selectedThinkingLabel,
+  selectedThinkingOption,
+} from "../../lib/modelThinking";
 import { RunningProcessBar } from "../process/RunningProcessBar";
 import { ProviderLogo } from "../settings/ProviderLogo";
 import { ApprovalModeSelect } from "./ApprovalModeSelect";
@@ -68,7 +72,7 @@ type ComposerProps = {
   /** Agent session that owns this composer; scopes the running-process bar. */
   sessionId?: string;
   onModelChange(model: string): void;
-  onModelConfigChange?(model: string, thinkingLevel: ThinkingLevel): Promise<void> | void;
+  onModelConfigChange?(model: string, thinkingVariant: string): Promise<void> | void;
   onContextChange(items: ContextItem[]): void;
   onSubmit(
     message: string,
@@ -609,11 +613,13 @@ function ModelSelect({
   model: string;
   models: ModelInfo[];
   onModelChange(model: string): void;
-  onModelConfigChange?(model: string, thinkingLevel: ThinkingLevel): Promise<void> | void;
+  onModelConfigChange?(model: string, thinkingVariant: string): Promise<void> | void;
 }) {
   const [editingModel, setEditingModel] = useState<string | null>(null);
   const current = models.find((item) => item.id === model) ?? models[0];
   const editingItem = models.find((item) => item.id === editingModel);
+  const editingOptions = editingItem ? modelThinkingOptions(editingItem) : [];
+  const editingSelection = editingItem ? selectedThinkingOption(editingItem) : undefined;
   const tag = current?.name ?? "No model configured";
 
   return current ? (
@@ -628,7 +634,7 @@ function ModelSelect({
         />
         <span className="min-w-0 truncate text-fg-subtle">{tag}</span>
         <span className="hidden shrink-0 whitespace-nowrap text-fg-faint @md:inline">
-          {current.thinkingLevel}
+          {selectedThinkingLabel(current)}
         </span>
         <Select.Icon>
           <IconChevronDown className="shrink-0 text-fg-faint" size={12} stroke={2} />
@@ -674,7 +680,9 @@ function ModelSelect({
                     off
                   </span>
                 ) : null}
-                <span className="ml-1 shrink-0 text-2xs text-fg-faint">{item.thinkingLevel}</span>
+                <span className="ml-1 shrink-0 text-2xs text-fg-faint">
+                  {selectedThinkingLabel(item)}
+                </span>
                 <button
                   aria-label={`Edit ${item.name}`}
                   className="ml-auto flex size-6 shrink-0 items-center justify-center rounded-md text-fg-faint opacity-0 transition-opacity hover:bg-active hover:text-fg-muted group-hover/model:opacity-100 data-[open=true]:opacity-100"
@@ -703,24 +711,24 @@ function ModelSelect({
                   </span>
                 </div>
                 <div className="flex flex-wrap gap-1">
-                  {editingItem.thinkingLevels.map((level) => (
+                  {editingOptions.map((option) => (
                     <button
                       className={cn(
                         "h-7 rounded-md px-2 text-xs transition-colors",
-                        editingItem.thinkingLevel === level
+                        editingSelection?.value === option.value
                           ? "bg-active text-fg"
                           : "text-fg-subtle hover:bg-hover hover:text-fg",
                       )}
-                      key={level}
+                      key={option.value}
                       onClick={(event) => {
                         event.preventDefault();
                         event.stopPropagation();
-                        void onModelConfigChange?.(editingItem.id, level);
+                        void onModelConfigChange?.(editingItem.id, option.value);
                         setEditingModel(null);
                       }}
                       type="button"
                     >
-                      {level}
+                      {option.label}
                     </button>
                   ))}
                 </div>

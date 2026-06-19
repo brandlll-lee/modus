@@ -42,11 +42,15 @@ import type {
   RuleMode,
   RuleSource,
   SkillInfo,
-  ThinkingLevel,
 } from "../../../../shared/contracts";
 import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
+import {
+  modelThinkingOptions,
+  selectedThinkingLabel,
+  selectedThinkingOption,
+} from "../../lib/modelThinking";
 import { type ThemeMode, useTheme } from "../../lib/theme";
 import { CustomProviderForm } from "./CustomProviderForm";
 import { Field, parsePositiveInteger, SelectField, SwitchControl } from "./form-controls";
@@ -63,6 +67,11 @@ type SettingsPanelProps = {
 };
 
 type SettingsSectionId = "general" | "model-provider" | "appearance" | "skills" | "mcp" | "rules";
+type ModelConfigPatch = {
+  thinkingVariant?: string;
+  contextWindow?: number;
+  maxTokens?: number;
+};
 
 export function SettingsPanel({
   open,
@@ -167,7 +176,7 @@ export function SettingsPanel({
 
   async function editModel(
     model: ProviderModelConfig,
-    patch: { thinkingLevel?: ThinkingLevel; contextWindow?: number; maxTokens?: number },
+    patch: ModelConfigPatch,
   ): Promise<void> {
     if (!detail) {
       return;
@@ -489,7 +498,7 @@ function ModelProviderSettingsPanel({
   onDeleteProvider(provider: ModelProviderInfo): void;
   onEditModel(
     model: ProviderModelConfig,
-    patch: { thinkingLevel?: ThinkingLevel; contextWindow?: number; maxTokens?: number },
+    patch: ModelConfigPatch,
   ): void;
   onEditProvider(providerId: string): void;
   onError(message: string | undefined): void;
@@ -762,7 +771,7 @@ function ProviderDetailDialog({
   onConnectProvider(provider: ModelProviderInfo, apiKey?: string, baseUrl?: string): void;
   onEditModel(
     model: ProviderModelConfig,
-    patch: { thinkingLevel?: ThinkingLevel; contextWindow?: number; maxTokens?: number },
+    patch: ModelConfigPatch,
   ): void;
   onEditProvider(providerId: string): void;
   onKeyChange(apiKey: string): void;
@@ -2106,7 +2115,7 @@ function ProviderDetail({
   onConnect(apiKey: string, baseUrl?: string): void;
   onEditModel(
     model: ProviderModelConfig,
-    patch: { thinkingLevel?: ThinkingLevel; contextWindow?: number; maxTokens?: number },
+    patch: ModelConfigPatch,
   ): void;
   onEditProvider(providerId: string): void;
   onKeyChange(apiKey: string): void;
@@ -2355,7 +2364,7 @@ function ModelGroupSection({
   editableLimits: boolean;
   onEditModel(
     model: ProviderModelConfig,
-    patch: { thinkingLevel?: ThinkingLevel; contextWindow?: number; maxTokens?: number },
+    patch: ModelConfigPatch,
   ): void;
   onToggleModel(model: ProviderModelConfig, enabled: boolean): void;
 }) {
@@ -2396,16 +2405,14 @@ function ModelRow({
   editableLimits: boolean;
   onEditModel(
     model: ProviderModelConfig,
-    patch: { thinkingLevel?: ThinkingLevel; contextWindow?: number; maxTokens?: number },
+    patch: ModelConfigPatch,
   ): void;
   onToggleModel(model: ProviderModelConfig, enabled: boolean): void;
 }) {
   const [open, setOpen] = useState(false);
-  const thinkingOptions = useMemo(
-    () => model.thinkingLevels.map((level) => ({ label: level, value: level })),
-    [model.thinkingLevels],
-  );
-  const canEditThinking = model.thinkingLevels.length > 1;
+  const thinkingOptions = useMemo(() => modelThinkingOptions(model), [model]);
+  const thinkingSelection = selectedThinkingOption(model);
+  const canEditThinking = thinkingOptions.length > 1;
   const expandable = canEditThinking || editableLimits;
   const [contextDraft, setContextDraft] = useState(
     model.contextWindow ? String(model.contextWindow) : "",
@@ -2453,7 +2460,9 @@ function ModelRow({
               <span>{`${model.contextWindow.toLocaleString()} ctx`}</span>
             ) : null}
             {model.maxTokens ? <span>{`${model.maxTokens.toLocaleString()} out`}</span> : null}
-            {model.thinkingLevel !== "off" ? <span>{model.thinkingLevel}</span> : null}
+            {thinkingSelection.value !== "off" ? (
+              <span>{thinkingSelection.label}</span>
+            ) : null}
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -2483,9 +2492,9 @@ function ModelRow({
             <div className="grid max-w-xs gap-2">
               <SelectField
                 label="Default thinking level"
-                onChange={(value) => onEditModel(model, { thinkingLevel: value as ThinkingLevel })}
+                onChange={(value) => onEditModel(model, { thinkingVariant: value })}
                 options={thinkingOptions}
-                value={model.thinkingLevel}
+                value={thinkingSelection.value}
               />
             </div>
           ) : null}
@@ -2746,6 +2755,9 @@ function modelMatchesQuery(model: ProviderModelConfig, query: string): boolean {
     model.contextWindow?.toString(),
     model.maxTokens?.toString(),
     model.thinkingLevel,
+    model.thinkingVariant,
+    selectedThinkingLabel(model),
+    ...(model.thinkingOptions?.flatMap((option) => [option.value, option.label]) ?? []),
     model.reasoning ? "thinking reasoning" : "standard",
   ]
     .filter(Boolean)

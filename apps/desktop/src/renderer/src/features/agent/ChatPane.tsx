@@ -21,7 +21,6 @@ import type {
   PromptDelivery,
   PromptImageAttachment,
   QuestionAnswer,
-  ThinkingLevel,
   WorkingChangeStats,
   WorkspaceInfo,
 } from "../../../../shared/contracts";
@@ -63,7 +62,7 @@ type ChatPaneProps = {
   /** Refresh the session list after operations that mutate session rows. */
   onSessionsChanged(): void;
   onModelChange(model: string): void;
-  onModelConfigChange(model: string, thinkingLevel: ThinkingLevel): Promise<void> | void;
+  onModelConfigChange(model: string, thinkingVariant: string): Promise<void> | void;
   /** "Review" on the changes strip: focus this pane and open the diff panel. */
   onOpenReview(): void;
   /** A plan was (re)written in Plan Mode: open it in the file panel. */
@@ -362,10 +361,11 @@ export const ChatPane = forwardRef<ChatPaneHandle, ChatPaneProps>(function ChatP
         : item,
     );
     // Bind THIS turn's execution params to the prompt: the model the composer
-    // currently shows + its thinking level. The runtime applies them at turn
+    // currently shows + its provider-facing thinking variant. The runtime applies them at turn
     // start, so the turn is self-describing — no stale model/thinking/mode after
     // a mid-session switch, edit-and-resend, or resume.
-    const turnThinking = models.find((item) => item.id === paneModel)?.thinkingLevel;
+    const turnModel = models.find((item) => item.id === paneModel);
+    const turnThinking = turnModel?.thinkingVariant ?? turnModel?.thinkingLevel;
     void window.modus.agent
       .prompt({
         context: leanContext,
@@ -377,7 +377,7 @@ export const ChatPane = forwardRef<ChatPaneHandle, ChatPaneProps>(function ChatP
         ...(skills && skills.length > 0 ? { skills } : {}),
         ...(mode ? { mode } : {}),
         ...(paneModel ? { model: paneModel } : {}),
-        ...(turnThinking ? { thinkingLevel: turnThinking } : {}),
+        ...(turnThinking ? { thinkingVariant: turnThinking } : {}),
         ...(planId ? { planId } : {}),
       })
       .then(() => onSessionsChanged())

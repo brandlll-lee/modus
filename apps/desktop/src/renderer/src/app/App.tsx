@@ -32,7 +32,6 @@ import type {
   PlanRef,
   PromptDelivery,
   PromptImageAttachment,
-  ThinkingLevel,
   WorkspaceInfo,
 } from "../../../shared/contracts";
 import modusLogo from "../assets/modus-logo.png";
@@ -401,8 +400,8 @@ export function App() {
     await window.modus.model.setDefault(nextModel);
   }
 
-  async function updateModelThinking(modelId: string, thinkingLevel: ThinkingLevel): Promise<void> {
-    await window.modus.model.updateConfig({ model: modelId, thinkingLevel });
+  async function updateModelThinking(modelId: string, thinkingVariant: string): Promise<void> {
+    await window.modus.model.updateConfig({ model: modelId, thinkingVariant });
     await window.modus.model.setDefault(modelId);
     await refreshModelSettings();
     setModel(modelId);
@@ -607,8 +606,8 @@ export function App() {
                               key={activeSession.id}
                               models={models}
                               onModelChange={setModel}
-                              onModelConfigChange={(next, thinkingLevel) =>
-                                void updateModelThinking(next, thinkingLevel)
+                              onModelConfigChange={(next, thinkingVariant) =>
+                                void updateModelThinking(next, thinkingVariant)
                               }
                               onOpenReview={() => setInspectorOpen(true)}
                               onPlanUpdated={(plan) => {
@@ -658,8 +657,8 @@ export function App() {
                                 onContextChange={setHeroContextItems}
                                 onModeChange={setHeroMode}
                                 onModelChange={(next) => void changeDefaultModel(next)}
-                                onModelConfigChange={(next, thinkingLevel) =>
-                                  void updateModelThinking(next, thinkingLevel)
+                                onModelConfigChange={(next, thinkingVariant) =>
+                                  void updateModelThinking(next, thinkingVariant)
                                 }
                                 onSubmit={(message, context, delivery, attachments, skills, mode) =>
                                   void submitHeroPrompt(
