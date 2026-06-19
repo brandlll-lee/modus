@@ -3,6 +3,7 @@ import {
   IconDots,
   IconFileText,
   IconGitBranch,
+  IconLayoutList,
   IconLayoutSidebarRight,
   IconShieldCheck,
   IconShieldX,
@@ -12,13 +13,14 @@ import {
 import { animate, m, useMotionValue } from "motion/react";
 import { type PointerEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import type { SecurityState } from "../../../../preload/types";
-import type { WorkspaceInfo } from "../../../../shared/contracts";
+import type { PlanRef, WorkspaceInfo } from "../../../../shared/contracts";
 import { PanelHeader } from "../../components/ui/Panel";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
 import { BrowserPanel } from "../browser/BrowserPanel";
 import { DiffPanel } from "../diff/DiffPanel";
 import { FilesPanel } from "../files/FilesPanel";
+import { PlanPanel } from "../plan/PlanPanel";
 import { TerminalPanel } from "../terminal/TerminalPanel";
 
 type InspectorProps = {
@@ -33,8 +35,12 @@ type InspectorProps = {
   /** Controlled active tab (App drives it so events can switch to Files). */
   tab?: string | undefined;
   onTabChange?(tab: string): void;
-  /** A document to show in the Files panel that isn't in the tree (e.g. a plan). */
-  planDoc?: { path: string; title: string; content: string } | undefined;
+  /** The session's active plan, shown in the Plan tab (not the file tree). */
+  plan?: PlanRef | undefined;
+  /** Whether the session is currently working — reconciles a stale "building". */
+  sessionWorking: boolean;
+  /** Build the active plan (runs the same path as the composer's Review card). */
+  onBuildPlan(): void;
   onOpenChange(open: boolean): void;
   onWidthChange(width: number): void;
 };
@@ -47,6 +53,7 @@ const INSPECTOR_TRANSITION = { duration: 0.18, ease: [0.22, 1, 0.36, 1] } as con
 
 const TABS = [
   { value: "changes", label: "Changes", icon: <IconGitBranch size={15} stroke={1.65} /> },
+  { value: "plan", label: "Plan", icon: <IconLayoutList size={15} stroke={1.65} /> },
   { value: "files", label: "Files", icon: <IconFileText size={15} stroke={1.65} /> },
   { value: "browser", label: "Browser", icon: <IconWorld size={15} stroke={1.65} /> },
   { value: "terminal", label: "Terminal", icon: <IconTerminal2 size={15} stroke={1.65} /> },
@@ -63,7 +70,9 @@ export function Inspector({
   maxWidth,
   tab: controlledTab,
   onTabChange,
-  planDoc,
+  plan,
+  sessionWorking,
+  onBuildPlan,
   onOpenChange,
   onWidthChange,
 }: InspectorProps) {
@@ -225,8 +234,11 @@ export function Inspector({
                 <Tabs.Panel className="min-h-0 flex-1 outline-none" value="changes">
                   <DiffPanel cwd={cwd} sessionId={sessionId} workspaceId={activeWorkspace?.id} />
                 </Tabs.Panel>
+                <Tabs.Panel className="min-h-0 flex-1 outline-none" keepMounted value="plan">
+                  <PlanPanel plan={plan} sessionWorking={sessionWorking} onBuild={onBuildPlan} />
+                </Tabs.Panel>
                 <Tabs.Panel className="min-h-0 flex-1 outline-none" keepMounted value="files">
-                  <FilesPanel cwd={cwd} {...(planDoc ? { activeDoc: planDoc } : {})} />
+                  <FilesPanel cwd={cwd} />
                 </Tabs.Panel>
                 <Tabs.Panel className="min-h-0 flex-1 outline-none" keepMounted value="browser">
                   <BrowserPanel active={tab === "browser"} workspaceId={activeWorkspace?.id} />

@@ -12,7 +12,6 @@ import {
   IconGitCommit,
   IconList,
   IconListTree,
-  IconLoader2,
   IconRefresh,
   IconReportSearch,
   IconRotateClockwise,
@@ -21,7 +20,6 @@ import { memo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState
 import type {
   FileChange,
   FileChangeStat,
-  GitBranchSummary,
   GitChangeEvent,
   GitCommit,
   GitStatusSummary,
@@ -31,6 +29,7 @@ import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
 import { EmptyState, PanelHeader } from "../../components/ui/Panel";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
+import { BranchSwitcher } from "../git/BranchSwitcher";
 import { CommitDialog } from "./CommitDialog";
 import {
   CHANGE_SCOPES,
@@ -192,21 +191,6 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
     [cwd, refresh],
   );
 
-  const switchBranch = useCallback(
-    async (name: string): Promise<void> => {
-      if (!cwd) return;
-      setActionError(undefined);
-      try {
-        await window.modus.git.checkout({ cwd, name });
-      } catch (cause) {
-        setActionError(cause instanceof Error ? cause.message : String(cause));
-      } finally {
-        await refresh(cwd);
-      }
-    },
-    [cwd, refresh],
-  );
-
   async function toggleCommit(hash: string): Promise<void> {
     setExpandedCommits((prev) => toggleKey(prev, hash));
     if (!cwd || commitFiles[hash]) return;
@@ -262,8 +246,8 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
             <ComparisonBar
               branch={status?.branch}
               cwd={cwd}
+              onError={setActionError}
               onRefresh={onCommitRefresh}
-              onSwitchBranch={switchBranch}
               onToggleTree={() => setTreeView(!treeView)}
               status={status}
               treeView={treeView}
@@ -395,7 +379,7 @@ function ComparisonBar({
   treeView,
   onToggleTree,
   onRefresh,
-  onSwitchBranch,
+  onError,
   children,
 }: {
   branch: string | undefined;
@@ -404,7 +388,7 @@ function ComparisonBar({
   treeView: boolean;
   onToggleTree(): void;
   onRefresh(): void;
-  onSwitchBranch(name: string): void;
+  onError(message: string): void;
   children: ReactNode;
 }) {
   return (
@@ -420,88 +404,21 @@ function ComparisonBar({
           {treeView ? <IconListTree size={15} stroke={1.7} /> : <IconList size={15} stroke={1.7} />}
         </button>
       </Tooltip>
-      <BranchMenu branch={branch} cwd={cwd} onSwitch={onSwitchBranch} />
+      <BranchSwitcher
+        cwd={cwd}
+        onAfterSwitch={onRefresh}
+        onError={onError}
+        triggerClassName="flex min-w-0 items-center gap-1.5 rounded-md py-0.5 pr-1.5 pl-1 text-sm outline-none transition-colors hover:bg-hover data-popup-open:bg-hover"
+      >
+        <IconGitBranch className="shrink-0 text-fg-subtle" size={13} stroke={1.7} />
+        <span className="max-w-[160px] truncate text-fg-muted">{branch ?? "detached"}</span>
+        <IconChevronDown className="shrink-0 text-fg-faint" size={12} stroke={1.8} />
+      </BranchSwitcher>
       <div className="ml-auto flex shrink-0 items-center gap-1">
         <CommitLauncher cwd={cwd} onRefresh={onRefresh} status={status} />
         {children}
       </div>
     </div>
-  );
-}
-
-/**
- * Branch viewer + switcher. Lists local branches lazily on open; clicking a
- * branch checks it out (the panel then refreshes to that branch's changes).
- */
-function BranchMenu({
-  branch,
-  cwd,
-  onSwitch,
-}: {
-  branch: string | undefined;
-  cwd: string;
-  onSwitch(name: string): void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [branches, setBranches] = useState<GitBranchSummary | undefined>();
-  const [busy, setBusy] = useState<string | undefined>();
-
-  useEffect(() => {
-    if (!open) return;
-    setBranches(undefined);
-    void window.modus.git
-      .branches(cwd)
-      .then(setBranches)
-      .catch(() => setBranches({ local: [], remote: [] }));
-  }, [open, cwd]);
-
-  const label = branch ?? "detached";
-  const locals = branches?.local ?? [];
-
-  return (
-    <Menu.Root onOpenChange={setOpen} open={open}>
-      <Menu.Trigger className="flex min-w-0 items-center gap-1.5 rounded-md py-0.5 pr-1.5 pl-1 text-sm outline-none transition-colors hover:bg-hover data-popup-open:bg-hover">
-        <IconGitBranch className="shrink-0 text-fg-subtle" size={13} stroke={1.7} />
-        <span className="max-w-[160px] truncate text-fg-muted">{label}</span>
-        <IconChevronDown className="shrink-0 text-fg-faint" size={12} stroke={1.8} />
-      </Menu.Trigger>
-      <Menu.Portal>
-        <Menu.Positioner align="start" side="bottom" sideOffset={6}>
-          <Menu.Popup className="scroll-thin origin-(--transform-origin) max-h-[320px] min-w-[240px] overflow-y-auto rounded-lg border border-hairline bg-elevated p-1 shadow-popup">
-            {locals.length === 0 ? (
-              <div className="px-2.5 py-3 text-center text-2xs text-fg-faint">
-                {branches ? "No branches" : "Loading…"}
-              </div>
-            ) : (
-              locals.map((b) => (
-                <Menu.Item
-                  className="flex cursor-default items-center gap-2 rounded-md px-2.5 py-1.5 text-fg text-sm outline-none transition-colors select-none data-highlighted:bg-hover"
-                  closeOnClick={!b.current}
-                  key={b.name}
-                  onClick={() => {
-                    if (b.current) return;
-                    setBusy(b.name);
-                    onSwitch(b.name);
-                  }}
-                >
-                  <span className="flex size-4 shrink-0 items-center justify-center text-accent">
-                    {busy === b.name ? (
-                      <IconLoader2 className="animate-spin" size={13} stroke={1.8} />
-                    ) : b.current ? (
-                      <IconCheck size={14} stroke={2} />
-                    ) : null}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate">{b.name}</span>
-                  {b.current ? (
-                    <span className="shrink-0 text-2xs text-fg-faint">current</span>
-                  ) : null}
-                </Menu.Item>
-              ))
-            )}
-          </Menu.Popup>
-        </Menu.Positioner>
-      </Menu.Portal>
-    </Menu.Root>
   );
 }
 

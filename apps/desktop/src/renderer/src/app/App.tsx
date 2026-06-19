@@ -1,3 +1,4 @@
+import { Menu } from "@base-ui/react/menu";
 import { Popover } from "@base-ui/react/popover";
 import {
   IconBrandVisualStudio,
@@ -6,6 +7,7 @@ import {
   IconCircles,
   IconDeviceLaptop,
   IconFolder,
+  IconFolderPlus,
   IconGitBranch,
   IconLayoutSidebar,
   IconLayoutSidebarRight,
@@ -27,6 +29,7 @@ import type {
   FileDiff,
   ModelInfo,
   ModelSettingsState,
+  PlanRef,
   PromptDelivery,
   PromptImageAttachment,
   ThinkingLevel,
@@ -35,6 +38,7 @@ import type {
 import modusLogo from "../assets/modus-logo.png";
 import { SIDEBAR_MIN_WIDTH, Sidebar } from "../components/Sidebar";
 import { ImageViewerProvider } from "../components/ui/ImageViewer";
+import { ModusBot } from "../components/ui/ModusBot";
 import { NativeSurfaceProvider } from "../components/ui/nativeSurface";
 import { ToolbarButton } from "../components/ui/ToolbarButton";
 import { TooltipProvider } from "../components/ui/Tooltip";
@@ -44,12 +48,13 @@ import {
   reduceActivity,
   type SessionActivity,
 } from "../features/agent/agentEventHub";
-import { ChatPane } from "../features/agent/ChatPane";
-import { isTerminalRunEvent } from "../features/agent/runState";
+import { ChatPane, type ChatPaneHandle } from "../features/agent/ChatPane";
 import { Composer } from "../features/composer/Composer";
+import { BranchSwitcher } from "../features/git/BranchSwitcher";
 import { INSPECTOR_MIN_WIDTH, Inspector } from "../features/inspector/Inspector";
 import { SettingsPanel } from "../features/settings/SettingsPanel";
 import { cn } from "../lib/cn";
+import { useGitBranch } from "../lib/useGitBranch";
 
 /**
  * Floor the main column keeps no matter how wide the side panels get. The
@@ -69,6 +74,9 @@ export function App() {
     Record<string, ContextUsageInfo>
   >({});
   const [heroContextItems, setHeroContextItems] = useState<ContextItem[]>([]);
+  // Composer mode for the hero (new-chat) screen — controlled so the "Plan New
+  // Idea" pill can start a session straight in plan mode.
+  const [heroMode, setHeroMode] = useState<AgentMode>("build");
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [model, setModel] = useState("");
   const [modelSettings, setModelSettings] = useState<ModelSettingsState | null>(null);
@@ -78,9 +86,15 @@ export function App() {
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [inspectorWidth, setInspectorWidth] = useState(384);
   const [inspectorTab, setInspectorTab] = useState("changes");
-  const [planDoc, setPlanDoc] = useState<
-    { path: string; title: string; content: string } | undefined
-  >();
+  // Plans are scoped per session (the authoritative key), so switching sessions
+  // shows that session's own plan — never the last one any session emitted.
+  const [activePlanBySession, setActivePlanBySession] = useState<Record<string, PlanRef>>({});
+  // Each distinct plan auto-opens the Plan tab exactly once (by content hash);
+  // re-opening a session or a build-status change never force-switches the tab.
+  const openedPlanHashesRef = useRef<Set<string>>(new Set());
+  // Imperative handle to the active pane so the Plan panel's Build button runs
+  // the same build path as the Review card.
+  const chatPaneRef = useRef<ChatPaneHandle>(null);
   const [environmentStats, setEnvironmentStats] = useState({ added: 0, removed: 0 });
   const [sessionCreateError, setSessionCreateError] = useState<string | undefined>();
   const [layoutWidth, setLayoutWidth] = useState(0);
@@ -194,7 +208,9 @@ export function App() {
         event.type === "agent.started" ||
         event.type === "agent.ended" ||
         event.type === "message.completed" ||
-        isTerminalRunEvent(event) ||
+        event.type === "run.completed" ||
+        event.type === "run.failed" ||
+        event.type === "run.cancelled" ||
         event.type === "run.blocked"
       ) {
         void refreshSessions();
@@ -283,6 +299,19 @@ export function App() {
       workspaces.find((workspace) => workspace.id === session.workspaceId) ?? activeWorkspace,
     );
     setActiveSessionId(session.id);
+  }
+
+  /**
+   * Open the new-chat hero (Figure 1). The session row is created lazily by the
+   * first prompt (`submitHeroPrompt`), so "New chat" never spawns an empty
+   * session — it just returns to the hero, optionally switching workspace first.
+   */
+  function openNewChat(workspace?: WorkspaceInfo | null): void {
+    if (workspace !== undefined) {
+      setActiveWorkspace(workspace);
+    }
+    setSessionCreateError(undefined);
+    setActiveSessionId(undefined);
   }
 
   async function archiveSession(session: AgentSessionInfo): Promise<void> {
@@ -405,6 +434,7 @@ export function App() {
 
   const hasSession = Boolean(activeSession);
   const activeCwd = activeSession?.cwd ?? activeWorkspace?.rootPath;
+  const branch = useGitBranch(activeCwd);
   const activeRunning = activeSession
     ? (activityBySession[activeSession.id]?.running ?? false)
     : false;
@@ -492,8 +522,8 @@ export function App() {
                       onArchiveProjectChats={(id) => void archiveProjectChats(id)}
                       onRemoveProject={(id) => void removeProject(id)}
                       onRevealProject={(id) => void revealProject(id)}
-                      onNewSession={() => void createSession(activeWorkspace)}
-                      onNewWorkspaceSession={(workspace) => void createSession(workspace)}
+                      onNewSession={() => openNewChat()}
+                      onNewWorkspaceSession={(workspace) => openNewChat(workspace)}
                       onOpenChange={setSidebarOpen}
                       onOpenWorkspace={() => void openWorkspace()}
                       onOpenSettings={() => setSettingsOpen(true)}
@@ -531,11 +561,22 @@ export function App() {
                               </m.div>
                             ) : null}
                           </AnimatePresence>
-                          {!hasSession ? <ChatTopBar activeWorkspace={activeWorkspace} /> : null}
+                          {!hasSession ? (
+                            <ChatTopBar
+                              activeWorkspace={activeWorkspace}
+                              branch={branch}
+                              cwd={activeCwd}
+                              onError={setSessionCreateError}
+                              onOpenFolder={() => void openWorkspace()}
+                              onSelectWorkspace={openNewChat}
+                              workspaces={workspaces}
+                            />
+                          ) : null}
                         </div>
                         <div className="flex flex-1 items-center justify-end pr-2">
                           <HeaderActions
                             activeWorkspace={activeWorkspace}
+                            branch={branch}
                             environmentStats={environmentStats}
                             inspectorOpen={inspectorOpen}
                             onToggleInspector={() => setInspectorOpen((open) => !open)}
@@ -571,14 +612,21 @@ export function App() {
                               }
                               onOpenReview={() => setInspectorOpen(true)}
                               onPlanUpdated={(plan) => {
-                                setPlanDoc({
-                                  path: plan.path,
-                                  title: plan.title,
-                                  content: plan.content,
-                                });
-                                setInspectorTab("files");
-                                setInspectorOpen(true);
+                                // Store under THIS session's id; auto-open the
+                                // Plan tab once per distinct plan (by hash) — a
+                                // build-status change or session re-open never
+                                // force-switches the tab.
+                                setActivePlanBySession((current) => ({
+                                  ...current,
+                                  [activeSession.id]: plan,
+                                }));
+                                if (!openedPlanHashesRef.current.has(plan.hash)) {
+                                  openedPlanHashesRef.current.add(plan.hash);
+                                  setInspectorTab("plan");
+                                  setInspectorOpen(true);
+                                }
                               }}
+                              ref={chatPaneRef}
                               onSessionsChanged={() => void refreshSessions()}
                               session={activeSession}
                               workspace={
@@ -595,15 +643,20 @@ export function App() {
                             key="hero"
                             transition={{ duration: 0.12, ease: "easeOut" }}
                           >
-                            <div className="w-full max-w-[680px] -translate-y-8">
+                            <div className="w-full max-w-[680px] -translate-y-4">
+                              <div className="mb-5 flex justify-center">
+                                <ModusBot className="size-12" />
+                              </div>
                               <Composer
                                 canSubmit={canCreateSession}
                                 contextItems={heroContextItems}
                                 cwd={activeWorkspace?.rootPath}
                                 hasSession={false}
+                                mode={heroMode}
                                 model={model}
                                 models={models}
                                 onContextChange={setHeroContextItems}
+                                onModeChange={setHeroMode}
                                 onModelChange={(next) => void changeDefaultModel(next)}
                                 onModelConfigChange={(next, thinkingLevel) =>
                                   void updateModelThinking(next, thinkingLevel)
@@ -621,11 +674,7 @@ export function App() {
                                 workspaceId={activeWorkspace?.id}
                               />
                               <div className="mt-4 flex items-center justify-center gap-2">
-                                <Pill
-                                  disabled={!activeWorkspace}
-                                  onClick={() => void createSession(activeWorkspace)}
-                                  shortcut="⌥Tab"
-                                >
+                                <Pill onClick={() => setHeroMode("plan")} shortcut="⇧Tab">
                                   Plan New Idea
                                 </Pill>
                                 <Pill onClick={() => setSettingsOpen(true)}>Use Your Model</Pill>
@@ -650,7 +699,11 @@ export function App() {
                         onTabChange={setInspectorTab}
                         onWidthChange={setInspectorWidth}
                         open={inspectorOpen}
-                        {...(planDoc ? { planDoc } : {})}
+                        {...(activeSession && activePlanBySession[activeSession.id]
+                          ? { plan: activePlanBySession[activeSession.id] }
+                          : {})}
+                        sessionWorking={activeRunning}
+                        onBuildPlan={() => chatPaneRef.current?.buildActivePlan()}
                         securityState={securityState}
                         tab={inspectorTab}
                         width={inspectorWidth}
@@ -795,45 +848,148 @@ function CaptionButton({
   );
 }
 
-function ChatTopBar({ activeWorkspace }: { activeWorkspace: WorkspaceInfo | null }) {
+/** Shared look for the two top-bar dropdown triggers (folder + branch). */
+const TOPBAR_TRIGGER_CLASS =
+  "flex h-7 items-center gap-1.5 rounded-md px-2 outline-none transition-colors hover:bg-hover hover:text-fg-muted data-popup-open:bg-hover data-popup-open:text-fg-muted disabled:opacity-60 disabled:hover:bg-transparent";
+
+/**
+ * New-chat hero top bar: the workspace folder and its git branch, both now
+ * selectable. Picking a folder switches the workspace and drops back to a fresh
+ * (lazy) chat; the branch list/checkout is driven off the active workspace's
+ * cwd, so the two stay linked. The branch label tracks the workspace live via
+ * `useGitBranch` (App) — switching folder repaints the branch without a refresh.
+ */
+function ChatTopBar({
+  activeWorkspace,
+  branch,
+  cwd,
+  workspaces,
+  onSelectWorkspace,
+  onOpenFolder,
+  onError,
+}: {
+  activeWorkspace: WorkspaceInfo | null;
+  branch: string | undefined;
+  cwd: string | undefined;
+  workspaces: WorkspaceInfo[];
+  onSelectWorkspace(workspace: WorkspaceInfo): void;
+  onOpenFolder(): void;
+  onError(message: string): void;
+}) {
   return (
     <div className="app-no-drag flex items-center gap-3 text-sm font-normal text-fg-subtle">
-      <TopBarItem icon={<IconFolder size={15} stroke={1.65} />}>
-        {activeWorkspace?.displayName ?? "No workspace"}
-      </TopBarItem>
-      <TopBarItem icon={<IconDeviceLaptop size={15} stroke={1.65} />}>Work locally</TopBarItem>
-      <TopBarItem icon={<IconGitBranch size={15} stroke={1.65} />}>main</TopBarItem>
+      <WorkspaceMenu
+        activeWorkspace={activeWorkspace}
+        onOpenFolder={onOpenFolder}
+        onSelect={onSelectWorkspace}
+        workspaces={workspaces}
+      />
+      <BranchSwitcher cwd={cwd} onError={onError} triggerClassName={TOPBAR_TRIGGER_CLASS}>
+        <span className="text-fg-faint">
+          <IconGitBranch size={15} stroke={1.65} />
+        </span>
+        <span className="max-w-40 truncate">{branch ?? "No branch"}</span>
+        <IconChevronDown className="text-fg-faint" size={11} stroke={2} />
+      </BranchSwitcher>
     </div>
   );
 }
 
-function TopBarItem({ children, icon }: { children: string; icon: ReactNode }) {
+/**
+ * Folder switcher: lists every known workspace (the authoritative recents from
+ * `workspace.list()`), marks the active one, and offers "Open folder…" to add a
+ * new root. Selecting a different workspace hands it to the host, which switches
+ * and opens a fresh chat — no empty session row is created until the first prompt.
+ */
+function WorkspaceMenu({
+  activeWorkspace,
+  workspaces,
+  onSelect,
+  onOpenFolder,
+}: {
+  activeWorkspace: WorkspaceInfo | null;
+  workspaces: WorkspaceInfo[];
+  onSelect(workspace: WorkspaceInfo): void;
+  onOpenFolder(): void;
+}) {
   return (
-    <button
-      className="flex h-7 items-center gap-1.5 rounded-md px-2 transition-colors hover:bg-hover hover:text-fg-muted"
-      type="button"
-    >
-      <span className="text-fg-faint">{icon}</span>
-      <span className="max-w-40 truncate">{children}</span>
-      <IconChevronDown className="text-fg-faint" size={11} stroke={2} />
-    </button>
+    <Menu.Root>
+      <Menu.Trigger className={TOPBAR_TRIGGER_CLASS}>
+        <span className="text-fg-faint">
+          <IconFolder size={15} stroke={1.65} />
+        </span>
+        <span className="max-w-40 truncate">{activeWorkspace?.displayName ?? "No workspace"}</span>
+        <IconChevronDown className="text-fg-faint" size={11} stroke={2} />
+      </Menu.Trigger>
+      <Menu.Portal>
+        <Menu.Positioner align="start" side="bottom" sideOffset={6}>
+          <Menu.Popup className="scroll-thin origin-(--transform-origin) max-h-[360px] min-w-[260px] overflow-y-auto rounded-lg border border-hairline bg-elevated p-1 shadow-popup">
+            {workspaces.length === 0 ? (
+              <div className="px-2.5 py-3 text-center text-2xs text-fg-faint">
+                No recent workspaces
+              </div>
+            ) : (
+              workspaces.map((workspace) => {
+                const active = workspace.id === activeWorkspace?.id;
+                return (
+                  <Menu.Item
+                    className="flex cursor-default items-center gap-2 rounded-md px-2.5 py-1.5 text-fg text-sm outline-none transition-colors select-none data-highlighted:bg-hover"
+                    closeOnClick
+                    key={workspace.id}
+                    onClick={() => {
+                      if (!active) {
+                        onSelect(workspace);
+                      }
+                    }}
+                  >
+                    <span className="flex size-4 shrink-0 items-center justify-center text-accent">
+                      {active ? <IconCheck size={14} stroke={2} /> : null}
+                    </span>
+                    <span className="flex min-w-0 flex-1 flex-col">
+                      <span className="truncate">{workspace.displayName}</span>
+                      <span className="truncate text-2xs text-fg-faint">{workspace.rootPath}</span>
+                    </span>
+                  </Menu.Item>
+                );
+              })
+            )}
+            <div className="my-1 h-px bg-hairline" />
+            <Menu.Item
+              className="flex cursor-default items-center gap-2 rounded-md px-2.5 py-1.5 text-fg text-sm outline-none transition-colors select-none data-highlighted:bg-hover"
+              onClick={onOpenFolder}
+            >
+              <span className="flex size-4 shrink-0 items-center justify-center text-fg-subtle">
+                <IconFolderPlus size={15} stroke={1.7} />
+              </span>
+              <span className="flex-1">Open folder…</span>
+            </Menu.Item>
+          </Menu.Popup>
+        </Menu.Positioner>
+      </Menu.Portal>
+    </Menu.Root>
   );
 }
 
 function HeaderActions({
   activeWorkspace,
+  branch,
   environmentStats,
   inspectorOpen,
   onToggleInspector,
 }: {
   activeWorkspace: WorkspaceInfo | null;
+  branch: string | undefined;
   environmentStats: { added: number; removed: number };
   inspectorOpen: boolean;
   onToggleInspector(): void;
 }) {
   return (
     <div className="app-no-drag flex h-7 items-center gap-1">
-      <EnvironmentPopover activeWorkspace={activeWorkspace} environmentStats={environmentStats} />
+      <EnvironmentPopover
+        activeWorkspace={activeWorkspace}
+        branch={branch}
+        environmentStats={environmentStats}
+      />
       <ToolbarButton
         active={inspectorOpen}
         label={inspectorOpen ? "Hide right sidebar" : "Show right sidebar"}
@@ -847,9 +1003,11 @@ function HeaderActions({
 
 function EnvironmentPopover({
   activeWorkspace,
+  branch,
   environmentStats,
 }: {
   activeWorkspace: WorkspaceInfo | null;
+  branch: string | undefined;
   environmentStats: { added: number; removed: number };
 }) {
   const [open, setOpen] = useState(false);
@@ -900,25 +1058,12 @@ function EnvironmentPopover({
                       <IconChevronDown className="text-fg-faint" size={12} stroke={2} />
                     </EnvironmentRow>
                     <EnvironmentRow icon={<IconGitBranch size={17} stroke={1.65} />}>
-                      <span>main</span>
-                      <IconChevronDown className="text-fg-faint" size={12} stroke={2} />
+                      <span>{branch ?? "No branch"}</span>
                     </EnvironmentRow>
                     <EnvironmentRow icon={<IconVersions size={17} stroke={1.65} />}>
                       <span>Commit or push</span>
                     </EnvironmentRow>
                   </div>
-
-                  <div className="my-5 h-px bg-hairline-soft" />
-
-                  <section>
-                    <h2 className="mb-3 text-sm font-normal text-fg-subtle">Progress</h2>
-                    <div className="space-y-2.5 text-sm text-fg-muted">
-                      <ProgressRow done>梳理 Chat 顶部栏与 Session 状态</ProgressRow>
-                      <ProgressRow done>核对 BaseUI、Motion 官方用法</ProgressRow>
-                      <ProgressRow done>重构极简顶部栏显示逻辑</ProgressRow>
-                      <ProgressRow>弹出面板动画与视觉校准</ProgressRow>
-                    </div>
-                  </section>
 
                   <div className="my-5 h-px bg-hairline-soft" />
 
@@ -951,22 +1096,6 @@ function EnvironmentRow({ children, icon }: { children: ReactNode; icon: ReactNo
       <span className="flex size-5 items-center justify-center text-fg">{icon}</span>
       {children}
     </button>
-  );
-}
-
-function ProgressRow({ children, done = false }: { children: string; done?: boolean }) {
-  return (
-    <div className="flex items-start gap-3">
-      <span
-        className={cn(
-          "mt-0.5 flex size-[18px] shrink-0 items-center justify-center rounded-full border",
-          done ? "border-transparent bg-fg-subtle text-canvas" : "border-fg-faint text-transparent",
-        )}
-      >
-        {done ? <IconCheck size={12} stroke={2.2} /> : null}
-      </span>
-      <span className="leading-snug">{children}</span>
-    </div>
   );
 }
 

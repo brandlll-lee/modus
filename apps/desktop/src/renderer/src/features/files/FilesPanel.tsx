@@ -24,17 +24,10 @@ import { MarkdownMessage } from "../agent/MarkdownMessage";
  *
  * Lazy by design — only the root and the children of expanded folders are ever
  * fetched/mounted, so a large repo stays smooth without a virtualization layer.
- *
- * `activeDoc` lets a caller show a document that isn't in the workspace tree
- * (e.g. a plan.md stored outside the repo); it takes precedence over the tree
- * selection until the user clicks a file.
  */
-
-type ActiveDoc = { path: string; title: string; content: string };
 
 type FilesPanelProps = {
   cwd: string | undefined;
-  activeDoc?: ActiveDoc | undefined;
 };
 
 type FlatNode = { entry: FileEntry; depth: number };
@@ -48,15 +41,13 @@ function isMarkdown(path: string): boolean {
   return /\.(md|markdown|mdx)$/i.test(path);
 }
 
-export function FilesPanel({ cwd, activeDoc }: FilesPanelProps) {
+export function FilesPanel({ cwd }: FilesPanelProps) {
   const [rootEntries, setRootEntries] = useState<FileEntry[]>([]);
   const [childrenByPath, setChildrenByPath] = useState<Map<string, FileEntry[]>>(new Map());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState<Set<string>>(new Set());
   const [selectedFile, setSelectedFile] = useState<FileReadResult | undefined>();
   const [fileError, setFileError] = useState<string | undefined>();
-  // The injected doc overrides the tree selection until the user picks a file.
-  const [docActive, setDocActive] = useState(false);
 
   // Tree width as a motion value (live drag writes straight to the DOM, no React
   // re-render per frame) + the committed width that the open animation targets.
@@ -98,13 +89,6 @@ export function FilesPanel({ cwd, activeDoc }: FilesPanelProps) {
       active = false;
     };
   }, [cwd]);
-
-  // A new injected doc (e.g. a freshly written plan) takes over the viewer.
-  useEffect(() => {
-    if (activeDoc) {
-      setDocActive(true);
-    }
-  }, [activeDoc]);
 
   function startResize(event: PointerEvent<HTMLButtonElement>): void {
     event.preventDefault();
@@ -176,7 +160,6 @@ export function FilesPanel({ cwd, activeDoc }: FilesPanelProps) {
       if (!cwd) {
         return;
       }
-      setDocActive(false);
       setFileError(undefined);
       void window.modus.files
         .read({ cwd, path: entry.path })
@@ -207,9 +190,9 @@ export function FilesPanel({ cwd, activeDoc }: FilesPanelProps) {
     return out;
   }, [rootEntries, expanded, childrenByPath]);
 
-  const selectedPath = docActive ? activeDoc?.path : selectedFile?.path;
-  const viewerLabel = docActive ? activeDoc?.title : selectedFile?.relativePath;
-  const viewerNote = !docActive && selectedFile?.truncated ? "preview truncated" : undefined;
+  const selectedPath = selectedFile?.path;
+  const viewerLabel = selectedFile?.relativePath;
+  const viewerNote = selectedFile?.truncated ? "preview truncated" : undefined;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -278,11 +261,7 @@ export function FilesPanel({ cwd, activeDoc }: FilesPanelProps) {
         ) : null}
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <FileViewer
-            activeDoc={docActive ? activeDoc : undefined}
-            error={fileError}
-            file={docActive ? undefined : selectedFile}
-          />
+          <FileViewer error={fileError} file={selectedFile} />
         </div>
       </div>
     </div>
@@ -342,21 +321,12 @@ function FileRow({
 }
 
 function FileViewer({
-  activeDoc,
   file,
   error,
 }: {
-  activeDoc: ActiveDoc | undefined;
   file: FileReadResult | undefined;
   error: string | undefined;
 }) {
-  if (activeDoc) {
-    return (
-      <div className="scroll-thin h-full overflow-auto px-4 py-3">
-        <MarkdownMessage content={activeDoc.content} />
-      </div>
-    );
-  }
   if (error) {
     return <Centered>{error}</Centered>;
   }
