@@ -87,12 +87,16 @@ vi.mock("./model-service", () => ({
     thinkingLevel: "off",
     thinkingLevels: ["off", "low", "medium", "high"],
   })),
-  getModelThinkingLevel: vi.fn(() => "off"),
+  getModelThinkingVariant: vi.fn(() => "off"),
   getModelRegistry: vi.fn(() => ({ authStorage: {} })),
   listScopedModels: vi.fn(() => [{ model: mocks.model, thinkingLevel: "off" }]),
   modelToId: (model: typeof mocks.model) => `${model.provider}/${model.id}`,
+  resolveModelThinking: vi.fn((model: typeof mocks.model, variant?: string) => ({
+    model,
+    thinkingLevel: variant === "high" ? "high" : "off",
+    variant: variant ?? "off",
+  })),
   setDefaultModel: vi.fn(),
-  toPiThinkingLevel: vi.fn((level: string) => level),
 }));
 
 const { getDatabase } = await import("../db/database");

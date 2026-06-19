@@ -60,6 +60,7 @@ export const agentPromptSchema = z.object({
   mode: z.enum(["build", "plan"]).optional(),
   model: optionalNonEmptyString,
   thinkingLevel: thinkingLevelSchema.optional(),
+  thinkingVariant: optionalNonEmptyString,
   planId: optionalNonEmptyString,
 });
 
@@ -74,6 +75,7 @@ export const agentSetModelSchema = z.object({
   sessionId: nonEmptyString,
   model: nonEmptyString,
   thinkingLevel: thinkingLevelSchema.optional(),
+  thinkingVariant: optionalNonEmptyString,
 });
 
 export const agentCycleModelSchema = z.object({
@@ -469,6 +471,7 @@ export const updateModelConfigSchema = z.object({
   model: nonEmptyString,
   enabled: z.boolean().optional(),
   thinkingLevel: thinkingLevelSchema.optional(),
+  thinkingVariant: optionalNonEmptyString,
   contextWindow: z.number().int().min(1_000).max(10_000_000).optional(),
   maxTokens: z.number().int().min(1).max(1_000_000).optional(),
 });

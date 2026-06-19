@@ -334,6 +334,7 @@ export function registerAppIpc(): void {
       ...(parsed.mode !== undefined ? { mode: parsed.mode } : {}),
       ...(parsed.model !== undefined ? { model: parsed.model } : {}),
       ...(parsed.thinkingLevel !== undefined ? { thinkingLevel: parsed.thinkingLevel } : {}),
+      ...(parsed.thinkingVariant !== undefined ? { thinkingVariant: parsed.thinkingVariant } : {}),
       ...(parsed.planId !== undefined ? { planId: parsed.planId } : {}),
     });
   });
@@ -367,7 +368,7 @@ export function registerAppIpc(): void {
       getSenderWindow(event),
       parsed.sessionId,
       parsed.model,
-      parsed.thinkingLevel,
+      parsed.thinkingVariant ?? parsed.thinkingLevel,
     );
   });
 

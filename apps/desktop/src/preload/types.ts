@@ -127,6 +127,7 @@ export type ModusApi = {
       mode?: AgentMode;
       model?: string;
       thinkingLevel?: ThinkingLevel;
+      thinkingVariant?: string;
       /** Set when this prompt is a "Build this plan" action; binds the turn to the plan. */
       planId?: string;
     }): Promise<void>;
@@ -142,6 +143,7 @@ export type ModusApi = {
       sessionId: string;
       model: string;
       thinkingLevel?: ThinkingLevel;
+      thinkingVariant?: string;
     }): Promise<AgentSessionInfo>;
     cycleModel(input: {
       sessionId?: string;

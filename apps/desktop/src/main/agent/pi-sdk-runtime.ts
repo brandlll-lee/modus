@@ -49,13 +49,12 @@ import {
   cycleDefaultModel,
   findModel,
   getDefaultModel,
-  getModelInfo,
   getModelRegistry,
-  getModelThinkingLevel,
+  getModelThinkingVariant,
   listScopedModels,
   modelToId,
+  resolveModelThinking,
   setDefaultModel,
-  toPiThinkingLevel,
 } from "./model-service";
 import { createPiEventNormalizer } from "./pi-event-normalizer";
 import { createModusPermissionExtension } from "./pi-permission-extension";
@@ -365,7 +364,6 @@ export class PiSdkRuntime implements AgentRuntime {
       );
     }
     const modelId = selectedModel ? modelToId(selectedModel) : input.model;
-    const selectedInfo = getModelInfo(modelId);
     const recordInput: Parameters<typeof createAgentSessionRecord>[0] = {
       ...input,
       cwd: input.cwd,
@@ -375,6 +373,7 @@ export class PiSdkRuntime implements AgentRuntime {
       recordInput.model = modelId;
     }
     const info = createAgentSessionRecord(recordInput);
+    const selectedThinking = selectedModel ? resolveModelThinking(selectedModel) : undefined;
 
     const agentDir = join(app.getPath("userData"), "pi-agent");
     const sessionDir = join(app.getPath("userData"), "pi-sessions");
@@ -396,11 +395,8 @@ export class PiSdkRuntime implements AgentRuntime {
       loader,
       settingsManager,
       sessionManager: SessionManager.create(input.cwd, sessionDir),
-      model: selectedModel,
-      thinkingLevel:
-        selectedModel !== undefined
-          ? toPiThinkingLevel(selectedInfo?.thinkingLevel ?? "off")
-          : undefined,
+      model: selectedThinking?.model ?? selectedModel,
+      thinkingLevel: selectedThinking?.thinkingLevel,
     });
     return runtimeSession.info;
   }
@@ -440,7 +436,7 @@ export class PiSdkRuntime implements AgentRuntime {
         "No model is configured. Open Settings and connect a provider before resuming this chat.",
       );
     }
-    const selectedInfo = getModelInfo(selectedModel ? modelToId(selectedModel) : info.model);
+    const selectedThinking = selectedModel ? resolveModelThinking(selectedModel) : undefined;
     const sessionFile =
       info.piSessionFile && existsSync(info.piSessionFile) ? info.piSessionFile : undefined;
     let sessionManager: SessionManager;
@@ -459,11 +455,8 @@ export class PiSdkRuntime implements AgentRuntime {
       loader,
       settingsManager,
       sessionManager,
-      model: selectedModel,
-      thinkingLevel:
-        selectedModel !== undefined
-          ? toPiThinkingLevel(selectedInfo?.thinkingLevel ?? "off")
-          : undefined,
+      model: selectedThinking?.model ?? selectedModel,
+      thinkingLevel: selectedThinking?.thinkingLevel,
     });
   }
 
@@ -495,7 +488,11 @@ export class PiSdkRuntime implements AgentRuntime {
     // the prompt and is applied authoritatively here, so the turn never runs
     // with stale model/thinking (mid-session switch, edit-and-resend, resume).
     if (input.model !== undefined) {
-      await this.applyModelSelection(runtimeSession, input.model, input.thinkingLevel);
+      await this.applyModelSelection(
+        runtimeSession,
+        input.model,
+        input.thinkingVariant ?? input.thinkingLevel,
+      );
     }
 
     const delivery = input.delivery ?? "normal";
@@ -887,20 +884,15 @@ export class PiSdkRuntime implements AgentRuntime {
   private async applyModelSelection(
     runtimeSession: SdkRuntimeSession,
     modelId: string,
-    thinkingLevel?: string,
+    thinkingVariant?: string,
   ): Promise<ReturnType<typeof findModel>> {
     const model = findModel(modelId);
     if (!model) {
       return undefined;
     }
-    await runtimeSession.session.setModel(model);
-    runtimeSession.session.setThinkingLevel(
-      toPiThinkingLevel(
-        thinkingLevel
-          ? getModelThinkingLevelFromInput(thinkingLevel)
-          : getModelThinkingLevel(modelId),
-      ),
-    );
+    const resolved = resolveModelThinking(model, thinkingVariant ?? getModelThinkingVariant(modelId));
+    await runtimeSession.session.setModel(resolved.model);
+    runtimeSession.session.setThinkingLevel(resolved.thinkingLevel);
     const updated = updateAgentSessionMetadata(runtimeSession.info.id, {
       model: modelToId(model),
     });
@@ -914,13 +906,13 @@ export class PiSdkRuntime implements AgentRuntime {
     window: BrowserWindowType,
     sessionId: string,
     modelId: string,
-    thinkingLevel?: string,
+    thinkingVariant?: string,
   ): Promise<AgentSessionInfo> {
     const runtimeSession = await this.getOrResume(window, sessionId);
     if (!runtimeSession) {
       throw new Error(`Unable to set model: ${modelId}`);
     }
-    const model = await this.applyModelSelection(runtimeSession, modelId, thinkingLevel);
+    const model = await this.applyModelSelection(runtimeSession, modelId, thinkingVariant);
     if (!model) {
       throw new Error(`Unable to set model: ${modelId}`);
     }
@@ -948,8 +940,9 @@ export class PiSdkRuntime implements AgentRuntime {
     if (!model) {
       throw new Error(`Unable to cycle to model: ${next.id}`);
     }
-    await runtimeSession.session.setModel(model);
-    runtimeSession.session.setThinkingLevel(toPiThinkingLevel(next.thinkingLevel));
+    const resolved = resolveModelThinking(model, next.thinkingVariant);
+    await runtimeSession.session.setModel(resolved.model);
+    runtimeSession.session.setThinkingLevel(resolved.thinkingLevel);
     updateAgentSessionMetadata(sessionId, { model: modelToId(model) });
     this.emitContextUsage(runtimeSession);
     return next;
@@ -1028,21 +1021,6 @@ function shouldPublishContextUsage(event: { type?: unknown }): boolean {
     event.type === "tool_execution_end" ||
     event.type === "compaction_end"
   );
-}
-
-function getModelThinkingLevelFromInput(value: string): ReturnType<typeof getModelThinkingLevel> {
-  if (
-    value === "off" ||
-    value === "minimal" ||
-    value === "low" ||
-    value === "medium" ||
-    value === "high" ||
-    value === "xhigh"
-  ) {
-    return value;
-  }
-
-  return "off";
 }
 
 /**

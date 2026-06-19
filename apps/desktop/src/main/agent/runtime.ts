@@ -38,6 +38,7 @@ export type PromptAgentInput = {
    */
   model?: string;
   thinkingLevel?: ThinkingLevel;
+  thinkingVariant?: string;
   /** Set when this prompt is a "Build this plan" action; binds the turn to the plan. */
   planId?: string;
 };
@@ -53,7 +54,7 @@ export type AgentRuntime = {
     window: BrowserWindowType,
     sessionId: string,
     model: string,
-    thinkingLevel?: string,
+    thinkingVariant?: string,
   ): Promise<AgentSessionInfo>;
   cycleModel(
     window: BrowserWindowType | undefined,

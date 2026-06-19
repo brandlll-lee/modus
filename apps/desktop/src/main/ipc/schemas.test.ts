@@ -58,9 +58,9 @@ describe("IPC schemas", () => {
   });
 
   // Regression: a prompt turn must carry its own execution params (mode, model,
-  // thinkingLevel) across the IPC boundary. Dropping any of these here was the
+  // thinking) across the IPC boundary. Dropping any of these here was the
   // root of the "stale model / thinking / plan-mode on resend" bugs.
-  it("preserves per-turn execution params (mode, model, thinkingLevel)", () => {
+  it("preserves per-turn execution params (mode, model, thinking)", () => {
     const parsed = parseIpcInput(
       agentPromptSchema,
       {
@@ -69,12 +69,14 @@ describe("IPC schemas", () => {
         mode: "plan",
         model: "openai/gpt-5.5",
         thinkingLevel: "xhigh",
+        thinkingVariant: "max",
       },
       "agent:prompt",
     );
     expect(parsed.mode).toBe("plan");
     expect(parsed.model).toBe("openai/gpt-5.5");
     expect(parsed.thinkingLevel).toBe("xhigh");
+    expect(parsed.thinkingVariant).toBe("max");
   });
 
   it("leaves per-turn params undefined when omitted (keeps session defaults)", () => {
@@ -86,6 +88,7 @@ describe("IPC schemas", () => {
     expect(parsed.mode).toBeUndefined();
     expect(parsed.model).toBeUndefined();
     expect(parsed.thinkingLevel).toBeUndefined();
+    expect(parsed.thinkingVariant).toBeUndefined();
   });
 
   it("rejects an invalid thinkingLevel", () => {
