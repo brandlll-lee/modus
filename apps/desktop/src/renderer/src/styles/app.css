@@ -26,11 +26,11 @@
   --color-hairline-soft: rgba(255, 255, 255, 0.03);
   --color-hairline-strong: rgba(255, 255, 255, 0.065);
 
-  /* Composer 专属描边：比通用 hairline 明显一档，让输入框从主区"读"出来而不融进背景
-     （Cursor 实测观感）。配合 shadow-composer-edge 的顶部内高光呈现精致浮起边缘。 */
-  --color-composer-border: rgba(255, 255, 255, 0.11);
-  /* Composer border on hover/focus: just one notch brighter — a quiet "alive"
-     cue, never a glow. Replaces the old purple focus ring. */
+  /* Composer 专属描边：静息态保持克制（只比 hairline 略亮），靠 shadow-composer-edge
+     的顶部内高光把输入框"浮起"，而不是用一圈深描边压住主区（图5 的轻盈观感）。 */
+  --color-composer-border: rgba(255, 255, 255, 0.08);
+  /* Composer border on hover/focus: lifts clearly above the resting edge — a
+     quiet "alive" cue, never a glow. Replaces the old purple focus ring. */
   --color-composer-border-strong: rgba(255, 255, 255, 0.2);
 
   /* 悬停 / 选中 半透明白叠层 */
@@ -114,12 +114,12 @@
   --radius-lg: 12px;
   --radius-xl: 16px;
 
-  /* hairline-only 纵深：仅给浮层一抹极淡阴影 */
-  --shadow-composer: 0 1px 10px -6px rgba(0, 0, 0, 0.5);
+  /* hairline-only 纵深：仅给浮层一抹极淡阴影（静息态收得更轻，描边不再压主区） */
+  --shadow-composer: 0 1px 8px -6px rgba(0, 0, 0, 0.38);
   /* Composer 静息态：在 shadow-composer 基础上叠一道顶部内高光，让上边缘"接住光"
      呈现精致浮起感（Cursor 风）。仅用于输入框/消息编辑框，不污染按钮/药丸。 */
   --shadow-composer-edge:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.06), 0 1px 10px -6px rgba(0, 0, 0, 0.5);
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.04), 0 1px 8px -6px rgba(0, 0, 0, 0.38);
   /* composer 聚焦态：保留原纵深 + 1px 品牌紫描边环 + 极淡紫色外发光 */
   --shadow-composer-focus:
     0 1px 10px -6px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--color-focus-ring),
@@ -171,11 +171,12 @@
   --color-hairline-soft: rgba(0, 0, 0, 0.055);
   --color-hairline-strong: rgba(0, 0, 0, 0.14);
 
-  /* Composer border on white: a clearly readable edge (stronger than hairline)
-     so the input reads as a distinct surface above the off-white canvas. */
-  --color-composer-border: rgba(0, 0, 0, 0.16);
-  /* Hover/focus: one notch darker edge — a subtle cue, no glow. */
-  --color-composer-border-strong: rgba(0, 0, 0, 0.26);
+  /* Composer border on white: a soft resting edge (图5) — the input is carried
+     mainly by its shadow + white fill above the off-white canvas, not a heavy
+     outline. Hover/focus is what supplies a readable darker edge. */
+  --color-composer-border: rgba(0, 0, 0, 0.09);
+  /* Hover/focus: a clearly darker edge — the deliberate cue, no glow. */
+  --color-composer-border-strong: rgba(0, 0, 0, 0.22);
 
   /* Hover / active overlays — black-alpha */
   --color-hover: rgba(0, 0, 0, 0.045);
@@ -220,11 +221,12 @@
   --color-diff-del-bg: color-mix(in oklab, var(--color-danger) 13%, transparent);
   --color-diff-del-gutter: color-mix(in oklab, var(--color-danger) 24%, transparent);
 
-  /* Shadows — visible & soft to carry elevation that dark gets from lightness */
-  --shadow-composer: 0 1px 2px rgba(0, 0, 0, 0.07), 0 1px 1px rgba(0, 0, 0, 0.04);
+  /* Shadows — soft & low to carry elevation that dark gets from lightness, kept
+     light at rest so the input/bubble don't read as heavily outlined (图5). */
+  --shadow-composer: 0 1px 2px rgba(0, 0, 0, 0.045), 0 1px 1px rgba(0, 0, 0, 0.025);
   /* On white the top inner-highlight is a no-op (surface is already white), so
-     the composer leans on its border + a slightly deeper drop shadow to lift. */
-  --shadow-composer-edge: 0 1px 2px rgba(0, 0, 0, 0.08), 0 1px 1px rgba(0, 0, 0, 0.05);
+     the composer leans on its border + a gentle drop shadow to lift. */
+  --shadow-composer-edge: 0 1px 2px rgba(0, 0, 0, 0.05), 0 1px 1px rgba(0, 0, 0, 0.03);
   --shadow-composer-focus:
     0 1px 3px rgba(0, 0, 0, 0.08), 0 0 0 1px var(--color-focus-ring),
     0 0 16px -4px rgba(133, 63, 244, 0.28);
@@ -362,6 +364,17 @@ input {
 @layer utilities {
   .animate-blink-cursor {
     animation: blink-cursor 1s step-end infinite;
+  }
+
+  /* Off-screen timeline blocks skip layout/paint/compositing (browser-native),
+     so a long transcript of heavy markdown (shiki code, mermaid) only pays the
+     render cost for what's on screen — cuts scroll jank + render/layer memory.
+     Unlike virtualization the React tree stays mounted, so nothing re-parses on
+     scroll. `contain-intrinsic-size: auto` remembers each block's last height so
+     the scrollbar never jumps; 120px is only the never-yet-rendered fallback. */
+  .timeline-block {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 120px;
   }
 }
 
