@@ -9,9 +9,8 @@ import {
 } from "electron";
 import { listAgentEvents, recordAgentEvent } from "../agent/agent-event-store";
 import { listAgentRuns } from "../agent/agent-run-store";
-import { deleteAgentSession, getAgentSession, listAgentSessions } from "../agent/agent-store";
+import { listAgentSessions } from "../agent/agent-store";
 import {
-  deleteSessionCheckpoints,
   getSessionBaseCheckpoint,
   listCheckpoints,
   restoreCheckpoint,
@@ -69,8 +68,12 @@ import {
 } from "../git/git-service";
 import { unwatchRepo, watchRepo } from "../git/git-watcher";
 import {
+  ensurePersonalizationFile,
+  getPersonalization,
+  savePersonalization,
+} from "../guidance/guidance-service";
+import {
   denyPendingQuestionRequests,
-  denyPendingQuestionRequestsForSession,
   resolveQuestionRequest,
 } from "../interaction/question-broker";
 import {
@@ -84,7 +87,6 @@ import {
 } from "../mcp/mcp-service";
 import {
   denyPendingPermissionRequests,
-  denyPendingPermissionRequestsForSession,
   resolvePermissionRequest,
 } from "../permissions/permission-broker";
 import {
@@ -152,6 +154,7 @@ import {
   mcpUpsertSchema,
   parseIpcInput,
   permissionDecideSchema,
+  personalizationSaveSchema,
   processKillSchema,
   processListSchema,
   questionRespondSchema,
@@ -881,6 +884,28 @@ export function registerAppIpc(): void {
     assertTrustedSender(event);
     const parsed = parseIpcInput(mcpServerNameSchema, input, IPC_CHANNELS.mcpEntry);
     return getMcpServerEntry(parsed.cwd, parsed.name);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.personalizationGet, (event) => {
+    assertTrustedSender(event);
+    return getPersonalization();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.personalizationSave, (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(
+      personalizationSaveSchema,
+      input,
+      IPC_CHANNELS.personalizationSave,
+    );
+    return savePersonalization(parsed.content);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.personalizationOpen, async (event) => {
+    assertTrustedSender(event);
+    const path = ensurePersonalizationFile();
+    await shell.openPath(path);
+    return path;
   });
 
   // Detected project rule files (AGENTS.md / CLAUDE.md / .cursorrules /

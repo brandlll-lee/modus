@@ -121,6 +121,16 @@ export type RuleFileInfo = {
   size: number;
 };
 
+/* ── Global personalization (Codex-style AGENTS.md guidance) ───────────── */
+
+export type PersonalizationState = {
+  basePath: string;
+  overridePath: string;
+  activePath: string;
+  overrideActive: boolean;
+  content: string;
+};
+
 export type PermissionRequest = {
   id: string;
   sessionId?: string;

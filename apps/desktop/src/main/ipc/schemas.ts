@@ -381,6 +381,10 @@ export const mcpSetEnabledSchema = z.object({
   enabled: z.boolean(),
 });
 
+export const personalizationSaveSchema = z.object({
+  content: z.string().max(200_000),
+});
+
 export const reviewStartSchema = z.object({
   cwd: nonEmptyString,
   sessionId: optionalNonEmptyString,

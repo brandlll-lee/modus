@@ -20,7 +20,7 @@ import type { RuleFileInfo, RuleMode, RuleSource } from "../../shared/contracts"
 /** Per-file cap so one runaway rule can't eat the context window. */
 const MAX_RULE_BYTES = 24 * 1024;
 /** Total cap across all injected rules. */
-const MAX_TOTAL_BYTES = 64 * 1024;
+export const RULES_MAX_TOTAL_BYTES = 64 * 1024;
 const MAX_RULE_FILES = 50;
 
 type ParsedFrontmatter = {
@@ -148,7 +148,10 @@ export function listRuleFiles(cwd: string): RuleFileInfo[] {
  * The system-prompt block of always-applied rules, or undefined when the
  * workspace defines none. Re-read at every session create/resume.
  */
-export function resolveAlwaysRulesPrompt(cwd: string): string | undefined {
+export function resolveAlwaysRulesPrompt(
+  cwd: string,
+  maxTotalBytes = RULES_MAX_TOTAL_BYTES,
+): string | undefined {
   const sections: string[] = [];
   let total = 0;
 
@@ -174,7 +177,7 @@ export function resolveAlwaysRulesPrompt(cwd: string): string | undefined {
     }
     const section = `<rule source="${rule.relPath}">\n${body}\n</rule>`;
     total += Buffer.byteLength(section, "utf8");
-    if (total > MAX_TOTAL_BYTES) {
+    if (total > maxTotalBytes) {
       break;
     }
     sections.push(section);

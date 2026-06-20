@@ -171,6 +171,11 @@ const api: ModusApi = {
   rules: {
     list: (cwd) => ipcRenderer.invoke("rules:list", cwd),
   },
+  personalization: {
+    get: () => ipcRenderer.invoke("personalization:get"),
+    save: (input) => ipcRenderer.invoke("personalization:save", input),
+    open: () => ipcRenderer.invoke("personalization:open"),
+  },
   skills: {
     list: (cwd) => ipcRenderer.invoke("skills:list", cwd),
     get: (input) => ipcRenderer.invoke("skills:get", input),

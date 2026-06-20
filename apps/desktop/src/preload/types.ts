@@ -39,6 +39,7 @@ import type {
   ModelSettingsState,
   PermissionAction,
   PermissionDecision,
+  PersonalizationState,
   PromptDelivery,
   PromptImageAttachment,
   QuestionAnswer,
@@ -333,6 +334,11 @@ export type ModusApi = {
   rules: {
     /** Detected project rule files (AGENTS.md, .cursor/rules…) with apply modes. */
     list(cwd: string): Promise<RuleFileInfo[]>;
+  };
+  personalization: {
+    get(): Promise<PersonalizationState>;
+    save(input: { content: string }): Promise<PersonalizationState>;
+    open(): Promise<string>;
   };
   skills: {
     list(cwd: string): Promise<SkillInfo[]>;

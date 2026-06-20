@@ -22,11 +22,12 @@ import type {
 import { releaseAgentBrowserControl } from "../browser/browser-service";
 import { formatResolvedContext, resolveContext } from "../context/context-service";
 import { getChangeStatsSince } from "../git/git-service";
+import { resolveGlobalGuidancePrompt } from "../guidance/guidance-service";
 import { IPC_CHANNELS } from "../ipc/channels";
 import { maybeNotifyAgentEvent } from "../notifications/agent-notifications";
 import { readPlanById, setPlanBuildStatusById } from "../plan/plan-store";
 import { summarizeApps } from "../process/app-process-service";
-import { resolveAlwaysRulesPrompt } from "../rules/rules-service";
+import { RULES_MAX_TOTAL_BYTES, resolveAlwaysRulesPrompt } from "../rules/rules-service";
 import { resolveSkillsPrompt } from "../skills/skills-service";
 import { summarizeTerminals } from "../terminal/terminal-service";
 import { recordAgentEvent } from "./agent-event-store";
@@ -220,7 +221,10 @@ export class PiSdkRuntime implements AgentRuntime {
     });
     // Project rules (AGENTS.md / .cursor/rules alwaysApply) ride the system
     // prompt so they apply to every turn without re-paying per-message tokens.
-    const rulesPrompt = resolveAlwaysRulesPrompt(cwd);
+    const globalGuidancePrompt = resolveGlobalGuidancePrompt();
+    const rulesBudget =
+      RULES_MAX_TOTAL_BYTES - Buffer.byteLength(globalGuidancePrompt ?? "", "utf8");
+    const rulesPrompt = rulesBudget > 0 ? resolveAlwaysRulesPrompt(cwd, rulesBudget) : undefined;
     const loader = new DefaultResourceLoader({
       cwd,
       agentDir,
@@ -229,6 +233,7 @@ export class PiSdkRuntime implements AgentRuntime {
       appendSystemPrompt: [
         describeAgentShellForPrompt(shell),
         RESPONSE_FORMAT_GUIDANCE,
+        ...(globalGuidancePrompt ? [globalGuidancePrompt] : []),
         ...(rulesPrompt ? [rulesPrompt] : []),
       ],
     });

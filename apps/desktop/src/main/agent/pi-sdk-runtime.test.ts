@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BrowserWindow as BrowserWindowType } from "electron";
@@ -19,6 +19,8 @@ const mocks = vi.hoisted(() => {
     },
     sessionManagerCreate: vi.fn(() => ({ kind: "create" })),
     sessionManagerOpen: vi.fn(() => ({ kind: "open" })),
+    resourceLoaderOptions: [] as unknown[],
+    globalGuidance: undefined as string | undefined,
   };
 });
 
@@ -49,6 +51,9 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
   createAgentSession: mocks.createAgentSession,
   defineTool: <T>(tool: T): T => tool,
   DefaultResourceLoader: class {
+    constructor(options: unknown) {
+      mocks.resourceLoaderOptions.push(options);
+    }
     async reload(): Promise<void> {}
   },
   SessionManager: {
@@ -58,6 +63,10 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
   SettingsManager: {
     inMemory: vi.fn(() => ({})),
   },
+}));
+
+vi.mock("../guidance/guidance-service", () => ({
+  resolveGlobalGuidancePrompt: vi.fn(() => mocks.globalGuidance),
 }));
 
 vi.mock("./model-service", () => ({
@@ -175,6 +184,8 @@ beforeEach(async () => {
   mocks.setPiSubscriber(undefined);
   mocks.sessionManagerCreate.mockClear();
   mocks.sessionManagerOpen.mockClear();
+  mocks.resourceLoaderOptions = [];
+  mocks.globalGuidance = undefined;
   mocks.createAgentSession.mockImplementation(async () => ({
     session: createMockPiSession(),
   }));
@@ -211,6 +222,38 @@ describe("PiSdkRuntime", () => {
       .prepare("select cwd from agent_sessions where id = ?")
       .get(session.id) as { cwd: string };
     expect(row.cwd).toBe(cwd);
+  });
+
+  it("injects global guidance before workspace rules", async () => {
+    const workspaceId = `workspace-${crypto.randomUUID()}`;
+    const now = new Date().toISOString();
+    mocks.globalGuidance = "<global_guidance>global</global_guidance>";
+    await writeFile(join(cwd, "AGENTS.md"), "project rules", "utf8");
+    getDatabase()
+      .prepare(
+        `insert into workspaces (id, root_path, display_name, is_git_repository, last_opened_at, created_at)
+         values (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(workspaceId, cwd, "repo", 1, now, now);
+    const runtime = new PiSdkRuntime();
+
+    await runtime.create(createWindowStub(), {
+      workspaceId,
+      cwd,
+      title: "New chat",
+      model: "mock/model",
+    });
+
+    const options = mocks.resourceLoaderOptions.at(-1) as { appendSystemPrompt: string[] };
+    const globalIndex = options.appendSystemPrompt.findIndex((part) =>
+      part.includes("<global_guidance>global"),
+    );
+    const rulesIndex = options.appendSystemPrompt.findIndex((part) =>
+      part.includes("<project_rules>"),
+    );
+
+    expect(globalIndex).toBeGreaterThan(-1);
+    expect(rulesIndex).toBeGreaterThan(globalIndex);
   });
 
   it("creates a fresh PI backing session when a persisted session is no longer in memory and its PI file is missing", async () => {
