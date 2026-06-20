@@ -32,6 +32,7 @@ import type {
   PlanRef,
   PromptDelivery,
   PromptImageAttachment,
+  SkillSelection,
   WorkspaceInfo,
 } from "../../../shared/contracts";
 import modusLogo from "../assets/modus-logo.png";
@@ -364,7 +365,7 @@ export function App() {
     context: ContextItem[],
     _delivery?: PromptDelivery,
     attachments?: PromptImageAttachment[],
-    skills?: string[],
+    skills?: SkillSelection[],
     mode?: AgentMode,
   ): Promise<void> {
     if (!message.trim()) {

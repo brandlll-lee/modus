@@ -21,6 +21,7 @@ import type {
   PromptDelivery,
   PromptImageAttachment,
   QuestionAnswer,
+  SkillSelection,
   WorkingChangeStats,
   WorkspaceInfo,
 } from "../../../../shared/contracts";
@@ -324,7 +325,7 @@ export const ChatPane = forwardRef<ChatPaneHandle, ChatPaneProps>(function ChatP
     context: ContextItem[],
     delivery: PromptDelivery = "normal",
     attachments?: PromptImageAttachment[],
-    skills?: string[],
+    skills?: SkillSelection[],
     mode?: AgentMode,
     planId?: string,
   ): void {
@@ -430,7 +431,7 @@ export const ChatPane = forwardRef<ChatPaneHandle, ChatPaneProps>(function ChatP
     message: string,
     attachments?: PromptImageAttachment[],
     contextItems?: ContextItem[],
-    skills?: string[],
+    skills?: SkillSelection[],
   ): Promise<void> {
     if (!paneModel) {
       throw new Error("No model is configured. Connect a provider in Settings first.");

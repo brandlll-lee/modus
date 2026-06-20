@@ -6,6 +6,7 @@ import type {
   ContextItem,
   MessageContextChip,
   PromptImageAttachment,
+  SkillSelection,
   TodoItem,
   WorkingChangeStats,
 } from "../../../../shared/contracts";
@@ -46,7 +47,7 @@ type TimelineProps = {
     message: string,
     attachments?: PromptImageAttachment[],
     contextItems?: ContextItem[],
-    skills?: string[],
+    skills?: SkillSelection[],
   ): Promise<void>;
   workspaceId?: string | undefined;
 };
@@ -67,6 +68,8 @@ export type MessageBlockItem = {
   contextChips?: MessageContextChip[];
   /** User only: original context items for edit-and-resend. */
   contextItems?: ContextItem[];
+  /** User only: selected skills attached to the prompt. */
+  skills?: SkillSelection[];
   /**
    * User only: present when this message is a "Build this plan" action — the
    * timeline renders a compact Build card (title + N To-dos) instead of the raw
@@ -433,6 +436,7 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
         ...(event.contextItems && event.contextItems.length > 0
           ? { contextItems: event.contextItems }
           : {}),
+        ...(event.skills && event.skills.length > 0 ? { skills: event.skills } : {}),
         ...(event.planBuild ? { planBuild: event.planBuild } : {}),
       };
       appendMessageBlock(block);
@@ -1341,6 +1345,7 @@ export function Timeline({
                   {...(block.attachments ? { attachments: block.attachments } : {})}
                   {...(block.contextChips ? { contextChips: block.contextChips } : {})}
                   {...(block.contextItems ? { contextItems: block.contextItems } : {})}
+                  {...(block.skills ? { skills: block.skills } : {})}
                   {...(block.checkpointId !== undefined
                     ? { checkpointId: block.checkpointId }
                     : {})}

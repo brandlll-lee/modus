@@ -238,6 +238,8 @@ export type AgentEvent =
       contextChips?: MessageContextChip[];
       /** User only: original context items, used when edit-and-resend reopens the prompt. */
       contextItems?: ContextItem[];
+      /** User only: skills explicitly selected for this prompt. */
+      skills?: SkillSelection[];
       /**
        * User only: present when this message is a "Build this plan" action. The
        * timeline renders it as a compact Build card (title + N To-dos) instead
@@ -1151,6 +1153,12 @@ export type PlanRef = {
 
 export type SkillScope = "workspace" | "user";
 
+export type SkillSelection = {
+  name: string;
+  /** Absolute path of the selected skill's SKILL.md. */
+  path: string;
+};
+
 /**
  * A discovered agent skill. Skills follow the portable `SKILL.md` standard
  * (YAML frontmatter `name` + `description`, Markdown body of instructions),
@@ -1158,8 +1166,6 @@ export type SkillScope = "workspace" | "user";
  * manually with `/name` in the composer, or surfaced to the agent by relevance.
  */
 export type SkillInfo = {
-  /** Stable id: `${scope}:${source}:${name}`. */
-  id: string;
   /** Slash-invocable name, e.g. "code-review". */
   name: string;
   description: string;
@@ -1168,6 +1174,8 @@ export type SkillInfo = {
   source: string;
   /** Absolute path of the skill's SKILL.md (or `<name>.md`). */
   path: string;
+  enabled: boolean;
+  allowImplicitInvocation: boolean;
   /** Tools the skill declares it needs, when present in frontmatter. */
   allowedTools?: string[];
 };

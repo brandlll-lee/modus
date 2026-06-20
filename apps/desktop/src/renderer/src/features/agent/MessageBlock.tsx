@@ -17,6 +17,7 @@ import type {
   ContextItem,
   MessageContextChip,
   PromptImageAttachment,
+  SkillSelection,
 } from "../../../../shared/contracts";
 import { CopyButton } from "../../components/ui/CopyButton";
 import { ImageThumb } from "../../components/ui/ImageViewer";
@@ -32,7 +33,6 @@ import { type MentionRow, useComposerMentions } from "../composer/useComposerMen
 import { type SlashItem, useComposerSlash } from "../composer/useComposerSlash";
 import { CheckpointRestoreButton } from "./CheckpointRestoreButton";
 import { MarkdownMessage } from "./MarkdownMessage";
-import { splitSkillPrefix } from "./messageDisplay";
 
 type MessageBlockProps = {
   messageRole: "assistant" | "user";
@@ -53,7 +53,7 @@ type MessageBlockProps = {
     message: string,
     attachments?: PromptImageAttachment[],
     contextItems?: ContextItem[],
-    skills?: string[],
+    skills?: SkillSelection[],
   ): Promise<void>;
   workspaceId?: string | undefined;
   cwd?: string | undefined;
@@ -63,6 +63,8 @@ type MessageBlockProps = {
   contextChips?: MessageContextChip[];
   /** User only: original context items for edit-and-resend. */
   contextItems?: ContextItem[];
+  /** User only: selected skills attached to the prompt. */
+  skills?: SkillSelection[];
 };
 
 export const MessageBlock = memo(function MessageBlock({
@@ -80,6 +82,7 @@ export const MessageBlock = memo(function MessageBlock({
   attachments,
   contextChips,
   contextItems,
+  skills,
 }: MessageBlockProps) {
   const [editing, setEditing] = useState(false);
   // Smoothly reveal assistant text like a typewriter, decoupled from bursty
@@ -88,7 +91,6 @@ export const MessageBlock = memo(function MessageBlock({
 
   if (messageRole === "user") {
     if (!content.trim()) return null;
-    const { skills, text: visibleContent } = splitSkillPrefix(content);
 
     if (editing && onEditResend) {
       const editableContextItems =
@@ -99,6 +101,7 @@ export const MessageBlock = memo(function MessageBlock({
           canRestoreFiles={Boolean(checkpointId)}
           cwd={cwd}
           initialContextItems={editableContextItems}
+          initialSkills={skills ?? []}
           initialText={content}
           onCancel={() => setEditing(false)}
           onSend={(text, nextContextItems, nextSkills) =>
@@ -132,10 +135,10 @@ export const MessageBlock = memo(function MessageBlock({
                 key={`${chip.kind}:${chip.label}:${chip.detail ?? ""}`}
               />
             ))}
-            {skills.map((skill) => (
-              <InlineSkillToken key={skill} name={skill} />
+            {(skills ?? []).map((skill) => (
+              <InlineSkillToken key={skill.path} name={skill.name} />
             ))}
-            {visibleContent}
+            {content}
           </div>
         </div>
         <div className="flex h-6 max-w-full items-center gap-1 pr-0.5 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
@@ -171,6 +174,7 @@ export const MessageBlock = memo(function MessageBlock({
 type UserMessageEditorProps = {
   initialText: string;
   initialContextItems: ContextItem[];
+  initialSkills: SkillSelection[];
   workspaceId: string | undefined;
   cwd: string | undefined;
   /** Original attachments, kept read-only and resent with the edited text. */
@@ -178,7 +182,7 @@ type UserMessageEditorProps = {
   /** A pre-run snapshot exists, so sending also restores workspace files. */
   canRestoreFiles: boolean;
   onCancel(): void;
-  onSend(text: string, contextItems: ContextItem[], skills: string[]): Promise<void>;
+  onSend(text: string, contextItems: ContextItem[], skills: SkillSelection[]): Promise<void>;
 };
 
 /**
@@ -192,6 +196,7 @@ type UserMessageEditorProps = {
 function UserMessageEditor({
   initialText,
   initialContextItems,
+  initialSkills,
   workspaceId,
   cwd,
   attachments,
@@ -199,10 +204,9 @@ function UserMessageEditor({
   onCancel,
   onSend,
 }: UserMessageEditorProps) {
-  const initial = splitSkillPrefix(initialText);
-  const [draft, setDraft] = useState(initial.text);
+  const [draft, setDraft] = useState(initialText);
   const [contextItems, setContextItems] = useState<ContextItem[]>(initialContextItems);
-  const [selectedSkills, setSelectedSkills] = useState<string[]>(initial.skills);
+  const [selectedSkills, setSelectedSkills] = useState<SkillSelection[]>(initialSkills);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -254,7 +258,7 @@ function UserMessageEditor({
     try {
       // On success this block unmounts (the timeline reloads truncated
       // events), so the loading label holds until the rolled-back view replaces it.
-      await onSend(messageFromEditorValue(draft, selectedSkills), contextItems, selectedSkills);
+      await onSend(draft.trim() || "Use the selected skill(s).", contextItems, selectedSkills);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
       setSending(false);
@@ -264,7 +268,9 @@ function UserMessageEditor({
   function selectSlashItem(item: SlashItem): void {
     if (item.kind === "skill") {
       setSelectedSkills((current) =>
-        current.includes(item.name) ? current : [...current, item.name],
+        current.some((skill) => skill.path === item.skill.path)
+          ? current
+          : [...current, { name: item.skill.name, path: item.skill.path }],
       );
       setDraft("");
       return;
@@ -420,10 +426,10 @@ function UserMessageEditor({
           {selectedSkills.map((skill) => (
             <span
               className="inline-flex h-6 items-center gap-1.5 font-medium text-focus-ring text-sm"
-              key={skill}
+              key={skill.path}
             >
               <IconCube size={15} stroke={1.8} />
-              <span>{skill}</span>
+              <span>{skill.name}</span>
             </span>
           ))}
           <textarea
@@ -483,11 +489,6 @@ function UserMessageEditor({
       </div>
     </m.div>
   );
-}
-
-function messageFromEditorValue(value: string, selectedSkills: string[]): string {
-  const skillText = selectedSkills.map((skill) => `"${skill}"`).join(" ");
-  return [skillText, value.trim()].filter(Boolean).join(" ");
 }
 
 function contextItemKey(item: ContextItem): string {

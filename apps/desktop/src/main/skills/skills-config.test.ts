@@ -75,6 +75,15 @@ describe("parseSkill", () => {
 
     expect(skill.description).toBe("Read the diff carefully. Return findings first.");
   });
+
+  it("honors explicit implicit-invocation policy", () => {
+    const skill = parseSkill(
+      "---\nname: quiet\ndescription: Manual only\nallow-implicit-invocation: false\n---\nx",
+      "fallback",
+    );
+
+    expect(skill.allowImplicitInvocation).toBe(false);
+  });
 });
 
 describe("normalizeSkillName", () => {
@@ -133,15 +142,17 @@ describe("loadWorkspaceSkills", () => {
     expect(nested?.path).toContain(join("engineering", "review", "deep-scope", "SKILL.md"));
   });
 
-  it("lets workspace .modus override an interop folder with the same name", () => {
+  it("keeps same-name skills distinct so callers can select by path", () => {
     writeSkill(join(cwd, ".cursor", "skills"), "review", "---\ndescription: from cursor\n---\na");
     writeSkill(join(cwd, ".modus", "skills"), "review", "---\ndescription: from modus\n---\nb");
 
     const skills = loadWorkspaceSkills(cwd, home);
     const review = skills.filter((skill) => skill.name === "review");
-    expect(review).toHaveLength(1);
-    expect(review[0]?.description).toBe("from modus");
-    expect(review[0]?.source).toBe(".modus");
+    expect(review).toHaveLength(2);
+    expect(review.map((skill) => skill.path)).toEqual([
+      join(cwd, ".cursor", "skills", "review", "SKILL.md"),
+      join(cwd, ".modus", "skills", "review", "SKILL.md"),
+    ]);
   });
 
   it("discovers user-scoped skills from the home directory", () => {

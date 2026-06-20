@@ -48,6 +48,7 @@ import type {
   RuleFileInfo,
   SkillDetail,
   SkillInfo,
+  SkillSelection,
   TerminalEvent,
   TerminalInfo,
   TestCustomProviderInput,
@@ -123,7 +124,7 @@ export type ModusApi = {
       delivery?: PromptDelivery;
       userMessageId?: string;
       attachments?: PromptImageAttachment[];
-      skills?: string[];
+      skills?: SkillSelection[];
       mode?: AgentMode;
       model?: string;
       thinkingLevel?: ThinkingLevel;
@@ -335,7 +336,7 @@ export type ModusApi = {
   };
   skills: {
     list(cwd: string): Promise<SkillInfo[]>;
-    get(input: { cwd: string; id: string }): Promise<SkillDetail | undefined>;
+    get(input: { cwd: string; path: string }): Promise<SkillDetail | undefined>;
     create(input: {
       cwd: string;
       name: string;

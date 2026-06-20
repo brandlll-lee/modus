@@ -35,6 +35,7 @@ export type ParsedSkill = {
   name: string;
   description: string;
   body: string;
+  allowImplicitInvocation: boolean;
   allowedTools?: string[];
 };
 
@@ -190,6 +191,16 @@ function asStringArray(value: FrontmatterValue | undefined): string[] | undefine
   return undefined;
 }
 
+function asBoolean(value: FrontmatterValue | undefined, fallback: boolean): boolean {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "true") return true;
+  if (normalized === "false") return false;
+  return fallback;
+}
+
 /** Parse a SKILL.md document. `fallbackName` is used when frontmatter omits `name`. */
 export function parseSkill(text: string, fallbackName: string): ParsedSkill {
   const { data, body } = parseFrontmatter(text);
@@ -201,7 +212,14 @@ export function parseSkill(text: string, fallbackName: string): ParsedSkill {
     firstNonHeadingLine(body) ||
     "";
   const allowedTools = asStringArray(data["allowed-tools"] ?? data.tools);
-  return { name, description, body, ...(allowedTools ? { allowedTools } : {}) };
+  const allowImplicitInvocation = asBoolean(data["allow-implicit-invocation"], true);
+  return {
+    name,
+    description,
+    body,
+    allowImplicitInvocation,
+    ...(allowedTools ? { allowedTools } : {}),
+  };
 }
 
 function firstNonHeadingLine(body: string): string | undefined {
@@ -221,10 +239,6 @@ export function normalizeSkillName(name: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
-}
-
-export function skillId(scope: SkillScope, source: string, name: string): string {
-  return `${scope}:${source}:${name}`;
 }
 
 type SkillRoot = { dir: string; source: string; scope: SkillScope };
@@ -310,12 +324,13 @@ function loadSkillFromFile(
     return undefined;
   }
   return {
-    id: skillId(root.scope, root.source, parsed.name),
     name: parsed.name,
     description: parsed.description,
     scope: root.scope,
     source: root.source,
     path: file.path,
+    enabled: true,
+    allowImplicitInvocation: parsed.allowImplicitInvocation,
     ...(parsed.allowedTools ? { allowedTools: parsed.allowedTools } : {}),
     body: parsed.body,
   };
@@ -323,16 +338,16 @@ function loadSkillFromFile(
 
 /** Discover + merge every skill visible from this workspace (and the user home). */
 export function loadWorkspaceSkills(cwd: string, home: string = homedir()): SkillDetail[] {
-  const byName = new Map<string, SkillDetail>();
+  const skills: SkillDetail[] = [];
   for (const root of skillRoots(cwd, home)) {
     for (const file of skillFilesIn(root)) {
       const skill = loadSkillFromFile(file, root);
       if (skill) {
-        byName.set(skill.name, skill);
+        skills.push(skill);
       }
     }
   }
-  return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+  return skills.sort((a, b) => a.name.localeCompare(b.name) || a.path.localeCompare(b.path));
 }
 
 export function toSkillInfo(skill: SkillDetail): SkillInfo {

@@ -592,7 +592,9 @@ export class PiSdkRuntime implements AgentRuntime {
     }
     try {
       const message = await this.composeTurnMessage(runtimeSession, input);
-      console.info(`[modus-timing] composeTurnMessage done +${Date.now() - outputTracker.startedAt}ms`);
+      console.info(
+        `[modus-timing] composeTurnMessage done +${Date.now() - outputTracker.startedAt}ms`,
+      );
       const images = buildTurnImages(input);
       await runtimeSession.session.prompt(message, {
         source: "rpc",
@@ -635,7 +637,9 @@ export class PiSdkRuntime implements AgentRuntime {
               runCheckpoint.commitHash,
             ).catch(() => undefined);
           }
-          console.info(`[modus-timing] getChangeStatsSince +${Date.now() - outputTracker.startedAt}ms`);
+          console.info(
+            `[modus-timing] getChangeStatsSince +${Date.now() - outputTracker.startedAt}ms`,
+          );
           runtimeSession.emit({
             type: "run.completed",
             sessionId: input.sessionId,
@@ -696,7 +700,9 @@ export class PiSdkRuntime implements AgentRuntime {
       throw error;
     } finally {
       this.runOutputTrackers.delete(input.sessionId);
-      console.info(`[modus-timing] turn end (idle emit) +${Date.now() - outputTracker.startedAt}ms`);
+      console.info(
+        `[modus-timing] turn end (idle emit) +${Date.now() - outputTracker.startedAt}ms`,
+      );
       const session = getAgentSession(input.sessionId);
       if (session?.status !== "error") {
         updateAgentSessionStatus(input.sessionId, "idle");
@@ -737,6 +743,7 @@ export class PiSdkRuntime implements AgentRuntime {
         : {}),
       ...(contextChips.length > 0 ? { contextChips } : {}),
       ...(input.context && input.context.length > 0 ? { contextItems: input.context } : {}),
+      ...(input.skills && input.skills.length > 0 ? { skills: input.skills } : {}),
       ...(planBuild ? { planBuild } : {}),
     });
     runtimeSession.emit({
@@ -890,7 +897,10 @@ export class PiSdkRuntime implements AgentRuntime {
     if (!model) {
       return undefined;
     }
-    const resolved = resolveModelThinking(model, thinkingVariant ?? getModelThinkingVariant(modelId));
+    const resolved = resolveModelThinking(
+      model,
+      thinkingVariant ?? getModelThinkingVariant(modelId),
+    );
     await runtimeSession.session.setModel(resolved.model);
     runtimeSession.session.setThinkingLevel(resolved.thinkingLevel);
     const updated = updateAgentSessionMetadata(runtimeSession.info.id, {

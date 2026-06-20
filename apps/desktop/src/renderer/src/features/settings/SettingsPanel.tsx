@@ -1919,7 +1919,7 @@ function SkillsSettingsPanel({ cwd }: { cwd: string | undefined }) {
             {skills.map((skill) => (
               <div
                 className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-hairline-soft border-b px-4 py-3 last:border-b-0"
-                key={skill.id}
+                key={skill.path}
               >
                 <div className="flex min-w-0 items-center gap-2.5">
                   <span className="flex size-5 shrink-0 items-center justify-center text-fg-faint">

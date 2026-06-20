@@ -8,6 +8,7 @@ import type {
   ModelInfo,
   PromptDelivery,
   PromptImageAttachment,
+  SkillSelection,
   ThinkingLevel,
 } from "../../shared/contracts";
 
@@ -25,8 +26,8 @@ export type PromptAgentInput = {
   delivery?: PromptDelivery;
   userMessageId?: string;
   attachments?: PromptImageAttachment[];
-  /** Skill ids/names invoked with `/name` in the composer for this prompt. */
-  skills?: string[];
+  /** Skills explicitly selected with `/name` in the composer for this prompt. */
+  skills?: SkillSelection[];
   /** Execution mode for this turn. Defaults to `build`. */
   mode?: AgentMode;
   /**

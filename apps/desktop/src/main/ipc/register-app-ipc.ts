@@ -898,7 +898,7 @@ export function registerAppIpc(): void {
   ipcMain.handle(IPC_CHANNELS.skillsGet, (event, input) => {
     assertTrustedSender(event);
     const parsed = parseIpcInput(skillsGetSchema, input, IPC_CHANNELS.skillsGet);
-    return getSkill(parsed.cwd, parsed.id);
+    return getSkill(parsed.cwd, parsed.path);
   });
 
   ipcMain.handle(IPC_CHANNELS.skillsCreate, (event, input) => {

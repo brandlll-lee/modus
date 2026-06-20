@@ -1,13 +1,17 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { CreateSkillInput, SkillDetail, SkillInfo } from "../../shared/contracts";
-import { loadWorkspaceSkills, normalizeSkillName, skillId, toSkillInfo } from "./skills-config";
+import type {
+  CreateSkillInput,
+  SkillDetail,
+  SkillInfo,
+  SkillSelection,
+} from "../../shared/contracts";
+import { loadWorkspaceSkills, normalizeSkillName, toSkillInfo } from "./skills-config";
 
 /**
  * Skills runtime — discovers SKILL.md files for a workspace, exposes them to the
  * Settings UI and the composer slash menu, lets users scaffold new skills, and
- * resolves a set of invoked skills into instruction text the runtime prepends
- * to a prompt (the manual `/skill` invocation path).
+ * renders the Codex-style skills manifest plus explicit `/skill` injections.
  */
 
 /** All skills visible from this workspace, without their (large) bodies. */
@@ -15,45 +19,75 @@ export function listSkills(cwd: string): SkillInfo[] {
   return loadWorkspaceSkills(cwd).map(toSkillInfo);
 }
 
-/** A single skill with its full instruction body, located by id or name. */
-export function getSkill(cwd: string, idOrName: string): SkillDetail | undefined {
-  const skills = loadWorkspaceSkills(cwd);
-  return (
-    skills.find((skill) => skill.id === idOrName) ??
-    skills.find((skill) => skill.name === normalizeSkillName(idOrName))
-  );
+/** A single skill with its full instruction body, located by its discovered path. */
+export function getSkill(cwd: string, path: string): SkillDetail | undefined {
+  return loadWorkspaceSkills(cwd).find((skill) => skill.path === path);
 }
 
-/**
- * Build the instruction block injected when the user invokes skills with `/name`.
- * Each skill's body is wrapped so the model can tell where instructions begin
- * and end, mirroring how Cursor/Claude inject skill content on manual trigger.
- */
-export function resolveSkillsPrompt(cwd: string, names: string[]): string {
-  if (names.length === 0) {
-    return "";
-  }
+const SKILLS_MANIFEST_BUDGET = 8000;
+
+export function resolveSkillsPrompt(cwd: string, selections: SkillSelection[]): string {
   const skills = loadWorkspaceSkills(cwd);
+  const manifest = renderSkillsManifest(skills);
   const blocks: string[] = [];
-  for (const name of names) {
-    const normalized = normalizeSkillName(name);
-    const skill = skills.find((item) => item.id === name || item.name === normalized);
+  const selectedPaths = new Set(selections.map((selection) => selection.path));
+  for (const path of selectedPaths) {
+    const skill = skills.find((item) => item.path === path);
     if (!skill) {
       continue;
     }
     const header = skill.description ? `${skill.name} — ${skill.description}` : skill.name;
-    blocks.push(`<skill name="${skill.name}">\n${header}\n\n${skill.body}\n</skill>`);
+    blocks.push(
+      `<skill name="${skill.name}" path="${skill.path}">\n${header}\n\n${skill.body}\n</skill>`,
+    );
   }
   if (blocks.length === 0) {
-    return "";
+    return manifest;
   }
   return [
+    manifest,
     "<invoked_skills>",
     "The user invoked the following skill(s). Follow their instructions for this task.",
     "",
     ...blocks,
     "</invoked_skills>",
   ].join("\n");
+}
+
+function renderSkillsManifest(skills: SkillDetail[]): string {
+  const available = skills.filter((skill) => skill.enabled && skill.allowImplicitInvocation);
+  if (available.length === 0) {
+    return "";
+  }
+  const intro = [
+    "## Skills",
+    "A skill is a local `SKILL.md` workflow. Below are the skills available this turn.",
+    "If a task matches a skill, read its file path with the existing file tools before following it.",
+    "",
+    "### Available skills",
+  ];
+  const fullLines = available.map((skill) =>
+    skill.description
+      ? `- ${skill.name}: ${skill.description} (file: ${skill.path})`
+      : `- ${skill.name}: (file: ${skill.path})`,
+  );
+  const full = [...intro, ...fullLines].join("\n");
+  if (full.length <= SKILLS_MANIFEST_BUDGET) {
+    return full;
+  }
+  const minimalLines = available.map((skill) => `- ${skill.name}: (file: ${skill.path})`);
+  const lines = [...intro, ...minimalLines];
+  const kept: string[] = [];
+  let used = 0;
+  for (const line of lines) {
+    const next = used + line.length + 1;
+    if (next > SKILLS_MANIFEST_BUDGET) {
+      break;
+    }
+    kept.push(line);
+    used = next;
+  }
+  return kept.join("\n");
 }
 
 function frontmatterScalar(value: string): string {
@@ -105,12 +139,13 @@ export function createSkill(input: CreateSkillInput): SkillInfo {
   mkdirSync(dir, { recursive: true });
   writeFileSync(file, SKILL_TEMPLATE(name, description, body), "utf8");
   return {
-    id: skillId("workspace", ".modus", name),
     name,
     description,
     scope: "workspace",
     source: ".modus",
     path: file,
+    enabled: true,
+    allowImplicitInvocation: true,
   };
 }
 

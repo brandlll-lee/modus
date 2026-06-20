@@ -115,7 +115,7 @@ export function useComposerSlash({ value, cwd }: UseComposerSlashInput) {
       ...filteredSkills.map(
         (skill): SlashItem => ({
           kind: "skill",
-          key: `skill:${skill.id}`,
+          key: `skill:${skill.path}`,
           name: skill.name,
           description: skill.description,
           skill,
@@ -145,6 +145,5 @@ export function useComposerSlash({ value, cwd }: UseComposerSlashInput) {
     items,
     activeIndex: Math.min(activeIndex, Math.max(0, items.length - 1)),
     setActiveIndex,
-    skills,
   };
 }

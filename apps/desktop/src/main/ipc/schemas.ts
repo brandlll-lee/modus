@@ -46,6 +46,11 @@ const promptImageAttachmentSchema = z.object({
   name: z.string().max(256).optional(),
 });
 
+const skillSelectionSchema = z.object({
+  name: nonEmptyString,
+  path: nonEmptyString,
+});
+
 export const agentPromptSchema = z.object({
   sessionId: nonEmptyString,
   message: nonEmptyString,
@@ -56,7 +61,7 @@ export const agentPromptSchema = z.object({
   delivery: z.enum(["normal", "steer", "follow-up"]).optional(),
   userMessageId: optionalNonEmptyString,
   attachments: z.array(promptImageAttachmentSchema).max(6).optional(),
-  skills: z.array(nonEmptyString).max(10).optional(),
+  skills: z.array(skillSelectionSchema).max(10).optional(),
   mode: z.enum(["build", "plan"]).optional(),
   model: optionalNonEmptyString,
   thinkingLevel: thinkingLevelSchema.optional(),
@@ -189,7 +194,7 @@ export const browserDesignModeSchema = z.object({
 
 export const skillsGetSchema = z.object({
   cwd: nonEmptyString,
-  id: nonEmptyString,
+  path: nonEmptyString,
 });
 
 export const skillsCreateSchema = z.object({

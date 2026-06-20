@@ -27,6 +27,7 @@ import type {
   ModelInfo,
   PromptDelivery,
   PromptImageAttachment,
+  SkillSelection,
 } from "../../../../shared/contracts";
 import { BorderBeam } from "../../components/ui/BorderBeam";
 import { ImageThumb } from "../../components/ui/ImageViewer";
@@ -79,7 +80,7 @@ type ComposerProps = {
     context: ContextItem[],
     delivery?: PromptDelivery,
     attachments?: PromptImageAttachment[],
-    skills?: string[],
+    skills?: SkillSelection[],
     mode?: AgentMode,
   ): void;
   onAbort?(): void;
@@ -109,7 +110,7 @@ export function Composer({
 }: ComposerProps) {
   const [value, setValue] = useState("");
   const [dragging, setDragging] = useState(false);
-  const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
+  const [selectedSkills, setSelectedSkills] = useState<SkillSelection[]>([]);
   const [internalMode, setInternalMode] = useState<AgentMode>("build");
   const mode = controlledMode ?? internalMode;
   const setMode = (next: AgentMode): void => {
@@ -145,7 +146,6 @@ export function Composer({
     workspaceId,
   });
   const slash = useComposerSlash({ cwd, value });
-  const invokedSkills = skillsFromComposerValue(value, slash.skills, selectedSkills);
 
   useLayoutEffect(() => {
     const textarea = textareaRef.current;
@@ -161,9 +161,10 @@ export function Composer({
       return;
     }
     // Providers reject empty text blocks, so image-only sends get a stub line.
-    const message =
-      hasText || hasSelectedSkills
-        ? messageFromComposerValue(value, selectedSkills)
+    const message = hasText
+      ? value.trim()
+      : hasSelectedSkills
+        ? "Use the selected skill(s)."
         : "See the attached image(s).";
     const attachments = toAttachments();
     onSubmit(
@@ -171,7 +172,7 @@ export function Composer({
       contextItems,
       delivery,
       attachments.length > 0 ? attachments : undefined,
-      invokedSkills.length > 0 ? invokedSkills : undefined,
+      selectedSkills.length > 0 ? selectedSkills : undefined,
       mode,
     );
     setValue("");
@@ -183,7 +184,9 @@ export function Composer({
   function selectSlashItem(item: SlashItem): void {
     if (item.kind === "skill") {
       setSelectedSkills((current) =>
-        current.includes(item.name) ? current : [...current, item.name],
+        current.some((skill) => skill.path === item.skill.path)
+          ? current
+          : [...current, { name: item.skill.name, path: item.skill.path }],
       );
       setValue("");
       return;
@@ -414,10 +417,10 @@ export function Composer({
               ? selectedSkills.map((skill) => (
                   <span
                     className="inline-flex h-6 items-center gap-1.5 text-focus-ring text-sm font-medium"
-                    key={skill}
+                    key={skill.path}
                   >
                     <IconCube size={15} stroke={1.8} />
-                    <span>{skill}</span>
+                    <span>{skill.name}</span>
                   </span>
                 ))
               : null}
@@ -886,27 +889,4 @@ function formatUsagePercent(value: number | null | undefined): string {
     return "—";
   }
   return `${Math.round(value)}%`;
-}
-
-function messageFromComposerValue(value: string, selectedSkills: string[]): string {
-  const skillText = selectedSkills.map((skill) => `"${skill}"`).join(" ");
-  return [skillText, value.trim()].filter(Boolean).join(" ");
-}
-
-function skillsFromComposerValue(
-  value: string,
-  knownSkills: Array<{ name: string }>,
-  selectedSkills: string[],
-): string[] {
-  if (knownSkills.length === 0 && selectedSkills.length === 0) {
-    return [];
-  }
-  const quoted = new Set(Array.from(value.matchAll(/"([^"\r\n]+)"/g), (match) => match[1] ?? ""));
-  const invoked = new Set<string>(selectedSkills);
-  for (const skill of knownSkills) {
-    if (quoted.has(skill.name)) {
-      invoked.add(skill.name);
-    }
-  }
-  return [...invoked];
 }
