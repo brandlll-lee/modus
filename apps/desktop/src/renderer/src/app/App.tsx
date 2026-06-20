@@ -86,6 +86,7 @@ export function App() {
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [inspectorWidth, setInspectorWidth] = useState(384);
   const [inspectorTab, setInspectorTab] = useState("changes");
+  const [selectedSubagentId, setSelectedSubagentId] = useState<string | undefined>();
   // Plans are scoped per session (the authoritative key), so switching sessions
   // shows that session's own plan — never the last one any session emitted.
   const [activePlanBySession, setActivePlanBySession] = useState<Record<string, PlanRef>>({});
@@ -211,7 +212,9 @@ export function App() {
         event.type === "run.completed" ||
         event.type === "run.failed" ||
         event.type === "run.cancelled" ||
-        event.type === "run.blocked"
+        event.type === "run.blocked" ||
+        event.type === "subagent.started" ||
+        event.type === "subagent.updated"
       ) {
         void refreshSessions();
       }
@@ -252,6 +255,10 @@ export function App() {
   const activeSession = useMemo(
     () => agentSessions.find((session) => session.id === activeSessionId),
     [activeSessionId, agentSessions],
+  );
+  const rootSessions = useMemo(
+    () => agentSessions.filter((session) => !session.parentSessionId),
+    [agentSessions],
   );
 
   /* ── Session lifecycle ───────────────────────────────────────────────── */
@@ -299,6 +306,12 @@ export function App() {
       workspaces.find((workspace) => workspace.id === session.workspaceId) ?? activeWorkspace,
     );
     setActiveSessionId(session.id);
+  }
+
+  function openSubagent(childSessionId: string): void {
+    setSelectedSubagentId(childSessionId);
+    setInspectorTab("subagents");
+    setInspectorOpen(true);
   }
 
   /**
@@ -514,7 +527,7 @@ export function App() {
                     <Sidebar
                       activeWorkspace={activeWorkspace}
                       activityBySession={activityBySession}
-                      agentSessions={agentSessions}
+                      agentSessions={rootSessions}
                       canCreateSession={canCreateSession}
                       onArchiveSession={(session) => void archiveSession(session)}
                       onPinProject={(id, pinned) => void pinProject(id, pinned)}
@@ -611,6 +624,7 @@ export function App() {
                                 void updateModelThinking(next, thinkingVariant)
                               }
                               onOpenReview={() => setInspectorOpen(true)}
+                              onOpenSubagent={openSubagent}
                               onPlanUpdated={(plan) => {
                                 // Store under THIS session's id; auto-open the
                                 // Plan tab once per distinct plan (by hash) — a
@@ -692,10 +706,31 @@ export function App() {
                     {hasSession ? (
                       <Inspector
                         activeWorkspace={activeWorkspace}
+                        contextUsageBySession={contextUsageBySession}
                         cwd={activeCwd}
+                        defaultModel={model}
+                        hub={hubRef.current}
                         sessionId={activeSession?.id}
                         maxWidth={inspectorMaxWidth}
+                        models={models}
+                        onModelChange={setModel}
+                        onModelConfigChange={(next, thinkingVariant) =>
+                          void updateModelThinking(next, thinkingVariant)
+                        }
                         onOpenChange={setInspectorOpen}
+                        onOpenReview={() => setInspectorOpen(true)}
+                        onOpenSubagent={openSubagent}
+                        onPlanUpdated={(plan) => {
+                          if (!activeSession) {
+                            return;
+                          }
+                          setActivePlanBySession((current) => ({
+                            ...current,
+                            [plan.sessionId ?? activeSession.id]: plan,
+                          }));
+                        }}
+                        onSelectSubagent={setSelectedSubagentId}
+                        onSessionsChanged={() => void refreshSessions()}
                         onTabChange={setInspectorTab}
                         onWidthChange={setInspectorWidth}
                         open={inspectorOpen}
@@ -705,6 +740,8 @@ export function App() {
                         sessionWorking={activeRunning}
                         onBuildPlan={() => chatPaneRef.current?.buildActivePlan()}
                         securityState={securityState}
+                        selectedSubagentId={selectedSubagentId}
+                        sessions={agentSessions}
                         tab={inspectorTab}
                         width={inspectorWidth}
                       />

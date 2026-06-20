@@ -3,6 +3,7 @@ import {
   IconDots,
   IconFileText,
   IconGitBranch,
+  IconGridDots,
   IconLayoutList,
   IconLayoutSidebarRight,
   IconShieldCheck,
@@ -13,15 +14,23 @@ import {
 import { animate, m, useMotionValue } from "motion/react";
 import { type PointerEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import type { SecurityState } from "../../../../preload/types";
-import type { PlanRef, WorkspaceInfo } from "../../../../shared/contracts";
+import type {
+  AgentSessionInfo,
+  ContextUsageInfo,
+  ModelInfo,
+  PlanRef,
+  WorkspaceInfo,
+} from "../../../../shared/contracts";
 import { PanelHeader } from "../../components/ui/Panel";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
+import type { AgentEventHub } from "../agent/agentEventHub";
 import { BrowserPanel } from "../browser/BrowserPanel";
 import { DiffPanel } from "../diff/DiffPanel";
 import { FilesPanel } from "../files/FilesPanel";
 import { PlanPanel } from "../plan/PlanPanel";
 import { TerminalPanel } from "../terminal/TerminalPanel";
+import { SubagentsPanel } from "./SubagentsPanel";
 
 type InspectorProps = {
   activeWorkspace: WorkspaceInfo | null;
@@ -41,6 +50,19 @@ type InspectorProps = {
   sessionWorking: boolean;
   /** Build the active plan (runs the same path as the composer's Review card). */
   onBuildPlan(): void;
+  sessions: AgentSessionInfo[];
+  selectedSubagentId?: string | undefined;
+  hub: AgentEventHub;
+  models: ModelInfo[];
+  defaultModel: string;
+  contextUsageBySession: Record<string, ContextUsageInfo>;
+  onSelectSubagent(id: string): void;
+  onSessionsChanged(): void;
+  onModelChange(model: string): void;
+  onModelConfigChange(model: string, thinkingVariant: string): Promise<void> | void;
+  onOpenReview(): void;
+  onOpenSubagent(childSessionId: string): void;
+  onPlanUpdated(plan: PlanRef): void;
   onOpenChange(open: boolean): void;
   onWidthChange(width: number): void;
 };
@@ -55,6 +77,7 @@ const TABS = [
   { value: "changes", label: "Changes", icon: <IconGitBranch size={15} stroke={1.65} /> },
   { value: "plan", label: "Plan", icon: <IconLayoutList size={15} stroke={1.65} /> },
   { value: "files", label: "Files", icon: <IconFileText size={15} stroke={1.65} /> },
+  { value: "subagents", label: "Subagents", icon: <IconGridDots size={15} stroke={1.65} /> },
   { value: "browser", label: "Browser", icon: <IconWorld size={15} stroke={1.65} /> },
   { value: "terminal", label: "Terminal", icon: <IconTerminal2 size={15} stroke={1.65} /> },
   { value: "security", label: "Security", icon: <IconShieldCheck size={15} stroke={1.65} /> },
@@ -73,6 +96,19 @@ export function Inspector({
   plan,
   sessionWorking,
   onBuildPlan,
+  sessions,
+  selectedSubagentId,
+  hub,
+  models,
+  defaultModel,
+  contextUsageBySession,
+  onSelectSubagent,
+  onSessionsChanged,
+  onModelChange,
+  onModelConfigChange,
+  onOpenReview,
+  onOpenSubagent,
+  onPlanUpdated,
   onOpenChange,
   onWidthChange,
 }: InspectorProps) {
@@ -239,6 +275,25 @@ export function Inspector({
                 </Tabs.Panel>
                 <Tabs.Panel className="min-h-0 flex-1 outline-none" keepMounted value="files">
                   <FilesPanel cwd={cwd} />
+                </Tabs.Panel>
+                <Tabs.Panel className="min-h-0 flex-1 outline-none" keepMounted value="subagents">
+                  <SubagentsPanel
+                    contextUsageBySession={contextUsageBySession}
+                    defaultModel={defaultModel}
+                    hub={hub}
+                    models={models}
+                    onModelChange={onModelChange}
+                    onModelConfigChange={onModelConfigChange}
+                    onOpenReview={onOpenReview}
+                    onOpenSubagent={onOpenSubagent}
+                    onPlanUpdated={onPlanUpdated}
+                    onSelect={onSelectSubagent}
+                    onSessionsChanged={onSessionsChanged}
+                    parentSessionId={sessionId}
+                    selectedId={selectedSubagentId}
+                    sessions={sessions}
+                    workspace={activeWorkspace}
+                  />
                 </Tabs.Panel>
                 <Tabs.Panel className="min-h-0 flex-1 outline-none" keepMounted value="browser">
                   <BrowserPanel active={tab === "browser"} workspaceId={activeWorkspace?.id} />

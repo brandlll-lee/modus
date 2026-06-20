@@ -66,6 +66,8 @@ type ChatPaneProps = {
   onModelConfigChange(model: string, thinkingVariant: string): Promise<void> | void;
   /** "Review" on the changes strip: focus this pane and open the diff panel. */
   onOpenReview(): void;
+  onOpenSubagent?(childSessionId: string): void;
+  botColor?: string;
   /** A plan was (re)written in Plan Mode: open it in the file panel. */
   onPlanUpdated(plan: PlanRef): void;
 };
@@ -84,6 +86,8 @@ export const ChatPane = forwardRef<ChatPaneHandle, ChatPaneProps>(function ChatP
     onModelChange,
     onModelConfigChange,
     onOpenReview,
+    onOpenSubagent,
+    botColor,
     onPlanUpdated,
   },
   ref,
@@ -480,8 +484,10 @@ export const ChatPane = forwardRef<ChatPaneHandle, ChatPaneProps>(function ChatP
         >
           <Timeline
             agentEvents={agentEvents}
+            {...(botColor ? { botColor } : {})}
             cwd={activeCwd}
             onEditResend={editAndResend}
+            {...(onOpenSubagent ? { onOpenSubagent } : {})}
             onRestoreCheckpoint={async (checkpointId) => {
               await window.modus.checkpoint.restore({ checkpointId });
               refreshStats();

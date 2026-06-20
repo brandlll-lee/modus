@@ -7,6 +7,8 @@ import type {
   MessageContextChip,
   PromptImageAttachment,
   SkillSelection,
+  SubagentActivity,
+  SubagentStatus,
   TodoItem,
   WorkingChangeStats,
 } from "../../../../shared/contracts";
@@ -14,6 +16,7 @@ import {
   APP_TOOL_NAMES,
   ASK_USER_TOOL_NAME,
   BROWSER_TOOL_NAMES,
+  getToolUiMeta,
   isMcpToolName,
   MCP_TOOL_PREFIX,
   PLAN_TOOL_NAME,
@@ -29,6 +32,7 @@ import { formatClock } from "../../lib/formatClock";
 import { ActivityGroup, ThoughtRow } from "./ActivityGroup";
 import { TurnChangesCard } from "./changes/ChangeStats";
 import { MessageBlock } from "./MessageBlock";
+import { subagentColor } from "./subagentUi";
 import { TodosCard } from "./TodosCard";
 import { ToolCard } from "./ToolCard";
 
@@ -49,6 +53,8 @@ type TimelineProps = {
     contextItems?: ContextItem[],
     skills?: SkillSelection[],
   ): Promise<void>;
+  onOpenSubagent?(childSessionId: string): void;
+  botColor?: string;
   workspaceId?: string | undefined;
 };
 
@@ -163,6 +169,18 @@ type TodosBlockItem = {
   updating: boolean;
 };
 
+export type SubagentBlockItem = {
+  id: string;
+  type: "subagent";
+  childSessionId: string;
+  task: string;
+  subagentType: string;
+  status: SubagentStatus;
+  background: boolean;
+  model?: string;
+  activity?: SubagentActivity;
+};
+
 type ActivityGroupBlockItem = {
   id: string;
   type: "activity-group";
@@ -185,7 +203,8 @@ type TimelineBlock =
   | NoticeBlockItem
   | ActivityGroupBlockItem
   | ChangesBlockItem
-  | TodosBlockItem;
+  | TodosBlockItem
+  | SubagentBlockItem;
 
 export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): TimelineBlock[] {
   const blocks: TimelineBlock[] = [];
@@ -193,6 +212,8 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
   const checkpointByRun = new Map<string, string>();
   /** todo_write tool calls render through the TodosCard, not as tool rows. */
   const todoToolCallIds = new Set<string>();
+  const subagentToolCallIds = new Set<string>();
+  const subagentsByChild = new Map<string, SubagentBlockItem>();
   let latestTodosBlock: TodosBlockItem | undefined;
   let todoLifecycleOpen = false;
   let hasRenderedAnyTodoBlock = false;
@@ -513,6 +534,10 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
         }
         continue;
       }
+      if (toolRenderKind(event.toolName) === "subagent") {
+        subagentToolCallIds.add(event.toolCallId);
+        continue;
+      }
       const existing = blockById.get(event.toolCallId);
       if (existing?.type === "tool") {
         existing.args = event.args;
@@ -540,6 +565,10 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
         }
         continue;
       }
+      if (toolRenderKind(event.toolName) === "subagent") {
+        subagentToolCallIds.add(event.toolCallId);
+        continue;
+      }
       // Idempotent: a live `tool.delta` may have already created the block.
       // Refresh its args with the authoritative ones rather than forking a
       // duplicate card.
@@ -564,6 +593,9 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
       if (todoToolCallIds.has(event.toolCallId)) {
         continue;
       }
+      if (subagentToolCallIds.has(event.toolCallId)) {
+        continue;
+      }
       const block = blockById.get(event.toolCallId);
       if (block?.type === "tool") {
         block.output += event.output;
@@ -578,6 +610,10 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
         if (latestTodosBlock) {
           latestTodosBlock.updating = todoUpdatesInFlight > 0;
         }
+        continue;
+      }
+      if (subagentToolCallIds.has(event.toolCallId)) {
+        subagentToolCallIds.delete(event.toolCallId);
         continue;
       }
       const block = blockById.get(event.toolCallId);
@@ -605,6 +641,46 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
         blocks.push(latestTodosBlock);
         hasRenderedAnyTodoBlock = true;
         todoLifecycleOpen = !allComplete;
+      }
+      continue;
+    }
+
+    if (event.type === "subagent.started") {
+      const block: SubagentBlockItem = {
+        id: `subagent:${event.childSessionId}`,
+        type: "subagent",
+        childSessionId: event.childSessionId,
+        task: event.task,
+        subagentType: event.subagentType,
+        status: "running",
+        background: event.background,
+        ...(event.model ? { model: event.model } : {}),
+      };
+      subagentsByChild.set(event.childSessionId, block);
+      blocks.push(block);
+      blockById.set(block.id, block);
+      continue;
+    }
+
+    if (event.type === "subagent.updated") {
+      let block = subagentsByChild.get(event.childSessionId);
+      if (!block) {
+        block = {
+          id: `subagent:${event.childSessionId}`,
+          type: "subagent",
+          childSessionId: event.childSessionId,
+          task: "Subagent",
+          subagentType: "worker",
+          status: event.status,
+          background: true,
+        };
+        subagentsByChild.set(event.childSessionId, block);
+        blocks.push(block);
+        blockById.set(block.id, block);
+      }
+      block.status = event.status;
+      if (event.activity) {
+        block.activity = event.activity;
       }
       continue;
     }
@@ -742,6 +818,8 @@ const BROWSER_TOOLS = new Set<string>(BROWSER_TOOL_NAMES);
 
 /** Which fold a tool joins, or undefined when it always stands alone. */
 function activityKind(name: string): "explore" | "browser" | "shell" | undefined {
+  const activity = getToolUiMeta(name)?.activity;
+  if (activity) return activity;
   if (toolRenderKind(name) === "terminal") return "shell";
   if (BROWSER_TOOLS.has(name)) return "browser";
   if (EXPLORE_TOOLS.has(name)) return "explore";
@@ -1190,6 +1268,28 @@ function runningActivityLabel(activity: RunActivity | undefined): string {
   return toolActivityLabel(activity.name);
 }
 
+function subagentStatusLabel(block: SubagentBlockItem): string {
+  if (block.status === "running") {
+    if (!block.activity || block.activity.kind === "thinking") {
+      return "Thinking";
+    }
+    if (block.activity.kind === "writing") {
+      return "Writing the response";
+    }
+    return toolActivityLabel(block.activity.name);
+  }
+  if (block.status === "blocked") {
+    return "Waiting for approval";
+  }
+  if (block.status === "failed") {
+    return "Subagent stopped";
+  }
+  if (block.status === "cancelled") {
+    return "Stopped";
+  }
+  return "Completed";
+}
+
 /**
  * The single status line for a turn footer. While running it tracks the live
  * activity; once the run settles it reports the duration (or terminal reason).
@@ -1224,7 +1324,7 @@ export function runStatusLabel(block: RunBlockItem): string {
  * the row (reserved space, so revealing them never reflows the layout). There is
  * no longer a separate per-message footer — the two lines are merged into one.
  */
-function TurnStatusFooter({ block }: { block: RunBlockItem }) {
+function TurnStatusFooter({ block, botColor }: { block: RunBlockItem; botColor?: string }) {
   const active = block.status === "running" || block.status === "blocked";
   const isError = block.status === "failed";
   const label = runStatusLabel(block);
@@ -1232,7 +1332,12 @@ function TurnStatusFooter({ block }: { block: RunBlockItem }) {
   const answer = !active ? block.answer : undefined;
   return (
     <div className="group flex min-w-0 items-center gap-2 text-sm">
-      <ModusBot active={active} busy={active} className="size-[18px] shrink-0" />
+      <ModusBot
+        active={active}
+        busy={active}
+        className="size-[18px] shrink-0"
+        {...(botColor ? { color: botColor } : {})}
+      />
       <AnimatePresence initial={false} mode="wait">
         <m.span
           animate={{ opacity: 1, y: 0 }}
@@ -1302,6 +1407,8 @@ export function Timeline({
   workspaceId,
   onRestoreCheckpoint,
   onEditResend,
+  onOpenSubagent,
+  botColor,
 }: TimelineProps) {
   const blocks = useMemo(
     () => relocateRunFooters(groupActivity(attachTurnActions(buildBlocks(agentEvents)))),
@@ -1384,10 +1491,15 @@ export function Timeline({
             {block.type === "thought" ? (
               <ThoughtRow streaming={block.streaming ?? false} text={block.text} />
             ) : null}
-            {block.type === "run" ? <TurnStatusFooter block={block} /> : null}
+            {block.type === "run" ? (
+              <TurnStatusFooter block={block} {...(botColor ? { botColor } : {})} />
+            ) : null}
             {block.type === "notice" ? <Notice {...block} /> : null}
             {block.type === "todos" ? (
               <TodosCard todos={block.todos} updating={block.updating} />
+            ) : null}
+            {block.type === "subagent" ? (
+              <SubagentCard block={block} {...(onOpenSubagent ? { onOpenSubagent } : {})} />
             ) : null}
             {block.type === "changes" ? (
               <TurnChangesCard
@@ -1408,6 +1520,42 @@ export function Timeline({
         ))}
       </div>
     </div>
+  );
+}
+
+function SubagentCard({
+  block,
+  onOpenSubagent,
+}: {
+  block: SubagentBlockItem;
+  onOpenSubagent?: (childSessionId: string) => void;
+}) {
+  const active = block.status === "running";
+  const label = subagentStatusLabel(block);
+  return (
+    <button
+      className="flex min-w-0 w-full items-start gap-3 rounded-lg border border-hairline-soft bg-panel px-3 py-2.5 text-left transition-colors hover:bg-hover"
+      onClick={() => onOpenSubagent?.(block.childSessionId)}
+      type="button"
+    >
+      <ModusBot
+        active={active}
+        busy={active}
+        className="mt-0.5 size-6 shrink-0"
+        color={subagentColor(block.childSessionId)}
+      />
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="min-w-0 truncate text-sm font-medium text-fg">{block.task}</span>
+          <span className="shrink-0 rounded-sm bg-fill px-1.5 py-0.5 text-2xs text-fg-faint">
+            {block.model ?? block.subagentType}
+          </span>
+        </div>
+        <div className="mt-1 min-w-0 truncate text-xs text-fg-subtle">
+          {active ? <ShinyText>{label}</ShinyText> : label}
+        </div>
+      </div>
+    </button>
   );
 }
 

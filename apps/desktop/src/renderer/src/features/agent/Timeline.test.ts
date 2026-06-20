@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentEvent } from "../../../../shared/contracts";
+import { subagentColor } from "./subagentUi";
 import {
   attachTurnActions,
   blockRenderKeys,
@@ -117,6 +118,43 @@ describe("buildBlocks", () => {
     expect(blocks).toEqual([]);
   });
 
+  it("aggregates subagent activity by child session id", () => {
+    const blocks = buildBlocks([
+      item("1", {
+        type: "subagent.started",
+        sessionId: "parent",
+        childSessionId: "child-a",
+        task: "Audit files",
+        subagentType: "reviewer",
+        background: true,
+        model: "mock/model",
+      }),
+      item("2", {
+        type: "subagent.updated",
+        sessionId: "parent",
+        childSessionId: "child-a",
+        status: "running",
+        activity: { kind: "tool", name: "read" },
+      }),
+      item("3", {
+        type: "subagent.updated",
+        sessionId: "parent",
+        childSessionId: "child-a",
+        status: "completed",
+      }),
+    ]);
+
+    expect(blocks.filter((block) => block.type === "subagent")).toEqual([
+      expect.objectContaining({
+        type: "subagent",
+        childSessionId: "child-a",
+        task: "Audit files",
+        status: "completed",
+        activity: { kind: "tool", name: "read" },
+      }),
+    ]);
+  });
+
   it("marks the active assistant message streaming with no thought when nothing is thought yet", () => {
     const blocks = buildBlocks([
       item("1", { type: "run.started", sessionId: "s", runId: "r", delivery: "normal" }),
@@ -182,8 +220,11 @@ describe("buildBlocks", () => {
     const message = blocks.find((block) => block.type === "message");
     expect(thought).toEqual(expect.objectContaining({ type: "thought", text: "plan" }));
     expect(message).toEqual(expect.objectContaining({ type: "message", content: "answer" }));
+    if (!thought || !message) {
+      throw new Error("Expected thought and message blocks");
+    }
     // Thought renders above its sibling answer, and stops shimmering once sealed.
-    expect(blocks.indexOf(thought!)).toBeLessThan(blocks.indexOf(message!));
+    expect(blocks.indexOf(thought)).toBeLessThan(blocks.indexOf(message));
     expect(thought).not.toEqual(expect.objectContaining({ streaming: true }));
   });
 
@@ -805,6 +846,32 @@ describe("groupActivity", () => {
     expect((result[0] as { items: unknown[] }).items).toHaveLength(2);
   });
 
+  it("folds thoughts and subagent control rows into the exploration group", () => {
+    const result = groupActivity([
+      tool("read-1", "read"),
+      thought("plan", "checking worker"),
+      tool("wait-1", "wait_agent"),
+      tool("list-1", "list_agents"),
+      thought("done", "worker settled"),
+    ] as Blocks);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toEqual(
+      expect.objectContaining({
+        type: "activity-group",
+        kind: "explore",
+        summary: "Explored 1 file",
+      }),
+    );
+    expect((result[0] as { items: { type: string; name?: string }[] }).items).toEqual([
+      expect.objectContaining({ type: "tool", name: "read" }),
+      expect.objectContaining({ type: "thought" }),
+      expect.objectContaining({ type: "tool", name: "wait_agent" }),
+      expect.objectContaining({ type: "tool", name: "list_agents" }),
+      expect.objectContaining({ type: "thought" }),
+    ]);
+  });
+
   it("flags an error when any member errored", () => {
     const result = groupActivity([
       tool("1", "grep"),
@@ -977,6 +1044,13 @@ describe("runStatusLabel", () => {
     expect(runStatusLabel(run("blocked"))).toBe("Waiting for approval");
     expect(runStatusLabel(run("failed"))).toBe("Modus stopped");
     expect(runStatusLabel(run("cancelled"))).toBe("Stopped by you");
+  });
+});
+
+describe("subagentColor", () => {
+  it("derives a stable color from the child session id", () => {
+    expect(subagentColor("child-a")).toBe(subagentColor("child-a"));
+    expect(subagentColor("child-a")).toMatch(/^#[0-9a-f]{6}$/);
   });
 });
 
