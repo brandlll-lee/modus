@@ -208,6 +208,13 @@ describe("PiSdkRuntime", () => {
       .run(workspaceId, cwd, "repo", 1, now, now);
     const runtime = new PiSdkRuntime();
     const window = createWindowStub();
+    let resolveBacking!: (value: { session: Record<string, unknown> }) => void;
+    mocks.createAgentSession.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveBacking = resolve;
+        }),
+    );
 
     const session = await runtime.create(window, {
       workspaceId,
@@ -217,6 +224,9 @@ describe("PiSdkRuntime", () => {
     });
 
     expect(session.cwd).toBe(cwd);
+    await vi.waitFor(() => expect(mocks.createAgentSession).toHaveBeenCalled());
+    resolveBacking({ session: createMockPiSession() });
+    await runtime.ensure(window, session.id);
     expect(mocks.sessionManagerCreate).toHaveBeenCalledWith(cwd, expect.any(String));
     const row = getDatabase()
       .prepare("select cwd from agent_sessions where id = ?")
@@ -237,12 +247,14 @@ describe("PiSdkRuntime", () => {
       .run(workspaceId, cwd, "repo", 1, now, now);
     const runtime = new PiSdkRuntime();
 
-    await runtime.create(createWindowStub(), {
+    const window = createWindowStub();
+    const session = await runtime.create(window, {
       workspaceId,
       cwd,
       title: "New chat",
       model: "mock/model",
     });
+    await runtime.ensure(window, session.id);
 
     const options = mocks.resourceLoaderOptions.at(-1) as { appendSystemPrompt: string[] };
     const globalIndex = options.appendSystemPrompt.findIndex((part) =>
@@ -281,8 +293,15 @@ describe("PiSdkRuntime", () => {
     insertSession(sessionId, workspaceId, join(userData, "missing.jsonl"), "New chat");
     const runtime = new PiSdkRuntime();
     const window = createWindowStub();
+    let resolveBacking!: (value: { session: Record<string, unknown> }) => void;
+    mocks.createAgentSession.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveBacking = resolve;
+        }),
+    );
 
-    await runtime.prompt(window, {
+    const promptPromise = runtime.prompt(window, {
       context: [],
       delivery: "normal",
       message: "介绍一下你自己",
@@ -299,11 +318,10 @@ describe("PiSdkRuntime", () => {
       )
       .all(sessionId) as Array<{ type: string; payload_json: string }>;
 
-    expect(rows.slice(0, 4).map((row) => row.type)).toEqual([
+    expect(rows.slice(0, 3).map((row) => row.type)).toEqual([
       "message.started",
       "message.delta",
       "message.completed",
-      "run.started",
     ]);
     expect(JSON.parse(rows[1]?.payload_json ?? "{}")).toEqual({
       type: "message.delta",
@@ -311,6 +329,15 @@ describe("PiSdkRuntime", () => {
       messageId: "local-user-1",
       delta: "介绍一下你自己",
     });
+    await vi.waitFor(() => expect(mocks.createAgentSession).toHaveBeenCalled());
+    resolveBacking({ session: createMockPiSession() });
+    await promptPromise;
+    const allRows = getDatabase()
+      .prepare(
+        "select type from agent_events where session_id = ? order by created_at asc, rowid asc",
+      )
+      .all(sessionId) as Array<{ type: string }>;
+    expect(allRows.map((row) => row.type)).toContain("run.started");
     const session = getDatabase()
       .prepare("select title from agent_sessions where id = ?")
       .get(sessionId) as { title: string };

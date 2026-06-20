@@ -115,6 +115,13 @@ export const ChatPane = forwardRef<ChatPaneHandle, ChatPaneProps>(function ChatP
   // viewing/scrolling never snaps back (opencode's createAutoScroll model).
   const autoScroll = useAutoScroll(isRunning);
 
+  useEffect(() => {
+    if (agentEvents.length === 0) {
+      return;
+    }
+    autoScroll.scrollToBottom();
+  }, [agentEvents, autoScroll.scrollToBottom]);
+
   // The latest plan written/updated in this session. Surfaced to the Plan panel
   // (data) on every change; the panel auto-opens only on a new plan (App gates
   // on hash). Build-status transitions re-emit plan.updated with the same hash.

@@ -39,6 +39,8 @@ export type AutoScroll = {
   contentRef: (el: HTMLElement | null) => void;
   /** Wire to the container's onScroll. */
   handleScroll: () => void;
+  /** Follow new content only when auto-follow is currently active. */
+  scrollToBottom: () => void;
   /** Force back to following the bottom (new prompt, session switch). */
   resume: () => void;
 };
@@ -142,10 +144,15 @@ export function useAutoScroll(working: boolean): AutoScroll {
     // Our own scrollToBottom fired this event — don't treat it as the user
     // leaving the bottom.
     if (!userScrolledRef.current && isAuto(el)) {
+      scrollToBottom(false);
       return;
     }
     stop();
-  }, [scrollEl, isAuto, stop, updateOverflowAnchor]);
+  }, [scrollEl, isAuto, scrollToBottom, stop, updateOverflowAnchor]);
+
+  const follow = useCallback((): void => {
+    scrollToBottom(false);
+  }, [scrollToBottom]);
 
   const resume = useCallback((): void => {
     scrollToBottom(true);
@@ -193,6 +200,9 @@ export function useAutoScroll(working: boolean): AutoScroll {
       scrollToBottom(false);
     });
     observer.observe(contentEl);
+    if (scrollEl) {
+      observer.observe(scrollEl);
+    }
     return () => observer.disconnect();
   }, [contentEl, scrollEl, active, scrollToBottom, updateOverflowAnchor]);
 
@@ -221,5 +231,11 @@ export function useAutoScroll(working: boolean): AutoScroll {
     [],
   );
 
-  return { scrollRef: setScrollEl, contentRef: setContentEl, handleScroll, resume };
+  return {
+    scrollRef: setScrollEl,
+    contentRef: setContentEl,
+    handleScroll,
+    scrollToBottom: follow,
+    resume,
+  };
 }

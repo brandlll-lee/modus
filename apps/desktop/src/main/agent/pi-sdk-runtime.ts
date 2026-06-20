@@ -146,6 +146,20 @@ export class PiSdkRuntime implements AgentRuntime {
     registerQuestionTools();
   }
 
+  private emitToWindow(window: BrowserWindowType): EmitAgentEvent {
+    return (event) => {
+      recordAgentEvent(event);
+      window.webContents.send(IPC_CHANNELS.agentEvent, event);
+      maybeNotifyAgentEvent(window, event);
+    };
+  }
+
+  private emitVolatileToWindow(window: BrowserWindowType): EmitAgentEvent {
+    return (event) => {
+      window.webContents.send(IPC_CHANNELS.agentEvent, event);
+    };
+  }
+
   private noteAssistantOutput(event: Parameters<EmitAgentEvent>[0]): void {
     const tracker = this.runOutputTrackers.get(event.sessionId);
     if (!tracker) {
@@ -354,14 +368,8 @@ export class PiSdkRuntime implements AgentRuntime {
     window: BrowserWindowType,
     input: CreateAgentRuntimeInput,
   ): Promise<AgentSessionInfo> {
-    const emit: EmitAgentEvent = (event) => {
-      recordAgentEvent(event);
-      window.webContents.send(IPC_CHANNELS.agentEvent, event);
-      maybeNotifyAgentEvent(window, event);
-    };
-    const emitVolatile: EmitAgentEvent = (event) => {
-      window.webContents.send(IPC_CHANNELS.agentEvent, event);
-    };
+    const emit = this.emitToWindow(window);
+    const emitVolatile = this.emitVolatileToWindow(window);
     const selectedModel = findModel(input.model) ?? getDefaultModel();
     if (!selectedModel) {
       throw new Error(
@@ -385,25 +393,32 @@ export class PiSdkRuntime implements AgentRuntime {
     mkdirSync(agentDir, { recursive: true });
     mkdirSync(sessionDir, { recursive: true });
 
-    const { settingsManager, loader } = await this.createSessionResources(
-      input.cwd,
-      info.id,
-      emit,
-      agentDir,
-    );
-
-    const runtimeSession = await this.assembleSession({
-      info,
-      emit,
-      emitVolatile,
-      agentDir,
-      loader,
-      settingsManager,
-      sessionManager: SessionManager.create(input.cwd, sessionDir),
-      model: selectedThinking?.model ?? selectedModel,
-      thinkingLevel: selectedThinking?.thinkingLevel,
+    const warmup = (async () => {
+      const { settingsManager, loader } = await this.createSessionResources(
+        input.cwd,
+        info.id,
+        emit,
+        agentDir,
+      );
+      return await this.assembleSession({
+        info,
+        emit,
+        emitVolatile,
+        agentDir,
+        loader,
+        settingsManager,
+        sessionManager: SessionManager.create(input.cwd, sessionDir),
+        model: selectedThinking?.model ?? selectedModel,
+        thinkingLevel: selectedThinking?.thinkingLevel,
+      });
+    })().finally(() => {
+      this.resumePromises.delete(info.id);
     });
-    return runtimeSession.info;
+    this.resumePromises.set(info.id, warmup);
+    void warmup.catch(() => {
+      updateAgentSessionStatus(info.id, "error");
+    });
+    return info;
   }
 
   private async createRuntimeSession(
@@ -415,14 +430,8 @@ export class PiSdkRuntime implements AgentRuntime {
       return undefined;
     }
 
-    const emit: EmitAgentEvent = (event) => {
-      recordAgentEvent(event);
-      window.webContents.send(IPC_CHANNELS.agentEvent, event);
-      maybeNotifyAgentEvent(window, event);
-    };
-    const emitVolatile: EmitAgentEvent = (event) => {
-      window.webContents.send(IPC_CHANNELS.agentEvent, event);
-    };
+    const emit = this.emitToWindow(window);
+    const emitVolatile = this.emitVolatileToWindow(window);
     const agentDir = join(app.getPath("userData"), "pi-agent");
     const sessionDir = join(app.getPath("userData"), "pi-sessions");
     mkdirSync(agentDir, { recursive: true });
@@ -466,9 +475,41 @@ export class PiSdkRuntime implements AgentRuntime {
   }
 
   async prompt(window: BrowserWindowType, input: PromptAgentInput): Promise<void> {
-    const runtimeSession = await this.getOrResume(window, input.sessionId);
+    const delivery = input.delivery ?? "normal";
+    const emit = this.emitToWindow(window);
+    let earlyUserMessageId: string | undefined;
+    const failEarlyPrompt = (error: unknown): Error => {
+      const message = error instanceof Error ? error.message : String(error);
+      if (earlyUserMessageId !== undefined) {
+        updateAgentSessionStatus(input.sessionId, "error");
+        emit({ type: "runtime.error", sessionId: input.sessionId, message });
+        emit({ type: "session.status", sessionId: input.sessionId, status: { type: "idle" } });
+      }
+      return error instanceof Error ? error : new Error(message);
+    };
+    if (delivery === "normal") {
+      earlyUserMessageId = input.userMessageId ?? `local-user:${randomUUID()}`;
+      const buildPlan = input.planId ? readPlanById(plansRoot(), input.planId) : undefined;
+      this.emitUserMessage(
+        emit,
+        input,
+        earlyUserMessageId,
+        buildPlan
+          ? { planId: buildPlan.id, title: buildPlan.title, todoCount: buildPlan.todos.length }
+          : undefined,
+      );
+      updateAgentSessionStatus(input.sessionId, "running");
+      emit({ type: "session.status", sessionId: input.sessionId, status: { type: "busy" } });
+    }
+
+    let runtimeSession: SdkRuntimeSession | undefined;
+    try {
+      runtimeSession = await this.getOrResume(window, input.sessionId);
+    } catch (error) {
+      throw failEarlyPrompt(error);
+    }
     if (!runtimeSession) {
-      throw new Error(`Agent session not running: ${input.sessionId}`);
+      throw failEarlyPrompt(`Agent session not running: ${input.sessionId}`);
     }
 
     // Publish this session's tool context so the (process-wide) custom tools
@@ -482,25 +523,27 @@ export class PiSdkRuntime implements AgentRuntime {
       emit: runtimeSession.emit,
     });
 
-    // Per-turn mode: switch the active tool set (plan = read-only research +
-    // plan_write; build = full chat tools). setActiveToolsByName also rebuilds
-    // the system prompt for the new set, and takes effect on this turn.
-    runtimeSession.session.setActiveToolsByName(
-      toolRegistry.resolveActiveTools(profileForMode(input.mode)),
-    );
-
-    // Per-turn model + thinking: the composer's current selection travels with
-    // the prompt and is applied authoritatively here, so the turn never runs
-    // with stale model/thinking (mid-session switch, edit-and-resend, resume).
-    if (input.model !== undefined) {
-      await this.applyModelSelection(
-        runtimeSession,
-        input.model,
-        input.thinkingVariant ?? input.thinkingLevel,
+    try {
+      // Per-turn mode: switch the active tool set (plan = read-only research +
+      // plan_write; build = full chat tools). setActiveToolsByName also rebuilds
+      // the system prompt for the new set, and takes effect on this turn.
+      runtimeSession.session.setActiveToolsByName(
+        toolRegistry.resolveActiveTools(profileForMode(input.mode)),
       );
-    }
 
-    const delivery = input.delivery ?? "normal";
+      // Per-turn model + thinking: the composer's current selection travels with
+      // the prompt and is applied authoritatively here, so the turn never runs
+      // with stale model/thinking (mid-session switch, edit-and-resend, resume).
+      if (input.model !== undefined) {
+        await this.applyModelSelection(
+          runtimeSession,
+          input.model,
+          input.thinkingVariant ?? input.thinkingLevel,
+        );
+      }
+    } catch (error) {
+      throw failEarlyPrompt(error);
+    }
 
     // Authoritative turn boundary: if a turn is already streaming, this message
     // JOINS it — pi queues it (steer/followUp) and resolves prompt() the moment
@@ -523,7 +566,8 @@ export class PiSdkRuntime implements AgentRuntime {
       sessionId: input.sessionId,
       prompt: input.message,
     };
-    if (input.userMessageId !== undefined) runInput.userMessageId = input.userMessageId;
+    if (earlyUserMessageId !== undefined) runInput.userMessageId = earlyUserMessageId;
+    else if (input.userMessageId !== undefined) runInput.userMessageId = input.userMessageId;
     if (runtimeSession.info.model !== undefined) runInput.model = runtimeSession.info.model;
     // Rollback anchor: the session-tree leaf right before this prompt. Reaching
     // here means a fresh turn (normal delivery, or a steer/follow-up that found
@@ -538,38 +582,39 @@ export class PiSdkRuntime implements AgentRuntime {
     this.runOutputTrackers.set(input.sessionId, outputTracker);
 
     updateAgentSessionStatus(input.sessionId, "running");
-    const userMessageId = input.userMessageId ?? `user:${run.id}`;
+    const userMessageId = earlyUserMessageId ?? input.userMessageId ?? `user:${run.id}`;
     // A "Build this plan" turn carries planId: tag the user message so the
     // timeline renders a compact Build card, and bind the plan's build status to
     // this run's authoritative lifecycle (building now → built/not_built later).
     const buildPlan = input.planId ? readPlanById(plansRoot(), input.planId) : undefined;
-    this.emitUserMessage(
-      runtimeSession,
-      input,
-      userMessageId,
-      buildPlan
-        ? { planId: buildPlan.id, title: buildPlan.title, todoCount: buildPlan.todos.length }
-        : undefined,
-    );
+    if (earlyUserMessageId === undefined) {
+      this.emitUserMessage(
+        runtimeSession.emit,
+        input,
+        userMessageId,
+        buildPlan
+          ? { planId: buildPlan.id, title: buildPlan.title, todoCount: buildPlan.todos.length }
+          : undefined,
+      );
+    }
     const startedEvent = {
       type: "run.started",
       sessionId: input.sessionId,
       runId: run.id,
+      userMessageId,
       delivery,
     } as const;
-    runtimeSession.emit(
-      input.userMessageId !== undefined
-        ? { ...startedEvent, userMessageId: input.userMessageId }
-        : startedEvent,
-    );
+    runtimeSession.emit(startedEvent);
     // The turn is now streaming: publish the authoritative `busy` status that
     // the composer's lock + border follow. `idle` is published in `finally`,
     // and `retry` arrives (from the normalizer) if the runtime auto-retries.
-    runtimeSession.emit({
-      type: "session.status",
-      sessionId: input.sessionId,
-      status: { type: "busy" },
-    });
+    if (earlyUserMessageId === undefined) {
+      runtimeSession.emit({
+        type: "session.status",
+        sessionId: input.sessionId,
+        status: { type: "busy" },
+      });
+    }
     if (input.planId) {
       this.transitionPlanBuild(runtimeSession, input.planId, "building");
     }
@@ -732,13 +777,13 @@ export class PiSdkRuntime implements AgentRuntime {
    * queued steer/follow-up so the sent message always shows the same way.
    */
   private emitUserMessage(
-    runtimeSession: SdkRuntimeSession,
+    emit: EmitAgentEvent,
     input: PromptAgentInput,
     userMessageId: string,
     planBuild?: { planId: string; title: string; todoCount: number },
   ): void {
     const contextChips = buildContextChips(input.context ?? []);
-    runtimeSession.emit({
+    emit({
       type: "message.started",
       sessionId: input.sessionId,
       messageId: userMessageId,
@@ -751,13 +796,13 @@ export class PiSdkRuntime implements AgentRuntime {
       ...(input.skills && input.skills.length > 0 ? { skills: input.skills } : {}),
       ...(planBuild ? { planBuild } : {}),
     });
-    runtimeSession.emit({
+    emit({
       type: "message.delta",
       sessionId: input.sessionId,
       messageId: userMessageId,
       delta: input.message,
     });
-    runtimeSession.emit({
+    emit({
       type: "message.completed",
       sessionId: input.sessionId,
       messageId: userMessageId,
@@ -805,7 +850,7 @@ export class PiSdkRuntime implements AgentRuntime {
     delivery: NonNullable<PromptAgentInput["delivery"]>,
   ): Promise<void> {
     const userMessageId = input.userMessageId ?? `local-user:${randomUUID()}`;
-    this.emitUserMessage(runtimeSession, input, userMessageId);
+    this.emitUserMessage(runtimeSession.emit, input, userMessageId);
     try {
       const message = await this.composeTurnMessage(runtimeSession, input);
       const images = buildTurnImages(input);
