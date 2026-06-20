@@ -32,12 +32,14 @@ type ModusBotProps = {
    * "Working for Xs" indicator. When false, a calmer idle-led personality loop.
    */
   busy?: boolean;
+  color?: string;
 };
 
 export const ModusBot = memo(function ModusBot({
   className,
   active = true,
   busy = false,
+  color = PURPLE,
 }: ModusBotProps) {
   const [scope, animate] = useAnimate();
   const prefersReduced = useReducedMotion();
@@ -218,7 +220,7 @@ export const ModusBot = memo(function ModusBot({
       ref={scope}
       role="img"
       shapeRendering="crispEdges"
-      style={{ color: PURPLE }}
+      style={{ color }}
       viewBox="0 0 64 64"
       xmlns="http://www.w3.org/2000/svg"
     >

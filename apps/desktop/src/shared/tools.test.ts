@@ -57,4 +57,13 @@ describe("tool render descriptor (single source of truth)", () => {
     expect(toolRenderKind("terminal_run")).toBe("terminal");
     expect(toolRenderKind("todo_write")).toBe("todo");
   });
+
+  it("renders subagent control tools with the Modus logo inside activity folds", () => {
+    expect(getToolUiMeta("wait_agent")).toEqual(
+      expect.objectContaining({ iconName: "modus", activity: "explore" }),
+    );
+    expect(getToolUiMeta("list_agents")).toEqual(
+      expect.objectContaining({ iconName: "modus", activity: "explore" }),
+    );
+  });
 });

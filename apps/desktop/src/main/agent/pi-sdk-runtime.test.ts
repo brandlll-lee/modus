@@ -477,6 +477,46 @@ describe("PiSdkRuntime", () => {
     expect(statuses).toEqual(["busy", "idle"]);
   });
 
+  it("starts subagents without waiting and disposes their runtime after completion", async () => {
+    const parentSessionId = `session-${crypto.randomUUID()}`;
+    const workspaceId = `workspace-${crypto.randomUUID()}`;
+    insertSession(parentSessionId, workspaceId, join(userData, "missing.jsonl"), "Parent chat");
+    let releasePrompt: (() => void) | undefined;
+    const prompt = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          releasePrompt = () => {
+            mocks.emitPiEvent({ type: "message_start", message: { role: "assistant" } });
+            mocks.emitPiEvent({
+              type: "message_update",
+              message: { role: "assistant" },
+              assistantMessageEvent: { type: "text_delta", delta: "done" },
+            });
+            mocks.emitPiEvent({ type: "message_end", message: { role: "assistant" } });
+            resolve();
+          };
+        }),
+    );
+    const childPiSession = createMockPiSession({ prompt });
+    mocks.createAgentSession.mockImplementationOnce(async () => ({ session: childPiSession }));
+    const runtime = new PiSdkRuntime();
+    const window = createWindowStub();
+
+    const result = await runtime.spawnSubagent(window, {
+      parentSessionId,
+      task: "Audit files",
+      prompt: "Audit files and report back.",
+      subagentType: "reviewer",
+    });
+
+    expect(result.status).toBe("running");
+    expect(result.session.parentSessionId).toBe(parentSessionId);
+    await vi.waitFor(() => expect(prompt).toHaveBeenCalled());
+    expect(childPiSession.dispose).not.toHaveBeenCalled();
+    releasePrompt?.();
+    await vi.waitFor(() => expect(childPiSession.dispose).toHaveBeenCalled());
+  });
+
   it("queues a steer message into the live turn without opening a phantom run", async () => {
     const sessionId = `session-${crypto.randomUUID()}`;
     const workspaceId = `workspace-${crypto.randomUUID()}`;

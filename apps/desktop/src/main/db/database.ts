@@ -157,6 +157,18 @@ function migrate(db: DatabaseSync): void {
   addColumn(db, "agent_sessions", "model", "text");
   addColumn(db, "agent_sessions", "pi_session_id", "text");
   addColumn(db, "agent_sessions", "pi_session_file", "text");
+  addColumn(
+    db,
+    "agent_sessions",
+    "parent_session_id",
+    "text references agent_sessions(id) on delete cascade",
+  );
+  addColumn(db, "agent_sessions", "subagent_task", "text");
+  addColumn(db, "agent_sessions", "subagent_type", "text");
+  db.exec(`
+    create index if not exists idx_agent_sessions_parent
+      on agent_sessions(parent_session_id);
+  `);
   // Sidebar project pinning: pinned projects sort to the top (pinned_at breaks ties).
   addColumn(db, "workspaces", "pinned", "integer not null default 0");
   addColumn(db, "workspaces", "pinned_at", "text");

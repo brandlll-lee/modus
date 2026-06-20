@@ -18,6 +18,9 @@ export type AgentSessionInfo = {
   model?: string;
   piSessionId?: string;
   piSessionFile?: string;
+  parentSessionId?: string;
+  subagentTask?: string;
+  subagentType?: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -212,6 +215,13 @@ export type SessionRunStatus =
       nextAt: number;
     };
 
+export type SubagentActivity =
+  | { kind: "tool"; name: string }
+  | { kind: "thinking" }
+  | { kind: "writing" };
+
+export type SubagentStatus = "running" | "completed" | "failed" | "blocked" | "cancelled";
+
 export type AgentEvent =
   | { type: "agent.started"; sessionId: string }
   | { type: "agent.ended"; sessionId: string }
@@ -310,6 +320,22 @@ export type AgentEvent =
   | { type: "checkpoint.created"; sessionId: string; checkpoint: CheckpointInfo }
   | { type: "checkpoint.restored"; sessionId: string; checkpointId: string }
   | { type: "todos.updated"; sessionId: string; todos: TodoItem[] }
+  | {
+      type: "subagent.started";
+      sessionId: string;
+      childSessionId: string;
+      task: string;
+      subagentType: string;
+      background: boolean;
+      model?: string;
+    }
+  | {
+      type: "subagent.updated";
+      sessionId: string;
+      childSessionId: string;
+      status: SubagentStatus;
+      activity?: SubagentActivity;
+    }
   | { type: "session.status"; sessionId: string; status: SessionRunStatus }
   | { type: "runtime.error"; sessionId: string; message: string };
 

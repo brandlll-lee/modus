@@ -21,6 +21,7 @@ export type ToolIconName =
   | "folder"
   | "globe"
   | "mcp"
+  | "modus"
   | "todo"
   | "tool";
 
@@ -48,7 +49,7 @@ export type ToolPermissionDecl = {
  * - `todo`: rendered as the live to-do list, not as a tool row.
  * - `question`: a collapsible "Asked N questions" card listing each question + the chosen answer.
  */
-export type ToolRenderKind = "flat" | "diff" | "terminal" | "todo" | "question";
+export type ToolRenderKind = "flat" | "diff" | "terminal" | "todo" | "question" | "subagent";
 
 /**
  * How a `render: "diff"` tool's diff is derived from its call arguments.
@@ -66,6 +67,8 @@ export type ToolUiMeta = {
   primaryArgKey?: string;
   /** Which renderer card this tool's calls use. Absent ⇒ `flat`. */
   render?: ToolRenderKind;
+  /** Which timeline activity fold this flat tool joins. Absent ⇒ standalone. */
+  activity?: "explore" | "browser" | "shell";
   /** For `render: "diff"` — how to build the diff from the call's arguments. */
   diffSource?: DiffSource;
   /**
@@ -262,6 +265,49 @@ export const ASK_USER_TOOL_UI: ToolUiMeta = {
   render: "question",
 };
 
+/** Agent-facing subagent orchestration tools (custom tools registered at runtime). */
+export const SUBAGENT_TOOL_NAMES = [
+  "task",
+  "list_agents",
+  "send_message",
+  "wait_agent",
+  "close_agent",
+] as const;
+
+export type SubagentToolName = (typeof SUBAGENT_TOOL_NAMES)[number];
+
+export const SUBAGENT_TOOL_UI: Record<SubagentToolName, ToolUiMeta> = {
+  task: {
+    iconName: "tool",
+    verb: "Started subagent",
+    mono: false,
+    primaryArgKey: "description",
+    render: "subagent",
+  },
+  list_agents: { iconName: "modus", verb: "Listed subagents", mono: false, activity: "explore" },
+  send_message: {
+    iconName: "modus",
+    verb: "Messaged subagent",
+    mono: false,
+    primaryArgKey: "target",
+    activity: "explore",
+  },
+  wait_agent: {
+    iconName: "modus",
+    verb: "Waited for subagent",
+    mono: false,
+    primaryArgKey: "target",
+    activity: "explore",
+  },
+  close_agent: {
+    iconName: "modus",
+    verb: "Closed subagent",
+    mono: false,
+    primaryArgKey: "target",
+    activity: "explore",
+  },
+};
+
 /** Agent-facing web tool names (custom tools registered at runtime). */
 export const WEB_TOOL_NAMES = ["web_search", "web_fetch"] as const;
 
@@ -403,6 +449,7 @@ export function getToolUiMeta(name: string): ToolUiMeta | undefined {
     getBuiltinToolUiMeta(name) ??
     TERMINAL_TOOL_UI[name as TerminalToolName] ??
     APP_TOOL_UI[name as AppToolName] ??
+    SUBAGENT_TOOL_UI[name as SubagentToolName] ??
     WEB_TOOL_UI[name as WebToolName] ??
     BROWSER_TOOL_UI[name as BrowserToolName]
   );

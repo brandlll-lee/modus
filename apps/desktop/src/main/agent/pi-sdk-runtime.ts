@@ -19,6 +19,7 @@ import type {
   ModelInfo,
   PlanBuildStatus,
 } from "../../shared/contracts";
+import { SUBAGENT_TOOL_NAMES } from "../../shared/tools";
 import { releaseAgentBrowserControl } from "../browser/browser-service";
 import { formatResolvedContext, resolveContext } from "../context/context-service";
 import { getChangeStatsSince } from "../git/git-service";
@@ -41,6 +42,7 @@ import {
 import {
   createAgentSessionRecord,
   getAgentSession,
+  listSubagentSessions,
   updateAgentSessionMetadata,
   updateAgentSessionStatus,
   updateAgentSessionTitle,
@@ -74,6 +76,7 @@ import { registerBrowserTools } from "./tools/browser-tools";
 import { plansRoot, registerPlanTools } from "./tools/plan-tools";
 import { registerQuestionTools } from "./tools/question-tools";
 import { toolRegistry } from "./tools/registry";
+import { registerSubagentTools } from "./tools/subagent-tools";
 import { registerTerminalTools } from "./tools/terminal-tools";
 import { registerTodoTools } from "./tools/todo-tools";
 import { setAgentToolContext } from "./tools/tool-context";
@@ -117,6 +120,8 @@ type RunOutputTracker = {
  * still carries the final args, so throttling never loses the end state.
  */
 const TOOL_DELTA_THROTTLE_MS = 100;
+const MAX_SUBAGENTS_PER_SESSION = 6;
+const DEFAULT_SUBAGENT_WAIT_MS = 300_000;
 
 /** Dedupe tool definitions by name (chat + plan custom-tool sets overlap). */
 function dedupeToolsByName<T extends { name: string }>(tools: T[]): T[] {
@@ -132,6 +137,7 @@ export class PiSdkRuntime implements AgentRuntime {
   private resumePromises = new Map<string, Promise<SdkRuntimeSession | undefined>>();
   private runOutputTrackers = new Map<string, RunOutputTracker>();
   private cancellingRuns = new Set<string>();
+  private parentSessionByChild = new Map<string, string | null>();
 
   constructor() {
     // Make the agent terminal tools (run/read/list/write/kill), the built-in
@@ -144,6 +150,7 @@ export class PiSdkRuntime implements AgentRuntime {
     registerTodoTools();
     registerPlanTools();
     registerQuestionTools();
+    registerSubagentTools(this);
   }
 
   private emitToWindow(window: BrowserWindowType): EmitAgentEvent {
@@ -151,13 +158,39 @@ export class PiSdkRuntime implements AgentRuntime {
       recordAgentEvent(event);
       window.webContents.send(IPC_CHANNELS.agentEvent, event);
       maybeNotifyAgentEvent(window, event);
+      this.emitSubagentUpdate(window, event);
     };
   }
 
   private emitVolatileToWindow(window: BrowserWindowType): EmitAgentEvent {
     return (event) => {
       window.webContents.send(IPC_CHANNELS.agentEvent, event);
+      this.emitSubagentUpdate(window, event);
     };
+  }
+
+  private parentSessionIdFor(sessionId: string): string | undefined {
+    if (this.parentSessionByChild.has(sessionId)) {
+      return this.parentSessionByChild.get(sessionId) ?? undefined;
+    }
+    const parentSessionId = getAgentSession(sessionId)?.parentSessionId ?? null;
+    this.parentSessionByChild.set(sessionId, parentSessionId);
+    return parentSessionId ?? undefined;
+  }
+
+  private emitSubagentUpdate(window: BrowserWindowType, childEvent: AgentEvent): void {
+    const parentSessionId = this.parentSessionIdFor(childEvent.sessionId);
+    if (!parentSessionId) {
+      return;
+    }
+    const event = subagentUpdateFromChildEvent(parentSessionId, childEvent);
+    if (!event) {
+      return;
+    }
+    if (shouldPersistSubagentUpdate(childEvent)) {
+      recordAgentEvent(event);
+    }
+    window.webContents.send(IPC_CHANNELS.agentEvent, event);
   }
 
   private noteAssistantOutput(event: Parameters<EmitAgentEvent>[0]): void {
@@ -519,6 +552,9 @@ export class PiSdkRuntime implements AgentRuntime {
       workspaceId: runtimeSession.info.workspaceId,
       cwd: runtimeSession.info.cwd,
       sessionId: runtimeSession.info.id,
+      ...(runtimeSession.info.parentSessionId
+        ? { parentSessionId: runtimeSession.info.parentSessionId }
+        : {}),
       window,
       emit: runtimeSession.emit,
     });
@@ -527,8 +563,11 @@ export class PiSdkRuntime implements AgentRuntime {
       // Per-turn mode: switch the active tool set (plan = read-only research +
       // plan_write; build = full chat tools). setActiveToolsByName also rebuilds
       // the system prompt for the new set, and takes effect on this turn.
+      const toolOverrides = runtimeSession.info.parentSessionId
+        ? { disable: [...SUBAGENT_TOOL_NAMES] }
+        : undefined;
       runtimeSession.session.setActiveToolsByName(
-        toolRegistry.resolveActiveTools(profileForMode(input.mode)),
+        toolRegistry.resolveActiveTools(profileForMode(input.mode), toolOverrides),
       );
 
       // Per-turn model + thinking: the composer's current selection travels with
@@ -885,6 +924,137 @@ export class PiSdkRuntime implements AgentRuntime {
     }
   }
 
+  async spawnSubagent(
+    window: BrowserWindowType,
+    input: {
+      parentSessionId: string;
+      task: string;
+      prompt: string;
+      subagentType: string;
+    },
+  ): Promise<{
+    session: AgentSessionInfo;
+    status: "running";
+  }> {
+    const parent = getAgentSession(input.parentSessionId);
+    if (!parent) {
+      throw new Error(`Parent session not found: ${input.parentSessionId}`);
+    }
+    if (parent.parentSessionId) {
+      throw new Error("Subagents cannot start nested subagents.");
+    }
+    if (listSubagentSessions(parent.id).length >= MAX_SUBAGENTS_PER_SESSION) {
+      throw new Error(`This session already has ${MAX_SUBAGENTS_PER_SESSION} subagents.`);
+    }
+
+    const emit = this.emitToWindow(window);
+    const session = await this.create(window, {
+      workspaceId: parent.workspaceId,
+      cwd: parent.cwd,
+      title: input.task,
+      ...(parent.model ? { model: parent.model } : {}),
+      parentSessionId: parent.id,
+      subagentTask: input.task,
+      subagentType: input.subagentType,
+    });
+    this.parentSessionByChild.set(session.id, parent.id);
+    emit({
+      type: "subagent.started",
+      sessionId: parent.id,
+      childSessionId: session.id,
+      task: input.task,
+      subagentType: input.subagentType,
+      background: true,
+      ...(session.model ? { model: session.model } : {}),
+    });
+
+    const run = this.prompt(window, {
+      sessionId: session.id,
+      message: input.prompt,
+      context: [],
+      delivery: "normal",
+      userMessageId: `subagent-user:${randomUUID()}`,
+      ...(parent.model ? { model: parent.model } : {}),
+    });
+
+    void run
+      .catch(() => {
+        emit({
+          type: "subagent.updated",
+          sessionId: parent.id,
+          childSessionId: session.id,
+          status: "failed",
+        });
+      })
+      .finally(() => {
+        void this.dispose(session.id).catch(() => undefined);
+      });
+    return { session, status: "running" };
+  }
+
+  listSubagents(parentSessionId: string): AgentSessionInfo[] {
+    return listSubagentSessions(parentSessionId);
+  }
+
+  async sendSubagentMessage(
+    window: BrowserWindowType,
+    input: { parentSessionId: string; target: string; message: string },
+  ): Promise<void> {
+    const child = this.requireChildSession(input.parentSessionId, input.target);
+    const delivery = isSubagentBusy(child.status) ? "follow-up" : "normal";
+    try {
+      await this.prompt(window, {
+        sessionId: input.target,
+        message: input.message,
+        context: [],
+        delivery,
+        userMessageId: `subagent-user:${randomUUID()}`,
+      });
+    } finally {
+      if (delivery === "normal") {
+        await this.dispose(input.target).catch(() => undefined);
+      }
+    }
+  }
+
+  async waitSubagent(
+    parentSessionId: string,
+    input: { target?: string; timeoutMs?: number },
+  ): Promise<{ timedOut: boolean; agents: AgentSessionInfo[] }> {
+    const deadline = Date.now() + (input.timeoutMs ?? DEFAULT_SUBAGENT_WAIT_MS);
+    while (true) {
+      const agents = input.target
+        ? [this.requireChildSession(parentSessionId, input.target)]
+        : listSubagentSessions(parentSessionId);
+      if (agents.every((agent) => !isSubagentBusy(agent.status))) {
+        return { timedOut: false, agents };
+      }
+      if (Date.now() >= deadline) {
+        return { timedOut: true, agents };
+      }
+      await sleep(250);
+    }
+  }
+
+  async closeSubagent(
+    parentSessionId: string,
+    target: string,
+  ): Promise<AgentSessionInfo | undefined> {
+    const child = this.requireChildSession(parentSessionId, target);
+    await this.abort(child.id);
+    updateAgentSessionStatus(child.id, "cancelled");
+    await this.dispose(child.id);
+    return getAgentSession(child.id);
+  }
+
+  private requireChildSession(parentSessionId: string, childSessionId: string): AgentSessionInfo {
+    const child = getAgentSession(childSessionId);
+    if (!child || child.parentSessionId !== parentSessionId) {
+      throw new Error(`Unknown subagent: ${childSessionId}`);
+    }
+    return child;
+  }
+
   async abort(sessionId: string): Promise<void> {
     const runtimeSession = this.sessions.get(sessionId);
     if (!runtimeSession) {
@@ -923,6 +1093,7 @@ export class PiSdkRuntime implements AgentRuntime {
     }
 
     const runtimeSession = this.sessions.get(sessionId);
+    this.parentSessionByChild.delete(sessionId);
     if (!runtimeSession) {
       return;
     }
@@ -1081,6 +1252,57 @@ function shouldPublishContextUsage(event: { type?: unknown }): boolean {
     event.type === "tool_execution_end" ||
     event.type === "compaction_end"
   );
+}
+
+function subagentUpdateFromChildEvent(
+  parentSessionId: string,
+  event: AgentEvent,
+): Extract<AgentEvent, { type: "subagent.updated" }> | undefined {
+  const base = {
+    type: "subagent.updated" as const,
+    sessionId: parentSessionId,
+    childSessionId: event.sessionId,
+  };
+  switch (event.type) {
+    case "run.started":
+      return { ...base, status: "running" };
+    case "run.completed":
+      return { ...base, status: "completed" };
+    case "run.failed":
+      return { ...base, status: "failed" };
+    case "run.blocked":
+      return { ...base, status: "blocked" };
+    case "run.cancelled":
+      return { ...base, status: "cancelled" };
+    case "tool.started":
+    case "tool.delta":
+      return { ...base, status: "running", activity: { kind: "tool", name: event.toolName } };
+    case "thinking.delta":
+      return { ...base, status: "running", activity: { kind: "thinking" } };
+    case "message.delta":
+      return { ...base, status: "running", activity: { kind: "writing" } };
+    default:
+      return undefined;
+  }
+}
+
+function shouldPersistSubagentUpdate(event: AgentEvent): boolean {
+  return (
+    event.type === "run.started" ||
+    event.type === "run.completed" ||
+    event.type === "run.failed" ||
+    event.type === "run.blocked" ||
+    event.type === "run.cancelled" ||
+    event.type === "tool.started"
+  );
+}
+
+function isSubagentBusy(status: AgentSessionInfo["status"]): boolean {
+  return status === "starting" || status === "running";
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**

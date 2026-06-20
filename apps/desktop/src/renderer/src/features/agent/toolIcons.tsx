@@ -13,9 +13,10 @@ import {
 } from "@tabler/icons-react";
 import type { ReactNode } from "react";
 import type { ToolIconName } from "../../../../shared/tools";
+import { ModusBot } from "../../components/ui/ModusBot";
 
 /** Maps the shared, serializable icon names to concrete Tabler components. */
-const TOOL_ICONS: Record<ToolIconName, typeof IconFile> = {
+const TOOL_ICONS: Record<Exclude<ToolIconName, "modus">, typeof IconFile> = {
   file: IconFile,
   terminal: IconTerminal2,
   pencil: IconPencil,
@@ -30,6 +31,9 @@ const TOOL_ICONS: Record<ToolIconName, typeof IconFile> = {
 };
 
 export function toolIcon(name: ToolIconName): ReactNode {
+  if (name === "modus") {
+    return <ModusBot active={false} className="size-3.5" color="currentColor" />;
+  }
   const Glyph = TOOL_ICONS[name] ?? IconTool;
   return <Glyph size={14} stroke={1.7} />;
 }
