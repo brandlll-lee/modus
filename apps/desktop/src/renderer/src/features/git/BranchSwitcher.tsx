@@ -1,7 +1,8 @@
 import { Menu } from "@base-ui/react/menu";
-import { IconCheck, IconLoader2 } from "@tabler/icons-react";
+import { IconCheck } from "@tabler/icons-react";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import type { GitBranchSummary } from "../../../../shared/contracts";
+import { ShinyText } from "../../components/ui/ShinyText";
 
 type BranchSwitcherProps = {
   /** Repo working dir whose branches are listed / checked out. Undefined → disabled. */
@@ -97,13 +98,13 @@ export function BranchSwitcher({
                   }}
                 >
                   <span className="flex size-4 shrink-0 items-center justify-center text-accent">
-                    {busy === branch.name ? (
-                      <IconLoader2 className="animate-spin" size={13} stroke={1.8} />
-                    ) : branch.current ? (
-                      <IconCheck size={14} stroke={2} />
-                    ) : null}
+                    {branch.current ? <IconCheck size={14} stroke={2} /> : null}
                   </span>
-                  <span className="min-w-0 flex-1 truncate">{branch.name}</span>
+                  {busy === branch.name ? (
+                    <ShinyText className="min-w-0 flex-1 truncate">{branch.name}</ShinyText>
+                  ) : (
+                    <span className="min-w-0 flex-1 truncate">{branch.name}</span>
+                  )}
                   {branch.current ? (
                     <span className="shrink-0 text-2xs text-fg-faint">current</span>
                   ) : null}

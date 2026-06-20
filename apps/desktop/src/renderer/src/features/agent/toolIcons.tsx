@@ -5,6 +5,7 @@ import {
   IconFolder,
   IconListCheck,
   IconPencil,
+  IconPlugConnected,
   IconSearch,
   IconTerminal2,
   IconTool,
@@ -23,6 +24,7 @@ const TOOL_ICONS: Record<ToolIconName, typeof IconFile> = {
   "file-search": IconFileSearch,
   folder: IconFolder,
   globe: IconWorld,
+  mcp: IconPlugConnected,
   todo: IconListCheck,
   tool: IconTool,
 };

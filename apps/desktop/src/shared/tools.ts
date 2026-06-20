@@ -20,6 +20,7 @@ export type ToolIconName =
   | "file-search"
   | "folder"
   | "globe"
+  | "mcp"
   | "todo"
   | "tool";
 
@@ -381,7 +382,7 @@ export function getMcpToolUiMeta(name: string): ToolUiMeta {
   const rest = name.slice(MCP_TOOL_PREFIX.length);
   const separator = rest.indexOf("_");
   const server = separator > 0 ? rest.slice(0, separator) : rest;
-  return { iconName: "tool", verb: server, mono: true };
+  return { iconName: "mcp", verb: server, mono: true };
 }
 
 /** UI metadata for any known tool (builtin, terminal, web, to-do, or MCP-bridged). */

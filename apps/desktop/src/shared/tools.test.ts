@@ -10,7 +10,7 @@ describe("MCP tool UI metadata", () => {
 
   it("uses the server name as the verb", () => {
     expect(getMcpToolUiMeta("mcp_linear_create_issue")).toEqual({
-      iconName: "tool",
+      iconName: "mcp",
       verb: "linear",
       mono: true,
     });

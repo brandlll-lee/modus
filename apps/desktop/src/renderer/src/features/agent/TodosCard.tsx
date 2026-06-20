@@ -9,8 +9,8 @@ import {
 import { useState } from "react";
 import type { TodoItem, TodoStatus } from "../../../../shared/contracts";
 import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
+import { ShinyText } from "../../components/ui/ShinyText";
 import { cn } from "../../lib/cn";
-import { ShinyText } from "./TextEffects";
 
 /**
  * Agent task-list snapshot (Cursor-style To-dos card). The timeline renders one

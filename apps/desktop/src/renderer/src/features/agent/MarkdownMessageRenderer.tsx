@@ -93,7 +93,7 @@ function buildMermaidConfig(theme: ThemeMode): MermaidConfig {
  * `className`, etc. Passing fresh inline objects on every render busts that memo
  * and forces a full re-parse/re-render of ALL blocks per streamed frame, which
  * (a) re-mounts word spans → the fade-in restarts out of order, and
- * (b) saturates the main thread → text + tool spinner stutter.
+ * (b) saturates the main thread → text + tool loading stutter.
  * Hoisting these to module-level constants keeps the references stable so only
  * the last streaming block re-renders incrementally.
  * Refs: https://streamdown.ai/docs/memoization, vercel/streamdown#435

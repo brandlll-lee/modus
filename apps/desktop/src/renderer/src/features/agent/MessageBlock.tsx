@@ -5,7 +5,6 @@ import {
   IconFolder,
   IconGitBranch,
   IconLayoutList,
-  IconLoader2,
   IconMessage2,
   IconPencil,
   IconSearch,
@@ -21,6 +20,7 @@ import type {
 } from "../../../../shared/contracts";
 import { CopyButton } from "../../components/ui/CopyButton";
 import { ImageThumb } from "../../components/ui/ImageViewer";
+import { ShinyText } from "../../components/ui/ShinyText";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
 import { formatClock } from "../../lib/formatClock";
@@ -186,7 +186,7 @@ type UserMessageEditorProps = {
  * resend). Replaces the bubble with a full-width composer-like field; Send
  * rolls the session back to this point and re-prompts with the edited text,
  * Cancel (or Esc) returns to the read-only bubble. While the rollback is in
- * flight the editor locks and shows a spinner; failures surface inline and
+ * flight the editor locks and shows an inline loading label; failures surface inline and
  * keep the draft so the action can be retried.
  */
 function UserMessageEditor({
@@ -253,7 +253,7 @@ function UserMessageEditor({
     setError(undefined);
     try {
       // On success this block unmounts (the timeline reloads truncated
-      // events), so the spinner holds until the rolled-back view replaces it.
+      // events), so the loading label holds until the rolled-back view replaces it.
       await onSend(messageFromEditorValue(draft, selectedSkills), contextItems, selectedSkills);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -478,8 +478,7 @@ function UserMessageEditor({
           onClick={() => void send()}
           type="button"
         >
-          {sending ? <IconLoader2 className="animate-spin" size={12} stroke={2.2} /> : null}
-          Send
+          {sending ? <ShinyText className="text-canvas">Sending…</ShinyText> : "Send"}
         </button>
       </div>
     </m.div>

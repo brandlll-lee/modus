@@ -1,10 +1,6 @@
-import {
-  IconCircleCheck,
-  IconCircleDashed,
-  IconLayoutList,
-  IconLoader2,
-} from "@tabler/icons-react";
+import { IconCircleCheck, IconCircleDashed, IconLayoutList } from "@tabler/icons-react";
 import type { PlanBuildStatus, PlanRef } from "../../../../shared/contracts";
+import { ShinyText } from "../../components/ui/ShinyText";
 import { cn } from "../../lib/cn";
 import { MarkdownMessage } from "../agent/MarkdownMessage";
 import { effectiveBuildStatus } from "./planState";
@@ -105,8 +101,8 @@ function BuildStatusBadge({ status }: { status: PlanBuildStatus }) {
   if (status === "building") {
     return (
       <span className="flex h-6 shrink-0 items-center gap-1.5 rounded-md bg-chip px-2 text-fg-muted text-xs">
-        <IconLoader2 className="animate-spin" size={13} stroke={2} />
-        Building…
+        <IconCircleDashed size={13} stroke={2} />
+        <ShinyText>Building…</ShinyText>
       </span>
     );
   }

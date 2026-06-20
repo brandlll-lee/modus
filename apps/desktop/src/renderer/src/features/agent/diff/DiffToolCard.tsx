@@ -1,11 +1,11 @@
-import { IconAlertCircle, IconChevronRight, IconCopy, IconLoader2 } from "@tabler/icons-react";
+import { IconAlertCircle, IconChevronRight, IconCopy } from "@tabler/icons-react";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { getToolUiMeta } from "../../../../../shared/tools";
 import { CollapsibleMotion } from "../../../components/ui/CollapsibleMotion";
 import { NumberTicker } from "../../../components/ui/NumberTicker";
+import { ShinyText } from "../../../components/ui/ShinyText";
 import { Tooltip } from "../../../components/ui/Tooltip";
 import { cn } from "../../../lib/cn";
-import { ShinyText } from "../TextEffects";
 import { toolIcon } from "../toolIcons";
 import { type InlineDiff, inlineDiffFromToolArgs, toolTargetPath } from "./computeInlineDiff";
 import { InlineDiffView } from "./InlineDiff";
@@ -146,14 +146,8 @@ export const DiffToolCard = memo(
           <span className="flex shrink-0 items-center text-fg-faint">
             {isError ? (
               <IconAlertCircle className="text-danger" size={14} stroke={1.7} />
-            ) : isComplete ? (
-              toolIcon(meta?.iconName ?? "pencil")
             ) : (
-              <IconLoader2
-                className="animate-spin text-fg-subtle will-change-transform"
-                size={14}
-                stroke={1.7}
-              />
+              toolIcon(meta?.iconName ?? "pencil")
             )}
           </span>
 

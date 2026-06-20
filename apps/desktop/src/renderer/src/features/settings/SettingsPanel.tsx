@@ -13,7 +13,6 @@ import {
   IconFilter,
   IconGavel,
   IconKey,
-  IconLoader2,
   IconMoon,
   IconPalette,
   IconPlugConnected,
@@ -44,6 +43,7 @@ import type {
   SkillInfo,
 } from "../../../../shared/contracts";
 import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
+import { ShinyText } from "../../components/ui/ShinyText";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
 import {
@@ -1091,12 +1091,8 @@ function McpSettingsPanel({ cwd }: { cwd: string | undefined }) {
               onClick={() => void refresh(true)}
               type="button"
             >
-              {syncing ? (
-                <IconLoader2 className="animate-spin" size={14} stroke={1.7} />
-              ) : (
-                <IconRefresh size={14} stroke={1.7} />
-              )}
-              {syncing ? "Connecting…" : "Reload"}
+              <IconRefresh size={14} stroke={1.7} />
+              {syncing ? <ShinyText>Connecting…</ShinyText> : "Reload"}
             </button>
             <button
               className="flex h-8 items-center gap-1.5 rounded-md bg-fg px-2.5 text-canvas text-xs transition-colors hover:bg-fg-muted disabled:opacity-40"
@@ -1425,8 +1421,13 @@ function McpServerForm({
             disabled={!canSave || busy}
             type="submit"
           >
-            {busy ? <IconLoader2 className="animate-spin" size={13} stroke={1.8} /> : null}
-            {busy ? "Connecting…" : isNew ? "Add server" : "Save changes"}
+            {busy ? (
+              <ShinyText className="text-canvas">Connecting…</ShinyText>
+            ) : isNew ? (
+              "Add server"
+            ) : (
+              "Save changes"
+            )}
           </button>
         </div>
       </div>
@@ -1645,12 +1646,8 @@ function RulesSettingsPanel({ cwd }: { cwd: string | undefined }) {
             onClick={() => void refresh()}
             type="button"
           >
-            {loading ? (
-              <IconLoader2 className="animate-spin" size={14} stroke={1.7} />
-            ) : (
-              <IconRefresh size={14} stroke={1.7} />
-            )}
-            Refresh
+            <IconRefresh size={14} stroke={1.7} />
+            {loading ? <ShinyText>Refreshing…</ShinyText> : "Refresh"}
           </button>
         }
         description="Project rules are injected into every agent session automatically when marked Always Apply (AGENTS.md, CLAUDE.md, .cursorrules, or .cursor/rules/*.mdc with alwaysApply: true). Other rules stay available through the @rules context attachment."
@@ -1665,9 +1662,8 @@ function RulesSettingsPanel({ cwd }: { cwd: string | undefined }) {
             <p className="text-sm text-fg-muted">Open a workspace to discover project rules.</p>
           </div>
         ) : loading && rules.length === 0 ? (
-          <div className="flex items-center gap-2 rounded-lg border border-hairline-soft bg-panel px-5 py-6 text-sm text-fg-muted">
-            <IconLoader2 className="animate-spin" size={15} stroke={1.7} />
-            Scanning workspace…
+          <div className="rounded-lg border border-hairline-soft bg-panel px-5 py-6 text-sm text-fg-muted">
+            <ShinyText>Scanning workspace…</ShinyText>
           </div>
         ) : rules.length === 0 ? (
           <div className="flex flex-col items-start gap-2 rounded-lg border border-hairline-soft bg-panel px-5 py-6">
@@ -1895,8 +1891,7 @@ function SkillsSettingsPanel({ cwd }: { cwd: string | undefined }) {
               onClick={() => void saveSkill()}
               type="button"
             >
-              {saving ? <IconLoader2 className="animate-spin" size={14} stroke={1.7} /> : null}
-              Create skill
+              {saving ? <ShinyText className="text-canvas">Creating…</ShinyText> : "Create skill"}
             </button>
           </div>
         </div>
@@ -1908,9 +1903,8 @@ function SkillsSettingsPanel({ cwd }: { cwd: string | undefined }) {
             <p className="text-sm text-fg-muted">Open a workspace to discover and create skills.</p>
           </div>
         ) : loading && skills.length === 0 ? (
-          <div className="flex items-center gap-2 rounded-lg border border-hairline-soft bg-panel px-5 py-6 text-sm text-fg-muted">
-            <IconLoader2 className="animate-spin" size={15} stroke={1.7} />
-            Discovering skills…
+          <div className="rounded-lg border border-hairline-soft bg-panel px-5 py-6 text-sm text-fg-muted">
+            <ShinyText>Discovering skills…</ShinyText>
           </div>
         ) : skills.length === 0 ? (
           <div className="flex flex-col items-start gap-2 rounded-lg border border-hairline-soft bg-panel px-5 py-6">
@@ -2198,9 +2192,8 @@ function ProviderDetail({
           </div>
           <div className="flex items-center gap-2">
             {busy ? (
-              <span className="flex items-center gap-1.5 rounded-md bg-chip px-2.5 py-1 text-xs text-fg-muted">
-                <IconLoader2 className="animate-spin" size={13} stroke={1.8} />
-                Saving
+              <span className="rounded-md bg-chip px-2.5 py-1 text-xs text-fg-muted">
+                <ShinyText>Saving</ShinyText>
               </span>
             ) : (
               <ReadOnlyPill>{modelResultLabel(filteredModels.length)}</ReadOnlyPill>
@@ -2325,8 +2318,13 @@ function ProviderCredentials({
           disabled={busy || !canSubmit}
           type="submit"
         >
-          {busy ? <IconLoader2 className="animate-spin" size={13} stroke={1.8} /> : null}
-          {detail.configured ? "Update" : "Connect"}
+          {busy ? (
+            <ShinyText className="text-canvas">Connecting…</ShinyText>
+          ) : detail.configured ? (
+            "Update"
+          ) : (
+            "Connect"
+          )}
         </button>
       </div>
 
@@ -2579,10 +2577,7 @@ function ProviderDetailLoading() {
       initial={{ opacity: 0, y: 8 }}
       transition={{ duration: 0.16, ease: "easeOut" }}
     >
-      <div className="flex items-center gap-2 text-sm text-fg-muted">
-        <IconLoader2 className="animate-spin text-fg-faint" size={16} stroke={1.8} />
-        Loading provider
-      </div>
+      <ShinyText className="text-sm">Loading provider</ShinyText>
     </m.section>
   );
 }

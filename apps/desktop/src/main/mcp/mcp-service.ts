@@ -319,7 +319,10 @@ async function disposeServer(name: string): Promise<void> {
  * Unchanged servers keep their connections; changed/removed ones are torn
  * down; new ones connect in parallel. Returns the resulting status list.
  */
-export async function syncWorkspaceMcp(cwd: string): Promise<McpServerInfo[]> {
+export async function syncWorkspaceMcp(
+  cwd: string,
+  options: { waitForConnections?: boolean } = {},
+): Promise<McpServerInfo[]> {
   const configs = loadWorkspaceMcpConfig(cwd).servers.map((config) =>
     config.transport === "stdio" && config.cwd === undefined ? { ...config, cwd } : config,
   );
@@ -351,7 +354,12 @@ export async function syncWorkspaceMcp(cwd: string): Promise<McpServerInfo[]> {
       connections.push(connectServer(managed));
     }
   }
-  await Promise.all(connections);
+  const connect = Promise.all(connections);
+  if (options.waitForConnections === false) {
+    void connect.catch(() => {});
+  } else {
+    await connect;
+  }
 
   return listMcpServers();
 }
@@ -385,7 +393,7 @@ export async function upsertMcpServer(
   input: McpServerUpsertInput,
 ): Promise<McpServerInfo[]> {
   upsertMcpServerEntry(cwd, input);
-  return await syncWorkspaceMcp(cwd);
+  return await syncWorkspaceMcp(cwd, { waitForConnections: false });
 }
 
 /** Delete a server from its config file, then reconcile connections. */

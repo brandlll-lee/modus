@@ -1,6 +1,7 @@
-import { IconArrowBackUp, IconCheck, IconLoader2 } from "@tabler/icons-react";
+import { IconArrowBackUp, IconCheck } from "@tabler/icons-react";
 import { useEffect, useRef, useState } from "react";
 import type { FileChangeStat, WorkingChangeStats } from "../../../../../shared/contracts";
+import { ShinyText } from "../../../components/ui/ShinyText";
 import { cn } from "../../../lib/cn";
 
 /**
@@ -166,14 +167,20 @@ export function TurnChangesCard({
             title="Restore files to before this turn"
             type="button"
           >
-            {phase === "working" ? (
-              <IconLoader2 className="animate-spin" size={12} stroke={1.8} />
-            ) : phase === "done" ? (
+            {phase === "done" ? (
               <IconCheck size={12} stroke={1.9} />
             ) : (
               <IconArrowBackUp size={12} stroke={1.8} />
             )}
-            {phase === "confirming" ? "Restore this turn?" : phase === "done" ? "Restored" : "Undo"}
+            {phase === "working" ? (
+              <ShinyText>Restoring…</ShinyText>
+            ) : phase === "confirming" ? (
+              "Restore this turn?"
+            ) : phase === "done" ? (
+              "Restored"
+            ) : (
+              "Undo"
+            )}
           </button>
         ) : null}
       </div>

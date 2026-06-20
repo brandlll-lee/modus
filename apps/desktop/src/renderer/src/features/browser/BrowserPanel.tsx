@@ -5,7 +5,6 @@ import {
   IconChevronUp,
   IconDeviceDesktopCode,
   IconExternalLink,
-  IconLoader2,
   IconLock,
   IconLockOpen,
   IconPlus,
@@ -26,6 +25,7 @@ import {
 } from "react";
 import type { BrowserBounds, BrowserEvent, BrowserTabInfo } from "../../../../shared/contracts";
 import { useNativeSurfaceSuppressed } from "../../components/ui/nativeSurface";
+import { ShinyText } from "../../components/ui/ShinyText";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
 import { computeBrowserViewBounds, sameBrowserBounds } from "./browserBounds";
@@ -350,11 +350,7 @@ export function BrowserPanel({ active, workspaceId }: BrowserPanelProps) {
           label="Reload (F5)"
           onClick={() => activeTab && void window.modus.browser.reload({ tabId: activeTab.id })}
         >
-          <IconRefresh
-            className={cn(activeTab?.loading && "animate-spin")}
-            size={15}
-            stroke={1.65}
-          />
+          <IconRefresh size={15} stroke={1.65} />
         </BrowserIconButton>
         <form className="mx-1 min-w-0 flex-1" onSubmit={(event) => void submitAddress(event)}>
           <div className="relative">
@@ -458,7 +454,7 @@ export function BrowserPanel({ active, workspaceId }: BrowserPanelProps) {
 
 function AddressIcon({ tab }: { tab: BrowserTabInfo | undefined }) {
   if (tab?.loading) {
-    return <IconLoader2 className="animate-spin" size={13} stroke={1.8} />;
+    return <IconWorld size={13} stroke={1.8} />;
   }
   const url = tab?.url ?? "";
   if (/^https:/i.test(url)) {
@@ -507,18 +503,18 @@ function BrowserTabStrip({
               title={tab.title || tab.url}
               type="button"
             >
-              {tab.loading ? (
-                <IconLoader2
-                  className="shrink-0 animate-spin text-fg-faint"
-                  size={13}
-                  stroke={1.8}
-                />
-              ) : tab.favicon ? (
+              {tab.favicon ? (
                 <img alt="" className="size-3.5 shrink-0 rounded-[3px]" src={tab.favicon} />
               ) : (
                 <IconWorld className="shrink-0 text-fg-faint" size={13} stroke={1.65} />
               )}
-              <span className="min-w-0 flex-1 truncate text-xs">{tab.title || "New tab"}</span>
+              {tab.loading ? (
+                <ShinyText className="min-w-0 flex-1 truncate text-xs">
+                  {tab.title || "Loading…"}
+                </ShinyText>
+              ) : (
+                <span className="min-w-0 flex-1 truncate text-xs">{tab.title || "New tab"}</span>
+              )}
             </button>
             <button
               aria-label="Close tab"

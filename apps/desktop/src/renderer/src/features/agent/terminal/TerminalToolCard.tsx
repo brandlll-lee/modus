@@ -1,8 +1,8 @@
 import { IconAlertCircle, IconCheck, IconChevronRight, IconTerminal2 } from "@tabler/icons-react";
 import { memo, useMemo, useState } from "react";
 import { CollapsibleMotion } from "../../../components/ui/CollapsibleMotion";
+import { ShinyText } from "../../../components/ui/ShinyText";
 import { cn } from "../../../lib/cn";
-import { ShinyText } from "../TextEffects";
 import { parseTerminalOutput } from "./parseTerminal";
 
 type TerminalToolCardProps = {

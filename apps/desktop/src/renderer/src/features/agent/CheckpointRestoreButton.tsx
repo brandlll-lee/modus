@@ -1,5 +1,6 @@
-import { IconCheck, IconLoader2, IconRestore } from "@tabler/icons-react";
+import { IconCheck, IconRestore } from "@tabler/icons-react";
 import { useEffect, useRef, useState } from "react";
+import { ShinyText } from "../../components/ui/ShinyText";
 import { cn } from "../../lib/cn";
 
 type CheckpointRestoreButtonProps = {
@@ -63,7 +64,8 @@ export function CheckpointRestoreButton({ checkpointId, onRestore }: CheckpointR
     <button
       aria-label="Restore checkpoint"
       className={cn(
-        "flex size-6 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-hover hover:text-fg-muted",
+        "flex h-6 items-center rounded-md text-fg-faint transition-colors hover:bg-hover hover:text-fg-muted",
+        phase === "restoring" ? "gap-1 px-1.5" : "w-6 justify-center",
         phase === "restoring" && "cursor-wait text-fg-muted",
       )}
       disabled={phase === "restoring"}
@@ -72,7 +74,10 @@ export function CheckpointRestoreButton({ checkpointId, onRestore }: CheckpointR
       type="button"
     >
       {phase === "restoring" ? (
-        <IconLoader2 className="animate-spin" size={13} stroke={1.8} />
+        <>
+          <IconRestore size={13} stroke={1.8} />
+          <ShinyText className="text-xs">Restoring…</ShinyText>
+        </>
       ) : phase === "done" ? (
         <IconCheck size={13} stroke={1.9} />
       ) : (

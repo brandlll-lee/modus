@@ -12,7 +12,7 @@ type Terminal = InstanceType<typeof Terminal>;
  * needs the *rendered text* it would see on screen. Feeding the raw bytes
  * (cursor moves, carriage returns, line clears) into a real VT emulator and
  * reading back its grid is the only correct way to get that: progress bars and
- * spinners that redraw in place collapse to their final line instead of being
+ * in-place progress redraws collapse to their final line instead of being
  * appended frame-by-frame (the old `stripAnsi`-and-concatenate approach turned
  * one `npm install` into thousands of duplicated lines).
  *

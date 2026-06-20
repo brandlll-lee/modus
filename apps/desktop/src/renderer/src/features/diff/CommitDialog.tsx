@@ -1,7 +1,8 @@
 import { Dialog } from "@base-ui/react/dialog";
-import { IconCloudUpload, IconGitBranch, IconGitCommit, IconLoader2 } from "@tabler/icons-react";
+import { IconCloudUpload, IconGitBranch, IconGitCommit } from "@tabler/icons-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import type { GitStatusSummary } from "../../../../shared/contracts";
+import { ShinyText } from "../../components/ui/ShinyText";
 import { cn } from "../../lib/cn";
 
 type CommitAction = "commit" | "commit-and-push" | "push";
@@ -182,16 +183,24 @@ function ActionRow({
     <button
       className={cn(
         "flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm transition-colors",
-        disabled ? "cursor-not-allowed text-fg-faint" : "text-fg-muted hover:bg-hover hover:text-fg",
+        disabled
+          ? "cursor-not-allowed text-fg-faint"
+          : "text-fg-muted hover:bg-hover hover:text-fg",
       )}
       disabled={disabled || busy}
       onClick={onClick}
       type="button"
     >
-      <span className={cn("flex size-4 items-center justify-center", !disabled && "text-fg-subtle")}>
-        {busy ? <IconLoader2 className="animate-spin" size={16} stroke={1.7} /> : icon}
+      <span
+        className={cn("flex size-4 items-center justify-center", !disabled && "text-fg-subtle")}
+      >
+        {icon}
       </span>
-      <span className="flex-1">{label}</span>
+      {busy ? (
+        <ShinyText className="flex-1">{label}</ShinyText>
+      ) : (
+        <span className="flex-1">{label}</span>
+      )}
       {shortcut ? <span className="font-mono text-2xs text-fg-faint">{shortcut}</span> : null}
     </button>
   );

@@ -1,11 +1,11 @@
-import { IconAlertCircle, IconChevronRight, IconLoader2 } from "@tabler/icons-react";
+import { IconAlertCircle, IconChevronRight } from "@tabler/icons-react";
 import { memo, type ReactNode, useState } from "react";
 import { getToolUiMeta, type ToolUiMeta, toolRenderKind } from "../../../../shared/tools";
 import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
+import { ShinyText } from "../../components/ui/ShinyText";
 import { cn } from "../../lib/cn";
 import { DiffToolCard } from "./diff/DiffToolCard";
 import { QuestionToolCard } from "./QuestionToolCard";
-import { ShinyText } from "./TextEffects";
 import { TerminalToolCard, type TerminalToolVariant } from "./terminal/TerminalToolCard";
 import { toolIcon } from "./toolIcons";
 
@@ -108,17 +108,7 @@ function FlatToolRow({
   const body = (
     <>
       <span className="shrink-0 text-fg-faint">
-        {isError ? (
-          <IconAlertCircle className="text-danger" size={14} stroke={1.7} />
-        ) : isComplete ? (
-          view.icon
-        ) : (
-          <IconLoader2
-            className="animate-spin text-fg-subtle will-change-transform"
-            size={14}
-            stroke={1.7}
-          />
-        )}
+        {isError ? <IconAlertCircle className="text-danger" size={14} stroke={1.7} /> : view.icon}
       </span>
       {running ? (
         // Running tools shimmer their label (the timeline's "Thinking" effect).

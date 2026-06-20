@@ -23,11 +23,11 @@ import {
 } from "../../../../shared/tools";
 import { CopyButton } from "../../components/ui/CopyButton";
 import { ModusBot } from "../../components/ui/ModusBot";
+import { ShinyText } from "../../components/ui/ShinyText";
 import { formatClock } from "../../lib/formatClock";
 import { ActivityGroup, ThoughtRow } from "./ActivityGroup";
 import { TurnChangesCard } from "./changes/ChangeStats";
 import { MessageBlock } from "./MessageBlock";
-import { ShinyText } from "./TextEffects";
 import { TodosCard } from "./TodosCard";
 import { ToolCard } from "./ToolCard";
 

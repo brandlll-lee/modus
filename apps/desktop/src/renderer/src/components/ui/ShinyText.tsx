@@ -56,7 +56,7 @@ export function ShinyText({
       style={{
         backgroundClip: "text",
         backgroundImage:
-          "linear-gradient(120deg, var(--color-fg-faint) 0%, var(--color-fg-subtle) 35%, var(--color-fg) 50%, var(--color-fg-subtle) 65%, var(--color-fg-faint) 100%)",
+          "linear-gradient(120deg, color-mix(in srgb, currentColor 35%, transparent) 0%, color-mix(in srgb, currentColor 70%, transparent) 35%, currentColor 50%, color-mix(in srgb, currentColor 70%, transparent) 65%, color-mix(in srgb, currentColor 35%, transparent) 100%)",
         backgroundPosition,
         backgroundSize: "200% auto",
         WebkitBackgroundClip: "text",

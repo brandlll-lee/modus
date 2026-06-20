@@ -3,7 +3,6 @@ import {
   IconChevronRight,
   IconCircleCheck,
   IconCircleX,
-  IconLoader2,
   IconPlugConnected,
   IconPlus,
   IconTrash,
@@ -12,6 +11,7 @@ import { AnimatePresence, m } from "motion/react";
 import { type FormEvent, type ReactNode, useState } from "react";
 import type { CustomProviderConfig, TestCustomProviderResult } from "../../../../shared/contracts";
 import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
+import { ShinyText } from "../../components/ui/ShinyText";
 import { cn } from "../../lib/cn";
 import {
   Disclosure,
@@ -417,12 +417,8 @@ export function CustomProviderForm({
             }
             type="button"
           >
-            {testing ? (
-              <IconLoader2 className="animate-spin" size={13} stroke={1.8} />
-            ) : (
-              <IconPlugConnected size={13} stroke={1.8} />
-            )}
-            Test connection
+            <IconPlugConnected size={13} stroke={1.8} />
+            {testing ? <ShinyText>Testing…</ShinyText> : "Test connection"}
           </button>
           <ConnectionTestStatus result={visibleTestResult} testing={testing} />
           <div className="flex-1" />
@@ -439,8 +435,7 @@ export function CustomProviderForm({
             title={missingReason}
             type="submit"
           >
-            {busy ? <IconLoader2 className="animate-spin" size={13} stroke={1.8} /> : null}
-            Save provider
+            {busy ? <ShinyText className="text-canvas">Saving…</ShinyText> : "Save provider"}
           </button>
         </div>
       </div>

@@ -28,8 +28,8 @@ type TerminalRecord = {
   info: TerminalInfo;
   /**
    * Headless VT screen that renders raw PTY output the way the agent would see
-   * it (cursor moves / carriage returns / clears applied), so progress bars and
-   * spinners collapse instead of duplicating. Backs all agent reads + persist.
+   * it (cursor moves / carriage returns / clears applied), so in-place progress
+   * redraws collapse instead of duplicating. Backs all agent reads + persist.
    */
   grid: TerminalGrid;
   /** Foreground awaiters resolved when the process exits. */
@@ -55,7 +55,7 @@ const MAX_EXITED_RETAINED = 40;
 
 /**
  * Environment for agent-run commands: deterministic, non-interactive, UTF-8.
- * Disables progress spinners/animations (which redraw and bloat output),
+ * Disables animated progress redraws (which bloat output),
  * pagers (which block waiting for a keypress), and color, and forces UTF-8 so
  * tool output decodes cleanly regardless of the host console code page. This is
  * the same hardening CI environments apply.
