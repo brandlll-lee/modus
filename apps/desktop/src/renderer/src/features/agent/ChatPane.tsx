@@ -36,6 +36,7 @@ import {
   type AgentEventItem,
   appendAgentEvents,
   foldAgentEvents,
+  optimisticUserPromptEvents,
 } from "./agentEventHub";
 import { ChangesStrip } from "./changes/ChangesStrip";
 import { latestPendingPermissionRequest } from "./permissionRequests";
@@ -60,6 +61,8 @@ type ChatPaneProps = {
   defaultModel: string;
   contextUsage?: ContextUsageInfo | undefined;
   workspace: WorkspaceInfo | null;
+  initialEvents?: AgentEventItem[] | undefined;
+  onInitialEventsConsumed?(sessionId: string): void;
   /** Refresh the session list after operations that mutate session rows. */
   onSessionsChanged(): void;
   onModelChange(model: string): void;
@@ -82,6 +85,8 @@ export const ChatPane = forwardRef<ChatPaneHandle, ChatPaneProps>(function ChatP
     defaultModel,
     contextUsage,
     workspace,
+    initialEvents,
+    onInitialEventsConsumed,
     onSessionsChanged,
     onModelChange,
     onModelConfigChange,
@@ -245,7 +250,10 @@ export const ChatPane = forwardRef<ChatPaneHandle, ChatPaneProps>(function ChatP
   // biome-ignore lint/correctness/useExhaustiveDependencies: see above.
   useEffect(() => {
     let cancelled = false;
-    setAgentEvents([]);
+    setAgentEvents(initialEvents ?? []);
+    if (initialEvents && initialEvents.length > 0) {
+      onInitialEventsConsumed?.(sessionId);
+    }
     setPromptError(undefined);
     setPendingPrompt(false);
     setAborting(false);
@@ -289,7 +297,7 @@ export const ChatPane = forwardRef<ChatPaneHandle, ChatPaneProps>(function ChatP
         queuedRef.current = [];
       }
       if (!cancelled) {
-        setAgentEvents(foldAgentEvents(items));
+        setAgentEvents(foldAgentEvents([...(initialEvents ?? []), ...items]));
         // Land at the latest message when opening a session. Idle sessions
         // never auto-follow, so this initial pin is explicit.
         requestAnimationFrame(() => autoScroll.resume());
@@ -378,13 +386,26 @@ export const ChatPane = forwardRef<ChatPaneHandle, ChatPaneProps>(function ChatP
     // a mid-session switch, edit-and-resend, or resume.
     const turnModel = models.find((item) => item.id === paneModel);
     const turnThinking = turnModel?.thinkingVariant ?? turnModel?.thinkingLevel;
+    const userMessageId = `local-user:${crypto.randomUUID()}`;
+    setAgentEvents((events) =>
+      appendAgentEvents(
+        events,
+        optimisticUserPromptEvents({
+          sessionId,
+          userMessageId,
+          message,
+          ...(mergedAttachments.length > 0 ? { attachments: mergedAttachments } : {}),
+          ...(skills && skills.length > 0 ? { skills } : {}),
+        }),
+      ),
+    );
     void window.modus.agent
       .prompt({
         context: leanContext,
         delivery,
         sessionId,
         message,
-        userMessageId: `local-user:${crypto.randomUUID()}`,
+        userMessageId,
         ...(mergedAttachments.length > 0 ? { attachments: mergedAttachments } : {}),
         ...(skills && skills.length > 0 ? { skills } : {}),
         ...(mode ? { mode } : {}),
@@ -394,8 +415,23 @@ export const ChatPane = forwardRef<ChatPaneHandle, ChatPaneProps>(function ChatP
       })
       .then(() => onSessionsChanged())
       .catch((error: unknown) => {
+        const errorMessage = error instanceof Error ? error.message : String(error);
         setPendingPrompt(false);
-        setPromptError(error instanceof Error ? error.message : String(error));
+        setAgentEvents((events) =>
+          appendAgentEvents(events, [
+            {
+              id: `local:${Date.now()}:${crypto.randomUUID()}:error`,
+              event: { type: "runtime.error", sessionId, message: errorMessage },
+              createdAt: new Date().toISOString(),
+            },
+            {
+              id: `local:${Date.now()}:${crypto.randomUUID()}:idle`,
+              event: { type: "session.status", sessionId, status: { type: "idle" } },
+              createdAt: new Date().toISOString(),
+            },
+          ]),
+        );
+        setPromptError(errorMessage);
       });
   }
 

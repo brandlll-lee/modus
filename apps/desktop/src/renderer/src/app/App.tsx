@@ -44,7 +44,9 @@ import { ToolbarButton } from "../components/ui/ToolbarButton";
 import { TooltipProvider } from "../components/ui/Tooltip";
 import {
   AgentEventHub,
+  type AgentEventItem,
   affectsActivity,
+  optimisticUserPromptEvents,
   reduceActivity,
   type SessionActivity,
 } from "../features/agent/agentEventHub";
@@ -69,6 +71,9 @@ export function App() {
   const [activeWorkspace, setActiveWorkspace] = useState<WorkspaceInfo | null>(null);
   const [agentSessions, setAgentSessions] = useState<AgentSessionInfo[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | undefined>();
+  const [initialEventsBySession, setInitialEventsBySession] = useState<
+    Record<string, AgentEventItem[]>
+  >({});
   const [activityBySession, setActivityBySession] = useState<Record<string, SessionActivity>>({});
   const [contextUsageBySession, setContextUsageBySession] = useState<
     Record<string, ContextUsageInfo>
@@ -153,6 +158,14 @@ export function App() {
   const refreshSessions = useCallback(async (): Promise<void> => {
     setAgentSessions(await window.modus.agent.list());
   }, []);
+
+  function publishLocalAgentEvent(event: AgentEvent): void {
+    hubRef.current.publish({
+      id: `local:${Date.now()}:${crypto.randomUUID()}`,
+      event,
+      createdAt: new Date().toISOString(),
+    });
+  }
 
   const refreshModelSettings = useCallback(async (): Promise<void> => {
     const settings = await window.modus.model.settings();
@@ -291,8 +304,14 @@ export function App() {
       });
       setSessionCreateError(undefined);
       setActiveWorkspace(workspace);
-      await refreshSessions();
+      setAgentSessions((current) => {
+        const exists = current.some((item) => item.id === session.id);
+        return exists
+          ? current.map((item) => (item.id === session.id ? session : item))
+          : [session, ...current];
+      });
       setActiveSessionId(session.id);
+      void refreshSessions();
       return session;
     } catch (error) {
       setSessionCreateError(error instanceof Error ? error.message : String(error));
@@ -390,6 +409,17 @@ export function App() {
     if (!session) {
       return;
     }
+    const userMessageId = `local-user:${crypto.randomUUID()}`;
+    setInitialEventsBySession((current) => ({
+      ...current,
+      [session.id]: optimisticUserPromptEvents({
+        sessionId: session.id,
+        userMessageId,
+        message,
+        ...(attachments && attachments.length > 0 ? { attachments } : {}),
+        ...(skills && skills.length > 0 ? { skills } : {}),
+      }),
+    }));
     setHeroContextItems([]);
     void window.modus.agent
       .prompt({
@@ -397,14 +427,25 @@ export function App() {
         delivery: "normal",
         sessionId: session.id,
         message,
-        userMessageId: `local-user:${crypto.randomUUID()}`,
+        userMessageId,
         ...(attachments && attachments.length > 0 ? { attachments } : {}),
         ...(skills && skills.length > 0 ? { skills } : {}),
         ...(mode ? { mode } : {}),
       })
       .then(() => refreshSessions())
       .catch((error: unknown) => {
-        setSessionCreateError(error instanceof Error ? error.message : String(error));
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        setSessionCreateError(errorMessage);
+        publishLocalAgentEvent({
+          type: "runtime.error",
+          sessionId: session.id,
+          message: errorMessage,
+        });
+        publishLocalAgentEvent({
+          type: "session.status",
+          sessionId: session.id,
+          status: { type: "idle" },
+        });
       });
   }
 
@@ -618,6 +659,7 @@ export function App() {
                               contextUsage={contextUsageBySession[activeSession.id]}
                               defaultModel={model}
                               hub={hubRef.current}
+                              initialEvents={initialEventsBySession[activeSession.id]}
                               key={activeSession.id}
                               models={models}
                               onModelChange={setModel}
@@ -626,6 +668,16 @@ export function App() {
                               }
                               onOpenReview={() => setInspectorOpen(true)}
                               onOpenSubagent={openSubagent}
+                              onInitialEventsConsumed={(sessionId) => {
+                                setInitialEventsBySession((current) => {
+                                  if (!current[sessionId]) {
+                                    return current;
+                                  }
+                                  const next = { ...current };
+                                  delete next[sessionId];
+                                  return next;
+                                });
+                              }}
                               onPlanUpdated={(plan) => {
                                 // Store under THIS session's id; auto-open the
                                 // Plan tab once per distinct plan (by hash) — a
