@@ -1,6 +1,11 @@
 import { denyPendingQuestionRequestsForSession } from "../interaction/question-broker";
 import { denyPendingPermissionRequestsForSession } from "../permissions/permission-broker";
-import { deleteAgentSession, getAgentSession, listAgentSessions } from "./agent-store";
+import {
+  deleteAgentSession,
+  getAgentSession,
+  listAgentSessions,
+  listSubagentSessions,
+} from "./agent-store";
 import { deleteSessionCheckpoints } from "./checkpoint-service";
 import { getAgentRuntime } from "./runtime-registry";
 
@@ -13,6 +18,9 @@ import { getAgentRuntime } from "./runtime-registry";
  * orphaned runtimes or checkpoints behind.
  */
 export async function archiveAgentSession(sessionId: string): Promise<void> {
+  for (const child of listSubagentSessions(sessionId)) {
+    await archiveAgentSession(child.id);
+  }
   await getAgentRuntime().dispose(sessionId);
   const session = getAgentSession(sessionId);
   if (session) {

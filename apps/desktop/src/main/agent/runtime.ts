@@ -71,7 +71,7 @@ export type AgentRuntime = {
   waitSubagent(
     parentSessionId: string,
     input: { target?: string; timeoutMs?: number },
-  ): Promise<{ timedOut: boolean; agents: AgentSessionInfo[] }>;
+  ): Promise<{ timedOut: boolean; agents: Array<AgentSessionInfo & { output?: string }> }>;
   closeSubagent(parentSessionId: string, target: string): Promise<AgentSessionInfo | undefined>;
   abort(sessionId: string): Promise<void>;
   listRuns(sessionId: string): Promise<AgentRunInfo[]>;

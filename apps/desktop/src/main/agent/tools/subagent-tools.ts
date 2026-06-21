@@ -43,6 +43,22 @@ function renderTaskStarted(sessionId: string, summary: string): string {
   ].join("\n");
 }
 
+function renderWaitResult(result: Awaited<ReturnType<SubagentToolOps["waitSubagent"]>>): string {
+  return [
+    result.timedOut ? "Wait timed out." : "Wait completed.",
+    ...result.agents.map((agent) =>
+      [
+        `<task id="${agent.id}" state="${agent.status}">`,
+        `<summary>${agent.subagentTask ?? agent.title}</summary>`,
+        "<task_result>",
+        agent.output ?? (result.timedOut ? "Subagent is still running." : "No assistant output."),
+        "</task_result>",
+        "</task>",
+      ].join("\n"),
+    ),
+  ].join("\n");
+}
+
 const taskParams = Type.Object({
   description: Type.String({
     minLength: 1,
@@ -163,7 +179,7 @@ const waitAgentTool: ToolDefinition = defineTool({
       ...(params.target ? { target: params.target } : {}),
       ...(params.timeout_ms !== undefined ? { timeoutMs: params.timeout_ms } : {}),
     });
-    return toResult(result.timedOut ? "Wait timed out." : "Wait completed.", result);
+    return toResult(renderWaitResult(result), result);
   },
 });
 

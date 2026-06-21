@@ -10,10 +10,24 @@ let cwd: string;
 const mocks = vi.hoisted(() => {
   const model = { id: "model", name: "Mock Model", provider: "mock" };
   let subscriber: ((event: unknown) => void) | undefined;
+  const processState = { processes: [] as unknown[] };
   return {
     createAgentSession: vi.fn(),
+    killManagedProcess: vi.fn(async () => true),
+    listManagedProcesses: vi.fn((query: { sessionId?: string; origin?: string }) =>
+      processState.processes.filter((process) => {
+        const item = process as { sessionId?: string; origin?: string };
+        return (
+          (query.sessionId === undefined || item.sessionId === query.sessionId) &&
+          (query.origin === undefined || item.origin === query.origin)
+        );
+      }),
+    ),
     model,
     emitPiEvent: (event: unknown) => subscriber?.(event),
+    setManagedProcesses: (processes: unknown[]) => {
+      processState.processes = processes;
+    },
     setPiSubscriber: (next: ((event: unknown) => void) | undefined) => {
       subscriber = next;
     },
@@ -69,6 +83,11 @@ vi.mock("../guidance/guidance-service", () => ({
   resolveGlobalGuidancePrompt: vi.fn(() => mocks.globalGuidance),
 }));
 
+vi.mock("../process/managed-process-facade", () => ({
+  killManagedProcess: mocks.killManagedProcess,
+  listManagedProcesses: mocks.listManagedProcesses,
+}));
+
 vi.mock("./model-service", () => ({
   cycleDefaultModel: vi.fn(() => ({
     id: "mock/model",
@@ -110,6 +129,8 @@ vi.mock("./model-service", () => ({
 
 const { getDatabase } = await import("../db/database");
 const { PiSdkRuntime } = await import("./pi-sdk-runtime");
+const { archiveAgentSession } = await import("./session-lifecycle");
+const { recordAgentEvent } = await import("./agent-event-store");
 const { writePlan, readPlanById } = await import("../plan/plan-store");
 
 function createMockPiSession(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -177,6 +198,32 @@ function insertSession(
   );
 }
 
+function insertSubagentSession(sessionId: string, parentSessionId: string, workspaceId: string): void {
+  const now = new Date().toISOString();
+  getDatabase()
+    .prepare(
+      `insert into agent_sessions (
+        id, workspace_id, title, cwd, status, runtime, model, parent_session_id,
+        subagent_task, subagent_type, created_at, updated_at
+       )
+       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      sessionId,
+      workspaceId,
+      "child",
+      cwd,
+      "idle",
+      "pi-sdk",
+      "mock/model",
+      parentSessionId,
+      "child task",
+      "worker",
+      now,
+      now,
+    );
+}
+
 beforeEach(async () => {
   userData = await mkdtemp(join(tmpdir(), "modus-pi-runtime-test-"));
   cwd = await mkdtemp(join(tmpdir(), "modus-pi-runtime-cwd-"));
@@ -186,6 +233,9 @@ beforeEach(async () => {
   mocks.sessionManagerOpen.mockClear();
   mocks.resourceLoaderOptions = [];
   mocks.globalGuidance = undefined;
+  mocks.killManagedProcess.mockClear();
+  mocks.listManagedProcesses.mockClear();
+  mocks.setManagedProcesses([]);
   mocks.createAgentSession.mockImplementation(async () => ({
     session: createMockPiSession(),
   }));
@@ -513,8 +563,146 @@ describe("PiSdkRuntime", () => {
     expect(result.session.parentSessionId).toBe(parentSessionId);
     await vi.waitFor(() => expect(prompt).toHaveBeenCalled());
     expect(childPiSession.dispose).not.toHaveBeenCalled();
+    mocks.setManagedProcesses([
+      {
+        id: "terminal-child",
+        kind: "terminal",
+        origin: "agent",
+        sessionId: result.session.id,
+        label: "dev server",
+        status: "running",
+        startedAt: new Date().toISOString(),
+      },
+    ]);
     releasePrompt?.();
     await vi.waitFor(() => expect(childPiSession.dispose).toHaveBeenCalled());
+    expect(mocks.listManagedProcesses).toHaveBeenCalledWith({
+      sessionId: result.session.id,
+      origin: "agent",
+    });
+    expect(mocks.killManagedProcess).toHaveBeenCalledWith("terminal-child");
+  });
+
+  it("aborts active subagents when the parent session is aborted", async () => {
+    const parentSessionId = `session-${crypto.randomUUID()}`;
+    const workspaceId = `workspace-${crypto.randomUUID()}`;
+    insertSession(parentSessionId, workspaceId, join(userData, "missing.jsonl"), "Parent chat");
+    const childAbort = vi.fn(async () => undefined);
+    const childPrompt = vi.fn(() => new Promise<void>(() => undefined));
+    const childPiSession = createMockPiSession({ abort: childAbort, prompt: childPrompt });
+    mocks.createAgentSession.mockImplementationOnce(async () => ({ session: childPiSession }));
+    const runtime = new PiSdkRuntime();
+    const window = createWindowStub();
+
+    const result = await runtime.spawnSubagent(window, {
+      parentSessionId,
+      task: "Run checks",
+      prompt: "Run checks.",
+      subagentType: "worker",
+    });
+    await vi.waitFor(() => expect(childPrompt).toHaveBeenCalled());
+    mocks.setManagedProcesses([
+      {
+        id: "app-child",
+        kind: "app",
+        origin: "agent",
+        sessionId: result.session.id,
+        label: "Preview",
+        status: "running",
+        startedAt: new Date().toISOString(),
+      },
+    ]);
+
+    await runtime.abort(parentSessionId);
+
+    expect(childAbort).toHaveBeenCalledOnce();
+    expect(childPiSession.dispose).toHaveBeenCalled();
+    expect(mocks.killManagedProcess).toHaveBeenCalledWith("app-child");
+    expect(
+      getDatabase()
+        .prepare("select status from agent_sessions where id = ?")
+        .get(result.session.id),
+    ).toEqual({ status: "cancelled" });
+  });
+
+  it("does not count completed subagents against the active subagent limit", async () => {
+    const parentSessionId = `session-${crypto.randomUUID()}`;
+    const workspaceId = `workspace-${crypto.randomUUID()}`;
+    insertSession(parentSessionId, workspaceId, join(userData, "missing.jsonl"), "Parent chat");
+    for (let index = 0; index < 6; index += 1) {
+      insertSubagentSession(`child-${crypto.randomUUID()}`, parentSessionId, workspaceId);
+    }
+    const runtime = new PiSdkRuntime();
+
+    await expect(
+      runtime.spawnSubagent(createWindowStub(), {
+        parentSessionId,
+        task: "Fresh child",
+        prompt: "Do work.",
+        subagentType: "worker",
+      }),
+    ).resolves.toMatchObject({ status: "running" });
+  });
+
+  it("returns the final assistant output from waitSubagent", async () => {
+    const parentSessionId = `session-${crypto.randomUUID()}`;
+    const childSessionId = `session-${crypto.randomUUID()}`;
+    const workspaceId = `workspace-${crypto.randomUUID()}`;
+    insertSession(parentSessionId, workspaceId, join(userData, "missing.jsonl"), "Parent chat");
+    insertSubagentSession(childSessionId, parentSessionId, workspaceId);
+    recordAgentEvent({
+      type: "message.started",
+      sessionId: childSessionId,
+      messageId: "assistant-message",
+      role: "assistant",
+    });
+    recordAgentEvent({
+      type: "message.delta",
+      sessionId: childSessionId,
+      messageId: "assistant-message",
+      delta: "final result",
+    });
+    recordAgentEvent({
+      type: "message.completed",
+      sessionId: childSessionId,
+      messageId: "assistant-message",
+    });
+    const runtime = new PiSdkRuntime();
+
+    await expect(runtime.waitSubagent(parentSessionId, { target: childSessionId })).resolves.toEqual(
+      {
+        timedOut: false,
+        agents: [expect.objectContaining({ id: childSessionId, output: "final result" })],
+      },
+    );
+  });
+
+  it("archives child sessions before deleting the parent session", async () => {
+    const parentSessionId = `session-${crypto.randomUUID()}`;
+    const childSessionId = `session-${crypto.randomUUID()}`;
+    const workspaceId = `workspace-${crypto.randomUUID()}`;
+    insertSession(parentSessionId, workspaceId, join(userData, "missing.jsonl"), "Parent chat");
+    insertSubagentSession(childSessionId, parentSessionId, workspaceId);
+    mocks.setManagedProcesses([
+      {
+        id: "terminal-archive-child",
+        kind: "terminal",
+        origin: "agent",
+        sessionId: childSessionId,
+        label: "dev server",
+        status: "running",
+        startedAt: new Date().toISOString(),
+      },
+    ]);
+
+    await archiveAgentSession(parentSessionId);
+
+    expect(mocks.killManagedProcess).toHaveBeenCalledWith("terminal-archive-child");
+    expect(
+      getDatabase()
+        .prepare("select count(*) as count from agent_sessions where id in (?, ?)")
+        .get(parentSessionId, childSessionId),
+    ).toEqual({ count: 0 });
   });
 
   it("queues a steer message into the live turn without opening a phantom run", async () => {

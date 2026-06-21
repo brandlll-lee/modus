@@ -230,4 +230,52 @@ describe("AgentEventHub", () => {
     expect(first).toHaveBeenCalledTimes(1);
     expect(second).toHaveBeenCalledTimes(1);
   });
+
+  it("keeps parent and subagent chat streams isolated", () => {
+    const hub = new AgentEventHub();
+    const parent = vi.fn();
+    const child = vi.fn();
+    hub.subscribe("parent-session", parent);
+    hub.subscribe("child-session", child);
+
+    hub.publish(
+      item({
+        type: "message.delta",
+        sessionId: "child-session",
+        messageId: "child-message",
+        delta: "child output",
+      }),
+    );
+    hub.publish(
+      item({
+        type: "subagent.updated",
+        sessionId: "parent-session",
+        childSessionId: "child-session",
+        status: "running",
+      }),
+    );
+    hub.publish(
+      item({
+        type: "message.delta",
+        sessionId: "parent-session",
+        messageId: "parent-message",
+        delta: "parent output",
+      }),
+    );
+
+    expect(child).toHaveBeenCalledOnce();
+    expect(child.mock.calls[0]?.[0].event).toMatchObject({
+      sessionId: "child-session",
+      delta: "child output",
+    });
+    expect(parent).toHaveBeenCalledTimes(2);
+    expect(parent.mock.calls.map((call) => call[0].event)).toEqual([
+      expect.objectContaining({ type: "subagent.updated", sessionId: "parent-session" }),
+      expect.objectContaining({
+        type: "message.delta",
+        sessionId: "parent-session",
+        delta: "parent output",
+      }),
+    ]);
+  });
 });

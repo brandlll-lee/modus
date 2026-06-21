@@ -27,11 +27,14 @@ import { resolveGlobalGuidancePrompt } from "../guidance/guidance-service";
 import { IPC_CHANNELS } from "../ipc/channels";
 import { maybeNotifyAgentEvent } from "../notifications/agent-notifications";
 import { readPlanById, setPlanBuildStatusById } from "../plan/plan-store";
+import { denyPendingQuestionRequestsForSession } from "../interaction/question-broker";
+import { denyPendingPermissionRequestsForSession } from "../permissions/permission-broker";
 import { summarizeApps } from "../process/app-process-service";
+import { killManagedProcess, listManagedProcesses } from "../process/managed-process-facade";
 import { RULES_MAX_TOTAL_BYTES, resolveAlwaysRulesPrompt } from "../rules/rules-service";
 import { resolveSkillsPrompt } from "../skills/skills-service";
 import { summarizeTerminals } from "../terminal/terminal-service";
-import { recordAgentEvent } from "./agent-event-store";
+import { listAgentEvents, recordAgentEvent } from "./agent-event-store";
 import {
   createAgentRun,
   getActiveAgentRun,
@@ -943,7 +946,10 @@ export class PiSdkRuntime implements AgentRuntime {
     if (parent.parentSessionId) {
       throw new Error("Subagents cannot start nested subagents.");
     }
-    if (listSubagentSessions(parent.id).length >= MAX_SUBAGENTS_PER_SESSION) {
+    if (
+      listSubagentSessions(parent.id).filter((session) => isSubagentBusy(session.status)).length >=
+      MAX_SUBAGENTS_PER_SESSION
+    ) {
       throw new Error(`This session already has ${MAX_SUBAGENTS_PER_SESSION} subagents.`);
     }
 
@@ -1020,14 +1026,14 @@ export class PiSdkRuntime implements AgentRuntime {
   async waitSubagent(
     parentSessionId: string,
     input: { target?: string; timeoutMs?: number },
-  ): Promise<{ timedOut: boolean; agents: AgentSessionInfo[] }> {
+  ): Promise<{ timedOut: boolean; agents: Array<AgentSessionInfo & { output?: string }> }> {
     const deadline = Date.now() + (input.timeoutMs ?? DEFAULT_SUBAGENT_WAIT_MS);
     while (true) {
       const agents = input.target
         ? [this.requireChildSession(parentSessionId, input.target)]
         : listSubagentSessions(parentSessionId);
       if (agents.every((agent) => !isSubagentBusy(agent.status))) {
-        return { timedOut: false, agents };
+        return { timedOut: false, agents: agents.map(withSubagentOutput) };
       }
       if (Date.now() >= deadline) {
         return { timedOut: true, agents };
@@ -1041,9 +1047,13 @@ export class PiSdkRuntime implements AgentRuntime {
     target: string,
   ): Promise<AgentSessionInfo | undefined> {
     const child = this.requireChildSession(parentSessionId, target);
-    await this.abort(child.id);
+    await this.closeSubagentTree(child.id, "Subagent closed");
+    await this.abortSessionOnly(child.id);
     updateAgentSessionStatus(child.id, "cancelled");
-    await this.dispose(child.id);
+    denyPendingPermissionRequestsForSession(child.id, "Subagent closed");
+    denyPendingQuestionRequestsForSession(child.id);
+    await this.cleanupSessionProcesses(child.id);
+    await this.disposeSessionOnly(child.id);
     return getAgentSession(child.id);
   }
 
@@ -1056,6 +1066,11 @@ export class PiSdkRuntime implements AgentRuntime {
   }
 
   async abort(sessionId: string): Promise<void> {
+    await this.closeSubagentTree(sessionId, "Parent session aborted");
+    await this.abortSessionOnly(sessionId);
+  }
+
+  private async abortSessionOnly(sessionId: string): Promise<void> {
     const runtimeSession = this.sessions.get(sessionId);
     if (!runtimeSession) {
       return;
@@ -1084,6 +1099,12 @@ export class PiSdkRuntime implements AgentRuntime {
   }
 
   async dispose(sessionId: string): Promise<void> {
+    await this.closeSubagentTree(sessionId, "Session disposed");
+    await this.cleanupSessionProcesses(sessionId);
+    await this.disposeSessionOnly(sessionId);
+  }
+
+  private async disposeSessionOnly(sessionId: string): Promise<void> {
     // Settle any in-flight resume first: it would otherwise re-cache a live
     // session right after this dispose (and a rollback would then truncate the
     // session file while a stale in-memory tree keeps answering prompts).
@@ -1101,6 +1122,33 @@ export class PiSdkRuntime implements AgentRuntime {
     runtimeSession.unsubscribe();
     runtimeSession.session.dispose();
     this.sessions.delete(sessionId);
+  }
+
+  private async closeSubagentTree(rootSessionId: string, reason: string): Promise<void> {
+    const descendants: AgentSessionInfo[] = [];
+    const queue = [rootSessionId];
+    for (let index = 0; index < queue.length; index += 1) {
+      const children = listSubagentSessions(queue[index]!);
+      descendants.push(...children);
+      queue.push(...children.map((child) => child.id));
+    }
+
+    for (const child of descendants.reverse()) {
+      await this.abortSessionOnly(child.id).catch(() => undefined);
+      updateAgentSessionStatus(child.id, "cancelled");
+      denyPendingPermissionRequestsForSession(child.id, reason);
+      denyPendingQuestionRequestsForSession(child.id);
+      await this.cleanupSessionProcesses(child.id);
+      await this.disposeSessionOnly(child.id).catch(() => undefined);
+    }
+  }
+
+  private async cleanupSessionProcesses(sessionId: string): Promise<void> {
+    await Promise.all(
+      listManagedProcesses({ sessionId, origin: "agent" }).map((process) =>
+        killManagedProcess(process.id).catch(() => false),
+      ),
+    );
   }
 
   /**
@@ -1297,8 +1345,42 @@ function shouldPersistSubagentUpdate(event: AgentEvent): boolean {
   );
 }
 
+function withSubagentOutput(session: AgentSessionInfo): AgentSessionInfo & { output?: string } {
+  const output = lastAssistantOutput(session.id);
+  return output ? { ...session, output } : session;
+}
+
+function lastAssistantOutput(sessionId: string): string | undefined {
+  const roles = new Map<string, "assistant" | "user">();
+  const textByMessage = new Map<string, string>();
+  let lastAssistantMessageId: string | undefined;
+  for (const { event } of listAgentEvents(sessionId)) {
+    if (event.type === "message.started") {
+      roles.set(event.messageId, event.role);
+      if (event.role === "assistant") {
+        textByMessage.set(event.messageId, textByMessage.get(event.messageId) ?? "");
+        lastAssistantMessageId = event.messageId;
+      }
+      continue;
+    }
+    if (event.type === "message.delta" && roles.get(event.messageId) === "assistant") {
+      textByMessage.set(
+        event.messageId,
+        `${textByMessage.get(event.messageId) ?? ""}${event.delta}`,
+      );
+      lastAssistantMessageId = event.messageId;
+      continue;
+    }
+    if (event.type === "message.completed" && roles.get(event.messageId) === "assistant") {
+      lastAssistantMessageId = event.messageId;
+    }
+  }
+  const output = lastAssistantMessageId ? textByMessage.get(lastAssistantMessageId)?.trim() : "";
+  return output || undefined;
+}
+
 function isSubagentBusy(status: AgentSessionInfo["status"]): boolean {
-  return status === "starting" || status === "running";
+  return status === "starting" || status === "running" || status === "blocked";
 }
 
 function sleep(ms: number): Promise<void> {
