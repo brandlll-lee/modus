@@ -82,7 +82,11 @@ import { toolRegistry } from "./tools/registry";
 import { registerSubagentTools } from "./tools/subagent-tools";
 import { registerTerminalTools } from "./tools/terminal-tools";
 import { registerTodoTools } from "./tools/todo-tools";
-import { setAgentToolContext } from "./tools/tool-context";
+import {
+  type AgentToolContext,
+  runWithAgentToolContext,
+  setAgentToolContext,
+} from "./tools/tool-context";
 import { registerWebTools } from "./tools/web-tools";
 
 /**
@@ -224,6 +228,22 @@ export class PiSdkRuntime implements AgentRuntime {
     if (event) {
       runtimeSession.emitVolatile(event);
     }
+  }
+
+  private toolContextFor(
+    runtimeSession: SdkRuntimeSession,
+    window: BrowserWindowType,
+  ): AgentToolContext {
+    return {
+      workspaceId: runtimeSession.info.workspaceId,
+      cwd: runtimeSession.info.cwd,
+      sessionId: runtimeSession.info.id,
+      ...(runtimeSession.info.parentSessionId
+        ? { parentSessionId: runtimeSession.info.parentSessionId }
+        : {}),
+      window,
+      emit: runtimeSession.emit,
+    };
   }
 
   private async getOrResume(
@@ -548,19 +568,8 @@ export class PiSdkRuntime implements AgentRuntime {
       throw failEarlyPrompt(`Agent session not running: ${input.sessionId}`);
     }
 
-    // Publish this session's tool context so the (process-wide) custom tools
-    // (terminal, to-dos) resolve the right workspace/session/window/emitter
-    // from their cwd.
-    setAgentToolContext({
-      workspaceId: runtimeSession.info.workspaceId,
-      cwd: runtimeSession.info.cwd,
-      sessionId: runtimeSession.info.id,
-      ...(runtimeSession.info.parentSessionId
-        ? { parentSessionId: runtimeSession.info.parentSessionId }
-        : {}),
-      window,
-      emit: runtimeSession.emit,
-    });
+    const toolContext = this.toolContextFor(runtimeSession, window);
+    setAgentToolContext(toolContext);
 
     try {
       // Per-turn mode: switch the active tool set (plan = read-only research +
@@ -594,7 +603,7 @@ export class PiSdkRuntime implements AgentRuntime {
     // settles the composer while the real turn is still streaming. We trust
     // pi's own `isStreaming`, never a guess from the delivery label.
     if (delivery !== "normal" && runtimeSession.session.isStreaming) {
-      await this.enqueueTurnMessage(runtimeSession, input, delivery);
+      await this.enqueueTurnMessage(runtimeSession, input, delivery, toolContext);
       return;
     }
 
@@ -688,13 +697,15 @@ export class PiSdkRuntime implements AgentRuntime {
         `[modus-timing] composeTurnMessage done +${Date.now() - outputTracker.startedAt}ms`,
       );
       const images = buildTurnImages(input);
-      await runtimeSession.session.prompt(message, {
-        source: "rpc",
-        ...(images.length > 0 ? { images } : {}),
-        ...(delivery === "normal"
-          ? {}
-          : { streamingBehavior: delivery === "follow-up" ? "followUp" : "steer" }),
-      });
+      await runWithAgentToolContext(toolContext, () =>
+        runtimeSession.session.prompt(message, {
+          source: "rpc",
+          ...(images.length > 0 ? { images } : {}),
+          ...(delivery === "normal"
+            ? {}
+            : { streamingBehavior: delivery === "follow-up" ? "followUp" : "steer" }),
+        }),
+      );
       console.info(`[modus-timing] prompt() resolved +${Date.now() - outputTracker.startedAt}ms`);
       this.emitContextUsage(runtimeSession);
       const currentRun = getAgentRun(run.id);
@@ -890,17 +901,20 @@ export class PiSdkRuntime implements AgentRuntime {
     runtimeSession: SdkRuntimeSession,
     input: PromptAgentInput,
     delivery: NonNullable<PromptAgentInput["delivery"]>,
+    toolContext: AgentToolContext,
   ): Promise<void> {
     const userMessageId = input.userMessageId ?? `local-user:${randomUUID()}`;
     this.emitUserMessage(runtimeSession.emit, input, userMessageId);
     try {
       const message = await this.composeTurnMessage(runtimeSession, input);
       const images = buildTurnImages(input);
-      await runtimeSession.session.prompt(message, {
-        source: "rpc",
-        ...(images.length > 0 ? { images } : {}),
-        streamingBehavior: delivery === "follow-up" ? "followUp" : "steer",
-      });
+      await runWithAgentToolContext(toolContext, () =>
+        runtimeSession.session.prompt(message, {
+          source: "rpc",
+          ...(images.length > 0 ? { images } : {}),
+          streamingBehavior: delivery === "follow-up" ? "followUp" : "steer",
+        }),
+      );
       this.emitContextUsage(runtimeSession);
     } catch (error) {
       runtimeSession.emit({
