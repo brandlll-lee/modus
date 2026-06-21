@@ -302,6 +302,7 @@ export function App() {
 
   function selectSession(session: AgentSessionInfo): void {
     setSessionCreateError(undefined);
+    setSettingsOpen(false);
     setActiveWorkspace(
       workspaces.find((workspace) => workspace.id === session.workspaceId) ?? activeWorkspace,
     );
@@ -324,6 +325,7 @@ export function App() {
       setActiveWorkspace(workspace);
     }
     setSessionCreateError(undefined);
+    setSettingsOpen(false);
     setActiveSessionId(undefined);
   }
 
@@ -518,7 +520,6 @@ export function App() {
                   <SettingsPanel
                     onClose={() => setSettingsOpen(false)}
                     onRefresh={() => void refreshModelSettings()}
-                    open
                     state={modelSettings}
                     workspaceCwd={activeWorkspace?.rootPath}
                   />
@@ -554,7 +555,7 @@ export function App() {
                       className="relative flex flex-1 flex-col bg-canvas"
                       style={{ minWidth: MAIN_MIN_WIDTH }}
                     >
-                      <header className="relative flex h-9 shrink-0 items-center px-3">
+                      <header className="relative flex h-12 shrink-0 items-center px-3">
                         <div className="app-no-drag flex flex-1 items-center gap-1.5">
                           <AnimatePresence initial={false}>
                             {!sidebarOpen ? (
@@ -758,14 +759,14 @@ export function App() {
 }
 
 /**
- * 顶部 menubar 行 —— 整行 36px 高，自绘 titlebar：
+ * 顶部 menubar 行 —— 整行 44px 高，自绘 titlebar：
  *   - 左侧 BrandMark + File/Edit/View/Help（menubar 区，app-drag）
  *   - 右侧 WindowControls 自绘 min/max/close（无 native overlay，无越界）
  * 这样 hover 命中区域完全由 CSS 控制，永远不会超出 menubar 高度。
  */
 function MenuBar() {
   return (
-    <div className="app-drag flex h-9 shrink-0 items-center border-hairline-strong border-b bg-canvas">
+    <div className="app-drag flex h-11 shrink-0 items-center border-hairline-strong border-b bg-canvas">
       <div className="flex flex-1 items-center gap-0.5 pl-2.5">
         <BrandMark />
         <MenuItem>File</MenuItem>
@@ -801,9 +802,9 @@ function MenuItem({ children }: { children: string }) {
 }
 
 /**
- * 自绘 Caption Buttons —— 严格被 menubar 36px 高度包覆，hover 区域不越界。
+ * 自绘 Caption Buttons —— 严格被 menubar 44px 高度包覆，hover 区域不越界。
  * Windows 风格：min/max/close 三键，close hover 用 #c42b1c 高亮。
- * 命中区域 46×36（与 Windows 11 native caption buttons 一致），但绘制完全 CSS 控制。
+ * 命中区域 46×44（跟随自绘 menubar），但绘制完全 CSS 控制。
  */
 function WindowControls() {
   const [maximized, setMaximized] = useState(false);

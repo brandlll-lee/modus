@@ -61,7 +61,6 @@ import { groupProviderModels, modelResultLabel } from "./modelListUtils";
 import { ProviderLogo } from "./ProviderLogo";
 
 type SettingsPanelProps = {
-  open: boolean;
   state: ModelSettingsState | null;
   onClose(): void;
   onRefresh(): void;
@@ -84,7 +83,6 @@ type ModelConfigPatch = {
 };
 
 export function SettingsPanel({
-  open,
   state,
   onClose,
   onRefresh,
@@ -112,7 +110,7 @@ export function SettingsPanel({
   const currentProvider = providers.find((provider) => provider.id === selectedProvider);
 
   useEffect(() => {
-    if (!open || !selectedProvider) {
+    if (!selectedProvider) {
       setDetail(undefined);
       setDetailLoading(false);
       return;
@@ -135,7 +133,7 @@ export function SettingsPanel({
     return () => {
       alive = false;
     };
-  }, [open, selectedProvider]);
+  }, [selectedProvider]);
 
   async function connectProvider(
     provider: ModelProviderInfo,
@@ -243,10 +241,6 @@ export function SettingsPanel({
     }
   }
 
-  if (!open) {
-    return null;
-  }
-
   return (
     <div className="flex min-h-0 flex-1 overflow-hidden bg-canvas">
       <SettingsSidebar
@@ -348,14 +342,14 @@ function SettingsSidebar({
   onSectionChange(section: SettingsSectionId): void;
 }) {
   return (
-    <aside className="flex w-[434px] shrink-0 flex-col border-hairline-strong border-r bg-panel px-2.5 py-3">
+    <aside className="flex w-[260px] shrink-0 flex-col border-hairline-strong border-r bg-panel px-2.5 py-3">
       <button
         className="mb-4 flex h-8 items-center gap-2 rounded-md px-2 text-sm text-fg-muted transition-colors hover:bg-hover hover:text-fg"
         onClick={onBack}
         type="button"
       >
         <IconArrowLeft size={16} stroke={1.7} />
-        Back to app
+        Back
       </button>
 
       <label className="relative mb-5 block">
