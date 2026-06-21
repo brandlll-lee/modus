@@ -50,6 +50,8 @@ import type {
   SkillDetail,
   SkillInfo,
   SkillSelection,
+  SubagentDetail,
+  SubagentInfo,
   TerminalEvent,
   TerminalInfo,
   TestCustomProviderInput,
@@ -349,6 +351,31 @@ export type ModusApi = {
       description: string;
       body: string;
     }): Promise<SkillInfo>;
+    openDir(cwd: string): Promise<string>;
+  };
+  subagents: {
+    list(cwd: string): Promise<SubagentInfo[]>;
+    get(input: { cwd: string; path: string }): Promise<SubagentDetail | undefined>;
+    create(input: {
+      cwd: string;
+      name: string;
+      description: string;
+      model?: string;
+      readOnly: boolean;
+      isBackground: boolean;
+      body: string;
+    }): Promise<SubagentInfo>;
+    update(input: {
+      cwd: string;
+      path: string;
+      name: string;
+      description: string;
+      model?: string;
+      readOnly: boolean;
+      isBackground: boolean;
+      body: string;
+    }): Promise<SubagentInfo>;
+    delete(input: { cwd: string; path: string }): Promise<SubagentInfo[]>;
     openDir(cwd: string): Promise<string>;
   };
   window: {

@@ -182,6 +182,14 @@ const api: ModusApi = {
     create: (input) => ipcRenderer.invoke("skills:create", input),
     openDir: (cwd) => ipcRenderer.invoke("skills:open-dir", cwd),
   },
+  subagents: {
+    list: (cwd) => ipcRenderer.invoke("subagents:list", cwd),
+    get: (input) => ipcRenderer.invoke("subagents:get", input),
+    create: (input) => ipcRenderer.invoke("subagents:create", input),
+    update: (input) => ipcRenderer.invoke("subagents:update", input),
+    delete: (input) => ipcRenderer.invoke("subagents:delete", input),
+    openDir: (cwd) => ipcRenderer.invoke("subagents:open-dir", cwd),
+  },
   window: {
     minimize: () => ipcRenderer.invoke("window:minimize") as Promise<void>,
     toggleMaximize: () => ipcRenderer.invoke("window:toggle-maximize") as Promise<void>,

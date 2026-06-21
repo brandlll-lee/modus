@@ -32,6 +32,14 @@ import { rollbackToUserMessage } from "../agent/rollback-service";
 import { getAgentRuntime } from "../agent/runtime-registry";
 import { archiveAgentSession } from "../agent/session-lifecycle";
 import {
+  createSubagent,
+  deleteSubagent,
+  ensureSubagentsDir,
+  getSubagent,
+  listSubagents,
+  updateSubagent,
+} from "../agent/subagents-config";
+import {
   closeBrowserTab,
   createBrowserTab,
   findInBrowserPage,
@@ -162,6 +170,10 @@ import {
   sessionIdSchema,
   skillsCreateSchema,
   skillsGetSchema,
+  subagentsCreateSchema,
+  subagentsDeleteSchema,
+  subagentsGetSchema,
+  subagentsUpdateSchema,
   terminalCreateSchema,
   terminalResizeSchema,
   terminalWriteSchema,
@@ -935,6 +947,50 @@ export function registerAppIpc(): void {
   ipcMain.handle(IPC_CHANNELS.skillsOpenDir, async (event, cwd: string) => {
     assertTrustedSender(event);
     const dir = ensureSkillsDir(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.skillsOpenDir));
+    await shell.openPath(dir);
+    return dir;
+  });
+
+  ipcMain.handle(IPC_CHANNELS.subagentsList, (event, cwd: string) => {
+    assertTrustedSender(event);
+    return listSubagents(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.subagentsList));
+  });
+
+  ipcMain.handle(IPC_CHANNELS.subagentsGet, (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(subagentsGetSchema, input, IPC_CHANNELS.subagentsGet);
+    return getSubagent(parsed.cwd, parsed.path);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.subagentsCreate, (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(subagentsCreateSchema, input, IPC_CHANNELS.subagentsCreate);
+    const { model, ...rest } = parsed;
+    return createSubagent({
+      ...rest,
+      ...(model !== undefined ? { model } : {}),
+    });
+  });
+
+  ipcMain.handle(IPC_CHANNELS.subagentsUpdate, (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(subagentsUpdateSchema, input, IPC_CHANNELS.subagentsUpdate);
+    const { model, ...rest } = parsed;
+    return updateSubagent({
+      ...rest,
+      ...(model !== undefined ? { model } : {}),
+    });
+  });
+
+  ipcMain.handle(IPC_CHANNELS.subagentsDelete, (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(subagentsDeleteSchema, input, IPC_CHANNELS.subagentsDelete);
+    return deleteSubagent(parsed.cwd, parsed.path);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.subagentsOpenDir, async (event, cwd: string) => {
+    assertTrustedSender(event);
+    const dir = ensureSubagentsDir(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.subagentsOpenDir));
     await shell.openPath(dir);
     return dir;
   });

@@ -204,6 +204,30 @@ export const skillsCreateSchema = z.object({
   body: z.string().trim().min(1).max(20_000),
 });
 
+export const subagentsGetSchema = z.object({
+  cwd: nonEmptyString,
+  path: nonEmptyString,
+});
+
+export const subagentsCreateSchema = z.object({
+  cwd: nonEmptyString,
+  name: nonEmptyString.max(64),
+  description: z.string().trim().max(280),
+  model: z.string().trim().max(120).optional(),
+  readOnly: z.boolean(),
+  isBackground: z.boolean(),
+  body: z.string().trim().min(1).max(20_000),
+});
+
+export const subagentsUpdateSchema = subagentsCreateSchema.extend({
+  path: nonEmptyString,
+});
+
+export const subagentsDeleteSchema = z.object({
+  cwd: nonEmptyString,
+  path: nonEmptyString,
+});
+
 export const diffReadSchema = z.object({
   cwd: nonEmptyString,
   path: optionalNonEmptyString,

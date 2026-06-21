@@ -44,6 +44,8 @@ import type {
   RuleMode,
   RuleSource,
   SkillInfo,
+  SubagentDetail,
+  SubagentInfo,
 } from "../../../../shared/contracts";
 import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
 import { ShinyText } from "../../components/ui/ShinyText";
@@ -74,6 +76,7 @@ type SettingsSectionId =
   | "appearance"
   | "personalization"
   | "skills"
+  | "subagents"
   | "mcp"
   | "rules";
 type ModelConfigPatch = {
@@ -82,12 +85,7 @@ type ModelConfigPatch = {
   maxTokens?: number;
 };
 
-export function SettingsPanel({
-  state,
-  onClose,
-  onRefresh,
-  workspaceCwd,
-}: SettingsPanelProps) {
+export function SettingsPanel({ state, onClose, onRefresh, workspaceCwd }: SettingsPanelProps) {
   const [selectedProvider, setSelectedProvider] = useState<string | undefined>();
   const [detail, setDetail] = useState<ModelProviderDetail | undefined>();
   const [detailLoading, setDetailLoading] = useState(false);
@@ -257,6 +255,7 @@ export function SettingsPanel({
           {activeSection === "appearance" ? <AppearanceSettingsPanel /> : null}
           {activeSection === "personalization" ? <PersonalizationSettingsPanel /> : null}
           {activeSection === "skills" ? <SkillsSettingsPanel cwd={workspaceCwd} /> : null}
+          {activeSection === "subagents" ? <SubagentsSettingsPanel cwd={workspaceCwd} /> : null}
           {activeSection === "mcp" ? <McpSettingsPanel cwd={workspaceCwd} /> : null}
           {activeSection === "rules" ? <RulesSettingsPanel cwd={workspaceCwd} /> : null}
           {activeSection === "model-provider" ? (
@@ -409,6 +408,13 @@ function SettingsSidebar({
             onClick={() => onSectionChange("skills")}
           >
             Skills
+          </SettingsNavItem>
+          <SettingsNavItem
+            active={activeSection === "subagents"}
+            icon={<IconUser size={16} stroke={1.7} />}
+            onClick={() => onSectionChange("subagents")}
+          >
+            Subagents
           </SettingsNavItem>
           <SettingsNavItem
             active={activeSection === "rules"}
@@ -2067,6 +2073,344 @@ function SkillsSettingsPanel({ cwd }: { cwd: string | undefined }) {
                 <span className="shrink-0 rounded bg-chip-faint px-1.5 py-px text-2xs text-fg-faint">
                   {scopeBadge(skill)}
                 </span>
+              </div>
+            ))}
+          </SettingsList>
+        )}
+      </SettingsSection>
+    </>
+  );
+}
+
+type SubagentFormState = {
+  path?: string;
+  name: string;
+  description: string;
+  model: string;
+  readOnly: boolean;
+  isBackground: boolean;
+  body: string;
+};
+
+function emptySubagentForm(): SubagentFormState {
+  return {
+    name: "",
+    description: "",
+    model: "inherit",
+    readOnly: false,
+    isBackground: false,
+    body: "",
+  };
+}
+
+function formFromSubagent(subagent: SubagentDetail): SubagentFormState {
+  return {
+    path: subagent.path,
+    name: subagent.name,
+    description: subagent.description,
+    model: subagent.model,
+    readOnly: subagent.readOnly,
+    isBackground: subagent.isBackground,
+    body: subagent.body,
+  };
+}
+
+function SubagentsSettingsPanel({ cwd }: { cwd: string | undefined }) {
+  const [subagents, setSubagents] = useState<SubagentInfo[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | undefined>();
+  const [form, setForm] = useState<SubagentFormState | undefined>();
+  const [saving, setSaving] = useState(false);
+
+  async function refresh(): Promise<void> {
+    if (!cwd) {
+      setSubagents([]);
+      return;
+    }
+    setLoading(true);
+    setError(undefined);
+    try {
+      setSubagents(await window.modus.subagents.list(cwd));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refresh is recreated each render; cwd is the real trigger.
+  useEffect(() => {
+    void refresh();
+  }, [cwd]);
+
+  async function editSubagent(subagent: SubagentInfo): Promise<void> {
+    if (!cwd) return;
+    setError(undefined);
+    try {
+      const detail = await window.modus.subagents.get({ cwd, path: subagent.path });
+      if (detail) {
+        setForm(formFromSubagent(detail));
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function saveSubagent(current: SubagentFormState): Promise<void> {
+    if (!cwd || !current.name.trim() || !current.body.trim()) {
+      return;
+    }
+    setSaving(true);
+    setError(undefined);
+    try {
+      const payload = {
+        cwd,
+        name: current.name.trim(),
+        description: current.description.trim(),
+        model: current.model.trim() || "inherit",
+        readOnly: current.readOnly,
+        isBackground: current.isBackground,
+        body: current.body.trim(),
+      };
+      if (current.path) {
+        await window.modus.subagents.update({ ...payload, path: current.path });
+      } else {
+        await window.modus.subagents.create(payload);
+      }
+      setForm(undefined);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function removeSubagent(subagent: SubagentInfo): Promise<void> {
+    if (!cwd || !subagent.deletable) return;
+    const confirmed = window.confirm(`Delete subagent "${subagent.name}"?`);
+    if (!confirmed) return;
+    setError(undefined);
+    try {
+      setSubagents(await window.modus.subagents.delete({ cwd, path: subagent.path }));
+      if (form?.path === subagent.path) {
+        setForm(undefined);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  function scopeBadge(subagent: SubagentInfo): string {
+    return subagent.scope === "user" ? `user · ${subagent.source}` : `project · ${subagent.source}`;
+  }
+
+  return (
+    <>
+      <SettingsPageHeader
+        actions={
+          <>
+            <button
+              className="flex h-8 items-center gap-1.5 rounded-md border border-hairline bg-surface px-2.5 text-xs text-fg transition-colors hover:bg-hover disabled:opacity-40"
+              disabled={!cwd}
+              onClick={() => void window.modus.subagents.openDir(cwd as string)}
+              type="button"
+            >
+              <IconWorld size={14} stroke={1.7} />
+              Open folder
+            </button>
+            <button
+              className="flex h-8 items-center gap-1.5 rounded-md bg-fg px-2.5 text-canvas text-xs transition-colors hover:bg-fg-muted disabled:opacity-40"
+              disabled={!cwd}
+              onClick={() => setForm((current) => (current ? undefined : emptySubagentForm()))}
+              type="button"
+            >
+              <IconPlus size={14} stroke={2} />
+              New
+            </button>
+          </>
+        }
+        description="Create specialized agents for focused work in parallel. Definitions are Markdown files in your agents folder."
+        title="Subagents"
+      />
+
+      {error ? <p className="-mt-4 text-danger text-xs">{error}</p> : null}
+
+      <CollapsibleMotion open={Boolean(form && cwd)} preset="default">
+        {form ? (
+          <div className="flex flex-col gap-3 rounded-lg border border-hairline-soft bg-panel px-5 py-4">
+            <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,220px)]">
+              <label className="flex flex-col gap-1.5">
+                <span className="text-xs text-fg-subtle">Name</span>
+                <input
+                  className="h-8 rounded-md border border-hairline bg-surface px-2.5 font-mono text-sm text-fg outline-none focus:border-focus-ring"
+                  onChange={(event) => setForm({ ...form, name: event.target.value })}
+                  placeholder="security-auditor"
+                  value={form.name}
+                />
+              </label>
+              <label className="flex flex-col gap-1.5">
+                <span className="text-xs text-fg-subtle">Model</span>
+                <input
+                  className="h-8 rounded-md border border-hairline bg-surface px-2.5 font-mono text-sm text-fg outline-none focus:border-focus-ring"
+                  onChange={(event) => setForm({ ...form, model: event.target.value })}
+                  placeholder="inherit"
+                  value={form.model}
+                />
+              </label>
+            </div>
+            <label className="flex flex-col gap-1.5">
+              <span className="text-xs text-fg-subtle">Description</span>
+              <textarea
+                className="scroll-thin min-h-[68px] resize-none rounded-md border border-hairline bg-surface px-2.5 py-2 text-sm text-fg leading-5 outline-none focus:border-focus-ring"
+                maxLength={280}
+                onChange={(event) => setForm({ ...form, description: event.target.value })}
+                placeholder="Use for security-sensitive auth, payment, or permission changes"
+                value={form.description}
+              />
+            </label>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="flex items-center justify-between gap-4 rounded-md border border-hairline-soft bg-surface px-3 py-2">
+                <span>
+                  <span className="block text-sm text-fg">Readonly</span>
+                  <span className="block text-xs text-fg-faint">
+                    Disable write/shell/control tools
+                  </span>
+                </span>
+                <SwitchControl
+                  ariaLabel="Readonly subagent"
+                  checked={form.readOnly}
+                  onCheckedChange={(checked) => setForm({ ...form, readOnly: checked })}
+                />
+              </div>
+              <div className="flex items-center justify-between gap-4 rounded-md border border-hairline-soft bg-surface px-3 py-2">
+                <span>
+                  <span className="block text-sm text-fg">Background</span>
+                  <span className="block text-xs text-fg-faint">
+                    Return immediately after spawn
+                  </span>
+                </span>
+                <SwitchControl
+                  ariaLabel="Background subagent"
+                  checked={form.isBackground}
+                  onCheckedChange={(checked) => setForm({ ...form, isBackground: checked })}
+                />
+              </div>
+            </div>
+            <label className="flex flex-col gap-1.5">
+              <span className="text-xs text-fg-subtle">Instructions</span>
+              <textarea
+                className="scroll-thin min-h-56 resize-y rounded-md border border-hairline bg-surface px-3 py-2 font-mono text-xs text-fg leading-5 outline-none placeholder:text-fg-faint focus:border-focus-ring"
+                onChange={(event) => setForm({ ...form, body: event.target.value })}
+                placeholder={
+                  "You are a focused security reviewer.\n\nWhen invoked:\n1. Inspect the relevant code.\n2. Report concrete risks.\n3. Do not edit files unless asked."
+                }
+                value={form.body}
+              />
+            </label>
+            <div className="flex items-center justify-end gap-2">
+              <button
+                className="flex h-8 items-center rounded-md border border-hairline bg-surface px-3 text-xs text-fg-muted transition-colors hover:bg-hover"
+                onClick={() => setForm(undefined)}
+                type="button"
+              >
+                Cancel
+              </button>
+              <button
+                className="flex h-8 items-center gap-1.5 rounded-md bg-fg px-3 text-canvas text-xs transition-colors hover:bg-fg-muted disabled:opacity-40"
+                disabled={!form.name.trim() || !form.body.trim() || saving}
+                onClick={() => void saveSubagent(form)}
+                type="button"
+              >
+                {saving ? (
+                  <ShinyText className="text-canvas">Saving…</ShinyText>
+                ) : form.path ? (
+                  "Save subagent"
+                ) : (
+                  "Create subagent"
+                )}
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </CollapsibleMotion>
+
+      <SettingsSection title="Available subagents">
+        {!cwd ? (
+          <div className="rounded-lg border border-hairline-soft bg-panel px-5 py-6">
+            <p className="text-sm text-fg-muted">
+              Open a workspace to discover and create subagents.
+            </p>
+          </div>
+        ) : loading && subagents.length === 0 ? (
+          <div className="rounded-lg border border-hairline-soft bg-panel px-5 py-6 text-sm text-fg-muted">
+            <ShinyText>Discovering subagents…</ShinyText>
+          </div>
+        ) : subagents.length === 0 ? (
+          <div className="rounded-lg border border-hairline-soft bg-panel px-5 py-10 text-center">
+            <div className="text-sm text-fg-muted">No Subagents Yet</div>
+            <div className="mt-1 text-xs text-fg-faint">
+              Create specialized agents to handle focused tasks.
+            </div>
+            <button
+              className="mt-4 h-8 rounded-md border border-hairline bg-surface px-3 text-xs text-fg transition-colors hover:bg-hover"
+              onClick={() => setForm(emptySubagentForm())}
+              type="button"
+            >
+              New Subagent
+            </button>
+          </div>
+        ) : (
+          <SettingsList>
+            {subagents.map((subagent) => (
+              <div
+                className="group/subagent grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-hairline-soft border-b px-4 py-3 last:border-b-0"
+                key={subagent.path}
+              >
+                <button
+                  className="min-w-0 text-left"
+                  onClick={() => void editSubagent(subagent)}
+                  type="button"
+                >
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    <span className="font-mono text-sm text-fg">/{subagent.name}</span>
+                    <ReadOnlyPill>{subagent.model || "inherit"}</ReadOnlyPill>
+                    {subagent.readOnly ? <ReadOnlyPill>readonly</ReadOnlyPill> : null}
+                    {subagent.isBackground ? <ReadOnlyPill>background</ReadOnlyPill> : null}
+                    <span className="rounded bg-chip-faint px-1.5 py-px text-2xs text-fg-faint">
+                      {scopeBadge(subagent)}
+                    </span>
+                  </div>
+                  {subagent.description ? (
+                    <div className="mt-1 truncate text-xs text-fg-muted">
+                      {subagent.description}
+                    </div>
+                  ) : null}
+                </button>
+                <div className="flex items-center gap-1">
+                  <Tooltip content="Edit subagent" side="bottom" sideOffset={6}>
+                    <button
+                      aria-label={`Edit ${subagent.name}`}
+                      className="flex size-7 items-center justify-center rounded-md text-fg-faint opacity-0 transition-all hover:bg-hover hover:text-fg group-hover/subagent:opacity-100"
+                      onClick={() => void editSubagent(subagent)}
+                      type="button"
+                    >
+                      <IconEdit size={14} stroke={1.8} />
+                    </button>
+                  </Tooltip>
+                  {subagent.deletable ? (
+                    <Tooltip content="Delete subagent" side="bottom" sideOffset={6}>
+                      <button
+                        aria-label={`Delete ${subagent.name}`}
+                        className="flex size-7 items-center justify-center rounded-md text-fg-faint opacity-0 transition-all hover:bg-danger/10 hover:text-danger group-hover/subagent:opacity-100"
+                        onClick={() => void removeSubagent(subagent)}
+                        type="button"
+                      >
+                        <IconTrash size={14} stroke={1.8} />
+                      </button>
+                    </Tooltip>
+                  ) : null}
+                </div>
               </div>
             ))}
           </SettingsList>
