@@ -7,6 +7,7 @@ import {
   appendAgentEvents,
   foldAgentEvents,
   IDLE_ACTIVITY,
+  optimisticUserPromptEvents,
   reduceActivity,
 } from "./agentEventHub";
 
@@ -193,6 +194,30 @@ describe("appendAgentEvents", () => {
     const twice = foldAgentEvents(once);
     expect(twice).toHaveLength(1);
     expect(twice[0]?.event).toMatchObject({ type: "message.delta", delta: "ab" });
+  });
+
+  it("replaces optimistic user prompt events with matching runtime events", () => {
+    const seed = optimisticUserPromptEvents({
+      sessionId: "s",
+      userMessageId: "m",
+      message: "hello",
+    });
+
+    const merged = appendAgentEvents(seed, [
+      item({ type: "message.started", sessionId: "s", messageId: "m", role: "user" }),
+      item({ type: "message.delta", sessionId: "s", messageId: "m", delta: "hello" }),
+      item({ type: "message.completed", sessionId: "s", messageId: "m" }),
+      item({ type: "session.status", sessionId: "s", status: { type: "idle" } }),
+    ]);
+
+    expect(merged).toHaveLength(4);
+    expect(merged.some((entry) => entry.optimistic)).toBe(false);
+    expect(merged.find((entry) => entry.event.type === "message.delta")?.event).toMatchObject({
+      delta: "hello",
+    });
+    expect(merged.find((entry) => entry.event.type === "session.status")?.event).toMatchObject({
+      status: { type: "idle" },
+    });
   });
 });
 

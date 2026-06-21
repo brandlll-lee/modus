@@ -2,6 +2,7 @@ import {
   type AgentEventItem,
   appendAgentEvents,
   foldAgentEvents,
+  optimisticUserPromptEvents,
 } from "../../../../shared/agent-events";
 import type { AgentEvent } from "../../../../shared/contracts";
 
@@ -18,7 +19,7 @@ import type { AgentEvent } from "../../../../shared/contracts";
  * renderer and the main-process event store fold identically.
  */
 
-export { type AgentEventItem, appendAgentEvents, foldAgentEvents };
+export { type AgentEventItem, appendAgentEvents, foldAgentEvents, optimisticUserPromptEvents };
 
 export type SessionActivity = {
   /** A run is currently executing. */

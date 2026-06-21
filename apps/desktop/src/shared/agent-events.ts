@@ -1,6 +1,11 @@
 import type { AgentEvent } from "./contracts";
 
-export type AgentEventItem = { id: string; event: AgentEvent; createdAt?: string };
+export type AgentEventItem = {
+  id: string;
+  event: AgentEvent;
+  createdAt?: string;
+  optimistic?: boolean;
+};
 
 /**
  * Fold key = the event's own authoritative stream identity.
@@ -12,17 +17,23 @@ export type AgentEventItem = { id: string; event: AgentEvent; createdAt?: string
  * still collapse correctly, and a session's event list stays O(parts) instead
  * of O(deltas): one accumulated item per stream, not one per chunk.
  *
- * Non-delta events (started/completed/ended/…) return no key and are kept
- * verbatim in arrival order.
+ * Durable lifecycle events are keyed when the event identity is explicit
+ * (`messageId`, session id for status), so local optimistic items can be
+ * replaced by the runtime's authoritative echo.
  */
 function foldKey(event: AgentEvent): string | undefined {
   switch (event.type) {
+    case "message.started":
+    case "message.completed":
+      return `${event.type}:${event.messageId}`;
     case "message.delta":
     case "thinking.delta":
       return `${event.type}:${event.messageId}`;
     case "tool.output":
     case "tool.delta":
       return `${event.type}:${event.toolCallId}`;
+    case "session.status":
+      return `${event.type}:${event.sessionId}`;
     default:
       return undefined;
   }
@@ -35,6 +46,12 @@ function foldKey(event: AgentEvent): string | undefined {
  * so the latest simply wins. `foldKey` guarantees both share the same type.
  */
 function foldInto<T extends AgentEventItem>(previous: T, next: T): T {
+  if (previous.optimistic && !next.optimistic) {
+    return next;
+  }
+  if (!previous.optimistic && next.optimistic) {
+    return previous;
+  }
   const prev = previous.event;
   const cur = next.event;
   if (prev.type === "message.delta" && cur.type === "message.delta") {
@@ -84,4 +101,59 @@ export function appendAgentEvents<T extends AgentEventItem>(events: T[], nextIte
 /** Fold a complete event list (e.g. a session's persisted history) in one pass. */
 export function foldAgentEvents<T extends AgentEventItem>(items: T[]): T[] {
   return appendAgentEvents([], items);
+}
+
+export function optimisticUserPromptEvents(input: {
+  sessionId: string;
+  userMessageId: string;
+  message: string;
+  attachments?: Extract<AgentEvent, { type: "message.started" }>["attachments"];
+  skills?: Extract<AgentEvent, { type: "message.started" }>["skills"];
+}): AgentEventItem[] {
+  const createdAt = new Date().toISOString();
+  const started: Extract<AgentEvent, { type: "message.started" }> = {
+    type: "message.started",
+    sessionId: input.sessionId,
+    messageId: input.userMessageId,
+    role: "user",
+    ...(input.attachments && input.attachments.length > 0
+      ? { attachments: input.attachments }
+      : {}),
+    ...(input.skills && input.skills.length > 0 ? { skills: input.skills } : {}),
+  };
+  return [
+    {
+      id: `optimistic:${input.userMessageId}:started`,
+      event: started,
+      createdAt,
+      optimistic: true,
+    },
+    {
+      id: `optimistic:${input.userMessageId}:delta`,
+      event: {
+        type: "message.delta",
+        sessionId: input.sessionId,
+        messageId: input.userMessageId,
+        delta: input.message,
+      },
+      createdAt,
+      optimistic: true,
+    },
+    {
+      id: `optimistic:${input.userMessageId}:completed`,
+      event: {
+        type: "message.completed",
+        sessionId: input.sessionId,
+        messageId: input.userMessageId,
+      },
+      createdAt,
+      optimistic: true,
+    },
+    {
+      id: `optimistic:${input.sessionId}:status`,
+      event: { type: "session.status", sessionId: input.sessionId, status: { type: "busy" } },
+      createdAt,
+      optimistic: true,
+    },
+  ];
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentEvent } from "../../../../shared/contracts";
+import { optimisticUserPromptEvents } from "./agentEventHub";
 import { subagentColor } from "./subagentUi";
 import {
   attachTurnActions,
@@ -29,6 +30,20 @@ function tool(id: string, name: string, complete = true, isError = false) {
 }
 
 describe("buildBlocks", () => {
+  it("renders an optimistic user prompt immediately", () => {
+    const blocks = buildBlocks(
+      optimisticUserPromptEvents({
+        sessionId: "s",
+        userMessageId: "m",
+        message: "hello now",
+      }),
+    );
+
+    expect(blocks).toContainEqual(
+      expect.objectContaining({ type: "message", role: "user", content: "hello now" }),
+    );
+  });
+
   it("updates run blocks through completion", () => {
     const blocks = buildBlocks([
       item("1", { type: "run.started", sessionId: "s", runId: "r", delivery: "normal" }),
