@@ -124,6 +124,7 @@ export function registerPlanTools(): void {
       name: PLAN_TOOL_NAME,
       profiles: ["plan"],
       permission: { danger: "safe" },
+      readOnly: false,
       ui: PLAN_TOOL_UI,
     },
     definition: planTool,

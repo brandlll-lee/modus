@@ -165,6 +165,7 @@ function migrate(db: DatabaseSync): void {
   );
   addColumn(db, "agent_sessions", "subagent_task", "text");
   addColumn(db, "agent_sessions", "subagent_type", "text");
+  addColumn(db, "agent_sessions", "subagent_readonly", "integer not null default 0");
   db.exec(`
     create index if not exists idx_agent_sessions_parent
       on agent_sessions(parent_session_id);

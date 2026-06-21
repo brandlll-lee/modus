@@ -19,16 +19,16 @@ import type {
   ModelInfo,
   PlanBuildStatus,
 } from "../../shared/contracts";
-import { SUBAGENT_TOOL_NAMES } from "../../shared/tools";
+import { SUBAGENT_TOOL_NAMES, type ToolProfileName } from "../../shared/tools";
 import { releaseAgentBrowserControl } from "../browser/browser-service";
 import { formatResolvedContext, resolveContext } from "../context/context-service";
 import { getChangeStatsSince } from "../git/git-service";
 import { resolveGlobalGuidancePrompt } from "../guidance/guidance-service";
+import { denyPendingQuestionRequestsForSession } from "../interaction/question-broker";
 import { IPC_CHANNELS } from "../ipc/channels";
 import { maybeNotifyAgentEvent } from "../notifications/agent-notifications";
-import { readPlanById, setPlanBuildStatusById } from "../plan/plan-store";
-import { denyPendingQuestionRequestsForSession } from "../interaction/question-broker";
 import { denyPendingPermissionRequestsForSession } from "../permissions/permission-broker";
+import { readPlanById, setPlanBuildStatusById } from "../plan/plan-store";
 import { summarizeApps } from "../process/app-process-service";
 import { killManagedProcess, listManagedProcesses } from "../process/managed-process-facade";
 import { RULES_MAX_TOTAL_BYTES, resolveAlwaysRulesPrompt } from "../rules/rules-service";
@@ -74,6 +74,7 @@ import type {
 } from "./runtime";
 import { deriveSessionTitle, shouldReplaceSessionTitle } from "./session-title";
 import { describeAgentShellForPrompt, resolveAgentShell } from "./shell-resolver";
+import { resolveSubagentsPrompt } from "./subagents-config";
 import { registerAppTools } from "./tools/app-tools";
 import { registerBrowserTools } from "./tools/browser-tools";
 import { plansRoot, registerPlanTools } from "./tools/plan-tools";
@@ -137,6 +138,47 @@ function dedupeToolsByName<T extends { name: string }>(tools: T[]): T[] {
     byName.set(tool.name, tool);
   }
   return [...byName.values()];
+}
+
+function readOnlyDisabledToolNames(profile: ToolProfileName): string[] {
+  return toolRegistry.resolveActiveTools(profile).filter((name) => {
+    const entry = toolRegistry.getEntry(name);
+    const allowed = entry?.readOnly ?? entry?.permission.danger === "safe";
+    return !allowed;
+  });
+}
+
+function toolDisableListForSession(
+  info: AgentSessionInfo,
+  profile: ToolProfileName,
+): string[] | undefined {
+  const disabled = new Set<string>();
+  if (info.parentSessionId) {
+    for (const name of SUBAGENT_TOOL_NAMES) disabled.add(name);
+  }
+  if (info.subagentReadOnly) {
+    for (const name of readOnlyDisabledToolNames(profile)) disabled.add(name);
+  }
+  return disabled.size > 0 ? [...disabled] : undefined;
+}
+
+function composeSubagentPrompt(input: {
+  prompt: string;
+  subagent?: { name: string; body: string };
+}): string {
+  const body = input.subagent?.body.trim();
+  if (!body) {
+    return input.prompt;
+  }
+  return [
+    `<subagent_definition name="${input.subagent?.name}">`,
+    body,
+    "</subagent_definition>",
+    "",
+    "<task>",
+    input.prompt,
+    "</task>",
+  ].join("\n");
 }
 
 export class PiSdkRuntime implements AgentRuntime {
@@ -575,11 +617,11 @@ export class PiSdkRuntime implements AgentRuntime {
       // Per-turn mode: switch the active tool set (plan = read-only research +
       // plan_write; build = full chat tools). setActiveToolsByName also rebuilds
       // the system prompt for the new set, and takes effect on this turn.
-      const toolOverrides = runtimeSession.info.parentSessionId
-        ? { disable: [...SUBAGENT_TOOL_NAMES] }
-        : undefined;
+      const profile = profileForMode(input.mode);
+      const disabledTools = toolDisableListForSession(runtimeSession.info, profile);
+      const toolOverrides = disabledTools ? { disable: disabledTools } : undefined;
       runtimeSession.session.setActiveToolsByName(
-        toolRegistry.resolveActiveTools(profileForMode(input.mode), toolOverrides),
+        toolRegistry.resolveActiveTools(profile, toolOverrides),
       );
 
       // Per-turn model + thinking: the composer's current selection travels with
@@ -885,7 +927,17 @@ export class PiSdkRuntime implements AgentRuntime {
     const digest = [terminalDigest, appDigest].filter(Boolean).join("\n");
     const awareness = digest ? `<active_terminals>\n${digest}\n</active_terminals>` : "";
     const skillsText = resolveSkillsPrompt(runtimeSession.info.cwd, input.skills ?? []);
-    return [planModePreamble(input.mode), skillsText, contextText, awareness, input.message]
+    const subagentsText = runtimeSession.info.parentSessionId
+      ? ""
+      : resolveSubagentsPrompt(runtimeSession.info.cwd);
+    return [
+      planModePreamble(input.mode),
+      skillsText,
+      subagentsText,
+      contextText,
+      awareness,
+      input.message,
+    ]
       .filter(Boolean)
       .join("\n\n");
   }
@@ -948,6 +1000,13 @@ export class PiSdkRuntime implements AgentRuntime {
       task: string;
       prompt: string;
       subagentType: string;
+      subagent?: {
+        name: string;
+        body: string;
+        model: string;
+        readOnly: boolean;
+        isBackground: boolean;
+      };
     },
   ): Promise<{
     session: AgentSessionInfo;
@@ -968,14 +1027,18 @@ export class PiSdkRuntime implements AgentRuntime {
     }
 
     const emit = this.emitToWindow(window);
+    const requestedModel = input.subagent?.model.trim();
+    const childModel =
+      requestedModel && requestedModel !== "inherit" ? requestedModel : (parent.model ?? undefined);
     const session = await this.create(window, {
       workspaceId: parent.workspaceId,
       cwd: parent.cwd,
       title: input.task,
-      ...(parent.model ? { model: parent.model } : {}),
+      ...(childModel ? { model: childModel } : {}),
       parentSessionId: parent.id,
       subagentTask: input.task,
       subagentType: input.subagentType,
+      ...(input.subagent?.readOnly ? { subagentReadOnly: true } : {}),
     });
     this.parentSessionByChild.set(session.id, parent.id);
     emit({
@@ -984,17 +1047,17 @@ export class PiSdkRuntime implements AgentRuntime {
       childSessionId: session.id,
       task: input.task,
       subagentType: input.subagentType,
-      background: true,
+      background: input.subagent?.isBackground ?? true,
       ...(session.model ? { model: session.model } : {}),
     });
 
     const run = this.prompt(window, {
       sessionId: session.id,
-      message: input.prompt,
+      message: composeSubagentPrompt(input),
       context: [],
       delivery: "normal",
       userMessageId: `subagent-user:${randomUUID()}`,
-      ...(parent.model ? { model: parent.model } : {}),
+      ...(childModel ? { model: childModel } : {}),
     });
 
     void run
@@ -1142,7 +1205,11 @@ export class PiSdkRuntime implements AgentRuntime {
     const descendants: AgentSessionInfo[] = [];
     const queue = [rootSessionId];
     for (let index = 0; index < queue.length; index += 1) {
-      const children = listSubagentSessions(queue[index]!);
+      const sessionId = queue[index];
+      if (!sessionId) {
+        continue;
+      }
+      const children = listSubagentSessions(sessionId);
       descendants.push(...children);
       queue.push(...children.map((child) => child.id));
     }

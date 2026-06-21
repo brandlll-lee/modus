@@ -87,6 +87,8 @@ export type ToolCatalogEntry = {
   /** Profiles this tool belongs to. Custom tools self-declare their membership. */
   profiles: ToolProfileName[];
   permission: ToolPermissionDecl;
+  /** Omit to derive from permission.danger === "safe"; false marks safe-but-mutating tools. */
+  readOnly?: boolean;
   ui: ToolUiMeta;
 };
 

@@ -15,6 +15,7 @@ type AgentSessionRow = {
   parent_session_id: string | null;
   subagent_task: string | null;
   subagent_type: string | null;
+  subagent_readonly: number;
   created_at: string;
   updated_at: string;
 };
@@ -49,6 +50,9 @@ function toSession(row: AgentSessionRow): AgentSessionInfo {
   if (row.subagent_type !== null) {
     session.subagentType = row.subagent_type;
   }
+  if (row.subagent_readonly !== 0) {
+    session.subagentReadOnly = true;
+  }
   return session;
 }
 
@@ -63,6 +67,7 @@ export function createAgentSessionRecord(input: {
   parentSessionId?: string;
   subagentTask?: string;
   subagentType?: string;
+  subagentReadOnly?: boolean;
 }): AgentSessionInfo {
   const now = new Date().toISOString();
   const runtime = input.runtime ?? "pi-sdk";
@@ -95,13 +100,16 @@ export function createAgentSessionRecord(input: {
   if (input.subagentType !== undefined) {
     session.subagentType = input.subagentType;
   }
+  if (input.subagentReadOnly !== undefined) {
+    session.subagentReadOnly = input.subagentReadOnly;
+  }
   getDatabase()
     .prepare(
       `insert into agent_sessions (
         id, workspace_id, title, cwd, status, runtime, model, pi_session_id, pi_session_file,
-        parent_session_id, subagent_task, subagent_type, created_at, updated_at
+        parent_session_id, subagent_task, subagent_type, subagent_readonly, created_at, updated_at
        )
-       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       session.id,
@@ -116,6 +124,7 @@ export function createAgentSessionRecord(input: {
       session.parentSessionId ?? null,
       session.subagentTask ?? null,
       session.subagentType ?? null,
+      session.subagentReadOnly ? 1 : 0,
       session.createdAt,
       session.updatedAt,
     );
@@ -180,7 +189,8 @@ export function getAgentSession(sessionId: string): AgentSessionInfo | undefined
   const row = getDatabase()
     .prepare(
       `select id, workspace_id, title, cwd, status, runtime, model, pi_session_id,
-        pi_session_file, parent_session_id, subagent_task, subagent_type, created_at, updated_at
+        pi_session_file, parent_session_id, subagent_task, subagent_type, subagent_readonly,
+        created_at, updated_at
        from agent_sessions
        where id = ?`,
     )
@@ -193,7 +203,8 @@ export function listAgentSessions(): AgentSessionInfo[] {
   const rows = getDatabase()
     .prepare(
       `select id, workspace_id, title, cwd, status, runtime, model, pi_session_id,
-        pi_session_file, parent_session_id, subagent_task, subagent_type, created_at, updated_at
+        pi_session_file, parent_session_id, subagent_task, subagent_type, subagent_readonly,
+        created_at, updated_at
        from agent_sessions
        order by updated_at desc`,
     )
@@ -206,7 +217,8 @@ export function listSubagentSessions(parentSessionId: string): AgentSessionInfo[
   const rows = getDatabase()
     .prepare(
       `select id, workspace_id, title, cwd, status, runtime, model, pi_session_id,
-        pi_session_file, parent_session_id, subagent_task, subagent_type, created_at, updated_at
+        pi_session_file, parent_session_id, subagent_task, subagent_type, subagent_readonly,
+        created_at, updated_at
        from agent_sessions
        where parent_session_id = ?
        order by created_at asc, rowid asc`,

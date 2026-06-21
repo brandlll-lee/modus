@@ -129,6 +129,7 @@ vi.mock("./model-service", () => ({
 
 const { getDatabase } = await import("../db/database");
 const { PiSdkRuntime } = await import("./pi-sdk-runtime");
+const { toolRegistry } = await import("./tools/registry");
 const { archiveAgentSession } = await import("./session-lifecycle");
 const { recordAgentEvent } = await import("./agent-event-store");
 const { writePlan, readPlanById } = await import("../plan/plan-store");
@@ -198,7 +199,11 @@ function insertSession(
   );
 }
 
-function insertSubagentSession(sessionId: string, parentSessionId: string, workspaceId: string): void {
+function insertSubagentSession(
+  sessionId: string,
+  parentSessionId: string,
+  workspaceId: string,
+): void {
   const now = new Date().toISOString();
   getDatabase()
     .prepare(
@@ -583,6 +588,76 @@ describe("PiSdkRuntime", () => {
     expect(mocks.killManagedProcess).toHaveBeenCalledWith("terminal-child");
   });
 
+  it("applies configured subagent prompt, readonly tools, and background flag", async () => {
+    const parentSessionId = `session-${crypto.randomUUID()}`;
+    const workspaceId = `workspace-${crypto.randomUUID()}`;
+    insertSession(parentSessionId, workspaceId, join(userData, "missing.jsonl"), "Parent chat");
+    const prompt = vi.fn(async (_message: string) => {
+      mocks.emitPiEvent({ type: "message_start", message: { role: "assistant" } });
+      mocks.emitPiEvent({
+        type: "message_update",
+        message: { role: "assistant" },
+        assistantMessageEvent: { type: "text_delta", delta: "done" },
+      });
+      mocks.emitPiEvent({ type: "message_end", message: { role: "assistant" } });
+    });
+    const childPiSession = createMockPiSession({ prompt });
+    mocks.createAgentSession.mockImplementationOnce(async () => ({ session: childPiSession }));
+    const runtime = new PiSdkRuntime();
+    const window = createWindowStub();
+
+    toolRegistry.registerTool({
+      entry: {
+        name: "synthetic_mutator",
+        profiles: ["chat"],
+        permission: { danger: "dangerous", action: "file.write" },
+        ui: { iconName: "tool", verb: "Mutated", mono: false },
+      },
+      definition: { name: "synthetic_mutator" } as never,
+    });
+    try {
+      await runtime.spawnSubagent(window, {
+        parentSessionId,
+        task: "Audit auth",
+        prompt: "Check login changes.",
+        subagentType: "security-auditor",
+        subagent: {
+          name: "security-auditor",
+          body: "You are a security reviewer.",
+          model: "inherit",
+          readOnly: true,
+          isBackground: false,
+        },
+      });
+
+      await vi.waitFor(() => expect(prompt).toHaveBeenCalled());
+      const message = prompt.mock.calls[0]?.[0] as unknown as string;
+      expect(message).toContain('<subagent_definition name="security-auditor">');
+      expect(message).toContain("You are a security reviewer.");
+      expect(message).toContain("<task>\nCheck login changes.\n</task>");
+
+      const setActiveToolsByName = childPiSession.setActiveToolsByName as ReturnType<typeof vi.fn>;
+      const activeTools = setActiveToolsByName.mock.calls[0]?.[0] as string[];
+      expect(activeTools).toEqual(expect.arrayContaining(["read", "grep", "find", "ls"]));
+      expect(activeTools).not.toEqual(
+        expect.arrayContaining(["bash", "edit", "write", "terminal_run", "browser_click", "task"]),
+      );
+      expect(activeTools).not.toContain("synthetic_mutator");
+
+      const send = window.webContents.send as unknown as ReturnType<typeof vi.fn>;
+      expect(send).toHaveBeenCalledWith(
+        "agent:event",
+        expect.objectContaining({
+          type: "subagent.started",
+          background: false,
+          subagentType: "security-auditor",
+        }),
+      );
+    } finally {
+      toolRegistry.unregisterTool("synthetic_mutator");
+    }
+  });
+
   it("aborts active subagents when the parent session is aborted", async () => {
     const parentSessionId = `session-${crypto.randomUUID()}`;
     const workspaceId = `workspace-${crypto.randomUUID()}`;
@@ -669,12 +744,12 @@ describe("PiSdkRuntime", () => {
     });
     const runtime = new PiSdkRuntime();
 
-    await expect(runtime.waitSubagent(parentSessionId, { target: childSessionId })).resolves.toEqual(
-      {
-        timedOut: false,
-        agents: [expect.objectContaining({ id: childSessionId, output: "final result" })],
-      },
-    );
+    await expect(
+      runtime.waitSubagent(parentSessionId, { target: childSessionId }),
+    ).resolves.toEqual({
+      timedOut: false,
+      agents: [expect.objectContaining({ id: childSessionId, output: "final result" })],
+    });
   });
 
   it("archives child sessions before deleting the parent session", async () => {

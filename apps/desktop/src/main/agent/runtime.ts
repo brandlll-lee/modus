@@ -20,6 +20,7 @@ export type CreateAgentRuntimeInput = {
   parentSessionId?: string;
   subagentTask?: string;
   subagentType?: string;
+  subagentReadOnly?: boolean;
 };
 
 export type PromptAgentInput = {
@@ -58,6 +59,13 @@ export type AgentRuntime = {
       task: string;
       prompt: string;
       subagentType: string;
+      subagent?: {
+        name: string;
+        body: string;
+        model: string;
+        readOnly: boolean;
+        isBackground: boolean;
+      };
     },
   ): Promise<{
     session: AgentSessionInfo;

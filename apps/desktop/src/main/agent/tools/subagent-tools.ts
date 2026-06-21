@@ -6,6 +6,7 @@ import {
 import { type Static, Type } from "typebox";
 import { SUBAGENT_TOOL_UI, type SubagentToolName } from "../../../shared/tools";
 import type { AgentRuntime } from "../runtime";
+import { resolveSubagent } from "../subagents-config";
 import { toolRegistry } from "./registry";
 import { type AgentToolContext, resolveAgentToolContext } from "./tool-context";
 
@@ -76,6 +77,13 @@ const taskParams = Type.Object({
       description: "Specialized agent type label, such as explorer, worker, reviewer.",
     }),
   ),
+  subagent: Type.Optional(
+    Type.String({
+      minLength: 1,
+      maxLength: 80,
+      description: "Configured subagent name from the workspace agents manifest.",
+    }),
+  ),
 });
 
 const targetParams = Type.Object({
@@ -100,10 +108,12 @@ const taskTool: ToolDefinition = defineTool({
   name: "task",
   label: "Start subagent",
   description:
-    "Start a child subagent with its own context window. Use only when the user explicitly asks for subagents, parallel work, or isolated exploration. Returns immediately; call wait_agent when you need results.",
-  promptSnippet: "task(description, prompt, subagent_type?) — start an isolated child subagent.",
+    "Start a child subagent with its own context window. Use a configured subagent when its description matches; otherwise use only when the user explicitly asks for subagents, parallel work, or isolated exploration.",
+  promptSnippet:
+    "task(description, prompt, subagent?, subagent_type?) — start an isolated child subagent.",
   promptGuidelines: [
     "Use subagents for bounded, parallel, noisy work; keep simple work in this main conversation.",
+    "If the user invokes `/name` and `name` is an available subagent, call task with subagent set to that name.",
     "Give each subagent a clear prompt and expected return format.",
     "Continue useful parent-side work after spawning; call wait_agent only when the child result is needed.",
   ],
@@ -113,12 +123,33 @@ const taskTool: ToolDefinition = defineTool({
     if (!context.window || !context.sessionId) {
       throw new Error("No active Modus session for this subagent task.");
     }
+    const subagent = params.subagent ? resolveSubagent(ctx.cwd, params.subagent) : undefined;
+    if (params.subagent && !subagent) {
+      throw new Error(`Unknown subagent: ${params.subagent}`);
+    }
     const result = await currentOps().spawnSubagent(context.window, {
       parentSessionId: ownerSessionId(context),
       task: params.description.trim(),
       prompt: params.prompt,
-      subagentType: params.subagent_type?.trim() || "worker",
+      subagentType: subagent?.name ?? params.subagent_type?.trim() ?? "worker",
+      ...(subagent
+        ? {
+            subagent: {
+              name: subagent.name,
+              body: subagent.body,
+              model: subagent.model,
+              readOnly: subagent.readOnly,
+              isBackground: subagent.isBackground,
+            },
+          }
+        : {}),
     });
+    if (subagent && !subagent.isBackground) {
+      const waitResult = await currentOps().waitSubagent(ownerSessionId(context), {
+        target: result.session.id,
+      });
+      return toResult(renderWaitResult(waitResult), waitResult);
+    }
     const summary = `Subagent started: ${params.description.trim()}`;
     return toResult(renderTaskStarted(result.session.id, summary), result);
   },
