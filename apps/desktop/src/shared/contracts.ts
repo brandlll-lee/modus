@@ -21,6 +21,7 @@ export type AgentSessionInfo = {
   parentSessionId?: string;
   subagentTask?: string;
   subagentType?: string;
+  subagentReadOnly?: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -1226,4 +1227,33 @@ export type CreateSkillInput = {
   description: string;
   /** Markdown instructions written to SKILL.md after frontmatter. */
   body: string;
+};
+
+export type SubagentInfo = {
+  name: string;
+  description: string;
+  scope: SkillScope;
+  source: string;
+  path: string;
+  model: string;
+  readOnly: boolean;
+  isBackground: boolean;
+  editable: boolean;
+  deletable: boolean;
+};
+
+export type SubagentDetail = SubagentInfo & { body: string };
+
+export type CreateSubagentInput = {
+  cwd: string;
+  name: string;
+  description: string;
+  model?: string;
+  readOnly: boolean;
+  isBackground: boolean;
+  body: string;
+};
+
+export type UpdateSubagentInput = CreateSubagentInput & {
+  path: string;
 };

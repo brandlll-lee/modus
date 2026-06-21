@@ -1,0 +1,107 @@
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  createSubagent,
+  deleteSubagent,
+  loadWorkspaceSubagents,
+  parseSubagent,
+  resolveSubagentsPrompt,
+  updateSubagent,
+} from "./subagents-config";
+
+describe("parseSubagent", () => {
+  it("parses Cursor-compatible frontmatter and defaults", () => {
+    const agent = parseSubagent(
+      "---\nname: Security Auditor\ndescription: Review auth\nreadonly: true\n---\nBody",
+      "fallback",
+    );
+
+    expect(agent).toEqual({
+      name: "security-auditor",
+      description: "Review auth",
+      model: "inherit",
+      readOnly: true,
+      isBackground: false,
+      body: "Body",
+    });
+  });
+});
+
+describe("loadWorkspaceSubagents", () => {
+  let cwd: string;
+  let home: string;
+
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), "modus-subagents-cwd-"));
+    home = mkdtempSync(join(tmpdir(), "modus-subagents-home-"));
+  });
+
+  afterEach(() => {
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  function writeAgent(root: string, name: string, description: string): string {
+    const dir = join(root, "agents");
+    mkdirSync(dir, { recursive: true });
+    const path = join(dir, `${name}.md`);
+    writeFileSync(
+      path,
+      `---\nname: ${name}\ndescription: ${description}\n---\n${description}`,
+      "utf8",
+    );
+    return path;
+  }
+
+  it("uses workspace and provider precedence for same-name agents", () => {
+    writeAgent(join(home, ".modus"), "reviewer", "home modus");
+    writeAgent(join(cwd, ".claude"), "reviewer", "workspace claude");
+    const winner = writeAgent(join(cwd, ".modus"), "reviewer", "workspace modus");
+
+    const agents = loadWorkspaceSubagents(cwd, home);
+
+    expect(agents).toHaveLength(1);
+    expect(agents[0]).toMatchObject({
+      name: "reviewer",
+      description: "workspace modus",
+      path: winner,
+      scope: "workspace",
+      source: ".modus",
+    });
+  });
+
+  it("creates, updates, deletes, and renders the manifest without bodies", () => {
+    const created = createSubagent({
+      cwd,
+      name: "Security Auditor",
+      description: "Review auth",
+      model: "mock/model",
+      readOnly: true,
+      isBackground: false,
+      body: "SECRET BODY",
+    });
+    expect(readFileSync(created.path, "utf8")).toContain("name: security-auditor");
+
+    const updated = updateSubagent({
+      cwd,
+      path: created.path,
+      name: "Security Auditor",
+      description: "Review payments",
+      model: "inherit",
+      readOnly: false,
+      isBackground: true,
+      body: "UPDATED BODY",
+    });
+    expect(updated.description).toBe("Review payments");
+    expect(updated.isBackground).toBe(true);
+
+    const prompt = resolveSubagentsPrompt(cwd);
+    expect(prompt).toContain("security-auditor");
+    expect(prompt).toContain("Review payments");
+    expect(prompt).not.toContain("UPDATED BODY");
+
+    expect(deleteSubagent(cwd, updated.path)).toEqual([]);
+  });
+});
