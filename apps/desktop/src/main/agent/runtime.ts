@@ -61,6 +61,7 @@ export type AgentRuntime = {
       task: string;
       prompt: string;
       subagentType: string;
+      background?: boolean;
       subagent?: {
         name: string;
         body: string;

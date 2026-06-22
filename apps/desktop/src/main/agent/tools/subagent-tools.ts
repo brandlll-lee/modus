@@ -30,31 +30,17 @@ function toResult<T>(text: string, details: T): AgentToolResult<T> {
   return { content: [{ type: "text", text }], details };
 }
 
-function renderTaskStarted(sessionId: string, summary: string): string {
-  return [
-    `<task id="${sessionId}" state="running">`,
-    `<summary>${summary}</summary>`,
-    "<task_result>",
-    "Subagent is running in the background. Its status will appear in <subagent_runs>.",
-    "</task_result>",
-    "</task>",
-  ].join("\n");
+function renderTaskStarted(): string {
+  return "Started background subagent. No result is available yet.";
 }
 
 function renderWaitResult(result: Awaited<ReturnType<SubagentToolOps["waitSubagent"]>>): string {
-  return [
-    result.timedOut ? "Wait timed out." : "Wait completed.",
-    ...result.agents.map((agent) =>
-      [
-        `<task id="${agent.id}" state="${agent.status}">`,
-        `<summary>${agent.subagentTask ?? agent.title}</summary>`,
-        "<task_result>",
-        agent.output ?? (result.timedOut ? "Subagent is still running." : "No assistant output."),
-        "</task_result>",
-        "</task>",
-      ].join("\n"),
-    ),
-  ].join("\n");
+  if (result.timedOut) {
+    return "Subagent is still running.";
+  }
+  return result.agents
+    .map((agent) => agent.output ?? "Subagent finished without assistant output.")
+    .join("\n\n");
 }
 
 const taskParams = Type.Object({
@@ -74,6 +60,12 @@ const taskParams = Type.Object({
       description: "Configured subagent name from the workspace agents manifest.",
     }),
   ),
+  background: Type.Optional(
+    Type.Boolean({
+      description:
+        "Run in the background and return immediately. Defaults to the configured subagent setting, otherwise false.",
+    }),
+  ),
 });
 
 const taskTool: ToolDefinition = defineTool({
@@ -82,12 +74,13 @@ const taskTool: ToolDefinition = defineTool({
   description:
     "Start a child subagent with its own context window. Use a configured subagent when its description matches; otherwise use only when the user explicitly asks for subagents, parallel work, or isolated exploration.",
   promptSnippet:
-    "task(description, prompt, subagent?) — delegate a bounded task to a child subagent.",
+    "task(description, prompt, subagent?, background?) — delegate a bounded task to a child subagent.",
   promptGuidelines: [
     "Use subagents for bounded, parallel, noisy work; keep simple work in this main conversation.",
     "If the user invokes `/name` and `name` is an available subagent, call task with subagent set to that name.",
     "Give each subagent a clear prompt and expected return format.",
-    "Background subagent status is reported in <subagent_runs>; do not try to manage child sessions yourself.",
+    "Leave background false when you need the subagent answer before replying.",
+    "Use background true only for long-running or parallel work; no result is available until the user opens that subagent session.",
   ],
   parameters: taskParams,
   execute: async (_toolCallId, params: Static<typeof taskParams>, _signal, _onUpdate, ctx) => {
@@ -99,11 +92,13 @@ const taskTool: ToolDefinition = defineTool({
     if (params.subagent && !subagent) {
       throw new Error(`Unknown subagent: ${params.subagent}`);
     }
+    const background = params.background ?? subagent?.isBackground ?? false;
     const result = await currentOps().spawnSubagent(context.window, {
       parentSessionId: ownerSessionId(context),
       task: params.description.trim(),
       prompt: params.prompt,
       subagentType: subagent?.name ?? "task",
+      background,
       ...(subagent
         ? {
             subagent: {
@@ -119,14 +114,13 @@ const taskTool: ToolDefinition = defineTool({
           }
         : {}),
     });
-    if (subagent && !subagent.isBackground) {
+    if (!background) {
       const waitResult = await currentOps().waitSubagent(ownerSessionId(context), {
         target: result.session.id,
       });
       return toResult(renderWaitResult(waitResult), waitResult);
     }
-    const summary = `Subagent started: ${params.description.trim()}`;
-    return toResult(renderTaskStarted(result.session.id, summary), result);
+    return toResult(renderTaskStarted(), result);
   },
 });
 

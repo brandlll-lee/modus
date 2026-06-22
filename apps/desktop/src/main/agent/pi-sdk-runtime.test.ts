@@ -136,7 +136,6 @@ const { PiSdkRuntime } = await import("./pi-sdk-runtime");
 const { toolRegistry } = await import("./tools/registry");
 const { archiveAgentSession } = await import("./session-lifecycle");
 const { recordAgentEvent } = await import("./agent-event-store");
-const { createAgentRun, updateAgentRunStatus } = await import("./agent-run-store");
 const { writePlan, readPlanById } = await import("../plan/plan-store");
 const { setAgentToolContext } = await import("./tools/tool-context");
 
@@ -309,7 +308,7 @@ describe("PiSdkRuntime", () => {
       .find((definition) => definition.name === "task") as {
       execute(
         toolCallId: string,
-        params: { description: string; prompt: string; subagent: string },
+        params: { description: string; prompt: string; subagent?: string; background?: boolean },
         signal: AbortSignal,
         onUpdate: undefined,
         ctx: { cwd: string },
@@ -324,8 +323,88 @@ describe("PiSdkRuntime", () => {
       { cwd },
     );
 
-    expect(result.content[0]?.text).toContain("Wait completed.");
     expect(result.content[0]?.text).toContain("audit complete");
+  });
+
+  it("defaults generic task tool calls to foreground", async () => {
+    const parentSessionId = `session-${crypto.randomUUID()}`;
+    const workspaceId = `workspace-${crypto.randomUUID()}`;
+    insertSession(parentSessionId, workspaceId, join(userData, "missing.jsonl"), "Parent chat");
+    mocks.createAgentSession.mockImplementationOnce(async () => ({
+      session: createMockPiSession({
+        prompt: vi.fn(async () => {
+          mocks.emitPiEvent({ type: "message_start", message: { role: "assistant" } });
+          mocks.emitPiEvent({
+            type: "message_update",
+            message: { role: "assistant" },
+            assistantMessageEvent: { type: "text_delta", delta: "generic task complete" },
+          });
+          mocks.emitPiEvent({ type: "message_end", message: { role: "assistant" } });
+        }),
+      }),
+    }));
+    new PiSdkRuntime();
+    const window = createWindowStub();
+    setAgentToolContext({ workspaceId, cwd, sessionId: parentSessionId, window });
+    const taskTool = toolRegistry
+      .getCustomToolDefinitions("chat")
+      .find((definition) => definition.name === "task") as {
+      execute(
+        toolCallId: string,
+        params: { description: string; prompt: string; subagent?: string; background?: boolean },
+        signal: AbortSignal,
+        onUpdate: undefined,
+        ctx: { cwd: string },
+      ): Promise<{ content: Array<{ type: "text"; text: string }> }>;
+    };
+
+    const result = await taskTool.execute(
+      "task-call",
+      { description: "Check files", prompt: "Check the files." },
+      new AbortController().signal,
+      undefined,
+      { cwd },
+    );
+
+    expect(result.content[0]?.text).toContain("generic task complete");
+  });
+
+  it("keeps background task tool output free of internal run state", async () => {
+    const parentSessionId = `session-${crypto.randomUUID()}`;
+    const workspaceId = `workspace-${crypto.randomUUID()}`;
+    insertSession(parentSessionId, workspaceId, join(userData, "missing.jsonl"), "Parent chat");
+    mocks.createAgentSession.mockImplementationOnce(async () => ({
+      session: createMockPiSession({ prompt: vi.fn(async () => undefined) }),
+    }));
+    new PiSdkRuntime();
+    const window = createWindowStub();
+    setAgentToolContext({ workspaceId, cwd, sessionId: parentSessionId, window });
+    const taskTool = toolRegistry
+      .getCustomToolDefinitions("chat")
+      .find((definition) => definition.name === "task") as {
+      execute(
+        toolCallId: string,
+        params: { description: string; prompt: string; subagent?: string; background?: boolean },
+        signal: AbortSignal,
+        onUpdate: undefined,
+        ctx: { cwd: string },
+      ): Promise<{ content: Array<{ type: "text"; text: string }> }>;
+    };
+
+    const result = await taskTool.execute(
+      "task-call",
+      { description: "Explore code", prompt: "Explore in parallel.", background: true },
+      new AbortController().signal,
+      undefined,
+      { cwd },
+    );
+
+    expect(result.content[0]?.text).toBe(
+      "Started background subagent. No result is available yet.",
+    );
+    expect(result.content[0]?.text).not.toContain("<subagent_runs>");
+    expect(result.content[0]?.text).not.toContain("completed");
+    expect(result.content[0]?.text).not.toContain("result:");
   });
 
   it("creates new sessions directly in the workspace checkout", async () => {
@@ -819,7 +898,7 @@ describe("PiSdkRuntime", () => {
     expect(existsSync(join(cwd, ".modus", "worktrees"))).toBe(true);
   });
 
-  it("injects subagent run status into root prompts", async () => {
+  it("does not inject subagent run status into root prompts", async () => {
     const parentSessionId = `session-${crypto.randomUUID()}`;
     const childSessionId = `session-${crypto.randomUUID()}`;
     const workspaceId = `workspace-${crypto.randomUUID()}`;
@@ -842,8 +921,6 @@ describe("PiSdkRuntime", () => {
       sessionId: childSessionId,
       messageId: "assistant-message",
     });
-    const childRun = createAgentRun({ sessionId: childSessionId, prompt: "child prompt" });
-    updateAgentRunStatus(childRun.id, "completed");
     const prompt = vi.fn(async (_message: string) => {
       mocks.emitPiEvent({ type: "message_start", message: { role: "assistant" } });
       mocks.emitPiEvent({
@@ -867,10 +944,10 @@ describe("PiSdkRuntime", () => {
     });
 
     const message = prompt.mock.calls[0]?.[0] as string;
-    expect(message).toContain("<subagent_runs>");
-    expect(message).toContain(`id: ${childSessionId}`);
-    expect(message).toContain("status: completed");
-    expect(message).toContain("last_result: final result");
+    expect(message).not.toContain("<subagent_runs>");
+    expect(message).not.toContain(childSessionId);
+    expect(message).not.toContain("last_result");
+    expect(message).not.toContain("final result");
   });
 
   it("aborts active subagents when the parent session is aborted", async () => {
@@ -1210,15 +1287,16 @@ describe("PiSdkRuntime", () => {
     const abort = vi.fn(async () => {
       rejectPrompt?.(new Error("Aborted"));
     });
+    const prompt = vi.fn(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectPrompt = reject;
+        }),
+    );
     mocks.createAgentSession.mockImplementationOnce(async () => ({
       session: createMockPiSession({
         abort,
-        prompt: vi.fn(
-          () =>
-            new Promise<void>((_resolve, reject) => {
-              rejectPrompt = reject;
-            }),
-        ),
+        prompt,
       }),
     }));
     const runtime = new PiSdkRuntime();
@@ -1239,6 +1317,7 @@ describe("PiSdkRuntime", () => {
           .get(sessionId),
       ).toEqual({ count: 1 });
     });
+    await vi.waitFor(() => expect(prompt).toHaveBeenCalledOnce());
     await runtime.abort(sessionId);
     await promptTask;
 

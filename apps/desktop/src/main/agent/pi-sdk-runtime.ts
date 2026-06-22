@@ -18,7 +18,6 @@ import type {
   MessageContextChip,
   ModelInfo,
   PlanBuildStatus,
-  SubagentStatus,
 } from "../../shared/contracts";
 import { SUBAGENT_TOOL_NAMES, type ToolProfileName } from "../../shared/tools";
 import { releaseAgentBrowserControl } from "../browser/browser-service";
@@ -503,9 +502,7 @@ export class PiSdkRuntime implements AgentRuntime {
       ...(input.parentSessionId !== undefined ? { parentSessionId: input.parentSessionId } : {}),
       ...(input.subagentTask !== undefined ? { subagentTask: input.subagentTask } : {}),
       ...(input.subagentType !== undefined ? { subagentType: input.subagentType } : {}),
-      ...(input.subagentReadOnly !== undefined
-        ? { subagentReadOnly: input.subagentReadOnly }
-        : {}),
+      ...(input.subagentReadOnly !== undefined ? { subagentReadOnly: input.subagentReadOnly } : {}),
       ...(input.subagentWorktree !== undefined ? { subagentWorktree: input.subagentWorktree } : {}),
     };
     if (modelId !== undefined) {
@@ -956,14 +953,10 @@ export class PiSdkRuntime implements AgentRuntime {
     const subagentsText = runtimeSession.info.parentSessionId
       ? ""
       : resolveSubagentsPrompt(runtimeSession.info.cwd);
-    const subagentRunsText = runtimeSession.info.parentSessionId
-      ? ""
-      : resolveSubagentRunsPrompt(runtimeSession.info.id);
     return [
       planModePreamble(input.mode),
       skillsText,
       subagentsText,
-      subagentRunsText,
       contextText,
       awareness,
       input.message,
@@ -1030,6 +1023,7 @@ export class PiSdkRuntime implements AgentRuntime {
       task: string;
       prompt: string;
       subagentType: string;
+      background?: boolean;
       subagent?: {
         name: string;
         body: string;
@@ -1063,6 +1057,7 @@ export class PiSdkRuntime implements AgentRuntime {
     const requestedModel = input.subagent?.model.trim();
     const childModel =
       requestedModel && requestedModel !== "inherit" ? requestedModel : (parent.model ?? undefined);
+    const background = input.background ?? input.subagent?.isBackground ?? false;
     const childSessionId = randomUUID();
     const worktree =
       input.subagent && !input.subagent.readOnly && input.subagent.isolation === "worktree"
@@ -1090,7 +1085,7 @@ export class PiSdkRuntime implements AgentRuntime {
       childSessionId: session.id,
       task: input.task,
       subagentType: input.subagentType,
-      background: input.subagent?.isBackground ?? true,
+      background,
       ...(session.model ? { model: session.model } : {}),
     });
 
@@ -1487,44 +1482,6 @@ function lastAssistantOutput(sessionId: string): string | undefined {
   }
   const output = lastAssistantMessageId ? textByMessage.get(lastAssistantMessageId)?.trim() : "";
   return output || undefined;
-}
-
-function resolveSubagentRunsPrompt(parentSessionId: string): string {
-  const agents = listSubagentSessions(parentSessionId);
-  if (agents.length === 0) {
-    return "";
-  }
-  return [
-    "<subagent_runs>",
-    ...agents.map((agent) => {
-      const output = lastAssistantOutput(agent.id);
-      return [
-        `- id: ${agent.id}`,
-        `  status: ${subagentPromptStatus(agent)}`,
-        `  task: ${agent.subagentTask ?? agent.title}`,
-        `  type: ${agent.subagentType ?? "subagent"}`,
-        ...(output ? [`  last_result: ${truncateForPrompt(output, 800)}`] : []),
-      ].join("\n");
-    }),
-    "</subagent_runs>",
-  ].join("\n");
-}
-
-function subagentPromptStatus(agent: AgentSessionInfo): SubagentStatus {
-  if (isSubagentBusy(agent.status)) {
-    return agent.status === "blocked" ? "blocked" : "running";
-  }
-  const latestRun = listAgentRuns(agent.id).at(-1);
-  if (latestRun?.status === "completed") return "completed";
-  if (latestRun?.status === "failed") return "failed";
-  if (latestRun?.status === "cancelled") return "cancelled";
-  if (latestRun?.status === "blocked") return "blocked";
-  return "completed";
-}
-
-function truncateForPrompt(value: string, maxLength: number): string {
-  const trimmed = value.replace(/\s+/g, " ").trim();
-  return trimmed.length > maxLength ? `${trimmed.slice(0, maxLength - 1)}…` : trimmed;
 }
 
 function isSubagentBusy(status: AgentSessionInfo["status"]): boolean {
