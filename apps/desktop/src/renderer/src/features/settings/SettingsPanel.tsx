@@ -896,7 +896,7 @@ function AppearanceSettingsPanel() {
           />
           <SettingsRow
             control={<ReadOnlyPill>Inter</ReadOnlyPill>}
-            description="Typography uses self-hosted Inter Variable and JetBrains Mono Variable."
+            description="Typography uses one self-hosted Inter stack with system CJK fallback."
             title="Font family"
           />
         </SettingsList>

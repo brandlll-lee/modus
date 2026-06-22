@@ -185,6 +185,7 @@ export const browserDesignModeSchema = z.object({
       elevated: hexColor,
       fg: hexColor,
       fgSubtle: hexColor,
+      fontFamily: z.string().trim().min(1).max(512),
       border: hexColor,
       shadow: hexColor,
       fill: hexColor,

@@ -105,9 +105,9 @@ export function DiffViewer({
       if (cancelled || !hostRef.current) return;
 
       const styles = getComputedStyle(document.documentElement);
-      const fontMono =
-        styles.getPropertyValue("--font-mono").trim() ||
-        '"JetBrains Mono Variable", ui-monospace, monospace';
+      const fontFamily =
+        styles.getPropertyValue("--font-sans").trim() ||
+        '"Inter Variable", "Inter", system-ui, sans-serif';
 
       const originalModel = monaco.editor.createModel(
         original,
@@ -150,7 +150,7 @@ export function DiffViewer({
         occurrencesHighlight: "off",
         selectionHighlight: false,
         renderLineHighlight: "none",
-        fontFamily: fontMono,
+        fontFamily,
         fontSize: 12.5,
         lineHeight: 22,
         wordWrap: wordWrap ? "on" : "off",

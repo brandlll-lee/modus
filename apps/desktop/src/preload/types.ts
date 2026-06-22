@@ -79,6 +79,7 @@ export type DesignModeTheme = {
   elevated: string;
   fg: string;
   fgSubtle: string;
+  fontFamily: string;
   border: string;
   shadow: string;
   fill: string;

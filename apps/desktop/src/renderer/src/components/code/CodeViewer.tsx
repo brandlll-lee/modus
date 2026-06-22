@@ -76,9 +76,9 @@ export function CodeViewer({
       }
       monacoRef.current = monaco;
       const styles = getComputedStyle(document.documentElement);
-      const fontMono =
-        styles.getPropertyValue("--font-mono").trim() ||
-        '"JetBrains Mono Variable", ui-monospace, monospace';
+      const fontFamily =
+        styles.getPropertyValue("--font-sans").trim() ||
+        '"Inter Variable", "Inter", system-ui, sans-serif';
 
       const model = monaco.editor.createModel(content, undefined, modelUri(monaco, instance, path));
       modelRef.current = model;
@@ -104,7 +104,7 @@ export function CodeViewer({
         occurrencesHighlight: "off",
         selectionHighlight: false,
         renderLineHighlight: "none",
-        fontFamily: fontMono,
+        fontFamily,
         fontSize: 12.5,
         lineHeight: 22,
         wordWrap: wordWrap ? "on" : "off",

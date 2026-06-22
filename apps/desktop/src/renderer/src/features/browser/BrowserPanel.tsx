@@ -676,6 +676,7 @@ function resolveDesignTheme() {
     elevated: token("--color-elevated", "#232325"),
     fg: token("--color-fg", "#e4e4e3"),
     fgSubtle: token("--color-fg-subtle", "#8a8a87"),
+    fontFamily: token("--font-sans", '"Inter Variable", "Inter", system-ui, sans-serif'),
     border: token("--color-hairline-strong", "rgba(255,255,255,0.08)"),
     shadow: "rgba(0,0,0,0.5)",
     fill: "rgba(133, 63, 244, 0.12)",

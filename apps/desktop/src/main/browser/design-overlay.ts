@@ -33,6 +33,7 @@ export type DesignThemeTokens = {
   elevated: string;
   fg: string;
   fgSubtle: string;
+  fontFamily: string;
   border: string;
   shadow: string;
   fill: string;
@@ -46,9 +47,10 @@ export type DesignThemeTokens = {
 const SHADOW_CSS = `
 :host { all: initial; position: fixed !important; inset: 0 !important; pointer-events: none !important;
   z-index: 2147483646 !important; display: block !important;
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--mdo-font-family);
   --mdo-accent: #853ff4; --mdo-accent-soft: #b388ff; --mdo-accent-contrast: #ffffff;
   --mdo-surface: #1c1c1d; --mdo-elevated: #232325; --mdo-fg: #e4e4e3; --mdo-fg-subtle: #8a8a87;
+  --mdo-font-family: "Inter Variable", "Inter", system-ui, sans-serif;
   --mdo-border: rgba(255,255,255,0.10); --mdo-shadow: rgba(0,0,0,0.55); --mdo-fill: rgba(133,63,244,0.14); }
 * { box-sizing: border-box; }
 
@@ -467,6 +469,7 @@ export const DESIGN_OVERLAY_BOOTSTRAP = `
       if (t.elevated) s.setProperty("--mdo-elevated", t.elevated);
       if (t.fg) s.setProperty("--mdo-fg", t.fg);
       if (t.fgSubtle) s.setProperty("--mdo-fg-subtle", t.fgSubtle);
+      if (t.fontFamily) s.setProperty("--mdo-font-family", t.fontFamily);
       if (t.border) s.setProperty("--mdo-border", t.border);
       if (t.shadow) s.setProperty("--mdo-shadow", t.shadow);
       if (t.fill) s.setProperty("--mdo-fill", t.fill);

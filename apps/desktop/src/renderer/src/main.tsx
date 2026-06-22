@@ -1,5 +1,4 @@
 import "@fontsource-variable/inter";
-import "@fontsource-variable/jetbrains-mono";
 import "katex/dist/katex.min.css";
 import "streamdown/styles.css";
 import { StrictMode } from "react";

@@ -15,8 +15,6 @@ type MarkdownMessageRendererProps = {
   streaming?: boolean;
 };
 
-const FONT_STACK = '"Inter Variable", "Inter", ui-sans-serif, system-ui, sans-serif';
-
 /* ── Shiki dual theme [light, dark] ───────────────────────────────────────
  * Streamdown stamps each token with inline CSS vars: `--sdm-c` (the light
  * theme colour) and `--shiki-dark` (the dark theme colour). Its Tailwind
@@ -44,37 +42,40 @@ const math = createMathPlugin({
 /* ── Mermaid theme — literal hex values (mermaid cannot resolve CSS var()), so
  * we mirror the Modus dark/light tokens per mode. ─────────────────────────── */
 function buildMermaidConfig(theme: ThemeMode): MermaidConfig {
+  const fontFamily =
+    getComputedStyle(document.documentElement).getPropertyValue("--font-sans").trim() ||
+    '"Inter Variable", "Inter", system-ui, sans-serif';
   if (theme === "light") {
     return {
-      fontFamily: FONT_STACK,
+      fontFamily,
       securityLevel: "strict",
       startOnLoad: false,
       theme: "base",
       themeVariables: {
         background: "transparent",
         darkMode: false,
-        fontFamily: FONT_STACK,
+        fontFamily,
         lineColor: "#9a9a9a",
         mainBkg: "#ffffff",
         nodeBorder: "rgba(0, 0, 0, 0.18)",
         primaryBorderColor: "rgba(0, 0, 0, 0.18)",
         primaryColor: "#f8f8f8",
-        primaryTextColor: "#050505",
+        primaryTextColor: "#242424",
         secondaryColor: "#ffffff",
         tertiaryColor: "#f8f8f8",
-        textColor: "#050505",
+        textColor: "#242424",
       },
     } satisfies MermaidConfig;
   }
   return {
-    fontFamily: FONT_STACK,
+    fontFamily,
     securityLevel: "strict",
     startOnLoad: false,
     theme: "dark",
     themeVariables: {
       background: "transparent",
       darkMode: true,
-      fontFamily: FONT_STACK,
+      fontFamily,
       lineColor: "#5a5a5d",
       mainBkg: "#1c1c1d",
       nodeBorder: "rgba(255, 255, 255, 0.065)",

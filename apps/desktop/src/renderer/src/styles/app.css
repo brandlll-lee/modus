@@ -85,14 +85,14 @@
   --color-diff-del-bg: color-mix(in oklab, var(--color-danger) 16%, transparent);
   --color-diff-del-gutter: color-mix(in oklab, var(--color-danger) 30%, transparent);
 
-  /* 字体：Inter 管英文/数字，系统 CJK 字体管中文；不内置大体积中文字库。 */
+  /* 字体：全 UI 使用同一套 sans 栈；系统 CJK 字体负责中日韩 fallback。 */
   --font-sans:
-    "Inter Variable", "Inter", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI",
-    "Microsoft YaHei", "Noto Sans SC", "Source Han Sans SC", ui-sans-serif, system-ui,
-    -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-mono:
-    "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Code", Consolas,
-    monospace;
+    "Inter Variable", "Inter", "Noto Sans SC", "Source Han Sans SC", "PingFang SC",
+    "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans TC", "PingFang TC",
+    "Microsoft JhengHei", "Noto Sans JP", "Yu Gothic", "Hiragino Sans", "Noto Sans KR",
+    "Malgun Gothic", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  --font-mono: var(--font-sans);
 
   /* 字号阶梯 —— 校准 Cursor 桌面 Agent Window：
      2xs 11 → status / kbd
@@ -182,10 +182,10 @@
   --color-active: rgba(0, 0, 0, 0.06);
 
   /* Text — dark-on-light, color carries hierarchy */
-  --color-fg: #050505;
-  --color-fg-muted: #1f1f1f;
-  --color-fg-subtle: #4d4d4d;
-  --color-fg-faint: #767676;
+  --color-fg: #242424;
+  --color-fg-muted: #444444;
+  --color-fg-subtle: #737373;
+  --color-fg-faint: #9a9a9a;
 
   /* Brand accent (send): orange fill works on both themes */
   --color-accent: #f54e00;
@@ -425,7 +425,7 @@ input {
   --sdm-bg: transparent;
   color: var(--color-fg);
   font-size: var(--text-md); /* 14px — 比 13px 更易读，留白更舒展 */
-  font-weight: 450;
+  font-weight: 500;
   line-height: 1.68;
   max-width: 100%;
   min-width: 0;
@@ -440,7 +440,7 @@ input {
 .modus-markdown :where(h1, h2, h3, h4, h5, h6) {
   margin: 1.05rem 0 0.35rem;
   color: var(--color-fg);
-  font-weight: 600;
+  font-weight: 650;
   line-height: 1.32;
   letter-spacing: 0;
 }
@@ -485,13 +485,7 @@ input {
 
 .modus-markdown :where(strong) {
   color: var(--color-fg);
-  font-weight: 600;
-}
-
-.modus-markdown :where(p:has(> strong:only-child)) {
-  margin: 1.15rem 0 0.35rem;
   font-weight: 650;
-  line-height: 1.35;
 }
 
 .modus-markdown :where(em) {
@@ -667,7 +661,7 @@ input {
 .modus-markdown :where(th) {
   background: color-mix(in oklab, var(--color-surface) 60%, var(--color-canvas));
   color: var(--color-fg);
-  font-weight: 600;
+  font-weight: 650;
 }
 
 .modus-markdown :where(td) {

@@ -16,9 +16,6 @@ import type { TerminalEvent, TerminalInfo } from "../../../../shared/contracts";
 import { EmptyState } from "../../components/ui/Panel";
 import { cn } from "../../lib/cn";
 
-const FONT_MONO =
-  '"JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "SF Mono", Consolas, monospace';
-
 /** "C:\\WINDOWS\\system32\\cmd.exe" → "cmd", "/bin/bash" → "bash". */
 function shellLabel(shell: string): string {
   const base = shell.split(/[/\\]/).pop() ?? shell;
@@ -160,7 +157,11 @@ function TerminalView({
     const term = new Terminal({
       cursorBlink: true,
       cursorStyle: "bar",
-      fontFamily: FONT_MONO,
+      fontFamily: token(
+        getComputedStyle(document.documentElement),
+        "--font-sans",
+        '"Inter Variable", "Inter", system-ui, sans-serif',
+      ),
       fontSize: 12,
       fontWeight: 400,
       fontWeightBold: 600,
