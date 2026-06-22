@@ -148,9 +148,8 @@
  * ── Light theme ─────────────────────────────────────────────────────────
  * A deliberate second theme (not a naive invert), derived from the dark tokens
  * per modern light-mode rules:
- *   - base is a soft off-white (#f7f7f6), never pure #fff (less glare);
- *   - elevation runs the OPPOSITE way to dark — raised/overlay surfaces step
- *     toward pure white and lean on shadows for depth (dark lightens to lift);
+ *   - editor/chat canvas is clean white (#fff);
+ *   - chrome panels use neutral #f8f8f8 and lean on hairlines for depth;
  *   - hairlines / hover / active become black-alpha so they read on white;
  *   - text tiers are WCAG-checked dark-on-light (fg≈16:1, muted≈9:1, subtle≈5:1);
  *   - brand accent (orange) and focus purple are preserved across both themes.
@@ -159,34 +158,34 @@
 :root[data-theme="light"] {
   color-scheme: light;
 
-  /* Surfaces — elevation = whiter + shadow */
-  --color-canvas: #f7f7f6; /* app base (chat / main) */
-  --color-panel: #f1f1f0; /* sidebar / inspector */
-  --color-surface: #ffffff; /* composer / cards / input — pops above canvas */
+  /* Surfaces — clean editor white + neutral panel chrome */
+  --color-canvas: #ffffff; /* app base (chat / main) */
+  --color-panel: #f8f8f8; /* sidebar / inspector */
+  --color-surface: #ffffff; /* composer / cards / input */
   --color-elevated: #ffffff; /* dropdowns / popovers — white + shadow-popup */
-  --color-code-bg: #f3f4f6; /* code blocks — soft gray so they read on white */
+  --color-code-bg: #f8f8f8; /* code blocks — soft gray so they read on white */
 
-  /* Hairlines — black-alpha, a touch stronger so they survive on white */
-  --color-hairline: rgba(0, 0, 0, 0.09);
-  --color-hairline-soft: rgba(0, 0, 0, 0.055);
-  --color-hairline-strong: rgba(0, 0, 0, 0.14);
+  /* Hairlines — neutral grays close to #e5e5e5 / #d0d0d0 on white */
+  --color-hairline: rgba(0, 0, 0, 0.1);
+  --color-hairline-soft: rgba(0, 0, 0, 0.06);
+  --color-hairline-strong: rgba(0, 0, 0, 0.18);
 
   /* Composer border on white: a soft resting edge (图5) — the input is carried
-     mainly by its shadow + white fill above the off-white canvas, not a heavy
+     mainly by its shadow + white fill above the white canvas, not a heavy
      outline. Hover/focus is what supplies a readable darker edge. */
   --color-composer-border: rgba(0, 0, 0, 0.09);
   /* Hover/focus: a clearly darker edge — the deliberate cue, no glow. */
   --color-composer-border-strong: rgba(0, 0, 0, 0.22);
 
   /* Hover / active overlays — black-alpha */
-  --color-hover: rgba(0, 0, 0, 0.045);
-  --color-active: rgba(0, 0, 0, 0.07);
+  --color-hover: rgba(0, 0, 0, 0.04);
+  --color-active: rgba(0, 0, 0, 0.06);
 
   /* Text — dark-on-light, color carries hierarchy */
-  --color-fg: #1b1b1d;
-  --color-fg-muted: #44464a;
-  --color-fg-subtle: #6a6c72;
-  --color-fg-faint: #9a9ca2;
+  --color-fg: #050505;
+  --color-fg-muted: #1f1f1f;
+  --color-fg-subtle: #4d4d4d;
+  --color-fg-faint: #767676;
 
   /* Brand accent (send): orange fill works on both themes */
   --color-accent: #f54e00;
@@ -215,7 +214,7 @@
   --color-danger: #d63a4f;
 
   /* Diff line tints — light theme. Slightly higher alpha so the wash survives on
-     the off-white canvas while keeping dark-on-light code fully legible. */
+     the white canvas while keeping dark-on-light code fully legible. */
   --color-diff-add-bg: color-mix(in oklab, var(--color-success) 14%, transparent);
   --color-diff-add-gutter: color-mix(in oklab, var(--color-success) 26%, transparent);
   --color-diff-del-bg: color-mix(in oklab, var(--color-danger) 13%, transparent);
