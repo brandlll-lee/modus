@@ -556,7 +556,7 @@ export function App() {
             <div className="app-root flex h-screen flex-col bg-canvas text-fg">
               <MenuBar />
 
-              <div className="flex min-h-0 flex-1" ref={layoutRowRef}>
+              <div className="flex min-h-0 flex-1 bg-panel" ref={layoutRowRef}>
                 {settingsOpen ? (
                   <SettingsPanel
                     onClose={() => setSettingsOpen(false)}
@@ -593,7 +593,7 @@ export function App() {
                     />
 
                     <main
-                      className="relative flex flex-1 flex-col bg-canvas"
+                      className="relative flex flex-1 flex-col overflow-hidden rounded-tl-xl border-hairline-strong border-t border-l bg-canvas"
                       style={{ minWidth: MAIN_MIN_WIDTH }}
                     >
                       <header className="relative flex h-12 shrink-0 items-center px-3">
@@ -818,7 +818,7 @@ export function App() {
  */
 function MenuBar() {
   return (
-    <div className="app-drag flex h-11 shrink-0 items-center border-hairline-strong border-b bg-canvas">
+    <div className="app-drag flex h-11 shrink-0 items-center bg-panel">
       <div className="flex flex-1 items-center gap-0.5 pl-2.5">
         <BrandMark />
         <MenuItem>File</MenuItem>

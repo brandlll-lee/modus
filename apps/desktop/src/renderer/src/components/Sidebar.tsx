@@ -169,10 +169,7 @@ export function Sidebar({
 
   return (
     <m.aside
-      className={cn(
-        "relative flex shrink-0 flex-col overflow-hidden bg-panel",
-        open && "border-hairline-strong border-r",
-      )}
+      className="relative flex shrink-0 flex-col overflow-hidden bg-panel"
       style={{ width: panelWidth }}
     >
       <m.div className="flex h-full flex-col bg-panel" style={{ width: contentWidth }}>

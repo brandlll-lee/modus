@@ -208,7 +208,7 @@ export function Inspector({
     <m.aside
       className={cn(
         "relative flex min-w-0 shrink-0 flex-col overflow-hidden bg-panel",
-        open && "border-hairline-strong border-l",
+        open && "border-hairline-strong border-t border-l",
       )}
       style={{ width: panelWidth }}
     >
@@ -236,7 +236,7 @@ export function Inspector({
                 onValueChange={(value) => setTab(value as string)}
                 value={tab}
               >
-                <div className="flex h-9 shrink-0 items-center border-hairline border-b px-2">
+                <div className="flex h-9 shrink-0 items-center bg-panel px-2">
                   <Tabs.List className="relative flex min-w-0 flex-1 items-center gap-0.5">
                     {TABS.map((tab) => (
                       <Tooltip content={tab.label} key={tab.value} side="bottom" sideOffset={6}>
