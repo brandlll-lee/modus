@@ -57,7 +57,7 @@ const taskParams = Type.Object({
     Type.String({
       minLength: 1,
       maxLength: 80,
-      description: "Configured subagent name from the workspace agents manifest.",
+      description: "Exact configured subagent name from the available subagents list.",
     }),
   ),
   background: Type.Optional(
@@ -77,6 +77,7 @@ const taskTool: ToolDefinition = defineTool({
     "task(description, prompt, subagent?, background?) — delegate a bounded task to a child subagent.",
   promptGuidelines: [
     "Use subagents for bounded, parallel, noisy work; keep simple work in this main conversation.",
+    "Set subagent only to an exact available subagent name; for generic delegation, omit subagent.",
     "If the user invokes `/name` and `name` is an available subagent, call task with subagent set to that name.",
     "Give each subagent a clear prompt and expected return format.",
     "Leave background false when you need the subagent answer before replying.",
@@ -88,10 +89,8 @@ const taskTool: ToolDefinition = defineTool({
     if (!context.window || !context.sessionId) {
       throw new Error("No active Modus session for this subagent task.");
     }
-    const subagent = params.subagent ? resolveSubagent(ctx.cwd, params.subagent) : undefined;
-    if (params.subagent && !subagent) {
-      throw new Error(`Unknown subagent: ${params.subagent}`);
-    }
+    const subagentName = params.subagent?.trim();
+    const subagent = subagentName ? resolveSubagent(ctx.cwd, subagentName) : undefined;
     const background = params.background ?? subagent?.isBackground ?? false;
     const result = await currentOps().spawnSubagent(context.window, {
       parentSessionId: ownerSessionId(context),

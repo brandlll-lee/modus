@@ -86,6 +86,14 @@ describe("loadWorkspaceSubagents", () => {
     });
   });
 
+  it("renders an empty manifest that prevents invented subagent names", () => {
+    const prompt = resolveSubagentsPrompt(cwd);
+
+    expect(prompt).toContain("No configured subagents are available");
+    expect(prompt).toContain("without the `subagent` field");
+    expect(prompt).toContain("do not invent subagent names");
+  });
+
   it("creates, updates, deletes, and renders the manifest without bodies", () => {
     const created = createSubagent({
       cwd,
@@ -119,6 +127,7 @@ describe("loadWorkspaceSubagents", () => {
     const prompt = resolveSubagentsPrompt(cwd);
     expect(prompt).toContain("security-auditor");
     expect(prompt).toContain("Review payments");
+    expect(prompt).toContain("exact name listed below");
     expect(prompt).not.toContain("UPDATED BODY");
 
     expect(deleteSubagent(cwd, updated.path)).toEqual([]);

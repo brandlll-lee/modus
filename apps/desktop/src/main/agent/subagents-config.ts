@@ -159,11 +159,14 @@ export function listSubagents(cwd: string): SubagentInfo[] {
 export function resolveSubagentsPrompt(cwd: string): string {
   const subagents = loadWorkspaceSubagents(cwd);
   if (subagents.length === 0) {
-    return "";
+    return [
+      "## Subagents",
+      "No configured subagents are available. Use `task` without the `subagent` field for generic delegation; do not invent subagent names.",
+    ].join("\n");
   }
   const lines = [
     "## Subagents",
-    "Subagents are local Markdown-defined specialists. Use the `task` tool with the `subagent` field when one matches the user's request.",
+    "Subagents are local Markdown-defined specialists. Set the `subagent` field only to an exact name listed below; otherwise omit it for generic task delegation.",
     "If the user starts a message with `/name` and `name` is listed below, invoke that subagent.",
     "",
     "### Available subagents",

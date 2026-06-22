@@ -326,7 +326,7 @@ describe("PiSdkRuntime", () => {
     expect(result.content[0]?.text).toContain("audit complete");
   });
 
-  it("defaults generic task tool calls to foreground", async () => {
+  it("falls back unknown subagent task tool calls to generic foreground", async () => {
     const parentSessionId = `session-${crypto.randomUUID()}`;
     const workspaceId = `workspace-${crypto.randomUUID()}`;
     insertSession(parentSessionId, workspaceId, join(userData, "missing.jsonl"), "Parent chat");
@@ -360,16 +360,21 @@ describe("PiSdkRuntime", () => {
 
     const result = await taskTool.execute(
       "task-call",
-      { description: "Check files", prompt: "Check the files." },
+      { description: "Check files", prompt: "Check the files.", subagent: "general-purpose" },
       new AbortController().signal,
       undefined,
       { cwd },
     );
 
     expect(result.content[0]?.text).toContain("generic task complete");
+    expect(
+      getDatabase()
+        .prepare("select subagent_type from agent_sessions where parent_session_id = ?")
+        .get(parentSessionId),
+    ).toEqual({ subagent_type: "task" });
   });
 
-  it("keeps background task tool output free of internal run state", async () => {
+  it("keeps background unknown-subagent task output free of internal run state", async () => {
     const parentSessionId = `session-${crypto.randomUUID()}`;
     const workspaceId = `workspace-${crypto.randomUUID()}`;
     insertSession(parentSessionId, workspaceId, join(userData, "missing.jsonl"), "Parent chat");
@@ -393,7 +398,12 @@ describe("PiSdkRuntime", () => {
 
     const result = await taskTool.execute(
       "task-call",
-      { description: "Explore code", prompt: "Explore in parallel.", background: true },
+      {
+        description: "Explore code",
+        prompt: "Explore in parallel.",
+        subagent: "general-purpose",
+        background: true,
+      },
       new AbortController().signal,
       undefined,
       { cwd },
@@ -405,6 +415,11 @@ describe("PiSdkRuntime", () => {
     expect(result.content[0]?.text).not.toContain("<subagent_runs>");
     expect(result.content[0]?.text).not.toContain("completed");
     expect(result.content[0]?.text).not.toContain("result:");
+    expect(
+      getDatabase()
+        .prepare("select subagent_type from agent_sessions where parent_session_id = ?")
+        .get(parentSessionId),
+    ).toEqual({ subagent_type: "task" });
   });
 
   it("creates new sessions directly in the workspace checkout", async () => {
