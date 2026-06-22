@@ -861,12 +861,10 @@ describe("groupActivity", () => {
     expect((result[0] as { items: unknown[] }).items).toHaveLength(2);
   });
 
-  it("folds thoughts and subagent control rows into the exploration group", () => {
+  it("folds thoughts into the exploration group", () => {
     const result = groupActivity([
       tool("read-1", "read"),
       thought("plan", "checking worker"),
-      tool("wait-1", "wait_agent"),
-      tool("list-1", "list_agents"),
       thought("done", "worker settled"),
     ] as Blocks);
 
@@ -881,8 +879,6 @@ describe("groupActivity", () => {
     expect((result[0] as { items: { type: string; name?: string }[] }).items).toEqual([
       expect.objectContaining({ type: "tool", name: "read" }),
       expect.objectContaining({ type: "thought" }),
-      expect.objectContaining({ type: "tool", name: "wait_agent" }),
-      expect.objectContaining({ type: "tool", name: "list_agents" }),
       expect.objectContaining({ type: "thought" }),
     ]);
   });

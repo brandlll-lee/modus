@@ -24,7 +24,21 @@ describe("parseSubagent", () => {
       model: "inherit",
       readOnly: true,
       isBackground: false,
+      isolation: "shared",
       body: "Body",
+    });
+  });
+
+  it("parses tool filters and worktree isolation", () => {
+    const agent = parseSubagent(
+      "---\ntools: [read, grep]\ndisallowedTools:\n  - shell\nisolation: worktree\n---\nBody",
+      "researcher",
+    );
+
+    expect(agent).toMatchObject({
+      tools: ["read", "grep"],
+      disallowedTools: ["shell"],
+      isolation: "worktree",
     });
   });
 });
@@ -80,9 +94,13 @@ describe("loadWorkspaceSubagents", () => {
       model: "mock/model",
       readOnly: true,
       isBackground: false,
+      tools: ["read", "grep"],
+      disallowedTools: ["shell"],
+      isolation: "worktree",
       body: "SECRET BODY",
     });
     expect(readFileSync(created.path, "utf8")).toContain("name: security-auditor");
+    expect(readFileSync(created.path, "utf8")).toContain("tools: [read, grep]");
 
     const updated = updateSubagent({
       cwd,
@@ -92,6 +110,7 @@ describe("loadWorkspaceSubagents", () => {
       model: "inherit",
       readOnly: false,
       isBackground: true,
+      isolation: "shared",
       body: "UPDATED BODY",
     });
     expect(updated.description).toBe("Review payments");

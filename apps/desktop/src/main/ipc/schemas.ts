@@ -216,6 +216,9 @@ export const subagentsCreateSchema = z.object({
   model: z.string().trim().max(120).optional(),
   readOnly: z.boolean(),
   isBackground: z.boolean(),
+  tools: z.array(z.string().trim().min(1).max(80)).optional(),
+  disallowedTools: z.array(z.string().trim().min(1).max(80)).optional(),
+  isolation: z.enum(["shared", "worktree"]).optional(),
   body: z.string().trim().min(1).max(20_000),
 });
 

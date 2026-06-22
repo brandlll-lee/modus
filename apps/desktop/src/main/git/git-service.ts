@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
-import { isAbsolute, join } from "node:path";
+import { appendFile, mkdir, readFile, rm } from "node:fs/promises";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import type {
   DiffFileVersions,
   DiffMode,
@@ -12,6 +12,7 @@ import type {
   GitCommit,
   GitCommitResult,
   GitStatusSummary,
+  SubagentWorktreeInfo,
   WorkingChangeStats,
 } from "../../shared/contracts";
 import { GitError, messageForCode } from "./git-errors";
@@ -667,6 +668,141 @@ export async function checkoutBranch(cwd: string, name: string, remote = false):
     return await git(cwd, ["switch", localName]);
   }
   return await git(cwd, ["switch", "--track", target]);
+}
+
+function subagentSlug(value: string): string {
+  return (
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 48) || "task"
+  );
+}
+
+function assertManagedWorktreePath(repoRoot: string, worktreePath: string): void {
+  const root = resolve(repoRoot, ".modus", "worktrees");
+  const target = resolve(worktreePath);
+  const rel = relative(root, target);
+  if (!rel || rel.startsWith("..") || isAbsolute(rel)) {
+    throw new Error("Refusing to manage a worktree outside .modus/worktrees.");
+  }
+}
+
+async function changedFilesBetween(cwd: string, base: string, target: string): Promise<string[]> {
+  return (await gitSafe(cwd, ["diff", "--name-only", "-z", base, target]))
+    .split("\0")
+    .filter(Boolean);
+}
+
+async function unmergedFiles(cwd: string): Promise<string[]> {
+  return (await gitSafe(cwd, ["diff", "--name-only", "--diff-filter=U", "-z"]))
+    .split("\0")
+    .filter(Boolean);
+}
+
+async function excludeManagedWorktrees(commonGitDir: string): Promise<void> {
+  const excludePath = join(commonGitDir, "info", "exclude");
+  const marker = ".modus/worktrees/";
+  const current = await readFile(excludePath, "utf8").catch(() => "");
+  if (!current.split(/\r?\n/).includes(marker)) {
+    await appendFile(excludePath, `${current.endsWith("\n") || !current ? "" : "\n"}${marker}\n`);
+  }
+}
+
+export async function createSubagentWorktree(
+  cwd: string,
+  input: { sessionId: string; name: string },
+): Promise<SubagentWorktreeInfo> {
+  const repo = resolveRepo(cwd);
+  if (!repo) {
+    throw new Error("Worktree isolation requires a Git repository.");
+  }
+  const baseSha = await gitSafe(repo.root, ["rev-parse", "--verify", "HEAD"]);
+  if (!baseSha) {
+    throw new Error("Worktree isolation requires an initial commit.");
+  }
+
+  const shortId = input.sessionId.replace(/[^a-f0-9]/gi, "").slice(0, 8);
+  const name = `${subagentSlug(input.name)}-${shortId || input.sessionId.slice(0, 8)}`;
+  const worktreeRoot = join(repo.root, ".modus", "worktrees");
+  const worktreePath = join(worktreeRoot, name);
+  const branch = `modus/subagent/${name}`;
+  await mkdir(worktreeRoot, { recursive: true });
+  await excludeManagedWorktrees(repo.commonGitDir);
+  await git(repo.root, ["worktree", "add", "-b", branch, worktreePath, baseSha]);
+  return { path: worktreePath, branch, baseSha, integrationStatus: "running" };
+}
+
+export async function finishSubagentWorktree(
+  worktree: SubagentWorktreeInfo,
+  task: string,
+): Promise<SubagentWorktreeInfo> {
+  const dirty = (await gitSafe(worktree.path, ["status", "--porcelain=v1"])).trim();
+  if (dirty) {
+    await git(worktree.path, ["add", "-A"]);
+    if ((await gitSafe(worktree.path, ["diff", "--cached", "--name-only"])).trim()) {
+      await runGit(
+        worktree.path,
+        [
+          "-c",
+          "user.name=Modus",
+          "-c",
+          "user.email=subagent@modus.local",
+          "commit",
+          "-m",
+          `subagent: ${task.trim() || "worktree changes"}`,
+        ],
+        { hookPath: await resolveUserPath() },
+      );
+    }
+  }
+  const changedFiles = await changedFilesBetween(worktree.path, worktree.baseSha, "HEAD");
+  return {
+    ...worktree,
+    integrationStatus: changedFiles.length > 0 ? "ready" : "no_changes",
+    changedFiles,
+  };
+}
+
+export async function applySubagentWorktree(
+  parentCwd: string,
+  worktree: SubagentWorktreeInfo,
+): Promise<SubagentWorktreeInfo> {
+  if ((await gitSafe(parentCwd, ["status", "--porcelain=v1"])).trim()) {
+    throw new Error("Apply requires a clean main workspace.");
+  }
+  try {
+    await git(parentCwd, ["merge", "--no-commit", "--no-ff", worktree.branch]);
+    return {
+      path: worktree.path,
+      branch: worktree.branch,
+      baseSha: worktree.baseSha,
+      integrationStatus: "applied",
+      ...(worktree.changedFiles ? { changedFiles: worktree.changedFiles } : {}),
+    };
+  } catch (error) {
+    const conflictFiles = await unmergedFiles(parentCwd);
+    if (conflictFiles.length > 0) {
+      return { ...worktree, integrationStatus: "conflict", conflictFiles };
+    }
+    throw error;
+  }
+}
+
+export async function cleanupSubagentWorktree(
+  parentCwd: string,
+  worktree: SubagentWorktreeInfo,
+): Promise<SubagentWorktreeInfo> {
+  const repo = resolveRepo(parentCwd);
+  if (!repo) {
+    throw new Error("Worktree cleanup requires a Git repository.");
+  }
+  assertManagedWorktreePath(repo.root, worktree.path);
+  await git(repo.root, ["worktree", "remove", "--force", worktree.path]);
+  await gitSafe(repo.root, ["branch", "-D", worktree.branch]);
+  await rm(worktree.path, { recursive: true, force: true }).catch(() => undefined);
+  return { ...worktree, integrationStatus: "cleaned" };
 }
 
 /* ── Agent checkpoints ───────────────────────────────────────────────────

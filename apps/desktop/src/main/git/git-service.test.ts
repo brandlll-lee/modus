@@ -1,11 +1,17 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  applySubagentWorktree,
+  cleanupSubagentWorktree,
   commitOrPush,
+  createSubagentWorktree,
   discardFile,
+  finishSubagentWorktree,
   getStatusSummary,
   getWorkingChangeStats,
   listChanges,
@@ -214,5 +220,65 @@ describe("git-service", () => {
     } finally {
       await rm(fresh, { recursive: true, force: true });
     }
+  });
+
+  it("creates, finishes, applies, and cleans up a subagent worktree", async () => {
+    const worktree = await createSubagentWorktree(repo, {
+      sessionId: "abcdef12-3456-7890-abcd-ef1234567890",
+      name: "writer",
+    });
+    expect(worktree.path.replace(/\\/g, "/")).toContain("/.modus/worktrees/writer-abcdef12");
+
+    await writeFile(join(worktree.path, "tracked.txt"), "child\n");
+    const finished = await finishSubagentWorktree(worktree, "Change tracked file");
+
+    expect(finished.integrationStatus).toBe("ready");
+    expect(finished.changedFiles).toEqual(["tracked.txt"]);
+    expect((await git(["status", "--porcelain=v1"])).trim()).toBe("");
+
+    const applied = await applySubagentWorktree(repo, finished);
+    expect(applied.integrationStatus).toBe("applied");
+    expect((await readFile(join(repo, "tracked.txt"), "utf8")).replace(/\r\n/g, "\n")).toBe(
+      "child\n",
+    );
+
+    const cleaned = await cleanupSubagentWorktree(repo, applied);
+    expect(cleaned.integrationStatus).toBe("cleaned");
+    expect(existsSync(worktree.path)).toBe(false);
+  });
+
+  it("rejects worktree isolation outside a committed git repo", async () => {
+    const plain = await mkdtemp(join(tmpdir(), "modus-non-git-"));
+    const unborn = await mkdtemp(join(tmpdir(), "modus-unborn-git-"));
+    try {
+      await expect(
+        createSubagentWorktree(plain, { sessionId: "child", name: "writer" }),
+      ).rejects.toThrow("Git repository");
+      await execFileAsync("git", ["init"], { cwd: unborn, windowsHide: true });
+      await expect(
+        createSubagentWorktree(unborn, { sessionId: "child", name: "writer" }),
+      ).rejects.toThrow("initial commit");
+    } finally {
+      await rm(plain, { recursive: true, force: true });
+      await rm(unborn, { recursive: true, force: true });
+    }
+  });
+
+  it("marks subagent apply conflicts without resolving them", async () => {
+    const worktree = await createSubagentWorktree(repo, {
+      sessionId: "12345678-3456-7890-abcd-ef1234567890",
+      name: "writer",
+    });
+    await writeFile(join(worktree.path, "tracked.txt"), "child\n");
+    const finished = await finishSubagentWorktree(worktree, "Child edit");
+
+    await writeFile(join(repo, "tracked.txt"), "main\n");
+    await git(["add", "tracked.txt"]);
+    await git(["commit", "-m", "main edit"]);
+
+    const conflicted = await applySubagentWorktree(repo, finished);
+
+    expect(conflicted.integrationStatus).toBe("conflict");
+    expect(conflicted.conflictFiles).toEqual(["tracked.txt"]);
   });
 });

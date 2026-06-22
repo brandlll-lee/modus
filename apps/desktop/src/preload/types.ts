@@ -143,6 +143,8 @@ export type ModusApi = {
      */
     rollback(input: { sessionId: string; userMessageId: string }): Promise<AgentRollbackResult>;
     delete(sessionId: string): Promise<void>;
+    applySubagentWorktree(sessionId: string): Promise<AgentSessionInfo>;
+    cleanupSubagentWorktree(sessionId: string): Promise<AgentSessionInfo>;
     setModel(input: {
       sessionId: string;
       model: string;
@@ -363,6 +365,9 @@ export type ModusApi = {
       model?: string;
       readOnly: boolean;
       isBackground: boolean;
+      tools?: string[];
+      disallowedTools?: string[];
+      isolation?: "shared" | "worktree";
       body: string;
     }): Promise<SubagentInfo>;
     update(input: {
@@ -373,6 +378,9 @@ export type ModusApi = {
       model?: string;
       readOnly: boolean;
       isBackground: boolean;
+      tools?: string[];
+      disallowedTools?: string[];
+      isolation?: "shared" | "worktree";
       body: string;
     }): Promise<SubagentInfo>;
     delete(input: { cwd: string; path: string }): Promise<SubagentInfo[]>;

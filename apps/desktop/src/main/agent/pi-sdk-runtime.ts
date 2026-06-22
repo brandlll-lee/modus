@@ -18,11 +18,16 @@ import type {
   MessageContextChip,
   ModelInfo,
   PlanBuildStatus,
+  SubagentStatus,
 } from "../../shared/contracts";
 import { SUBAGENT_TOOL_NAMES, type ToolProfileName } from "../../shared/tools";
 import { releaseAgentBrowserControl } from "../browser/browser-service";
 import { formatResolvedContext, resolveContext } from "../context/context-service";
-import { getChangeStatsSince } from "../git/git-service";
+import {
+  createSubagentWorktree,
+  finishSubagentWorktree,
+  getChangeStatsSince,
+} from "../git/git-service";
 import { resolveGlobalGuidancePrompt } from "../guidance/guidance-service";
 import { denyPendingQuestionRequestsForSession } from "../interaction/question-broker";
 import { IPC_CHANNELS } from "../ipc/channels";
@@ -49,6 +54,7 @@ import {
   updateAgentSessionMetadata,
   updateAgentSessionStatus,
   updateAgentSessionTitle,
+  updateAgentSessionWorktree,
 } from "./agent-store";
 import { createCheckpoint } from "./checkpoint-service";
 import {
@@ -74,7 +80,7 @@ import type {
 } from "./runtime";
 import { deriveSessionTitle, shouldReplaceSessionTitle } from "./session-title";
 import { describeAgentShellForPrompt, resolveAgentShell } from "./shell-resolver";
-import { resolveSubagentsPrompt } from "./subagents-config";
+import { resolveSubagent, resolveSubagentsPrompt } from "./subagents-config";
 import { registerAppTools } from "./tools/app-tools";
 import { registerBrowserTools } from "./tools/browser-tools";
 import { plansRoot, registerPlanTools } from "./tools/plan-tools";
@@ -140,26 +146,39 @@ function dedupeToolsByName<T extends { name: string }>(tools: T[]): T[] {
   return [...byName.values()];
 }
 
-function readOnlyDisabledToolNames(profile: ToolProfileName): string[] {
-  return toolRegistry.resolveActiveTools(profile).filter((name) => {
-    const entry = toolRegistry.getEntry(name);
-    const allowed = entry?.readOnly ?? entry?.permission.danger === "safe";
-    return !allowed;
-  });
-}
-
-function toolDisableListForSession(
-  info: AgentSessionInfo,
-  profile: ToolProfileName,
-): string[] | undefined {
+function activeToolNamesForSession(info: AgentSessionInfo, profile: ToolProfileName): string[] {
+  let active = toolRegistry.resolveActiveTools(profile);
+  const configCwd = info.parentSessionId
+    ? (getAgentSession(info.parentSessionId)?.cwd ?? info.cwd)
+    : info.cwd;
+  const subagent =
+    info.parentSessionId && info.subagentType
+      ? resolveSubagent(configCwd, info.subagentType)
+      : undefined;
+  if (subagent?.tools?.length) {
+    active = active.filter((name) =>
+      subagent.tools?.some((selector) => toolRegistry.matchesSelector(name, selector)),
+    );
+  }
   const disabled = new Set<string>();
   if (info.parentSessionId) {
     for (const name of SUBAGENT_TOOL_NAMES) disabled.add(name);
   }
   if (info.subagentReadOnly) {
-    for (const name of readOnlyDisabledToolNames(profile)) disabled.add(name);
+    for (const name of active) {
+      if (!toolRegistry.isReadOnlySafe(name)) {
+        disabled.add(name);
+      }
+    }
   }
-  return disabled.size > 0 ? [...disabled] : undefined;
+  for (const selector of subagent?.disallowedTools ?? []) {
+    for (const name of active) {
+      if (toolRegistry.matchesSelector(name, selector)) {
+        disabled.add(name);
+      }
+    }
+  }
+  return active.filter((name) => !disabled.has(name));
 }
 
 function composeSubagentPrompt(input: {
@@ -476,9 +495,18 @@ export class PiSdkRuntime implements AgentRuntime {
     }
     const modelId = selectedModel ? modelToId(selectedModel) : input.model;
     const recordInput: Parameters<typeof createAgentSessionRecord>[0] = {
-      ...input,
+      workspaceId: input.workspaceId,
       cwd: input.cwd,
+      title: input.title,
       runtime: "pi-sdk",
+      ...(input.id !== undefined ? { id: input.id } : {}),
+      ...(input.parentSessionId !== undefined ? { parentSessionId: input.parentSessionId } : {}),
+      ...(input.subagentTask !== undefined ? { subagentTask: input.subagentTask } : {}),
+      ...(input.subagentType !== undefined ? { subagentType: input.subagentType } : {}),
+      ...(input.subagentReadOnly !== undefined
+        ? { subagentReadOnly: input.subagentReadOnly }
+        : {}),
+      ...(input.subagentWorktree !== undefined ? { subagentWorktree: input.subagentWorktree } : {}),
     };
     if (modelId !== undefined) {
       recordInput.model = modelId;
@@ -618,10 +646,8 @@ export class PiSdkRuntime implements AgentRuntime {
       // plan_write; build = full chat tools). setActiveToolsByName also rebuilds
       // the system prompt for the new set, and takes effect on this turn.
       const profile = profileForMode(input.mode);
-      const disabledTools = toolDisableListForSession(runtimeSession.info, profile);
-      const toolOverrides = disabledTools ? { disable: disabledTools } : undefined;
       runtimeSession.session.setActiveToolsByName(
-        toolRegistry.resolveActiveTools(profile, toolOverrides),
+        activeToolNamesForSession(runtimeSession.info, profile),
       );
 
       // Per-turn model + thinking: the composer's current selection travels with
@@ -930,10 +956,14 @@ export class PiSdkRuntime implements AgentRuntime {
     const subagentsText = runtimeSession.info.parentSessionId
       ? ""
       : resolveSubagentsPrompt(runtimeSession.info.cwd);
+    const subagentRunsText = runtimeSession.info.parentSessionId
+      ? ""
+      : resolveSubagentRunsPrompt(runtimeSession.info.id);
     return [
       planModePreamble(input.mode),
       skillsText,
       subagentsText,
+      subagentRunsText,
       contextText,
       awareness,
       input.message,
@@ -1006,6 +1036,9 @@ export class PiSdkRuntime implements AgentRuntime {
         model: string;
         readOnly: boolean;
         isBackground: boolean;
+        tools?: string[];
+        disallowedTools?: string[];
+        isolation?: "shared" | "worktree";
       };
     },
   ): Promise<{
@@ -1030,15 +1063,25 @@ export class PiSdkRuntime implements AgentRuntime {
     const requestedModel = input.subagent?.model.trim();
     const childModel =
       requestedModel && requestedModel !== "inherit" ? requestedModel : (parent.model ?? undefined);
+    const childSessionId = randomUUID();
+    const worktree =
+      input.subagent && !input.subagent.readOnly && input.subagent.isolation === "worktree"
+        ? await createSubagentWorktree(parent.cwd, {
+            sessionId: childSessionId,
+            name: input.subagent.name || input.subagentType,
+          })
+        : undefined;
     const session = await this.create(window, {
+      id: childSessionId,
       workspaceId: parent.workspaceId,
-      cwd: parent.cwd,
+      cwd: worktree?.path ?? parent.cwd,
       title: input.task,
       ...(childModel ? { model: childModel } : {}),
       parentSessionId: parent.id,
       subagentTask: input.task,
       subagentType: input.subagentType,
       ...(input.subagent?.readOnly ? { subagentReadOnly: true } : {}),
+      ...(worktree ? { subagentWorktree: worktree } : {}),
     });
     this.parentSessionByChild.set(session.id, parent.id);
     emit({
@@ -1060,8 +1103,10 @@ export class PiSdkRuntime implements AgentRuntime {
       ...(childModel ? { model: childModel } : {}),
     });
 
+    let runFailed = false;
     void run
       .catch(() => {
+        runFailed = true;
         emit({
           type: "subagent.updated",
           sessionId: parent.id,
@@ -1069,35 +1114,34 @@ export class PiSdkRuntime implements AgentRuntime {
           status: "failed",
         });
       })
+      .then(async () => {
+        if (!session.subagentWorktree) {
+          return;
+        }
+        const updated = await finishSubagentWorktree(session.subagentWorktree, input.task);
+        updateAgentSessionWorktree(session.id, updated);
+        if (!runFailed) {
+          emit({
+            type: "subagent.updated",
+            sessionId: parent.id,
+            childSessionId: session.id,
+            status: "completed",
+          });
+        }
+      })
+      .catch((error) => {
+        emit({
+          type: "runtime.error",
+          sessionId: parent.id,
+          message: `Subagent worktree finalization failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        });
+      })
       .finally(() => {
         void this.dispose(session.id).catch(() => undefined);
       });
     return { session, status: "running" };
-  }
-
-  listSubagents(parentSessionId: string): AgentSessionInfo[] {
-    return listSubagentSessions(parentSessionId);
-  }
-
-  async sendSubagentMessage(
-    window: BrowserWindowType,
-    input: { parentSessionId: string; target: string; message: string },
-  ): Promise<void> {
-    const child = this.requireChildSession(input.parentSessionId, input.target);
-    const delivery = isSubagentBusy(child.status) ? "follow-up" : "normal";
-    try {
-      await this.prompt(window, {
-        sessionId: input.target,
-        message: input.message,
-        context: [],
-        delivery,
-        userMessageId: `subagent-user:${randomUUID()}`,
-      });
-    } finally {
-      if (delivery === "normal") {
-        await this.dispose(input.target).catch(() => undefined);
-      }
-    }
   }
 
   async waitSubagent(
@@ -1117,21 +1161,6 @@ export class PiSdkRuntime implements AgentRuntime {
       }
       await sleep(250);
     }
-  }
-
-  async closeSubagent(
-    parentSessionId: string,
-    target: string,
-  ): Promise<AgentSessionInfo | undefined> {
-    const child = this.requireChildSession(parentSessionId, target);
-    await this.closeSubagentTree(child.id, "Subagent closed");
-    await this.abortSessionOnly(child.id);
-    updateAgentSessionStatus(child.id, "cancelled");
-    denyPendingPermissionRequestsForSession(child.id, "Subagent closed");
-    denyPendingQuestionRequestsForSession(child.id);
-    await this.cleanupSessionProcesses(child.id);
-    await this.disposeSessionOnly(child.id);
-    return getAgentSession(child.id);
   }
 
   private requireChildSession(parentSessionId: string, childSessionId: string): AgentSessionInfo {
@@ -1458,6 +1487,44 @@ function lastAssistantOutput(sessionId: string): string | undefined {
   }
   const output = lastAssistantMessageId ? textByMessage.get(lastAssistantMessageId)?.trim() : "";
   return output || undefined;
+}
+
+function resolveSubagentRunsPrompt(parentSessionId: string): string {
+  const agents = listSubagentSessions(parentSessionId);
+  if (agents.length === 0) {
+    return "";
+  }
+  return [
+    "<subagent_runs>",
+    ...agents.map((agent) => {
+      const output = lastAssistantOutput(agent.id);
+      return [
+        `- id: ${agent.id}`,
+        `  status: ${subagentPromptStatus(agent)}`,
+        `  task: ${agent.subagentTask ?? agent.title}`,
+        `  type: ${agent.subagentType ?? "subagent"}`,
+        ...(output ? [`  last_result: ${truncateForPrompt(output, 800)}`] : []),
+      ].join("\n");
+    }),
+    "</subagent_runs>",
+  ].join("\n");
+}
+
+function subagentPromptStatus(agent: AgentSessionInfo): SubagentStatus {
+  if (isSubagentBusy(agent.status)) {
+    return agent.status === "blocked" ? "blocked" : "running";
+  }
+  const latestRun = listAgentRuns(agent.id).at(-1);
+  if (latestRun?.status === "completed") return "completed";
+  if (latestRun?.status === "failed") return "failed";
+  if (latestRun?.status === "cancelled") return "cancelled";
+  if (latestRun?.status === "blocked") return "blocked";
+  return "completed";
+}
+
+function truncateForPrompt(value: string, maxLength: number): string {
+  const trimmed = value.replace(/\s+/g, " ").trim();
+  return trimmed.length > maxLength ? `${trimmed.slice(0, maxLength - 1)}…` : trimmed;
 }
 
 function isSubagentBusy(status: AgentSessionInfo["status"]): boolean {

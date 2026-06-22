@@ -9,7 +9,11 @@ import {
 } from "electron";
 import { listAgentEvents, recordAgentEvent } from "../agent/agent-event-store";
 import { listAgentRuns } from "../agent/agent-run-store";
-import { listAgentSessions } from "../agent/agent-store";
+import {
+  getAgentSession,
+  listAgentSessions,
+  updateAgentSessionWorktree,
+} from "../agent/agent-store";
 import {
   getSessionBaseCheckpoint,
   listCheckpoints,
@@ -61,7 +65,9 @@ import { resolveContext, searchContext } from "../context/context-service";
 import { addDocSource, listDocSources, searchDocs } from "../docs/docs-service";
 import { listDirectory, readWorkspaceFile } from "../files/files-service";
 import {
+  applySubagentWorktree,
   checkoutBranch,
+  cleanupSubagentWorktree,
   commitOrPush,
   discardFile,
   getChangeStatsSince,
@@ -374,6 +380,43 @@ export function registerAppIpc(): void {
     assertTrustedSender(event);
     const id = parseIpcInput(sessionIdSchema, sessionId, IPC_CHANNELS.agentDelete);
     await archiveAgentSession(id);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.agentApplySubagentWorktree, async (event, sessionId: string) => {
+    assertTrustedSender(event);
+    const id = parseIpcInput(sessionIdSchema, sessionId, IPC_CHANNELS.agentApplySubagentWorktree);
+    const child = getAgentSession(id);
+    if (!child?.parentSessionId || !child.subagentWorktree) {
+      throw new Error("Subagent worktree not found.");
+    }
+    const parent = getAgentSession(child.parentSessionId);
+    if (!parent) {
+      throw new Error("Parent session not found.");
+    }
+    const worktree = await applySubagentWorktree(parent.cwd, child.subagentWorktree);
+    const updated = updateAgentSessionWorktree(child.id, worktree) ?? child;
+    if (worktree.integrationStatus === "conflict") {
+      throw new Error(`Merge conflict: ${(worktree.conflictFiles ?? []).join(", ")}`);
+    }
+    return updated;
+  });
+
+  ipcMain.handle(IPC_CHANNELS.agentCleanupSubagentWorktree, async (event, sessionId: string) => {
+    assertTrustedSender(event);
+    const id = parseIpcInput(sessionIdSchema, sessionId, IPC_CHANNELS.agentCleanupSubagentWorktree);
+    const child = getAgentSession(id);
+    if (!child?.parentSessionId || !child.subagentWorktree) {
+      throw new Error("Subagent worktree not found.");
+    }
+    if (!["applied", "no_changes"].includes(child.subagentWorktree.integrationStatus)) {
+      throw new Error("Only applied or no-change worktrees can be cleaned up.");
+    }
+    const parent = getAgentSession(child.parentSessionId);
+    if (!parent) {
+      throw new Error("Parent session not found.");
+    }
+    const worktree = await cleanupSubagentWorktree(parent.cwd, child.subagentWorktree);
+    return updateAgentSessionWorktree(child.id, worktree) ?? child;
   });
 
   ipcMain.handle(IPC_CHANNELS.agentSetModel, async (event, input) => {
@@ -965,20 +1008,26 @@ export function registerAppIpc(): void {
   ipcMain.handle(IPC_CHANNELS.subagentsCreate, (event, input) => {
     assertTrustedSender(event);
     const parsed = parseIpcInput(subagentsCreateSchema, input, IPC_CHANNELS.subagentsCreate);
-    const { model, ...rest } = parsed;
+    const { model, tools, disallowedTools, isolation, ...rest } = parsed;
     return createSubagent({
       ...rest,
       ...(model !== undefined ? { model } : {}),
+      ...(tools !== undefined ? { tools } : {}),
+      ...(disallowedTools !== undefined ? { disallowedTools } : {}),
+      ...(isolation !== undefined ? { isolation } : {}),
     });
   });
 
   ipcMain.handle(IPC_CHANNELS.subagentsUpdate, (event, input) => {
     assertTrustedSender(event);
     const parsed = parseIpcInput(subagentsUpdateSchema, input, IPC_CHANNELS.subagentsUpdate);
-    const { model, ...rest } = parsed;
+    const { model, tools, disallowedTools, isolation, ...rest } = parsed;
     return updateSubagent({
       ...rest,
       ...(model !== undefined ? { model } : {}),
+      ...(tools !== undefined ? { tools } : {}),
+      ...(disallowedTools !== undefined ? { disallowedTools } : {}),
+      ...(isolation !== undefined ? { isolation } : {}),
     });
   });
 

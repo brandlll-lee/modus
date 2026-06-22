@@ -2089,6 +2089,9 @@ type SubagentFormState = {
   model: string;
   readOnly: boolean;
   isBackground: boolean;
+  tools: string;
+  disallowedTools: string;
+  isolation: "shared" | "worktree";
   body: string;
 };
 
@@ -2099,6 +2102,9 @@ function emptySubagentForm(): SubagentFormState {
     model: "inherit",
     readOnly: false,
     isBackground: false,
+    tools: "",
+    disallowedTools: "",
+    isolation: "shared",
     body: "",
   };
 }
@@ -2111,8 +2117,19 @@ function formFromSubagent(subagent: SubagentDetail): SubagentFormState {
     model: subagent.model,
     readOnly: subagent.readOnly,
     isBackground: subagent.isBackground,
+    tools: (subagent.tools ?? []).join(", "),
+    disallowedTools: (subagent.disallowedTools ?? []).join(", "),
+    isolation: subagent.isolation,
     body: subagent.body,
   };
+}
+
+function splitToolList(value: string): string[] | undefined {
+  const items = value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return items.length > 0 ? items : undefined;
 }
 
 function SubagentsSettingsPanel({ cwd }: { cwd: string | undefined }) {
@@ -2163,6 +2180,8 @@ function SubagentsSettingsPanel({ cwd }: { cwd: string | undefined }) {
     setSaving(true);
     setError(undefined);
     try {
+      const tools = splitToolList(current.tools);
+      const disallowedTools = splitToolList(current.disallowedTools);
       const payload = {
         cwd,
         name: current.name.trim(),
@@ -2170,6 +2189,9 @@ function SubagentsSettingsPanel({ cwd }: { cwd: string | undefined }) {
         model: current.model.trim() || "inherit",
         readOnly: current.readOnly,
         isBackground: current.isBackground,
+        ...(tools ? { tools } : {}),
+        ...(disallowedTools ? { disallowedTools } : {}),
+        isolation: current.isolation,
         body: current.body.trim(),
       };
       if (current.path) {
@@ -2297,6 +2319,42 @@ function SubagentsSettingsPanel({ cwd }: { cwd: string | undefined }) {
                 />
               </div>
             </div>
+            <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_160px]">
+              <label className="flex flex-col gap-1.5">
+                <span className="text-xs text-fg-subtle">Tools</span>
+                <input
+                  className="h-8 rounded-md border border-hairline bg-surface px-2.5 font-mono text-sm text-fg outline-none focus:border-focus-ring"
+                  onChange={(event) => setForm({ ...form, tools: event.target.value })}
+                  placeholder="read, grep, web_search"
+                  value={form.tools}
+                />
+              </label>
+              <label className="flex flex-col gap-1.5">
+                <span className="text-xs text-fg-subtle">Disallowed tools</span>
+                <input
+                  className="h-8 rounded-md border border-hairline bg-surface px-2.5 font-mono text-sm text-fg outline-none focus:border-focus-ring"
+                  onChange={(event) => setForm({ ...form, disallowedTools: event.target.value })}
+                  placeholder="shell, process"
+                  value={form.disallowedTools}
+                />
+              </label>
+              <label className="flex flex-col gap-1.5">
+                <span className="text-xs text-fg-subtle">Isolation</span>
+                <select
+                  className="h-8 rounded-md border border-hairline bg-surface px-2.5 text-sm text-fg outline-none focus:border-focus-ring"
+                  onChange={(event) =>
+                    setForm({
+                      ...form,
+                      isolation: event.target.value === "worktree" ? "worktree" : "shared",
+                    })
+                  }
+                  value={form.isolation}
+                >
+                  <option value="shared">shared</option>
+                  <option value="worktree">worktree</option>
+                </select>
+              </label>
+            </div>
             <label className="flex flex-col gap-1.5">
               <span className="text-xs text-fg-subtle">Instructions</span>
               <textarea
@@ -2377,6 +2435,9 @@ function SubagentsSettingsPanel({ cwd }: { cwd: string | undefined }) {
                     <ReadOnlyPill>{subagent.model || "inherit"}</ReadOnlyPill>
                     {subagent.readOnly ? <ReadOnlyPill>readonly</ReadOnlyPill> : null}
                     {subagent.isBackground ? <ReadOnlyPill>background</ReadOnlyPill> : null}
+                    {subagent.isolation === "worktree" ? (
+                      <ReadOnlyPill>worktree</ReadOnlyPill>
+                    ) : null}
                     <span className="rounded bg-chip-faint px-1.5 py-px text-2xs text-fg-faint">
                       {scopeBadge(subagent)}
                     </span>

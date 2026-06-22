@@ -18,6 +18,8 @@ export const IPC_CHANNELS = {
   agentAbort: "agent:abort",
   agentRollback: "agent:rollback",
   agentDelete: "agent:delete",
+  agentApplySubagentWorktree: "agent:apply-subagent-worktree",
+  agentCleanupSubagentWorktree: "agent:cleanup-subagent-worktree",
   agentSetModel: "agent:set-model",
   agentCycleModel: "agent:cycle-model",
   agentEvent: "agent:event",

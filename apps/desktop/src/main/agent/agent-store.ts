@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { AgentSessionInfo } from "../../shared/contracts";
+import type { AgentSessionInfo, SubagentWorktreeInfo } from "../../shared/contracts";
 import { getDatabase } from "../db/database";
 
 type AgentSessionRow = {
@@ -16,9 +16,27 @@ type AgentSessionRow = {
   subagent_task: string | null;
   subagent_type: string | null;
   subagent_readonly: number;
+  subagent_worktree_path: string | null;
+  subagent_worktree_branch: string | null;
+  subagent_worktree_base_sha: string | null;
+  subagent_integration_status: string | null;
+  subagent_changed_files_json: string | null;
+  subagent_conflict_files_json: string | null;
   created_at: string;
   updated_at: string;
 };
+
+function parseJsonArray(text: string | null): string[] | undefined {
+  if (!text) return undefined;
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === "string")
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 function toSession(row: AgentSessionRow): AgentSessionInfo {
   const session: AgentSessionInfo = {
@@ -53,10 +71,30 @@ function toSession(row: AgentSessionRow): AgentSessionInfo {
   if (row.subagent_readonly !== 0) {
     session.subagentReadOnly = true;
   }
+  if (
+    row.subagent_worktree_path !== null &&
+    row.subagent_worktree_branch !== null &&
+    row.subagent_worktree_base_sha !== null
+  ) {
+    const integrationStatus = row.subagent_integration_status as
+      | SubagentWorktreeInfo["integrationStatus"]
+      | null;
+    const changedFiles = parseJsonArray(row.subagent_changed_files_json);
+    const conflictFiles = parseJsonArray(row.subagent_conflict_files_json);
+    session.subagentWorktree = {
+      path: row.subagent_worktree_path,
+      branch: row.subagent_worktree_branch,
+      baseSha: row.subagent_worktree_base_sha,
+      integrationStatus: integrationStatus ?? "running",
+      ...(changedFiles ? { changedFiles } : {}),
+      ...(conflictFiles ? { conflictFiles } : {}),
+    };
+  }
   return session;
 }
 
 export function createAgentSessionRecord(input: {
+  id?: string;
   workspaceId: string;
   title: string;
   cwd: string;
@@ -68,11 +106,12 @@ export function createAgentSessionRecord(input: {
   subagentTask?: string;
   subagentType?: string;
   subagentReadOnly?: boolean;
+  subagentWorktree?: SubagentWorktreeInfo;
 }): AgentSessionInfo {
   const now = new Date().toISOString();
   const runtime = input.runtime ?? "pi-sdk";
   const session: AgentSessionInfo = {
-    id: randomUUID(),
+    id: input.id ?? randomUUID(),
     workspaceId: input.workspaceId,
     title: input.title,
     cwd: input.cwd,
@@ -103,13 +142,19 @@ export function createAgentSessionRecord(input: {
   if (input.subagentReadOnly !== undefined) {
     session.subagentReadOnly = input.subagentReadOnly;
   }
+  if (input.subagentWorktree !== undefined) {
+    session.subagentWorktree = input.subagentWorktree;
+  }
   getDatabase()
     .prepare(
       `insert into agent_sessions (
         id, workspace_id, title, cwd, status, runtime, model, pi_session_id, pi_session_file,
-        parent_session_id, subagent_task, subagent_type, subagent_readonly, created_at, updated_at
+        parent_session_id, subagent_task, subagent_type, subagent_readonly,
+        subagent_worktree_path, subagent_worktree_branch, subagent_worktree_base_sha,
+        subagent_integration_status, subagent_changed_files_json, subagent_conflict_files_json,
+        created_at, updated_at
        )
-       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       session.id,
@@ -125,11 +170,56 @@ export function createAgentSessionRecord(input: {
       session.subagentTask ?? null,
       session.subagentType ?? null,
       session.subagentReadOnly ? 1 : 0,
+      session.subagentWorktree?.path ?? null,
+      session.subagentWorktree?.branch ?? null,
+      session.subagentWorktree?.baseSha ?? null,
+      session.subagentWorktree?.integrationStatus ?? null,
+      session.subagentWorktree?.changedFiles
+        ? JSON.stringify(session.subagentWorktree.changedFiles)
+        : null,
+      session.subagentWorktree?.conflictFiles
+        ? JSON.stringify(session.subagentWorktree.conflictFiles)
+        : null,
       session.createdAt,
       session.updatedAt,
     );
 
   return session;
+}
+
+export function updateAgentSessionWorktree(
+  sessionId: string,
+  worktree: SubagentWorktreeInfo | undefined,
+): AgentSessionInfo | undefined {
+  const existing = getAgentSession(sessionId);
+  if (!existing) {
+    return undefined;
+  }
+
+  getDatabase()
+    .prepare(
+      `update agent_sessions
+       set subagent_worktree_path = ?,
+           subagent_worktree_branch = ?,
+           subagent_worktree_base_sha = ?,
+           subagent_integration_status = ?,
+           subagent_changed_files_json = ?,
+           subagent_conflict_files_json = ?,
+           updated_at = ?
+       where id = ?`,
+    )
+    .run(
+      worktree?.path ?? null,
+      worktree?.branch ?? null,
+      worktree?.baseSha ?? null,
+      worktree?.integrationStatus ?? null,
+      worktree?.changedFiles ? JSON.stringify(worktree.changedFiles) : null,
+      worktree?.conflictFiles ? JSON.stringify(worktree.conflictFiles) : null,
+      new Date().toISOString(),
+      sessionId,
+    );
+
+  return getAgentSession(sessionId);
 }
 
 export function updateAgentSessionStatus(
@@ -190,6 +280,8 @@ export function getAgentSession(sessionId: string): AgentSessionInfo | undefined
     .prepare(
       `select id, workspace_id, title, cwd, status, runtime, model, pi_session_id,
         pi_session_file, parent_session_id, subagent_task, subagent_type, subagent_readonly,
+        subagent_worktree_path, subagent_worktree_branch, subagent_worktree_base_sha,
+        subagent_integration_status, subagent_changed_files_json, subagent_conflict_files_json,
         created_at, updated_at
        from agent_sessions
        where id = ?`,
@@ -204,6 +296,8 @@ export function listAgentSessions(): AgentSessionInfo[] {
     .prepare(
       `select id, workspace_id, title, cwd, status, runtime, model, pi_session_id,
         pi_session_file, parent_session_id, subagent_task, subagent_type, subagent_readonly,
+        subagent_worktree_path, subagent_worktree_branch, subagent_worktree_base_sha,
+        subagent_integration_status, subagent_changed_files_json, subagent_conflict_files_json,
         created_at, updated_at
        from agent_sessions
        order by updated_at desc`,
@@ -218,6 +312,8 @@ export function listSubagentSessions(parentSessionId: string): AgentSessionInfo[
     .prepare(
       `select id, workspace_id, title, cwd, status, runtime, model, pi_session_id,
         pi_session_file, parent_session_id, subagent_task, subagent_type, subagent_readonly,
+        subagent_worktree_path, subagent_worktree_branch, subagent_worktree_base_sha,
+        subagent_integration_status, subagent_changed_files_json, subagent_conflict_files_json,
         created_at, updated_at
        from agent_sessions
        where parent_session_id = ?

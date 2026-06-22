@@ -13,6 +13,7 @@ import type {
 } from "../../shared/contracts";
 
 export type CreateAgentRuntimeInput = {
+  id?: string;
   workspaceId: string;
   cwd: string;
   title: string;
@@ -21,6 +22,7 @@ export type CreateAgentRuntimeInput = {
   subagentTask?: string;
   subagentType?: string;
   subagentReadOnly?: boolean;
+  subagentWorktree?: AgentSessionInfo["subagentWorktree"];
 };
 
 export type PromptAgentInput = {
@@ -65,22 +67,19 @@ export type AgentRuntime = {
         model: string;
         readOnly: boolean;
         isBackground: boolean;
+        tools?: string[];
+        disallowedTools?: string[];
+        isolation?: "shared" | "worktree";
       };
     },
   ): Promise<{
     session: AgentSessionInfo;
     status: "running";
   }>;
-  listSubagents(parentSessionId: string): AgentSessionInfo[];
-  sendSubagentMessage(
-    window: BrowserWindowType,
-    input: { parentSessionId: string; target: string; message: string },
-  ): Promise<void>;
   waitSubagent(
     parentSessionId: string,
     input: { target?: string; timeoutMs?: number },
   ): Promise<{ timedOut: boolean; agents: Array<AgentSessionInfo & { output?: string }> }>;
-  closeSubagent(parentSessionId: string, target: string): Promise<AgentSessionInfo | undefined>;
   abort(sessionId: string): Promise<void>;
   listRuns(sessionId: string): Promise<AgentRunInfo[]>;
   dispose(sessionId: string): Promise<void>;

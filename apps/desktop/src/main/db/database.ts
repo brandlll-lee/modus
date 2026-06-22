@@ -166,6 +166,12 @@ function migrate(db: DatabaseSync): void {
   addColumn(db, "agent_sessions", "subagent_task", "text");
   addColumn(db, "agent_sessions", "subagent_type", "text");
   addColumn(db, "agent_sessions", "subagent_readonly", "integer not null default 0");
+  addColumn(db, "agent_sessions", "subagent_worktree_path", "text");
+  addColumn(db, "agent_sessions", "subagent_worktree_branch", "text");
+  addColumn(db, "agent_sessions", "subagent_worktree_base_sha", "text");
+  addColumn(db, "agent_sessions", "subagent_integration_status", "text");
+  addColumn(db, "agent_sessions", "subagent_changed_files_json", "text");
+  addColumn(db, "agent_sessions", "subagent_conflict_files_json", "text");
   db.exec(`
     create index if not exists idx_agent_sessions_parent
       on agent_sessions(parent_session_id);

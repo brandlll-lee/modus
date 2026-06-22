@@ -51,10 +51,59 @@ export function SubagentsPanel({
   onPlanUpdated,
 }: SubagentsPanelProps) {
   const [railWidth, setRailWidth] = useState(192);
+  const [worktreeBusy, setWorktreeBusy] = useState<string | undefined>();
+  const [worktreeError, setWorktreeError] = useState<string | undefined>();
   const subagents = sessions.filter((session) => session.parentSessionId === parentSessionId);
+  const parentSession = sessions.find((session) => session.id === parentSessionId);
   const selected =
     subagents.find((session) => session.id === selectedId) ?? subagents[0] ?? undefined;
   const collapsed = railWidth <= COLLAPSED_RAIL_WIDTH;
+
+  async function applyWorktree(session: AgentSessionInfo): Promise<void> {
+    setWorktreeBusy("apply");
+    setWorktreeError(undefined);
+    try {
+      await window.modus.agent.applySubagentWorktree(session.id);
+    } catch (error) {
+      setWorktreeError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setWorktreeBusy(undefined);
+      onSessionsChanged();
+    }
+  }
+
+  async function cleanupWorktree(session: AgentSessionInfo): Promise<void> {
+    setWorktreeBusy("cleanup");
+    setWorktreeError(undefined);
+    try {
+      await window.modus.agent.cleanupSubagentWorktree(session.id);
+    } catch (error) {
+      setWorktreeError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setWorktreeBusy(undefined);
+      onSessionsChanged();
+    }
+  }
+
+  async function askRootToResolve(session: AgentSessionInfo): Promise<void> {
+    if (!parentSessionId) return;
+    setWorktreeBusy("resolve");
+    setWorktreeError(undefined);
+    try {
+      await window.modus.agent.prompt({
+        sessionId: parentSessionId,
+        message: `Resolve the merge conflict from subagent "${session.subagentTask ?? session.title}". Conflict files: ${session.subagentWorktree?.conflictFiles?.join(", ") || "see git status"}. Keep both intents where possible, then run the relevant checks.`,
+        context: [],
+        delivery: "normal",
+        model: parentSession?.model ?? defaultModel,
+      });
+    } catch (error) {
+      setWorktreeError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setWorktreeBusy(undefined);
+      onSessionsChanged();
+    }
+  }
 
   const beginResize = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -129,24 +178,123 @@ export function SubagentsPanel({
       </div>
       <div className="min-w-0 flex-1">
         {selected ? (
-          <ChatPane
-            botColor={subagentColor(selected.id)}
-            contextUsage={contextUsageBySession[selected.id]}
-            defaultModel={defaultModel}
-            hub={hub}
-            key={selected.id}
-            models={models}
-            onModelChange={onModelChange}
-            onModelConfigChange={onModelConfigChange}
-            onOpenReview={onOpenReview}
-            onOpenSubagent={onOpenSubagent}
-            onPlanUpdated={onPlanUpdated}
-            onSessionsChanged={onSessionsChanged}
-            session={selected}
-            workspace={workspace}
-          />
+          <div className="flex h-full min-h-0 flex-col">
+            {selected.subagentWorktree ? (
+              <SubagentWorktreeBanner
+                busy={worktreeBusy}
+                error={worktreeError}
+                onApply={() => void applyWorktree(selected)}
+                onAskRoot={() => void askRootToResolve(selected)}
+                onCleanup={() => void cleanupWorktree(selected)}
+                onOpen={() =>
+                  void window.modus.file.open({
+                    cwd: parentSession?.cwd ?? selected.cwd,
+                    path: selected.subagentWorktree?.path ?? selected.cwd,
+                  })
+                }
+                worktree={selected.subagentWorktree}
+              />
+            ) : null}
+            <div className="min-h-0 flex-1">
+              <ChatPane
+                botColor={subagentColor(selected.id)}
+                contextUsage={contextUsageBySession[selected.id]}
+                defaultModel={defaultModel}
+                hub={hub}
+                key={selected.id}
+                models={models}
+                onModelChange={onModelChange}
+                onModelConfigChange={onModelConfigChange}
+                onOpenReview={onOpenReview}
+                onOpenSubagent={onOpenSubagent}
+                onPlanUpdated={onPlanUpdated}
+                onSessionsChanged={onSessionsChanged}
+                session={selected}
+                workspace={workspace}
+              />
+            </div>
+          </div>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+function SubagentWorktreeBanner({
+  busy,
+  error,
+  onApply,
+  onAskRoot,
+  onCleanup,
+  onOpen,
+  worktree,
+}: {
+  busy: string | undefined;
+  error: string | undefined;
+  onApply(): void;
+  onAskRoot(): void;
+  onCleanup(): void;
+  onOpen(): void;
+  worktree: NonNullable<AgentSessionInfo["subagentWorktree"]>;
+}) {
+  const files = worktree.conflictFiles?.length ? worktree.conflictFiles : worktree.changedFiles;
+  const canApply = worktree.integrationStatus === "ready";
+  const canCleanup =
+    worktree.integrationStatus === "applied" || worktree.integrationStatus === "no_changes";
+  const canAskRoot = worktree.integrationStatus === "conflict";
+  return (
+    <div className="border-hairline border-b bg-elevated px-3 py-2 text-xs">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-medium">Worktree</span>
+        <span className="rounded bg-fill px-1.5 py-0.5 text-fg-subtle">
+          {worktree.integrationStatus}
+        </span>
+        <span className="truncate text-fg-faint">{worktree.branch}</span>
+        <button
+          className="rounded border-hairline px-2 py-1 hover:bg-hover"
+          onClick={onOpen}
+          type="button"
+        >
+          Open
+        </button>
+        {canApply ? (
+          <button
+            className="rounded border-hairline px-2 py-1 hover:bg-hover"
+            disabled={Boolean(busy)}
+            onClick={onApply}
+            type="button"
+          >
+            {busy === "apply" ? "Applying..." : "Apply"}
+          </button>
+        ) : null}
+        {canAskRoot ? (
+          <button
+            className="rounded border-hairline px-2 py-1 hover:bg-hover"
+            disabled={Boolean(busy)}
+            onClick={onAskRoot}
+            type="button"
+          >
+            {busy === "resolve" ? "Asking..." : "Ask root"}
+          </button>
+        ) : null}
+        {canCleanup ? (
+          <button
+            className="rounded border-hairline px-2 py-1 hover:bg-hover"
+            disabled={Boolean(busy)}
+            onClick={onCleanup}
+            type="button"
+          >
+            {busy === "cleanup" ? "Cleaning..." : "Cleanup"}
+          </button>
+        ) : null}
+      </div>
+      {files?.length ? (
+        <div className="mt-1 truncate text-fg-faint">
+          {files.slice(0, 4).join(", ")}
+          {files.length > 4 ? `, +${files.length - 4}` : ""}
+        </div>
+      ) : null}
+      {error ? <div className="mt-1 text-danger">{error}</div> : null}
     </div>
   );
 }

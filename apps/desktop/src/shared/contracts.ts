@@ -22,11 +22,21 @@ export type AgentSessionInfo = {
   subagentTask?: string;
   subagentType?: string;
   subagentReadOnly?: boolean;
+  subagentWorktree?: SubagentWorktreeInfo;
   createdAt: string;
   updatedAt: string;
 };
 
 export type AgentRunStatus = "running" | "completed" | "failed" | "blocked" | "cancelled";
+
+export type SubagentWorktreeInfo = {
+  path: string;
+  branch: string;
+  baseSha: string;
+  integrationStatus: "running" | "ready" | "no_changes" | "applied" | "conflict" | "cleaned";
+  changedFiles?: string[];
+  conflictFiles?: string[];
+};
 
 export type PromptDelivery = "normal" | "steer" | "follow-up";
 
@@ -1238,6 +1248,9 @@ export type SubagentInfo = {
   model: string;
   readOnly: boolean;
   isBackground: boolean;
+  tools?: string[];
+  disallowedTools?: string[];
+  isolation: "shared" | "worktree";
   editable: boolean;
   deletable: boolean;
 };
@@ -1251,6 +1264,9 @@ export type CreateSubagentInput = {
   model?: string;
   readOnly: boolean;
   isBackground: boolean;
+  tools?: string[];
+  disallowedTools?: string[];
+  isolation?: "shared" | "worktree";
   body: string;
 };
 

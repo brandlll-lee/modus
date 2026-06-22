@@ -1,11 +1,15 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import type { BrowserWindow as BrowserWindowType } from "electron";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 let userData: string;
 let cwd: string;
+const execFileAsync = promisify(execFile);
 
 const mocks = vi.hoisted(() => {
   const model = { id: "model", name: "Mock Model", provider: "mock" };
@@ -132,7 +136,9 @@ const { PiSdkRuntime } = await import("./pi-sdk-runtime");
 const { toolRegistry } = await import("./tools/registry");
 const { archiveAgentSession } = await import("./session-lifecycle");
 const { recordAgentEvent } = await import("./agent-event-store");
+const { createAgentRun, updateAgentRunStatus } = await import("./agent-run-store");
 const { writePlan, readPlanById } = await import("../plan/plan-store");
+const { setAgentToolContext } = await import("./tools/tool-context");
 
 function createMockPiSession(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -229,6 +235,15 @@ function insertSubagentSession(
     );
 }
 
+async function initGitRepo(): Promise<void> {
+  await execFileAsync("git", ["init"], { cwd, windowsHide: true });
+  await execFileAsync("git", ["config", "user.email", "test@example.com"], { cwd });
+  await execFileAsync("git", ["config", "user.name", "Modus Test"], { cwd });
+  await writeFile(join(cwd, "tracked.txt"), "base\n");
+  await execFileAsync("git", ["add", "tracked.txt"], { cwd, windowsHide: true });
+  await execFileAsync("git", ["commit", "-m", "initial"], { cwd, windowsHide: true });
+}
+
 beforeEach(async () => {
   userData = await mkdtemp(join(tmpdir(), "modus-pi-runtime-test-"));
   cwd = await mkdtemp(join(tmpdir(), "modus-pi-runtime-cwd-"));
@@ -252,6 +267,67 @@ afterAll(async () => {
 });
 
 describe("PiSdkRuntime", () => {
+  it("registers task as the only model-visible subagent tool", () => {
+    new PiSdkRuntime();
+
+    expect(toolRegistry.resolveActiveTools("chat")).toContain("task");
+    expect(toolRegistry.resolveActiveTools("chat")).not.toContain("list_agents");
+    expect(toolRegistry.resolveActiveTools("chat")).not.toContain("send_message");
+    expect(toolRegistry.resolveActiveTools("chat")).not.toContain("wait_agent");
+    expect(toolRegistry.resolveActiveTools("chat")).not.toContain("close_agent");
+  });
+
+  it("returns foreground subagent output from the task tool", async () => {
+    const parentSessionId = `session-${crypto.randomUUID()}`;
+    const workspaceId = `workspace-${crypto.randomUUID()}`;
+    insertSession(parentSessionId, workspaceId, join(userData, "missing.jsonl"), "Parent chat");
+    const agentsDir = join(cwd, ".modus", "agents");
+    await mkdir(agentsDir, { recursive: true });
+    await writeFile(
+      join(agentsDir, "security-auditor.md"),
+      "---\nname: security-auditor\nis_background: false\n---\nSecurity reviewer.",
+      "utf8",
+    );
+    mocks.createAgentSession.mockImplementationOnce(async () => ({
+      session: createMockPiSession({
+        prompt: vi.fn(async () => {
+          mocks.emitPiEvent({ type: "message_start", message: { role: "assistant" } });
+          mocks.emitPiEvent({
+            type: "message_update",
+            message: { role: "assistant" },
+            assistantMessageEvent: { type: "text_delta", delta: "audit complete" },
+          });
+          mocks.emitPiEvent({ type: "message_end", message: { role: "assistant" } });
+        }),
+      }),
+    }));
+    new PiSdkRuntime();
+    const window = createWindowStub();
+    setAgentToolContext({ workspaceId, cwd, sessionId: parentSessionId, window });
+    const taskTool = toolRegistry
+      .getCustomToolDefinitions("chat")
+      .find((definition) => definition.name === "task") as {
+      execute(
+        toolCallId: string,
+        params: { description: string; prompt: string; subagent: string },
+        signal: AbortSignal,
+        onUpdate: undefined,
+        ctx: { cwd: string },
+      ): Promise<{ content: Array<{ type: "text"; text: string }> }>;
+    };
+
+    const result = await taskTool.execute(
+      "task-call",
+      { description: "Audit auth", prompt: "Audit login.", subagent: "security-auditor" },
+      new AbortController().signal,
+      undefined,
+      { cwd },
+    );
+
+    expect(result.content[0]?.text).toContain("Wait completed.");
+    expect(result.content[0]?.text).toContain("audit complete");
+  });
+
   it("creates new sessions directly in the workspace checkout", async () => {
     const workspaceId = `workspace-${crypto.randomUUID()}`;
     const now = new Date().toISOString();
@@ -656,6 +732,145 @@ describe("PiSdkRuntime", () => {
     } finally {
       toolRegistry.unregisterTool("synthetic_mutator");
     }
+  });
+
+  it("applies configured subagent tool allow and deny lists", async () => {
+    const parentSessionId = `session-${crypto.randomUUID()}`;
+    const workspaceId = `workspace-${crypto.randomUUID()}`;
+    insertSession(parentSessionId, workspaceId, join(userData, "missing.jsonl"), "Parent chat");
+    const agentsDir = join(cwd, ".modus", "agents");
+    await mkdir(agentsDir, { recursive: true });
+    await writeFile(
+      join(agentsDir, "limited-agent.md"),
+      "---\nname: limited-agent\ntools: [read, grep, web_search]\ndisallowedTools: [grep]\n---\nLimited agent.",
+      "utf8",
+    );
+    const childPiSession = createMockPiSession({
+      prompt: vi.fn(async () => {
+        mocks.emitPiEvent({ type: "message_start", message: { role: "assistant" } });
+        mocks.emitPiEvent({
+          type: "message_update",
+          message: { role: "assistant" },
+          assistantMessageEvent: { type: "text_delta", delta: "done" },
+        });
+        mocks.emitPiEvent({ type: "message_end", message: { role: "assistant" } });
+      }),
+    });
+    mocks.createAgentSession.mockImplementationOnce(async () => ({ session: childPiSession }));
+    const runtime = new PiSdkRuntime();
+
+    await runtime.spawnSubagent(createWindowStub(), {
+      parentSessionId,
+      task: "Limited work",
+      prompt: "Read only selected tools.",
+      subagentType: "limited-agent",
+      subagent: {
+        name: "limited-agent",
+        body: "Limited agent.",
+        model: "inherit",
+        readOnly: false,
+        isBackground: true,
+      },
+    });
+
+    await vi.waitFor(() => expect(childPiSession.setActiveToolsByName).toHaveBeenCalled());
+    const activeTools = (childPiSession.setActiveToolsByName as ReturnType<typeof vi.fn>).mock
+      .calls[0]?.[0] as string[];
+    expect(activeTools).toContain("read");
+    expect(activeTools).toContain("web_search");
+    expect(activeTools).not.toContain("grep");
+    expect(activeTools).not.toContain("find");
+  });
+
+  it("creates writable worktree-isolated subagents in their own checkout", async () => {
+    await initGitRepo();
+    const parentSessionId = `session-${crypto.randomUUID()}`;
+    const workspaceId = `workspace-${crypto.randomUUID()}`;
+    insertSession(parentSessionId, workspaceId, join(userData, "missing.jsonl"), "Parent chat");
+    let childCwd = "";
+    const childPiSession = createMockPiSession({
+      prompt: vi.fn(async () => undefined),
+    });
+    mocks.createAgentSession.mockImplementationOnce(async (options: unknown) => {
+      childCwd = (options as { cwd: string }).cwd;
+      return { session: childPiSession };
+    });
+    const runtime = new PiSdkRuntime();
+
+    const result = await runtime.spawnSubagent(createWindowStub(), {
+      parentSessionId,
+      task: "Write child file",
+      prompt: "Create child.txt.",
+      subagentType: "writer",
+      subagent: {
+        name: "writer",
+        body: "Write code.",
+        model: "inherit",
+        readOnly: false,
+        isBackground: true,
+        isolation: "worktree",
+      },
+    });
+
+    expect(result.session.cwd.replace(/\\/g, "/")).toContain("/.modus/worktrees/writer-");
+    expect(childCwd).toBe(result.session.cwd);
+    expect(result.session.subagentWorktree?.integrationStatus).toBe("running");
+    expect(existsSync(result.session.cwd)).toBe(true);
+    expect(existsSync(join(cwd, ".modus", "worktrees"))).toBe(true);
+  });
+
+  it("injects subagent run status into root prompts", async () => {
+    const parentSessionId = `session-${crypto.randomUUID()}`;
+    const childSessionId = `session-${crypto.randomUUID()}`;
+    const workspaceId = `workspace-${crypto.randomUUID()}`;
+    insertSession(parentSessionId, workspaceId, join(userData, "missing.jsonl"), "Parent chat");
+    insertSubagentSession(childSessionId, parentSessionId, workspaceId);
+    recordAgentEvent({
+      type: "message.started",
+      sessionId: childSessionId,
+      messageId: "assistant-message",
+      role: "assistant",
+    });
+    recordAgentEvent({
+      type: "message.delta",
+      sessionId: childSessionId,
+      messageId: "assistant-message",
+      delta: "final result",
+    });
+    recordAgentEvent({
+      type: "message.completed",
+      sessionId: childSessionId,
+      messageId: "assistant-message",
+    });
+    const childRun = createAgentRun({ sessionId: childSessionId, prompt: "child prompt" });
+    updateAgentRunStatus(childRun.id, "completed");
+    const prompt = vi.fn(async (_message: string) => {
+      mocks.emitPiEvent({ type: "message_start", message: { role: "assistant" } });
+      mocks.emitPiEvent({
+        type: "message_update",
+        message: { role: "assistant" },
+        assistantMessageEvent: { type: "text_delta", delta: "parent done" },
+      });
+      mocks.emitPiEvent({ type: "message_end", message: { role: "assistant" } });
+    });
+    mocks.createAgentSession.mockImplementationOnce(async () => ({
+      session: createMockPiSession({ prompt }),
+    }));
+    const runtime = new PiSdkRuntime();
+
+    await runtime.prompt(createWindowStub(), {
+      context: [],
+      delivery: "normal",
+      message: "continue",
+      sessionId: parentSessionId,
+      userMessageId: "local-user-subagent-runs",
+    });
+
+    const message = prompt.mock.calls[0]?.[0] as string;
+    expect(message).toContain("<subagent_runs>");
+    expect(message).toContain(`id: ${childSessionId}`);
+    expect(message).toContain("status: completed");
+    expect(message).toContain("last_result: final result");
   });
 
   it("aborts active subagents when the parent session is aborted", async () => {

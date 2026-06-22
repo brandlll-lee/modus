@@ -31,6 +31,9 @@ export type ParsedSubagent = {
   model: string;
   readOnly: boolean;
   isBackground: boolean;
+  tools?: string[];
+  disallowedTools?: string[];
+  isolation: "shared" | "worktree";
   body: string;
 };
 
@@ -43,12 +46,17 @@ export function parseSubagent(text: string, fallbackName: string): ParsedSubagen
     (typeof data.description === "string" && foldPlainScalar(data.description.split(/\r?\n/))) ||
     firstNonHeadingLine(body) ||
     "";
+  const tools = asStringArray(data.tools);
+  const disallowedTools = asStringArray(data.disallowedtools ?? data["disallowed-tools"]);
   return {
     name,
     description,
     model: scalar(data.model)?.trim() || "inherit",
     readOnly: asBoolean(data.readonly, false),
     isBackground: asBoolean(data.is_background ?? data["is-background"], false),
+    ...(tools ? { tools } : {}),
+    ...(disallowedTools ? { disallowedTools } : {}),
+    isolation: asIsolation(data.isolation),
     body,
   };
 }
@@ -164,6 +172,9 @@ export function resolveSubagentsPrompt(cwd: string): string {
         agent.model && agent.model !== "inherit" ? `model=${agent.model}` : "model=inherit",
         agent.readOnly ? "readonly" : undefined,
         agent.isBackground ? "background" : "foreground",
+        agent.tools?.length ? `tools=${agent.tools.join("|")}` : undefined,
+        agent.disallowedTools?.length ? `disallowed=${agent.disallowedTools.join("|")}` : undefined,
+        agent.isolation === "worktree" ? "isolation=worktree" : undefined,
       ].filter(Boolean);
       return agent.description
         ? `- ${agent.name}: ${agent.description} (${flags.join(", ")})`
@@ -243,6 +254,9 @@ function toSubagentDetail(parsed: ParsedSubagent, path: string, root: AgentRoot)
     model: parsed.model,
     readOnly: parsed.readOnly,
     isBackground: parsed.isBackground,
+    ...(parsed.tools ? { tools: parsed.tools } : {}),
+    ...(parsed.disallowedTools ? { disallowedTools: parsed.disallowedTools } : {}),
+    isolation: parsed.isolation,
     editable: true,
     deletable: root.source === ".modus",
     body: parsed.body,
@@ -257,7 +271,25 @@ function toSubagentInfo(subagent: SubagentDetail): SubagentInfo {
 function renderSubagentFile(input: CreateSubagentInput): string {
   const name = normalizeSkillName(input.name);
   const model = input.model?.trim() || "inherit";
-  return `---\nname: ${name}\ndescription: ${frontmatterScalar(input.description)}\nmodel: ${frontmatterScalar(model)}\nreadonly: ${input.readOnly ? "true" : "false"}\nis_background: ${input.isBackground ? "true" : "false"}\n---\n\n${input.body.trim()}\n`;
+  const lines = [
+    "---",
+    `name: ${name}`,
+    `description: ${frontmatterScalar(input.description)}`,
+    `model: ${frontmatterScalar(model)}`,
+    `readonly: ${input.readOnly ? "true" : "false"}`,
+    `is_background: ${input.isBackground ? "true" : "false"}`,
+  ];
+  if (input.tools?.length) {
+    lines.push(`tools: [${input.tools.map(frontmatterScalar).join(", ")}]`);
+  }
+  if (input.disallowedTools?.length) {
+    lines.push(`disallowedTools: [${input.disallowedTools.map(frontmatterScalar).join(", ")}]`);
+  }
+  if (input.isolation === "worktree") {
+    lines.push("isolation: worktree");
+  }
+  lines.push("---", "", input.body.trim(), "");
+  return lines.join("\n");
 }
 
 function isManagedSubagentPath(cwd: string, path: string): boolean {
@@ -281,6 +313,24 @@ function asBoolean(value: FrontmatterValue | undefined, fallback: boolean): bool
   if (normalized === "true") return true;
   if (normalized === "false") return false;
   return fallback;
+}
+
+function asStringArray(value: FrontmatterValue | undefined): string[] | undefined {
+  if (Array.isArray(value)) {
+    const items = value.map((item) => item.trim()).filter(Boolean);
+    return items.length > 0 ? items : undefined;
+  }
+  if (typeof value === "string" && value.trim()) {
+    return value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+  return undefined;
+}
+
+function asIsolation(value: FrontmatterValue | undefined): "shared" | "worktree" {
+  return scalar(value)?.trim() === "worktree" ? "worktree" : "shared";
 }
 
 function foldPlainScalar(lines: string[]): string {
