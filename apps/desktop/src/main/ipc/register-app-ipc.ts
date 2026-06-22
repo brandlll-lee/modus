@@ -73,6 +73,8 @@ import {
   getChangeStatsSince,
   getStatusSummary,
   getWorkingChangeStats,
+  initRepository,
+  isGitRepository,
   listBranches,
   listChanges,
   listCommitChanges,
@@ -130,6 +132,7 @@ import {
   revealProject,
   setProjectPinned,
 } from "../workspace/workspace-service";
+import { upsertWorkspace } from "../workspace/workspace-store";
 import { IPC_CHANNELS } from "./channels";
 import {
   agentCreateSchema,
@@ -730,6 +733,19 @@ export function registerAppIpc(): void {
     assertTrustedSender(event);
     const parsed = parseIpcInput(gitCheckoutSchema, input, IPC_CHANNELS.gitCheckout);
     return { output: await checkoutBranch(parsed.cwd, parsed.name, parsed.remote ?? false) };
+  });
+
+  ipcMain.handle(IPC_CHANNELS.gitIsRepository, async (event, cwd: string) => {
+    assertTrustedSender(event);
+    return await isGitRepository(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.gitIsRepository));
+  });
+
+  ipcMain.handle(IPC_CHANNELS.gitInit, async (event, cwd: string) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.gitInit);
+    const result = await initRepository(parsed);
+    upsertWorkspace(parsed, await isGitRepository(parsed));
+    return result;
   });
 
   ipcMain.handle(IPC_CHANNELS.gitLog, async (event, input) => {

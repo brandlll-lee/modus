@@ -257,6 +257,8 @@ export type ModusApi = {
   git: {
     branches(cwd: string): Promise<GitBranchSummary>;
     checkout(input: { cwd: string; name: string; remote?: boolean }): Promise<GitActionResult>;
+    isRepository(cwd: string): Promise<boolean>;
+    init(cwd: string): Promise<GitActionResult>;
     /** Recent commit history for the Source Control "All commits" scope. */
     log(input: { cwd: string; limit?: number }): Promise<GitCommit[]>;
     /** Start live-watching the repo containing cwd (ref-counted). */

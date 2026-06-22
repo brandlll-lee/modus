@@ -7,6 +7,7 @@ import type {
   FileChange,
   FileChangeStat,
   FileDiff,
+  GitActionResult,
   GitBranch,
   GitBranchSummary,
   GitCommit,
@@ -39,16 +40,17 @@ function assertWritable(cwd: string): void {
 }
 
 export async function isGitRepository(rootPath: string): Promise<boolean> {
-  if (!existsSync(join(rootPath, ".git"))) {
-    return false;
-  }
+  return (
+    existsSync(rootPath) &&
+    (await gitSafe(rootPath, ["rev-parse", "--is-inside-work-tree"])) === "true"
+  );
+}
 
-  try {
-    await git(rootPath, ["rev-parse", "--show-toplevel"]);
-    return true;
-  } catch {
-    return false;
+export async function initRepository(cwd: string): Promise<GitActionResult> {
+  if (await isGitRepository(cwd)) {
+    return { output: "Repository already initialized." };
   }
+  return { output: await git(cwd, ["init"]) };
 }
 
 export async function listChanges(cwd: string): Promise<FileChange[]> {

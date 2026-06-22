@@ -65,6 +65,8 @@ export const IPC_CHANNELS = {
   filesRead: "files:read",
   gitBranches: "git:branches",
   gitCheckout: "git:checkout",
+  gitIsRepository: "git:is-repository",
+  gitInit: "git:init",
   gitLog: "git:log",
   gitWatch: "git:watch",
   gitUnwatch: "git:unwatch",

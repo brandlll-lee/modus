@@ -113,6 +113,8 @@ const api: ModusApi = {
   git: {
     branches: (cwd) => ipcRenderer.invoke("git:branches", cwd),
     checkout: (input) => ipcRenderer.invoke("git:checkout", input),
+    isRepository: (cwd) => ipcRenderer.invoke("git:is-repository", cwd),
+    init: (cwd) => ipcRenderer.invoke("git:init", cwd),
     log: (input) => ipcRenderer.invoke("git:log", input),
     watch: (cwd) => ipcRenderer.invoke("git:watch", cwd),
     unwatch: (cwd) => ipcRenderer.invoke("git:unwatch", cwd),

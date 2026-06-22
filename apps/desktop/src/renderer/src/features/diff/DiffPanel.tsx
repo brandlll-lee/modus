@@ -88,6 +88,8 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
   const [changes, setChanges] = useState<FileChange[]>([]);
   const [statsByPath, setStatsByPath] = useState<Map<string, LineStat>>(new Map());
   const [status, setStatus] = useState<GitStatusSummary | undefined>();
+  const [isRepository, setIsRepository] = useState<boolean | undefined>();
+  const [initializingRepository, setInitializingRepository] = useState(false);
   const [commits, setCommits] = useState<GitCommit[]>([]);
   const [commitFiles, setCommitFiles] = useState<Record<string, FileChange[]>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -98,6 +100,17 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
 
   const refresh = useCallback(async (targetCwd: string | undefined): Promise<void> => {
     if (!targetCwd) {
+      setChanges([]);
+      setStatsByPath(new Map());
+      setStatus(undefined);
+      setIsRepository(undefined);
+      setCommits([]);
+      setCommitFiles({});
+      return;
+    }
+    const repository = await window.modus.git.isRepository(targetCwd);
+    setIsRepository(repository);
+    if (!repository) {
       setChanges([]);
       setStatsByPath(new Map());
       setStatus(undefined);
@@ -130,7 +143,7 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
   // Live refresh: watch the repo and refresh on debounced on-disk changes
   // (agent edits, terminal commits, external git ops) — no manual refresh.
   useEffect(() => {
-    if (!cwd) return;
+    if (!cwd || isRepository === false) return;
     let watchedRoot: string | undefined;
     void window.modus.git.watch(cwd).then((root: string | undefined) => {
       watchedRoot = root ?? undefined;
@@ -144,7 +157,7 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
       off();
       void window.modus.git.unwatch(cwd);
     };
-  }, [cwd, refresh]);
+  }, [cwd, isRepository, refresh]);
 
   const meta = SCOPE_META[scope];
   const scopeFiles = useMemo(
@@ -205,6 +218,20 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
   const cwdLabel = cwd?.split(/[\\/]/).filter(Boolean).at(-1) ?? "workspace";
   const onCommitRefresh = useCallback(() => refresh(cwd), [cwd, refresh]);
 
+  async function initializeRepository(): Promise<void> {
+    if (!cwd) return;
+    setActionError(undefined);
+    setInitializingRepository(true);
+    try {
+      await window.modus.git.init(cwd);
+      await refresh(cwd);
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setInitializingRepository(false);
+    }
+  }
+
   // Panel-scoped Ctrl+R / Ctrl+F. Bound on the section node (events bubble up
   // from the focused child), so it only fires when the user is inside the
   // Changes panel — never hijacks the keys globally.
@@ -241,7 +268,7 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
       </PanelHeader>
 
       <div className="scroll-thin min-h-0 flex-1 overflow-y-auto">
-        {cwd ? (
+        {cwd && isRepository ? (
           <>
             <ComparisonBar
               branch={status?.branch}
@@ -276,21 +303,35 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
               scope={scope}
               showStats={!meta.commitHistory}
             />
-            {actionError ? (
-              <button
-                className="flex w-full items-start gap-2 border-hairline-soft border-b bg-danger/8 px-3 py-2 text-left text-danger text-xs"
-                onClick={() => setActionError(undefined)}
-                title="Dismiss"
-                type="button"
-              >
-                <IconAlertTriangle className="mt-0.5 shrink-0" size={13} stroke={1.8} />
-                <span className="min-w-0 flex-1 wrap-break-word">{actionError}</span>
-              </button>
-            ) : null}
           </>
         ) : null}
 
-        {count === 0 ? (
+        {actionError ? (
+          <button
+            className="flex w-full items-start gap-2 border-hairline-soft border-b bg-danger/8 px-3 py-2 text-left text-danger text-xs"
+            onClick={() => setActionError(undefined)}
+            title="Dismiss"
+            type="button"
+          >
+            <IconAlertTriangle className="mt-0.5 shrink-0" size={13} stroke={1.8} />
+            <span className="min-w-0 flex-1 wrap-break-word">{actionError}</span>
+          </button>
+        ) : null}
+
+        {cwd && isRepository === false ? (
+          <div className="flex h-full min-h-[360px] flex-col items-center justify-center gap-3 px-6 text-center">
+            <IconGitBranch className="text-fg-faint" size={22} stroke={1.4} />
+            <span className="text-fg-subtle text-xs">Use Git to track changes</span>
+            <button
+              className="rounded-md border-hairline px-3 py-1.5 text-fg text-xs transition-colors hover:bg-hover disabled:opacity-50"
+              disabled={initializingRepository}
+              onClick={() => void initializeRepository()}
+              type="button"
+            >
+              {initializingRepository ? "Initializing..." : "Initialize Repository"}
+            </button>
+          </div>
+        ) : count === 0 ? (
           <EmptyState
             className={cwd ? "min-h-[220px]" : "h-full"}
             hint={

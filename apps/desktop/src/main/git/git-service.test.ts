@@ -14,6 +14,8 @@ import {
   finishSubagentWorktree,
   getStatusSummary,
   getWorkingChangeStats,
+  initRepository,
+  isGitRepository,
   listChanges,
   listCommitChanges,
   listCommitLog,
@@ -53,6 +55,32 @@ describe("git-service", () => {
 
     expect(changes.find((change) => change.path === "tracked.txt")?.staged).toBe(true);
     expect(changes.find((change) => change.path === "new.txt")?.untracked).toBe(true);
+  });
+
+  it("initializes a plain directory without committing files", async () => {
+    const plain = await mkdtemp(join(tmpdir(), "modus-git-plain-"));
+    try {
+      await writeFile(join(plain, "new.txt"), "new\n");
+
+      await initRepository(plain);
+
+      expect(await isGitRepository(plain)).toBe(true);
+      expect(await listCommitLog(plain)).toEqual([]);
+      expect((await listChanges(plain)).find((change) => change.path === "new.txt")).toEqual(
+        expect.objectContaining({ untracked: true }),
+      );
+    } finally {
+      await rm(plain, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves an existing repository initialized", async () => {
+    const before = await git(["rev-parse", "HEAD"]);
+
+    const result = await initRepository(repo);
+
+    expect(result.output).toContain("already initialized");
+    expect(await git(["rev-parse", "HEAD"])).toBe(before);
   });
 
   it("reads a staged diff", async () => {
