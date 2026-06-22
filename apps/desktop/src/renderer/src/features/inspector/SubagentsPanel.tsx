@@ -199,7 +199,7 @@ export function SubagentsPanel({
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-canvas">
-      <div className="shrink-0 border-hairline border-b px-3 py-2">
+      <div className="shrink-0 px-4 pt-3 pb-2">
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex rounded-md bg-fill p-0.5">
             <ViewButton active={display === "board"} onClick={() => setDisplay("board")}>
@@ -218,7 +218,7 @@ export function SubagentsPanel({
               stroke={1.7}
             />
             <input
-              className="h-8 w-full rounded-md border-hairline bg-canvas pr-3 pl-8 text-sm outline-none transition-colors placeholder:text-fg-faint focus:border-fg-faint"
+              className="h-8 w-full rounded-md bg-fill pr-3 pl-8 text-sm outline-none transition-colors placeholder:text-fg-faint focus:bg-canvas"
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Search subagents..."
               value={query}
@@ -226,8 +226,6 @@ export function SubagentsPanel({
           </label>
         </div>
       </div>
-
-      <SubagentStatusBar sessions={subagents} />
 
       <div className="scroll-thin min-h-0 flex-1 overflow-y-auto">
         {filteredSubagents.length === 0 ? (
@@ -267,33 +265,6 @@ function ViewButton({
   );
 }
 
-function SubagentStatusBar({ sessions }: { sessions: AgentSessionInfo[] }) {
-  const counts = sessions.reduce(
-    (acc, session) => {
-      acc[subagentGroup(session)] += 1;
-      return acc;
-    },
-    { blocked: 0, ready: 0, running: 0 } satisfies Record<SubagentGroup, number>,
-  );
-  return (
-    <div className="grid shrink-0 grid-cols-3 border-hairline border-b bg-elevated px-3 py-2 text-xs">
-      <StatusCount color="bg-accent" label="Running" value={counts.running} />
-      <StatusCount color="bg-danger" label="Blocked" value={counts.blocked} />
-      <StatusCount color="bg-success" label="Ready" value={counts.ready} />
-    </div>
-  );
-}
-
-function StatusCount({ color, label, value }: { color: string; label: string; value: number }) {
-  return (
-    <div className="flex items-center gap-2">
-      <span className={`size-2 rounded-full ${color}`} />
-      <span className="font-medium text-fg">{label}</span>
-      <span className="text-fg-faint">{value}</span>
-    </div>
-  );
-}
-
 function SubagentBoard({
   sessions,
   onOpen,
@@ -302,24 +273,10 @@ function SubagentBoard({
   onOpen(session: AgentSessionInfo): void;
 }) {
   return (
-    <div className="grid min-h-full grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-3 p-3">
-      {(["running", "blocked", "ready"] as const).map((group) => {
-        const items = sessions.filter((session) => subagentGroup(session) === group);
-        return (
-          <section className="min-w-0" key={group}>
-            <div className="mb-2 flex items-center gap-2 px-1 text-xs">
-              <span className={`size-2 rounded-full ${groupColor(group)}`} />
-              <span className="font-medium text-fg">{groupLabel(group)}</span>
-              <span className="text-fg-faint">{items.length}</span>
-            </div>
-            <div className="space-y-2">
-              {items.map((session) => (
-                <SubagentCard key={session.id} onOpen={onOpen} session={session} />
-              ))}
-            </div>
-          </section>
-        );
-      })}
+    <div className="grid min-h-full content-start gap-4 bg-fill/30 px-5 py-6 sm:grid-cols-2 xl:grid-cols-3">
+      {sessions.map((session) => (
+        <SubagentCard key={session.id} onOpen={onOpen} session={session} />
+      ))}
     </div>
   );
 }
@@ -331,33 +288,32 @@ function SubagentCard({
   session: AgentSessionInfo;
   onOpen(session: AgentSessionInfo): void;
 }) {
+  const worktreeStatus = session.subagentWorktree?.integrationStatus;
   return (
     <button
-      className="min-h-24 w-full rounded-md border-hairline bg-canvas p-3 text-left transition-colors hover:bg-hover"
+      className="flex min-h-20 w-full items-center gap-3 rounded-lg border border-hairline-soft bg-panel px-3 py-3 text-left shadow-composer transition-colors hover:bg-hover"
       onClick={() => onOpen(session)}
       title={subagentTitle(session)}
       type="button"
     >
-      <div className="flex items-start gap-2">
+      <span className="flex size-10 shrink-0 items-center justify-center rounded-md bg-fill">
         <ModusBot
           active={isSubagentLive(session.status)}
           busy={isSubagentLive(session.status)}
-          className="size-5 shrink-0"
+          className="size-5"
           color={subagentColor(session.id)}
         />
-        <div className="min-w-0 flex-1">
-          <div className="line-clamp-2 font-medium text-fg text-sm">{subagentTitle(session)}</div>
-          <div className="mt-2 truncate text-fg-faint text-xs">{subagentMeta(session)}</div>
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="line-clamp-2 font-medium text-fg text-sm">{subagentTitle(session)}</div>
+        <div className="mt-1 flex min-w-0 items-center gap-2 text-fg-faint text-xs">
+          <span className="truncate">{relativeTime(session.updatedAt)}</span>
+          {worktreeStatus ? (
+            <span className="truncate text-fg-subtle">{worktreeStatus}</span>
+          ) : null}
         </div>
-        <span
-          className={`mt-1 size-2 shrink-0 rounded-full ${groupColor(subagentGroup(session))}`}
-        />
       </div>
-      {session.subagentWorktree ? (
-        <div className="mt-3 inline-flex max-w-full rounded bg-fill px-1.5 py-0.5 text-fg-subtle text-xs">
-          <span className="truncate">{session.subagentWorktree.integrationStatus}</span>
-        </div>
-      ) : null}
+      <span className={`size-2 shrink-0 rounded-full ${groupColor(subagentGroup(session))}`} />
     </button>
   );
 }
