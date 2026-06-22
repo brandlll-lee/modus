@@ -85,11 +85,11 @@
   --color-diff-del-bg: color-mix(in oklab, var(--color-danger) 16%, transparent);
   --color-diff-del-gutter: color-mix(in oklab, var(--color-danger) 30%, transparent);
 
-  /* 字体：Inter Variable（自托管，CursorGothic 官方替代），代码面 JetBrains Mono Variable。
-     CSP font-src 'self' 满足；不联网。 */
+  /* 字体：Inter 管英文/数字，系统 CJK 字体管中文；不内置大体积中文字库。 */
   --font-sans:
-    "Inter Variable", "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
-    "Segoe UI", sans-serif;
+    "Inter Variable", "Inter", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI",
+    "Microsoft YaHei", "Noto Sans SC", "Source Han Sans SC", ui-sans-serif, system-ui,
+    -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono:
     "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Code", Consolas,
     monospace;
@@ -425,31 +425,32 @@ input {
   --sdm-bg: transparent;
   color: var(--color-fg);
   font-size: var(--text-md); /* 14px — 比 13px 更易读，留白更舒展 */
-  line-height: 1.7;
+  font-weight: 450;
+  line-height: 1.68;
   max-width: 100%;
   min-width: 0;
   overflow-wrap: anywhere;
 }
 
 .modus-markdown :where(p) {
-  margin: 0.7rem 0;
+  margin: 0.72rem 0;
 }
 
 /* 标题层级 —— 用字号拉开 h1>h2>h3，恢复正常的阅读结构（Streamdown 工具类未编译，靠这里承载） */
 .modus-markdown :where(h1, h2, h3, h4, h5, h6) {
-  margin: 1.3rem 0 0.5rem;
+  margin: 1.05rem 0 0.35rem;
   color: var(--color-fg);
-  font-weight: 650;
-  line-height: 1.35;
-  letter-spacing: -0.01em;
+  font-weight: 600;
+  line-height: 1.32;
+  letter-spacing: 0;
 }
 
 .modus-markdown :where(h1) {
-  font-size: 1.3rem; /* ≈18px */
+  font-size: 1.18rem; /* ≈16.5px */
 }
 
 .modus-markdown :where(h2) {
-  font-size: 1.15rem; /* ≈16px */
+  font-size: 1.08rem; /* ≈15px */
 }
 
 .modus-markdown :where(h3) {
@@ -467,8 +468,8 @@ input {
 }
 
 .modus-markdown :where(h1, h2) {
-  padding-bottom: 0.35rem;
-  border-bottom: 1px solid var(--color-hairline-soft);
+  padding-bottom: 0;
+  border-bottom: 0;
 }
 
 .modus-markdown :where(a) {
@@ -484,7 +485,13 @@ input {
 
 .modus-markdown :where(strong) {
   color: var(--color-fg);
+  font-weight: 600;
+}
+
+.modus-markdown :where(p:has(> strong:only-child)) {
+  margin: 1.15rem 0 0.35rem;
   font-weight: 650;
+  line-height: 1.35;
 }
 
 .modus-markdown :where(em) {
@@ -492,8 +499,8 @@ input {
 }
 
 .modus-markdown :where(ul, ol) {
-  margin: 0.7rem 0;
-  padding-left: 1.5rem;
+  margin: 0.75rem 0;
+  padding-left: 1.15rem;
 }
 
 /* 恢复列表符号 —— Tailwind preflight 把 ul/ol 重置成 list-style:none，这里显式补回 */
@@ -508,11 +515,12 @@ input {
 /* 嵌套无序列表换用空心圈，层级更清晰 */
 .modus-markdown :where(ul ul) {
   list-style: circle;
+  margin-top: 0.32rem;
 }
 
 .modus-markdown :where(li) {
-  margin: 0.3rem 0;
-  padding-left: 0.2rem;
+  margin: 0.36rem 0;
+  padding-left: 0.1rem;
 }
 
 .modus-markdown :where(li)::marker {
@@ -520,7 +528,7 @@ input {
 }
 
 .modus-markdown :where(li > p) {
-  margin: 0.3rem 0;
+  margin: 0.26rem 0;
 }
 
 .modus-markdown :where(input[type="checkbox"]) {
@@ -532,8 +540,8 @@ input {
 }
 
 .modus-markdown :where(blockquote) {
-  margin: 0.8rem 0;
-  padding: 0.1rem 0 0.1rem 0.9rem;
+  margin: 0.65rem 0;
+  padding: 0.05rem 0 0.05rem 0.75rem;
   border-left: 1px solid var(--color-hairline-strong);
   color: var(--color-fg-muted);
   font-style: normal;
@@ -671,12 +679,13 @@ input {
 .modus-markdown :where([data-streamdown="inline-code"]) {
   border: 1px solid var(--color-hairline-soft);
   border-radius: var(--radius-xs);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--color-chip);
   color: var(--color-fg);
   font-family: var(--font-mono);
-  font-size: 0.88em;
-  padding: 0.1rem 0.35rem;
-  vertical-align: 0.5px;
+  font-size: 0.86em;
+  line-height: 1.45;
+  padding: 0.04rem 0.24rem;
+  vertical-align: 0.06em;
 }
 
 /*
