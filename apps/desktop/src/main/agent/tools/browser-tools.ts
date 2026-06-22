@@ -902,6 +902,7 @@ export function registerBrowserTools(): void {
         name,
         profiles: ["chat"],
         permission: { danger: "dynamic" },
+        capabilities: READ_ONLY_BROWSER_TOOLS.has(name) ? ["read", "network"] : ["write"],
         ui: BROWSER_TOOL_UI[name],
       },
       definition: withAgentPresence(TOOL_DEFINITIONS[name]),

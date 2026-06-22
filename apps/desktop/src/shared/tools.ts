@@ -39,6 +39,8 @@ export type ToolPermissionDecl = {
   action?: PermissionAction;
 };
 
+export type ToolCapability = "read" | "write" | "shell" | "network" | "process";
+
 /**
  * Which renderer card a tool's calls use. Declared here (data) so the renderer
  * routes by capability, never by tool name — adding a tool is a catalog entry,
@@ -87,6 +89,7 @@ export type ToolCatalogEntry = {
   /** Profiles this tool belongs to. Custom tools self-declare their membership. */
   profiles: ToolProfileName[];
   permission: ToolPermissionDecl;
+  capabilities?: ToolCapability[];
   /** Omit to derive from permission.danger === "safe"; false marks safe-but-mutating tools. */
   readOnly?: boolean;
   ui: ToolUiMeta;
@@ -103,6 +106,7 @@ export const BUILTIN_TOOL_CATALOG: ToolCatalogEntry[] = [
     kind: "builtin",
     profiles: ["chat", "review", "plan"],
     permission: { danger: "safe" },
+    capabilities: ["read"],
     ui: { iconName: "file", verb: "Read", mono: false, primaryArgKey: "path" },
   },
   {
@@ -110,6 +114,7 @@ export const BUILTIN_TOOL_CATALOG: ToolCatalogEntry[] = [
     kind: "builtin",
     profiles: ["chat"],
     permission: { danger: "dynamic" },
+    capabilities: ["shell", "process"],
     ui: {
       iconName: "terminal",
       verb: "Ran",
@@ -124,6 +129,7 @@ export const BUILTIN_TOOL_CATALOG: ToolCatalogEntry[] = [
     kind: "builtin",
     profiles: ["chat"],
     permission: { danger: "dangerous", action: "file.write" },
+    capabilities: ["write"],
     ui: {
       iconName: "pencil",
       verb: "Edited",
@@ -138,6 +144,7 @@ export const BUILTIN_TOOL_CATALOG: ToolCatalogEntry[] = [
     kind: "builtin",
     profiles: ["chat"],
     permission: { danger: "dangerous", action: "file.write" },
+    capabilities: ["write"],
     ui: {
       iconName: "file-plus",
       verb: "Wrote",
@@ -152,6 +159,7 @@ export const BUILTIN_TOOL_CATALOG: ToolCatalogEntry[] = [
     kind: "builtin",
     profiles: ["chat", "review", "plan"],
     permission: { danger: "safe" },
+    capabilities: ["read"],
     ui: { iconName: "search", verb: "Grepped", mono: true, primaryArgKey: "pattern" },
   },
   {
@@ -159,6 +167,7 @@ export const BUILTIN_TOOL_CATALOG: ToolCatalogEntry[] = [
     kind: "builtin",
     profiles: ["chat", "review", "plan"],
     permission: { danger: "safe" },
+    capabilities: ["read"],
     ui: { iconName: "file-search", verb: "Searched", mono: true, primaryArgKey: "pattern" },
   },
   {
@@ -166,6 +175,7 @@ export const BUILTIN_TOOL_CATALOG: ToolCatalogEntry[] = [
     kind: "builtin",
     profiles: ["chat", "review", "plan"],
     permission: { danger: "safe" },
+    capabilities: ["read"],
     ui: { iconName: "folder", verb: "Listed", mono: false, primaryArgKey: "path" },
   },
 ];
@@ -267,14 +277,8 @@ export const ASK_USER_TOOL_UI: ToolUiMeta = {
   render: "question",
 };
 
-/** Agent-facing subagent orchestration tools (custom tools registered at runtime). */
-export const SUBAGENT_TOOL_NAMES = [
-  "task",
-  "list_agents",
-  "send_message",
-  "wait_agent",
-  "close_agent",
-] as const;
+/** Agent-facing subagent delegation tool (custom tool registered at runtime). */
+export const SUBAGENT_TOOL_NAMES = ["task"] as const;
 
 export type SubagentToolName = (typeof SUBAGENT_TOOL_NAMES)[number];
 
@@ -285,28 +289,6 @@ export const SUBAGENT_TOOL_UI: Record<SubagentToolName, ToolUiMeta> = {
     mono: false,
     primaryArgKey: "description",
     render: "subagent",
-  },
-  list_agents: { iconName: "modus", verb: "Listed subagents", mono: false, activity: "explore" },
-  send_message: {
-    iconName: "modus",
-    verb: "Messaged subagent",
-    mono: false,
-    primaryArgKey: "target",
-    activity: "explore",
-  },
-  wait_agent: {
-    iconName: "modus",
-    verb: "Waited for subagent",
-    mono: false,
-    primaryArgKey: "target",
-    activity: "explore",
-  },
-  close_agent: {
-    iconName: "modus",
-    verb: "Closed subagent",
-    mono: false,
-    primaryArgKey: "target",
-    activity: "explore",
   },
 };
 

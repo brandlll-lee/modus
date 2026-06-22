@@ -140,6 +140,7 @@ export function registerQuestionTools(): void {
       name: ASK_USER_TOOL_NAME,
       profiles: ["plan", "chat"],
       permission: { danger: "safe" },
+      capabilities: ["read"],
       ui: ASK_USER_TOOL_UI,
     },
     definition: askUserTool,

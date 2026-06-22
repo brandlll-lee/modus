@@ -2,6 +2,7 @@ import type { ToolCallEvent, ToolDefinition } from "@earendil-works/pi-coding-ag
 import type { PermissionAction } from "../../../shared/contracts";
 import {
   BUILTIN_TOOL_CATALOG,
+  type ToolCapability,
   type ToolCatalogEntry,
   type ToolProfileName,
 } from "../../../shared/tools";
@@ -25,6 +26,8 @@ export type ToolOverrides = {
   enable?: string[];
   disable?: string[];
 };
+
+const WRITE_CAPABILITIES = new Set<ToolCapability>(["write", "shell", "process"]);
 
 export type RegisterToolInput = {
   /** Catalog metadata; `kind` is forced to "custom". */
@@ -261,6 +264,35 @@ export class ToolRegistry {
 
   getEntry(name: string): ToolCatalogEntry | undefined {
     return this.entries.get(name);
+  }
+
+  capabilitiesFor(name: string): ToolCapability[] {
+    const entry = this.entries.get(name);
+    if (!entry) {
+      return [];
+    }
+    if (entry.capabilities) {
+      return entry.capabilities;
+    }
+    if (entry.readOnly === false || entry.permission.danger !== "safe") {
+      return ["write"];
+    }
+    return ["read"];
+  }
+
+  isReadOnlySafe(name: string): boolean {
+    return !this.capabilitiesFor(name).some((capability) => WRITE_CAPABILITIES.has(capability));
+  }
+
+  matchesSelector(name: string, selector: string): boolean {
+    const normalized = selector.trim();
+    if (!normalized) {
+      return false;
+    }
+    if (this.entries.has(normalized)) {
+      return name === normalized;
+    }
+    return this.capabilitiesFor(name).includes(normalized as ToolCapability);
   }
 }
 

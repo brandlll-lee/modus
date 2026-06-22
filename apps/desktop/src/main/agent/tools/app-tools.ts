@@ -85,6 +85,7 @@ export function registerAppTools(): void {
       name: "launch_app",
       profiles: ["chat"],
       permission: { danger: "dangerous", action: "shell.execute" },
+      capabilities: ["process"],
       ui: APP_TOOL_UI.launch_app,
     },
     definition: launchAppTool,

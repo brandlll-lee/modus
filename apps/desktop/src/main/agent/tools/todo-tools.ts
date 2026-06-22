@@ -179,6 +179,7 @@ export function registerTodoTools(): void {
       name: TODO_TOOL_NAME,
       profiles: ["chat"],
       permission: { danger: "safe" },
+      capabilities: ["write"],
       readOnly: false,
       ui: TODO_TOOL_UI,
     },
