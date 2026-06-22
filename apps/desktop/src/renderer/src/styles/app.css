@@ -416,14 +416,18 @@ input {
 
 /* AI response Markdown. Capability comes from Streamdown; visuals stay inside Modus tokens. */
 .modus-markdown {
+  --markdown-fg: color-mix(in oklab, var(--color-fg) 88%, var(--color-canvas));
+  --markdown-fg-strong: color-mix(in oklab, var(--color-fg) 94%, var(--color-canvas));
+  --markdown-fg-muted: color-mix(in oklab, var(--color-fg-muted) 92%, var(--color-canvas));
+  --markdown-fg-subtle: color-mix(in oklab, var(--color-fg-subtle) 92%, var(--color-canvas));
   --background: var(--color-canvas);
-  --foreground: var(--color-fg);
+  --foreground: var(--markdown-fg);
   --border: var(--color-hairline);
   --muted: var(--color-hover);
-  --muted-foreground: var(--color-fg-subtle);
+  --muted-foreground: var(--markdown-fg-subtle);
   --sidebar: var(--color-surface);
   --sdm-bg: transparent;
-  color: var(--color-fg);
+  color: var(--markdown-fg);
   font-size: var(--text-md); /* 14px — 比 13px 更易读，留白更舒展 */
   font-weight: 500;
   line-height: 1.68;
@@ -439,7 +443,7 @@ input {
 /* 标题层级 —— 用字号拉开 h1>h2>h3，恢复正常的阅读结构（Streamdown 工具类未编译，靠这里承载） */
 .modus-markdown :where(h1, h2, h3, h4, h5, h6) {
   margin: 1.05rem 0 0.35rem;
-  color: var(--color-fg);
+  color: var(--markdown-fg-strong);
   font-weight: 650;
   line-height: 1.32;
   letter-spacing: 0;
@@ -459,7 +463,7 @@ input {
 
 .modus-markdown :where(h4, h5, h6) {
   font-size: 0.95rem;
-  color: var(--color-fg-muted);
+  color: var(--markdown-fg-muted);
 }
 
 /* 首个标题不要顶出过大空隙 */
@@ -484,12 +488,12 @@ input {
 }
 
 .modus-markdown :where(strong) {
-  color: var(--color-fg);
+  color: var(--markdown-fg-strong);
   font-weight: 650;
 }
 
 .modus-markdown :where(em) {
-  color: var(--color-fg-muted);
+  color: var(--markdown-fg-muted);
 }
 
 .modus-markdown :where(ul, ol) {
@@ -518,7 +522,7 @@ input {
 }
 
 .modus-markdown :where(li)::marker {
-  color: var(--color-fg-faint);
+  color: var(--markdown-fg-subtle);
 }
 
 .modus-markdown :where(li > p) {
@@ -537,7 +541,7 @@ input {
   margin: 0.65rem 0;
   padding: 0.05rem 0 0.05rem 0.75rem;
   border-left: 1px solid var(--color-hairline-strong);
-  color: var(--color-fg-muted);
+  color: var(--markdown-fg-muted);
   font-style: normal;
 }
 
@@ -640,7 +644,7 @@ input {
   font-size: var(--text-xs);
   text-align: left;
   white-space: nowrap;
-  color: var(--color-fg-muted);
+  color: var(--markdown-fg-muted);
   transition:
     background 0.12s ease,
     color 0.12s ease;
@@ -648,7 +652,7 @@ input {
 
 .modus-markdown [data-streamdown="table-wrapper"] [class~="top-full"] button:hover {
   background: var(--color-hover);
-  color: var(--color-fg);
+  color: var(--markdown-fg-strong);
 }
 
 .modus-markdown :where(th, td) {
@@ -660,12 +664,12 @@ input {
 
 .modus-markdown :where(th) {
   background: color-mix(in oklab, var(--color-surface) 60%, var(--color-canvas));
-  color: var(--color-fg);
+  color: var(--markdown-fg-strong);
   font-weight: 650;
 }
 
 .modus-markdown :where(td) {
-  color: var(--color-fg-muted);
+  color: var(--markdown-fg-muted);
 }
 
 /* ── Inline code ───────────────────────────────────────────────────── */
@@ -674,7 +678,7 @@ input {
   border: 1px solid var(--color-hairline-soft);
   border-radius: var(--radius-xs);
   background: var(--color-chip);
-  color: var(--color-fg);
+  color: var(--markdown-fg-strong);
   font-family: var(--font-mono);
   font-size: 0.86em;
   line-height: 1.45;
@@ -779,7 +783,7 @@ input {
   border-radius: var(--radius-sm);
   background: color-mix(in oklab, var(--color-surface) 80%, transparent);
   padding: 2px;
-  color: var(--color-fg-faint);
+  color: var(--markdown-fg-subtle);
   backdrop-filter: blur(6px);
 }
 
@@ -800,22 +804,22 @@ input {
 }
 
 .modus-markdown [data-streamdown="code-block-actions"] button {
-  color: var(--color-fg-faint);
+  color: var(--markdown-fg-subtle);
   transition: color 0.12s ease;
 }
 
 .modus-markdown [data-streamdown="code-block-actions"] button:hover {
-  color: var(--color-fg);
+  color: var(--markdown-fg-strong);
 }
 
 /* ── Global button resets inside markdown ───────────────────────────── */
 .modus-markdown :where(button) {
-  color: var(--color-fg-subtle);
+  color: var(--markdown-fg-subtle);
   transition: color 0.12s ease;
 }
 
 .modus-markdown :where(button:hover) {
-  color: var(--color-fg);
+  color: var(--markdown-fg-strong);
 }
 
 /*
@@ -847,7 +851,7 @@ input {
   min-height: 0;
   margin: 0;
   padding: 0 0.1rem;
-  color: var(--color-fg-subtle);
+  color: var(--markdown-fg-subtle);
 }
 
 .modus-markdown [data-streamdown="mermaid-block"] > div:first-child > span {
@@ -855,7 +859,7 @@ input {
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
   font-weight: 500;
-  color: var(--color-fg-subtle);
+  color: var(--markdown-fg-subtle);
   text-transform: lowercase;
   letter-spacing: 0;
 }
@@ -880,7 +884,7 @@ input {
   border-radius: var(--radius-sm);
   background: transparent;
   padding: 0;
-  color: var(--color-fg-subtle);
+  color: var(--markdown-fg-subtle);
   backdrop-filter: none;
 }
 
@@ -894,7 +898,7 @@ input {
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--color-fg-faint);
+  color: var(--markdown-fg-subtle);
   cursor: pointer;
   transition:
     color 0.12s ease,
@@ -903,7 +907,7 @@ input {
 
 .modus-markdown [data-streamdown="mermaid-block-actions"] button:hover,
 .modus-markdown [data-streamdown="mermaid-block-actions"] a:hover {
-  color: var(--color-fg);
+  color: var(--markdown-fg-strong);
   background: var(--color-hover);
 }
 
@@ -931,7 +935,7 @@ input {
 }
 
 .modus-markdown [data-streamdown="mermaid"] [class*="absolute"] button {
-  color: var(--color-fg-subtle);
+  color: var(--markdown-fg-subtle);
   border-radius: var(--radius-xs);
   transition:
     color 0.12s ease,
@@ -939,7 +943,7 @@ input {
 }
 
 .modus-markdown [data-streamdown="mermaid"] [class*="absolute"] button:hover {
-  color: var(--color-fg);
+  color: var(--markdown-fg-strong);
   background: var(--color-hover);
 }
 
@@ -948,7 +952,7 @@ input {
  * shrank every formula and made dense fractions cramped. We only retint to the
  * theme fg; sizing is KaTeX's own. */
 .modus-markdown :where(.katex) {
-  color: var(--color-fg);
+  color: var(--markdown-fg);
 }
 
 .modus-markdown :where(.katex-display) {
