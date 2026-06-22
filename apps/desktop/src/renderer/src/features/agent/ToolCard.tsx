@@ -28,8 +28,6 @@ type ToolView = {
   verb: string;
   /** Main target shown after the verb. Always truncated so it can't widen chat. */
   target: string;
-  /** Render the target in monospace (commands, patterns). */
-  mono: boolean;
 };
 
 export const ToolCard = memo(
@@ -120,10 +118,7 @@ function FlatToolRow({
           <span className={cn("shrink-0 font-medium", isError ? "text-danger" : "text-fg-subtle")}>
             {view.verb}
           </span>
-          <span
-            className={cn("min-w-0 flex-1 truncate text-fg-subtle", view.mono && "font-mono")}
-            title={view.target}
-          >
+          <span className="min-w-0 flex-1 truncate text-fg-subtle" title={view.target}>
             {view.target}
           </span>
         </>
@@ -161,7 +156,7 @@ function FlatToolRow({
         <pre
           className={cn(
             "scroll-thin mt-1 max-h-72 overflow-auto rounded-md border border-hairline bg-canvas px-3 py-2",
-            "whitespace-pre-wrap wrap-break-word font-mono text-[12px] text-fg-faint leading-relaxed",
+            "whitespace-pre-wrap wrap-break-word text-[12px] text-fg-faint leading-relaxed",
             isError && "border-danger/25 text-danger/90",
           )}
         >
@@ -176,13 +171,12 @@ function describeTool(name: string, args: unknown): ToolView {
   const a = (args && typeof args === "object" ? args : {}) as Record<string, unknown>;
   const meta = getToolUiMeta(name);
   if (!meta) {
-    return { icon: toolIcon("tool"), verb: humanize(name), target: bestEffortArg(a), mono: true };
+    return { icon: toolIcon("tool"), verb: humanize(name), target: bestEffortArg(a) };
   }
   const base: ToolView = {
     icon: toolIcon(meta.iconName),
     verb: meta.verb,
     target: primaryTarget(meta, a),
-    mono: meta.mono,
   };
   switch (name) {
     case "read":

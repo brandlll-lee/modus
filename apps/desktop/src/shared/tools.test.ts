@@ -12,7 +12,6 @@ describe("MCP tool UI metadata", () => {
     expect(getMcpToolUiMeta("mcp_linear_create_issue")).toEqual({
       iconName: "mcp",
       verb: "linear",
-      mono: true,
     });
   });
 

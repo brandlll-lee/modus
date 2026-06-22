@@ -63,8 +63,6 @@ export type DiffSource = "edits" | "newFile";
 export type ToolUiMeta = {
   iconName: ToolIconName;
   verb: string;
-  /** Render the target in monospace (commands, patterns). */
-  mono: boolean;
   /** Argument key used to derive the default target label shown after the verb. */
   primaryArgKey?: string;
   /** Which renderer card this tool's calls use. Absent ⇒ `flat`. */
@@ -107,7 +105,7 @@ export const BUILTIN_TOOL_CATALOG: ToolCatalogEntry[] = [
     profiles: ["chat", "review", "plan"],
     permission: { danger: "safe" },
     capabilities: ["read"],
-    ui: { iconName: "file", verb: "Read", mono: false, primaryArgKey: "path" },
+    ui: { iconName: "file", verb: "Read", primaryArgKey: "path" },
   },
   {
     name: "bash",
@@ -118,7 +116,6 @@ export const BUILTIN_TOOL_CATALOG: ToolCatalogEntry[] = [
     ui: {
       iconName: "terminal",
       verb: "Ran",
-      mono: true,
       primaryArgKey: "command",
       render: "terminal",
       terminalFramed: false,
@@ -133,7 +130,6 @@ export const BUILTIN_TOOL_CATALOG: ToolCatalogEntry[] = [
     ui: {
       iconName: "pencil",
       verb: "Edited",
-      mono: false,
       primaryArgKey: "path",
       render: "diff",
       diffSource: "edits",
@@ -148,7 +144,6 @@ export const BUILTIN_TOOL_CATALOG: ToolCatalogEntry[] = [
     ui: {
       iconName: "file-plus",
       verb: "Wrote",
-      mono: false,
       primaryArgKey: "path",
       render: "diff",
       diffSource: "newFile",
@@ -160,7 +155,7 @@ export const BUILTIN_TOOL_CATALOG: ToolCatalogEntry[] = [
     profiles: ["chat", "review", "plan"],
     permission: { danger: "safe" },
     capabilities: ["read"],
-    ui: { iconName: "search", verb: "Grepped", mono: true, primaryArgKey: "pattern" },
+    ui: { iconName: "search", verb: "Grepped", primaryArgKey: "pattern" },
   },
   {
     name: "find",
@@ -168,7 +163,7 @@ export const BUILTIN_TOOL_CATALOG: ToolCatalogEntry[] = [
     profiles: ["chat", "review", "plan"],
     permission: { danger: "safe" },
     capabilities: ["read"],
-    ui: { iconName: "file-search", verb: "Searched", mono: true, primaryArgKey: "pattern" },
+    ui: { iconName: "file-search", verb: "Searched", primaryArgKey: "pattern" },
   },
   {
     name: "ls",
@@ -176,7 +171,7 @@ export const BUILTIN_TOOL_CATALOG: ToolCatalogEntry[] = [
     profiles: ["chat", "review", "plan"],
     permission: { danger: "safe" },
     capabilities: ["read"],
-    ui: { iconName: "folder", verb: "Listed", mono: false, primaryArgKey: "path" },
+    ui: { iconName: "folder", verb: "Listed", primaryArgKey: "path" },
   },
 ];
 
@@ -200,7 +195,6 @@ export const TERMINAL_TOOL_UI: Record<TerminalToolName, ToolUiMeta> = {
   terminal_run: {
     iconName: "terminal",
     verb: "Terminal",
-    mono: true,
     primaryArgKey: "command",
     render: "terminal",
     terminalFramed: true,
@@ -208,22 +202,19 @@ export const TERMINAL_TOOL_UI: Record<TerminalToolName, ToolUiMeta> = {
   terminal_read: {
     iconName: "terminal",
     verb: "Read terminal",
-    mono: true,
     primaryArgKey: "terminal_id",
     render: "terminal",
     terminalFramed: true,
   },
-  terminal_list: { iconName: "terminal", verb: "Listed terminals", mono: false },
+  terminal_list: { iconName: "terminal", verb: "Listed terminals" },
   terminal_write: {
     iconName: "terminal",
     verb: "Sent input",
-    mono: true,
     primaryArgKey: "input",
   },
   terminal_kill: {
     iconName: "terminal",
     verb: "Killed terminal",
-    mono: true,
     primaryArgKey: "terminal_id",
   },
 };
@@ -235,7 +226,7 @@ export type AppToolName = (typeof APP_TOOL_NAMES)[number];
 
 /** UI metadata for the GUI app launch tool. */
 export const APP_TOOL_UI: Record<AppToolName, ToolUiMeta> = {
-  launch_app: { iconName: "terminal", verb: "Launched app", mono: true, primaryArgKey: "path" },
+  launch_app: { iconName: "terminal", verb: "Launched app", primaryArgKey: "path" },
 };
 
 /** Agent-facing to-do tool (custom tool registered at runtime). */
@@ -244,7 +235,6 @@ export const TODO_TOOL_NAME = "todo_write";
 export const TODO_TOOL_UI: ToolUiMeta = {
   iconName: "todo",
   verb: "Updated to-dos",
-  mono: false,
   render: "todo",
 };
 
@@ -259,7 +249,6 @@ export const PLAN_TOOL_NAME = "plan_write";
 export const PLAN_TOOL_UI: ToolUiMeta = {
   iconName: "todo",
   verb: "Creating plan",
-  mono: false,
   primaryArgKey: "title",
 };
 
@@ -273,7 +262,6 @@ export const ASK_USER_TOOL_NAME = "ask_user";
 export const ASK_USER_TOOL_UI: ToolUiMeta = {
   iconName: "tool",
   verb: "Asking",
-  mono: false,
   render: "question",
 };
 
@@ -286,7 +274,6 @@ export const SUBAGENT_TOOL_UI: Record<SubagentToolName, ToolUiMeta> = {
   task: {
     iconName: "tool",
     verb: "Started subagent",
-    mono: false,
     primaryArgKey: "description",
     render: "subagent",
   },
@@ -303,8 +290,8 @@ export type WebToolName = (typeof WEB_TOOL_NAMES)[number];
  * though their executable definitions live in the main process.
  */
 export const WEB_TOOL_UI: Record<WebToolName, ToolUiMeta> = {
-  web_search: { iconName: "globe", verb: "Searched the web", mono: false, primaryArgKey: "query" },
-  web_fetch: { iconName: "globe", verb: "Fetched", mono: true, primaryArgKey: "url" },
+  web_search: { iconName: "globe", verb: "Searched the web", primaryArgKey: "query" },
+  web_fetch: { iconName: "globe", verb: "Fetched", primaryArgKey: "url" },
 };
 
 /**
@@ -343,45 +330,42 @@ export const BROWSER_TOOL_NAMES = [
 export type BrowserToolName = (typeof BROWSER_TOOL_NAMES)[number];
 
 export const BROWSER_TOOL_UI: Record<BrowserToolName, ToolUiMeta> = {
-  browser_tabs: { iconName: "globe", verb: "Browser tabs", mono: false, primaryArgKey: "action" },
-  browser_navigate: { iconName: "globe", verb: "Navigated", mono: true, primaryArgKey: "url" },
-  browser_navigate_back: { iconName: "globe", verb: "Went back", mono: false },
-  browser_snapshot: { iconName: "globe", verb: "Snapshotted page", mono: false },
-  browser_take_screenshot: { iconName: "globe", verb: "Captured page", mono: false },
-  browser_click: { iconName: "globe", verb: "Clicked", mono: false, primaryArgKey: "element" },
-  browser_click_xy: { iconName: "globe", verb: "Clicked coordinates", mono: false },
-  browser_hover: { iconName: "globe", verb: "Hovered", mono: false, primaryArgKey: "element" },
-  browser_drag: { iconName: "globe", verb: "Dragged", mono: false, primaryArgKey: "startElement" },
-  browser_fill: { iconName: "globe", verb: "Filled", mono: false, primaryArgKey: "element" },
-  browser_type: { iconName: "globe", verb: "Typed", mono: false, primaryArgKey: "element" },
-  browser_fill_form: { iconName: "globe", verb: "Filled form", mono: false },
+  browser_tabs: { iconName: "globe", verb: "Browser tabs", primaryArgKey: "action" },
+  browser_navigate: { iconName: "globe", verb: "Navigated", primaryArgKey: "url" },
+  browser_navigate_back: { iconName: "globe", verb: "Went back" },
+  browser_snapshot: { iconName: "globe", verb: "Snapshotted page" },
+  browser_take_screenshot: { iconName: "globe", verb: "Captured page" },
+  browser_click: { iconName: "globe", verb: "Clicked", primaryArgKey: "element" },
+  browser_click_xy: { iconName: "globe", verb: "Clicked coordinates" },
+  browser_hover: { iconName: "globe", verb: "Hovered", primaryArgKey: "element" },
+  browser_drag: { iconName: "globe", verb: "Dragged", primaryArgKey: "startElement" },
+  browser_fill: { iconName: "globe", verb: "Filled", primaryArgKey: "element" },
+  browser_type: { iconName: "globe", verb: "Typed", primaryArgKey: "element" },
+  browser_fill_form: { iconName: "globe", verb: "Filled form" },
   browser_select_option: {
     iconName: "globe",
     verb: "Selected option",
-    mono: false,
     primaryArgKey: "element",
   },
-  browser_scroll: { iconName: "globe", verb: "Scrolled", mono: false },
-  browser_wait_for: { iconName: "globe", verb: "Waited", mono: false, primaryArgKey: "text" },
-  browser_console_messages: { iconName: "globe", verb: "Read console", mono: false },
-  browser_network_requests: { iconName: "globe", verb: "Read network", mono: false },
+  browser_scroll: { iconName: "globe", verb: "Scrolled" },
+  browser_wait_for: { iconName: "globe", verb: "Waited", primaryArgKey: "text" },
+  browser_console_messages: { iconName: "globe", verb: "Read console" },
+  browser_network_requests: { iconName: "globe", verb: "Read network" },
   browser_network_request: {
     iconName: "globe",
     verb: "Inspected request",
-    mono: true,
     primaryArgKey: "requestId",
   },
-  browser_resize: { iconName: "globe", verb: "Resized browser", mono: false },
-  browser_press_key: { iconName: "globe", verb: "Pressed key", mono: true, primaryArgKey: "key" },
-  browser_handle_dialog: { iconName: "globe", verb: "Handled dialog", mono: false },
+  browser_resize: { iconName: "globe", verb: "Resized browser" },
+  browser_press_key: { iconName: "globe", verb: "Pressed key", primaryArgKey: "key" },
+  browser_handle_dialog: { iconName: "globe", verb: "Handled dialog" },
   browser_evaluate: {
     iconName: "globe",
     verb: "Evaluated in page",
-    mono: true,
     primaryArgKey: "expression",
   },
-  browser_profile_start: { iconName: "globe", verb: "Started profile", mono: false },
-  browser_profile_stop: { iconName: "globe", verb: "Stopped profile", mono: false },
+  browser_profile_start: { iconName: "globe", verb: "Started profile" },
+  browser_profile_stop: { iconName: "globe", verb: "Stopped profile" },
 };
 
 /** Tool names belonging to a profile, derived from a catalog. */
@@ -412,7 +396,7 @@ export function getMcpToolUiMeta(name: string): ToolUiMeta {
   const rest = name.slice(MCP_TOOL_PREFIX.length);
   const separator = rest.indexOf("_");
   const server = separator > 0 ? rest.slice(0, separator) : rest;
-  return { iconName: "mcp", verb: server, mono: true };
+  return { iconName: "mcp", verb: server };
 }
 
 /** UI metadata for any known tool (builtin, terminal, web, to-do, or MCP-bridged). */

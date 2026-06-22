@@ -687,7 +687,7 @@ describe("PiSdkRuntime", () => {
         name: "synthetic_mutator",
         profiles: ["chat"],
         permission: { danger: "dangerous", action: "file.write" },
-        ui: { iconName: "tool", verb: "Mutated", mono: false },
+        ui: { iconName: "tool", verb: "Mutated" },
       },
       definition: { name: "synthetic_mutator" } as never,
     });

@@ -67,7 +67,7 @@ export function ThoughtRow({ text, streaming = false }: { text: string; streamin
       </button>
       <CollapsibleMotion open={open} preset="timeline">
         <pre
-          className="scroll-thin mt-1 max-h-44 max-w-full overflow-x-auto overflow-y-auto whitespace-pre-wrap font-mono text-2xs text-fg-faint leading-relaxed"
+          className="scroll-thin mt-1 max-h-44 max-w-full overflow-x-auto overflow-y-auto whitespace-pre-wrap text-2xs text-fg-faint leading-relaxed"
           ref={preRef}
         >
           {text}

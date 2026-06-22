@@ -41,7 +41,7 @@ describe("ToolRegistry profiles", () => {
         name: "plan_write",
         profiles: ["plan"],
         permission: { danger: "safe" },
-        ui: { iconName: "todo", verb: "Creating plan", mono: false },
+        ui: { iconName: "todo", verb: "Creating plan" },
       },
       definition,
     });
@@ -65,7 +65,7 @@ describe("ToolRegistry custom tools", () => {
       name: "demo",
       profiles: ["chat"],
       permission: { danger: "safe" },
-      ui: { iconName: "tool", verb: "Demo", mono: true },
+      ui: { iconName: "tool", verb: "Demo" },
     };
     const definition = { name: "demo" } as never;
     registry.registerTool({ entry, definition });
@@ -85,7 +85,7 @@ describe("ToolRegistry custom tools", () => {
         name: "slow",
         profiles: ["chat"],
         permission: { danger: "safe" },
-        ui: { iconName: "tool", verb: "Slow", mono: false },
+        ui: { iconName: "tool", verb: "Slow" },
       },
       definition: { name: "slow", execute: () => hang } as never,
     });
@@ -99,8 +99,9 @@ describe("ToolRegistry custom tools", () => {
         ctx: unknown,
       ) => Promise<unknown>;
     }>;
+    if (!wrapped) throw new Error("slow tool was not registered");
     const controller = new AbortController();
-    const pending = wrapped!.execute("call-1", {}, controller.signal, undefined, {});
+    const pending = wrapped.execute("call-1", {}, controller.signal, undefined, {});
     controller.abort();
 
     await expect(pending).rejects.toThrow(/aborted/i);
@@ -113,7 +114,7 @@ describe("ToolRegistry custom tools", () => {
         name: "deploy",
         profiles: ["chat"],
         permission: { danger: "dynamic" },
-        ui: { iconName: "tool", verb: "Deployed", mono: true },
+        ui: { iconName: "tool", verb: "Deployed" },
       },
       definition: { name: "deploy" } as never,
       classify: () => ({ action: "external.open", dangerous: true }),
