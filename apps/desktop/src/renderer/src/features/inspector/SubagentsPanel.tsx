@@ -1,4 +1,5 @@
-import { type PointerEvent as ReactPointerEvent, useCallback, useState } from "react";
+import { IconArrowLeft, IconLayoutBoard, IconList, IconSearch } from "@tabler/icons-react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import type {
   AgentSessionInfo,
   ContextUsageInfo,
@@ -11,9 +12,9 @@ import type { AgentEventHub } from "../agent/agentEventHub";
 import { ChatPane } from "../agent/ChatPane";
 import { subagentColor } from "../agent/subagentUi";
 
-const MIN_RAIL_WIDTH = 48;
-const MAX_RAIL_WIDTH = 280;
-const COLLAPSED_RAIL_WIDTH = 80;
+type PanelView = "overview" | "detail";
+type DisplayMode = "board" | "list";
+type SubagentGroup = "running" | "blocked" | "ready";
 
 type SubagentsPanelProps = {
   parentSessionId?: string | undefined;
@@ -50,14 +51,30 @@ export function SubagentsPanel({
   onOpenSubagent,
   onPlanUpdated,
 }: SubagentsPanelProps) {
-  const [railWidth, setRailWidth] = useState(192);
+  const [view, setView] = useState<PanelView>("overview");
+  const [display, setDisplay] = useState<DisplayMode>("board");
+  const [query, setQuery] = useState("");
   const [worktreeBusy, setWorktreeBusy] = useState<string | undefined>();
   const [worktreeError, setWorktreeError] = useState<string | undefined>();
-  const subagents = sessions.filter((session) => session.parentSessionId === parentSessionId);
+  const lastSelectedIdRef = useRef<string | undefined>(undefined);
+
+  const subagents = useMemo(
+    () => sessions.filter((session) => session.parentSessionId === parentSessionId),
+    [sessions, parentSessionId],
+  );
   const parentSession = sessions.find((session) => session.id === parentSessionId);
-  const selected =
-    subagents.find((session) => session.id === selectedId) ?? subagents[0] ?? undefined;
-  const collapsed = railWidth <= COLLAPSED_RAIL_WIDTH;
+  const selected = subagents.find((session) => session.id === selectedId);
+  const filteredSubagents = useMemo(
+    () => subagents.filter((session) => matchesSubagentQuery(session, query)),
+    [subagents, query],
+  );
+
+  useEffect(() => {
+    if (selectedId && selectedId !== lastSelectedIdRef.current) {
+      setView("detail");
+    }
+    lastSelectedIdRef.current = selectedId;
+  }, [selectedId]);
 
   async function applyWorktree(session: AgentSessionInfo): Promise<void> {
     setWorktreeBusy("apply");
@@ -105,23 +122,10 @@ export function SubagentsPanel({
     }
   }
 
-  const beginResize = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>) => {
-      event.preventDefault();
-      const startX = event.clientX;
-      const startWidth = railWidth;
-      const move = (moveEvent: PointerEvent) => {
-        setRailWidth(clampRailWidth(startWidth + moveEvent.clientX - startX));
-      };
-      const stop = () => {
-        window.removeEventListener("pointermove", move);
-        window.removeEventListener("pointerup", stop);
-      };
-      window.addEventListener("pointermove", move);
-      window.addEventListener("pointerup", stop, { once: true });
-    },
-    [railWidth],
-  );
+  function openDetail(session: AgentSessionInfo): void {
+    onSelect(session.id);
+    setView("detail");
+  }
 
   if (!parentSessionId || subagents.length === 0) {
     return (
@@ -131,92 +135,274 @@ export function SubagentsPanel({
     );
   }
 
-  return (
-    <div className="flex h-full min-w-0">
-      <div className="relative shrink-0 border-hairline border-r p-2" style={{ width: railWidth }}>
-        <div className="space-y-1">
-          {subagents.map((session) => {
-            const active = isSubagentLive(session.status);
-            const selectedRow = session.id === selected?.id;
-            return (
-              <button
-                className={`flex min-h-10 w-full min-w-0 items-center rounded-md text-left text-xs transition-colors ${
-                  collapsed ? "justify-center px-0" : "gap-2 px-2 py-1.5"
-                } ${
-                  selectedRow ? "bg-active text-fg" : "text-fg-subtle hover:bg-hover hover:text-fg"
-                }`}
-                key={session.id}
-                onClick={() => onSelect(session.id)}
-                title={session.subagentTask ?? session.title}
-                type="button"
-              >
-                <ModusBot
-                  active={active}
-                  busy={active}
-                  className="size-5 shrink-0"
-                  color={subagentColor(session.id)}
-                />
-                {collapsed ? null : (
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate font-medium">
-                      {session.subagentTask ?? session.title}
-                    </div>
-                    <div className="mt-0.5 truncate text-fg-faint">
-                      {[session.status, session.model].filter(Boolean).join(" · ")}
-                    </div>
-                  </div>
-                )}
-              </button>
-            );
-          })}
-        </div>
-        <div
-          aria-hidden
-          className="-right-1 absolute top-0 h-full w-2 cursor-col-resize select-none"
-          onPointerDown={beginResize}
-        />
-      </div>
-      <div className="min-w-0 flex-1">
-        {selected ? (
-          <div className="flex h-full min-h-0 flex-col">
-            {selected.subagentWorktree ? (
-              <SubagentWorktreeBanner
-                busy={worktreeBusy}
-                error={worktreeError}
-                onApply={() => void applyWorktree(selected)}
-                onAskRoot={() => void askRootToResolve(selected)}
-                onCleanup={() => void cleanupWorktree(selected)}
-                onOpen={() =>
-                  void window.modus.file.open({
-                    cwd: parentSession?.cwd ?? selected.cwd,
-                    path: selected.subagentWorktree?.path ?? selected.cwd,
-                  })
-                }
-                worktree={selected.subagentWorktree}
-              />
-            ) : null}
-            <div className="min-h-0 flex-1">
-              <ChatPane
-                botColor={subagentColor(selected.id)}
-                contextUsage={contextUsageBySession[selected.id]}
-                defaultModel={defaultModel}
-                hub={hub}
-                key={selected.id}
-                models={models}
-                onModelChange={onModelChange}
-                onModelConfigChange={onModelConfigChange}
-                onOpenReview={onOpenReview}
-                onOpenSubagent={onOpenSubagent}
-                onPlanUpdated={onPlanUpdated}
-                onSessionsChanged={onSessionsChanged}
-                session={selected}
-                workspace={workspace}
-              />
-            </div>
+  if (view === "detail" && selected) {
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        <div className="flex h-12 shrink-0 items-center gap-2 border-hairline border-b px-3">
+          <button
+            aria-label="Back to subagents"
+            className="flex size-7 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-hover hover:text-fg"
+            onClick={() => setView("overview")}
+            type="button"
+          >
+            <IconArrowLeft size={16} stroke={1.7} />
+          </button>
+          <ModusBot
+            active={isSubagentLive(selected.status)}
+            busy={isSubagentLive(selected.status)}
+            className="size-5 shrink-0"
+            color={subagentColor(selected.id)}
+          />
+          <div className="min-w-0 flex-1">
+            <div className="truncate font-medium text-fg text-sm">{subagentTitle(selected)}</div>
+            <div className="truncate text-fg-faint text-xs">{subagentMeta(selected)}</div>
           </div>
+          <StatusPill session={selected} />
+        </div>
+        {selected.subagentWorktree ? (
+          <SubagentWorktreeBanner
+            busy={worktreeBusy}
+            error={worktreeError}
+            onApply={() => void applyWorktree(selected)}
+            onAskRoot={() => void askRootToResolve(selected)}
+            onCleanup={() => void cleanupWorktree(selected)}
+            onOpen={() =>
+              void window.modus.file.open({
+                cwd: parentSession?.cwd ?? selected.cwd,
+                path: selected.subagentWorktree?.path ?? selected.cwd,
+              })
+            }
+            worktree={selected.subagentWorktree}
+          />
         ) : null}
+        <div className="min-h-0 flex-1">
+          <ChatPane
+            botColor={subagentColor(selected.id)}
+            contextUsage={contextUsageBySession[selected.id]}
+            defaultModel={defaultModel}
+            hub={hub}
+            key={selected.id}
+            models={models}
+            onModelChange={onModelChange}
+            onModelConfigChange={onModelConfigChange}
+            onOpenReview={onOpenReview}
+            onOpenSubagent={onOpenSubagent}
+            onPlanUpdated={onPlanUpdated}
+            onSessionsChanged={onSessionsChanged}
+            session={selected}
+            workspace={workspace}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-full min-h-0 flex-col bg-canvas">
+      <div className="shrink-0 border-hairline border-b px-3 py-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex rounded-md bg-fill p-0.5">
+            <ViewButton active={display === "board"} onClick={() => setDisplay("board")}>
+              <IconLayoutBoard size={14} stroke={1.7} />
+              Board
+            </ViewButton>
+            <ViewButton active={display === "list"} onClick={() => setDisplay("list")}>
+              <IconList size={14} stroke={1.7} />
+              List
+            </ViewButton>
+          </div>
+          <label className="relative ml-auto min-w-[180px] flex-1 sm:max-w-[320px]">
+            <IconSearch
+              className="-translate-y-1/2 pointer-events-none absolute top-1/2 left-2.5 text-fg-faint"
+              size={14}
+              stroke={1.7}
+            />
+            <input
+              className="h-8 w-full rounded-md border-hairline bg-canvas pr-3 pl-8 text-sm outline-none transition-colors placeholder:text-fg-faint focus:border-fg-faint"
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search subagents..."
+              value={query}
+            />
+          </label>
+        </div>
+      </div>
+
+      <SubagentStatusBar sessions={subagents} />
+
+      <div className="scroll-thin min-h-0 flex-1 overflow-y-auto">
+        {filteredSubagents.length === 0 ? (
+          <div className="flex h-full min-h-[220px] items-center justify-center px-4 text-center text-fg-faint text-sm">
+            No matching subagents.
+          </div>
+        ) : display === "board" ? (
+          <SubagentBoard sessions={filteredSubagents} onOpen={openDetail} />
+        ) : (
+          <SubagentList sessions={filteredSubagents} onOpen={openDetail} />
+        )}
       </div>
     </div>
+  );
+}
+
+function ViewButton({
+  active,
+  children,
+  onClick,
+}: {
+  active: boolean;
+  children: ReactNode;
+  onClick(): void;
+}) {
+  return (
+    <button
+      aria-pressed={active}
+      className={`flex h-7 items-center gap-1.5 rounded px-2 text-xs transition-colors ${
+        active ? "bg-canvas text-fg shadow-sm" : "text-fg-subtle hover:text-fg"
+      }`}
+      onClick={onClick}
+      type="button"
+    >
+      {children}
+    </button>
+  );
+}
+
+function SubagentStatusBar({ sessions }: { sessions: AgentSessionInfo[] }) {
+  const counts = sessions.reduce(
+    (acc, session) => {
+      acc[subagentGroup(session)] += 1;
+      return acc;
+    },
+    { blocked: 0, ready: 0, running: 0 } satisfies Record<SubagentGroup, number>,
+  );
+  return (
+    <div className="grid shrink-0 grid-cols-3 border-hairline border-b bg-elevated px-3 py-2 text-xs">
+      <StatusCount color="bg-accent" label="Running" value={counts.running} />
+      <StatusCount color="bg-danger" label="Blocked" value={counts.blocked} />
+      <StatusCount color="bg-success" label="Ready" value={counts.ready} />
+    </div>
+  );
+}
+
+function StatusCount({ color, label, value }: { color: string; label: string; value: number }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className={`size-2 rounded-full ${color}`} />
+      <span className="font-medium text-fg">{label}</span>
+      <span className="text-fg-faint">{value}</span>
+    </div>
+  );
+}
+
+function SubagentBoard({
+  sessions,
+  onOpen,
+}: {
+  sessions: AgentSessionInfo[];
+  onOpen(session: AgentSessionInfo): void;
+}) {
+  return (
+    <div className="grid min-h-full grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-3 p-3">
+      {(["running", "blocked", "ready"] as const).map((group) => {
+        const items = sessions.filter((session) => subagentGroup(session) === group);
+        return (
+          <section className="min-w-0" key={group}>
+            <div className="mb-2 flex items-center gap-2 px-1 text-xs">
+              <span className={`size-2 rounded-full ${groupColor(group)}`} />
+              <span className="font-medium text-fg">{groupLabel(group)}</span>
+              <span className="text-fg-faint">{items.length}</span>
+            </div>
+            <div className="space-y-2">
+              {items.map((session) => (
+                <SubagentCard key={session.id} onOpen={onOpen} session={session} />
+              ))}
+            </div>
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+function SubagentCard({
+  session,
+  onOpen,
+}: {
+  session: AgentSessionInfo;
+  onOpen(session: AgentSessionInfo): void;
+}) {
+  return (
+    <button
+      className="min-h-24 w-full rounded-md border-hairline bg-canvas p-3 text-left transition-colors hover:bg-hover"
+      onClick={() => onOpen(session)}
+      title={subagentTitle(session)}
+      type="button"
+    >
+      <div className="flex items-start gap-2">
+        <ModusBot
+          active={isSubagentLive(session.status)}
+          busy={isSubagentLive(session.status)}
+          className="size-5 shrink-0"
+          color={subagentColor(session.id)}
+        />
+        <div className="min-w-0 flex-1">
+          <div className="line-clamp-2 font-medium text-fg text-sm">{subagentTitle(session)}</div>
+          <div className="mt-2 truncate text-fg-faint text-xs">{subagentMeta(session)}</div>
+        </div>
+        <span
+          className={`mt-1 size-2 shrink-0 rounded-full ${groupColor(subagentGroup(session))}`}
+        />
+      </div>
+      {session.subagentWorktree ? (
+        <div className="mt-3 inline-flex max-w-full rounded bg-fill px-1.5 py-0.5 text-fg-subtle text-xs">
+          <span className="truncate">{session.subagentWorktree.integrationStatus}</span>
+        </div>
+      ) : null}
+    </button>
+  );
+}
+
+function SubagentList({
+  sessions,
+  onOpen,
+}: {
+  sessions: AgentSessionInfo[];
+  onOpen(session: AgentSessionInfo): void;
+}) {
+  return (
+    <div className="p-2">
+      {sessions.map((session) => (
+        <button
+          className="flex min-h-12 w-full items-center gap-3 rounded-md px-3 text-left text-sm transition-colors hover:bg-hover"
+          key={session.id}
+          onClick={() => onOpen(session)}
+          title={subagentTitle(session)}
+          type="button"
+        >
+          <ModusBot
+            active={isSubagentLive(session.status)}
+            busy={isSubagentLive(session.status)}
+            className="size-5 shrink-0"
+            color={subagentColor(session.id)}
+          />
+          <div className="min-w-0 flex-1">
+            <div className="truncate font-medium text-fg">{subagentTitle(session)}</div>
+            <div className="truncate text-fg-faint text-xs">{subagentMeta(session)}</div>
+          </div>
+          <StatusPill session={session} />
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function StatusPill({ session }: { session: AgentSessionInfo }) {
+  const group = subagentGroup(session);
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-fill px-2 py-1 text-fg-subtle text-xs">
+      <span className={`size-1.5 rounded-full ${groupColor(group)}`} />
+      {groupLabel(group)}
+    </span>
   );
 }
 
@@ -299,8 +485,57 @@ function SubagentWorktreeBanner({
   );
 }
 
-function clampRailWidth(width: number): number {
-  return Math.max(MIN_RAIL_WIDTH, Math.min(MAX_RAIL_WIDTH, width));
+function matchesSubagentQuery(session: AgentSessionInfo, query: string): boolean {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return true;
+  return [
+    session.subagentTask,
+    session.title,
+    session.model,
+    session.status,
+    session.subagentType,
+    session.subagentWorktree?.integrationStatus,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase()
+    .includes(normalized);
+}
+
+function subagentTitle(session: AgentSessionInfo): string {
+  return session.subagentTask ?? session.title;
+}
+
+function subagentMeta(session: AgentSessionInfo): string {
+  return [session.status, session.model, relativeTime(session.updatedAt)]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+function subagentGroup(session: AgentSessionInfo): SubagentGroup {
+  if (isSubagentLive(session.status)) return "running";
+  if (session.status === "blocked") return "blocked";
+  return "ready";
+}
+
+function groupLabel(group: SubagentGroup): string {
+  return group === "running" ? "Running" : group === "blocked" ? "Blocked" : "Ready";
+}
+
+function groupColor(group: SubagentGroup): string {
+  return group === "running" ? "bg-accent" : group === "blocked" ? "bg-danger" : "bg-success";
+}
+
+function relativeTime(value: string): string {
+  const time = Date.parse(value);
+  if (!Number.isFinite(time)) return "";
+  const seconds = Math.max(0, Math.floor((Date.now() - time) / 1000));
+  if (seconds < 60) return "now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
 }
 
 function isSubagentLive(status: AgentSessionInfo["status"]): boolean {
