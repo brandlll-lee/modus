@@ -416,10 +416,10 @@ input {
 
 /* AI response Markdown. Capability comes from Streamdown; visuals stay inside Modus tokens. */
 .modus-markdown {
-  --markdown-fg: color-mix(in oklab, var(--color-fg) 94%, var(--color-canvas));
-  --markdown-fg-strong: color-mix(in oklab, var(--color-fg) 97%, var(--color-canvas));
-  --markdown-fg-muted: color-mix(in oklab, var(--color-fg-muted) 96%, var(--color-canvas));
-  --markdown-fg-subtle: color-mix(in oklab, var(--color-fg-subtle) 96%, var(--color-canvas));
+  --markdown-fg: color-mix(in oklab, var(--color-fg) 99%, var(--color-canvas));
+  --markdown-fg-strong: var(--color-fg);
+  --markdown-fg-muted: color-mix(in oklab, var(--color-fg-muted) 99%, var(--color-canvas));
+  --markdown-fg-subtle: color-mix(in oklab, var(--color-fg-subtle) 99%, var(--color-canvas));
   --background: var(--color-canvas);
   --foreground: var(--markdown-fg);
   --border: var(--color-hairline);
@@ -429,7 +429,7 @@ input {
   --sdm-bg: transparent;
   color: var(--markdown-fg);
   font-size: var(--text-md); /* 14px — 比 13px 更易读，留白更舒展 */
-  font-weight: 500;
+  font-weight: 425;
   line-height: 1.68;
   max-width: 100%;
   min-width: 0;
