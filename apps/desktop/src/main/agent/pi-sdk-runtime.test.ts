@@ -284,7 +284,7 @@ describe("PiSdkRuntime", () => {
     await mkdir(agentsDir, { recursive: true });
     await writeFile(
       join(agentsDir, "security-auditor.md"),
-      "---\nname: security-auditor\nis_background: false\n---\nSecurity reviewer.",
+      "---\nname: security-auditor\nis_background: true\n---\nSecurity reviewer.",
       "utf8",
     );
     mocks.createAgentSession.mockImplementationOnce(async () => ({
@@ -317,13 +317,67 @@ describe("PiSdkRuntime", () => {
 
     const result = await taskTool.execute(
       "task-call",
-      { description: "Audit auth", prompt: "Audit login.", subagent: "security-auditor" },
+      {
+        description: "Audit auth",
+        prompt: "Audit login.",
+        subagent: "security-auditor",
+        background: false,
+      },
       new AbortController().signal,
       undefined,
       { cwd },
     );
 
     expect(result.content[0]?.text).toContain("audit complete");
+  });
+
+  it("returns immediately when task background true overrides a foreground subagent", async () => {
+    const parentSessionId = `session-${crypto.randomUUID()}`;
+    const workspaceId = `workspace-${crypto.randomUUID()}`;
+    insertSession(parentSessionId, workspaceId, join(userData, "missing.jsonl"), "Parent chat");
+    const agentsDir = join(cwd, ".modus", "agents");
+    await mkdir(agentsDir, { recursive: true });
+    await writeFile(
+      join(agentsDir, "researcher.md"),
+      "---\nname: researcher\nis_background: false\n---\nResearch in parallel.",
+      "utf8",
+    );
+    mocks.createAgentSession.mockImplementationOnce(async () => ({
+      session: createMockPiSession({ prompt: vi.fn(async () => undefined) }),
+    }));
+    new PiSdkRuntime();
+    const window = createWindowStub();
+    setAgentToolContext({ workspaceId, cwd, sessionId: parentSessionId, window });
+    const taskTool = toolRegistry
+      .getCustomToolDefinitions("chat")
+      .find((definition) => definition.name === "task") as {
+      execute(
+        toolCallId: string,
+        params: { description: string; prompt: string; subagent?: string; background?: boolean },
+        signal: AbortSignal,
+        onUpdate: undefined,
+        ctx: { cwd: string },
+      ): Promise<{ content: Array<{ type: "text"; text: string }> }>;
+    };
+
+    const result = await taskTool.execute(
+      "task-call",
+      {
+        description: "Research APIs",
+        prompt: "Research APIs in parallel.",
+        subagent: "researcher",
+        background: true,
+      },
+      new AbortController().signal,
+      undefined,
+      { cwd },
+    );
+
+    expect(result.content[0]?.text).toBe(
+      "Started background subagent. No result is available yet.",
+    );
+    expect(result.content[0]?.text).not.toContain("<subagent_runs>");
+    expect(result.content[0]?.text).not.toContain("summary");
   });
 
   it("falls back unknown subagent task tool calls to generic foreground", async () => {

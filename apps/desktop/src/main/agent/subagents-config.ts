@@ -53,7 +53,7 @@ export function parseSubagent(text: string, fallbackName: string): ParsedSubagen
     description,
     model: scalar(data.model)?.trim() || "inherit",
     readOnly: asBoolean(data.readonly, false),
-    isBackground: asBoolean(data.is_background ?? data["is-background"], false),
+    isBackground: asBoolean(data.background ?? data.is_background ?? data["is-background"], false),
     ...(tools ? { tools } : {}),
     ...(disallowedTools ? { disallowedTools } : {}),
     isolation: asIsolation(data.isolation),

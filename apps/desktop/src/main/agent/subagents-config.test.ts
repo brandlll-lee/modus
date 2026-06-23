@@ -41,6 +41,12 @@ describe("parseSubagent", () => {
       isolation: "worktree",
     });
   });
+
+  it("accepts background as an alias for is_background", () => {
+    const agent = parseSubagent("---\nbackground: true\n---\nBody", "researcher");
+
+    expect(agent.isBackground).toBe(true);
+  });
 });
 
 describe("loadWorkspaceSubagents", () => {
