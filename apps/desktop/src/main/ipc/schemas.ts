@@ -243,6 +243,11 @@ export const diffPathSchema = z.object({
   path: nonEmptyString,
 });
 
+export const diffStatsSinceSchema = z.object({
+  cwd: nonEmptyString,
+  base: nonEmptyString,
+});
+
 /**
  * Open a workspace file in the OS default app. `path` is the tool's reported
  * path (relative to cwd or absolute); the handler resolves + sandboxes it.

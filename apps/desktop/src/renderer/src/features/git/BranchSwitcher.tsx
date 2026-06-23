@@ -18,6 +18,8 @@ type BranchSwitcherProps = {
   onError?: (message: string) => void;
   /** Fired after a successful checkout so the host can refresh derived views. */
   onAfterSwitch?: () => void;
+  /** Fired when Git says this branch is already checked out in a linked worktree. */
+  onWorktreeBranch?: (path: string, branch: string) => void;
 };
 
 /**
@@ -36,6 +38,7 @@ export function BranchSwitcher({
   disabled = false,
   onError,
   onAfterSwitch,
+  onWorktreeBranch,
 }: BranchSwitcherProps) {
   const [open, setOpen] = useState(false);
   const [branches, setBranches] = useState<GitBranchSummary | undefined>();
@@ -60,8 +63,8 @@ export function BranchSwitcher({
       setBusy(name);
       try {
         const result = await window.modus.git.checkout({ cwd, name });
-        if (result.kind === "worktree") {
-          onError?.(result.output);
+        if (result.kind === "worktree" && result.worktreePath) {
+          onWorktreeBranch?.(result.worktreePath, result.branch ?? name);
           return;
         }
         onAfterSwitch?.();
@@ -71,7 +74,7 @@ export function BranchSwitcher({
         setBusy(undefined);
       }
     },
-    [cwd, onAfterSwitch, onError],
+    [cwd, onAfterSwitch, onError, onWorktreeBranch],
   );
 
   const locals = branches?.local ?? [];

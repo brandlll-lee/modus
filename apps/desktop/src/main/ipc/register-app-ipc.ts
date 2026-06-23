@@ -160,6 +160,7 @@ import {
   diffFileVersionsSchema,
   diffPathSchema,
   diffReadSchema,
+  diffStatsSinceSchema,
   docsAddSchema,
   docsSearchSchema,
   fileOpenSchema,
@@ -712,6 +713,12 @@ export function registerAppIpc(): void {
   ipcMain.handle(IPC_CHANNELS.diffStats, async (event, cwd: string) => {
     assertTrustedSender(event);
     return await getWorkingChangeStats(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.diffStats));
+  });
+
+  ipcMain.handle(IPC_CHANNELS.diffStatsSince, async (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(diffStatsSinceSchema, input, IPC_CHANNELS.diffStatsSince);
+    return await getChangeStatsSince(parsed.cwd, parsed.base);
   });
 
   // Session-scoped change summary for the composer strip: changes made since

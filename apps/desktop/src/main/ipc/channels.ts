@@ -60,6 +60,7 @@ export const IPC_CHANNELS = {
   diffDiscard: "diff:discard",
   diffStatus: "diff:status",
   diffStats: "diff:stats",
+  diffStatsSince: "diff:stats-since",
   diffSessionStats: "diff:session-stats",
   diffCommitOrPush: "diff:commit-or-push",
   filesList: "files:list",

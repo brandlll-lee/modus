@@ -105,6 +105,7 @@ const api: ModusApi = {
     discard: (input) => ipcRenderer.invoke("diff:discard", input),
     status: (cwd) => ipcRenderer.invoke("diff:status", cwd),
     stats: (cwd) => ipcRenderer.invoke("diff:stats", cwd),
+    statsSince: (input) => ipcRenderer.invoke("diff:stats-since", input),
     sessionStats: (sessionId) => ipcRenderer.invoke("diff:session-stats", sessionId),
     commitOrPush: (input) => ipcRenderer.invoke("diff:commit-or-push", input),
   },

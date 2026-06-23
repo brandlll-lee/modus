@@ -91,6 +91,7 @@ export function App() {
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [inspectorWidth, setInspectorWidth] = useState(384);
   const [inspectorTab, setInspectorTab] = useState("changes");
+  const [reviewCwd, setReviewCwd] = useState<string | undefined>();
   const [selectedSubagentId, setSelectedSubagentId] = useState<string | undefined>();
   // Plans are scoped per session (the authoritative key), so switching sessions
   // shows that session's own plan — never the last one any session emitted.
@@ -108,6 +109,10 @@ export function App() {
   const hubRef = useRef(new AgentEventHub());
   const activeSessionIdRef = useRef<string | undefined>(undefined);
   const activeWorkspaceRef = useRef<WorkspaceInfo | null>(null);
+  const reviewScopeRef = useRef<{
+    sessionId: string | undefined;
+    workspaceId: string | undefined;
+  }>({ sessionId: undefined, workspaceId: undefined });
   const layoutRowRef = useRef<HTMLDivElement>(null);
 
   // Track the panel row's live width so side-panel widths can be clamped to keep
@@ -334,6 +339,12 @@ export function App() {
     setInspectorOpen(true);
   }
 
+  function openReview(cwd?: string): void {
+    setReviewCwd(cwd);
+    setInspectorTab("changes");
+    setInspectorOpen(true);
+  }
+
   /**
    * Open the new-chat hero (Figure 1). The session row is created lazily by the
    * first prompt (`submitHeroPrompt`), so "New chat" never spawns an empty
@@ -494,6 +505,17 @@ export function App() {
   const activeRunning = activeSession
     ? (activityBySession[activeSession.id]?.running ?? false)
     : false;
+
+  useEffect(() => {
+    const next = { sessionId: activeSessionId, workspaceId: activeWorkspace?.id };
+    if (
+      reviewScopeRef.current.sessionId !== next.sessionId ||
+      reviewScopeRef.current.workspaceId !== next.workspaceId
+    ) {
+      reviewScopeRef.current = next;
+      setReviewCwd(undefined);
+    }
+  }, [activeSessionId, activeWorkspace?.id]);
 
   // Each panel may grow only until the OTHER panel + main's reserved floor are
   // accounted for. Until the row is measured, allow the panels' own caps.
@@ -666,7 +688,7 @@ export function App() {
                               onModelConfigChange={(next, thinkingVariant) =>
                                 void updateModelThinking(next, thinkingVariant)
                               }
-                              onOpenReview={() => setInspectorOpen(true)}
+                              onOpenReview={openReview}
                               onOpenSubagent={openSubagent}
                               onInitialEventsConsumed={(sessionId) => {
                                 setInitialEventsBySession((current) => {
@@ -760,7 +782,7 @@ export function App() {
                       <Inspector
                         activeWorkspace={activeWorkspace}
                         contextUsageBySession={contextUsageBySession}
-                        cwd={activeCwd}
+                        cwd={reviewCwd ?? activeCwd}
                         defaultModel={model}
                         hub={hubRef.current}
                         sessionId={activeSession?.id}
@@ -771,7 +793,7 @@ export function App() {
                           void updateModelThinking(next, thinkingVariant)
                         }
                         onOpenChange={setInspectorOpen}
-                        onOpenReview={() => setInspectorOpen(true)}
+                        onOpenReview={openReview}
                         onOpenSubagent={openSubagent}
                         onPlanUpdated={(plan) => {
                           if (!activeSession) {

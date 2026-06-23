@@ -60,7 +60,7 @@ type InspectorProps = {
   onSessionsChanged(): void;
   onModelChange(model: string): void;
   onModelConfigChange(model: string, thinkingVariant: string): Promise<void> | void;
-  onOpenReview(): void;
+  onOpenReview(cwd?: string): void;
   onOpenSubagent(childSessionId: string): void;
   onPlanUpdated(plan: PlanRef): void;
   onOpenChange(open: boolean): void;

@@ -97,6 +97,12 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
   // Surfaces a failed stage/unstage/discard/revert so it is never a silent no-op.
   const [actionError, setActionError] = useState<string | undefined>();
   const [refreshToken, setRefreshToken] = useState(0);
+  const [linkedWorktree, setLinkedWorktree] = useState<
+    { rootCwd: string | undefined; cwd: string; branch: string } | undefined
+  >();
+  const visibleLinkedWorktree =
+    normalizePath(linkedWorktree?.rootCwd) === normalizePath(cwd) ? linkedWorktree : undefined;
+  const activeCwd = visibleLinkedWorktree?.cwd ?? cwd;
 
   const refresh = useCallback(async (targetCwd: string | undefined): Promise<void> => {
     if (!targetCwd) {
@@ -137,27 +143,27 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
   }, []);
 
   useEffect(() => {
-    void refresh(cwd);
-  }, [cwd, refresh]);
+    void refresh(activeCwd);
+  }, [activeCwd, refresh]);
 
   // Live refresh: watch the repo and refresh on debounced on-disk changes
   // (agent edits, terminal commits, external git ops) — no manual refresh.
   useEffect(() => {
-    if (!cwd || isRepository === false) return;
+    if (!activeCwd || isRepository === false) return;
     let watchedRoot: string | undefined;
-    void window.modus.git.watch(cwd).then((root: string | undefined) => {
+    void window.modus.git.watch(activeCwd).then((root: string | undefined) => {
       watchedRoot = root ?? undefined;
     });
     const off = window.modus.git.onChanged((event: GitChangeEvent) => {
       if (!watchedRoot || event.cwd === watchedRoot) {
-        void refresh(cwd);
+        void refresh(activeCwd);
       }
     });
     return () => {
       off();
-      void window.modus.git.unwatch(cwd);
+      void window.modus.git.unwatch(activeCwd);
     };
-  }, [cwd, isRepository, refresh]);
+  }, [activeCwd, isRepository, refresh]);
 
   const meta = SCOPE_META[scope];
   const scopeFiles = useMemo(
@@ -191,23 +197,23 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
 
   const discardChange = useCallback(
     async (path: string): Promise<void> => {
-      if (!cwd) return;
+      if (!activeCwd) return;
       setActionError(undefined);
       try {
-        await window.modus.diff.discard({ cwd, path });
+        await window.modus.diff.discard({ cwd: activeCwd, path });
       } catch (cause) {
         setActionError(cause instanceof Error ? cause.message : String(cause));
       } finally {
-        await refresh(cwd);
+        await refresh(activeCwd);
       }
     },
-    [cwd, refresh],
+    [activeCwd, refresh],
   );
 
   async function toggleCommit(hash: string): Promise<void> {
     setExpandedCommits((prev) => toggleKey(prev, hash));
-    if (!cwd || commitFiles[hash]) return;
-    const files = await window.modus.diff.commitChanges({ cwd, commit: hash });
+    if (!activeCwd || commitFiles[hash]) return;
+    const files = await window.modus.diff.commitChanges({ cwd: activeCwd, commit: hash });
     setCommitFiles((prev) => ({ ...prev, [hash]: files }));
   }
 
@@ -215,16 +221,16 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
     setExpanded((prev) => toggleKey(prev, key));
   }, []);
 
-  const cwdLabel = cwd?.split(/[\\/]/).filter(Boolean).at(-1) ?? "workspace";
-  const onCommitRefresh = useCallback(() => refresh(cwd), [cwd, refresh]);
+  const cwdLabel = activeCwd?.split(/[\\/]/).filter(Boolean).at(-1) ?? "workspace";
+  const onCommitRefresh = useCallback(() => refresh(activeCwd), [activeCwd, refresh]);
 
   async function initializeRepository(): Promise<void> {
-    if (!cwd) return;
+    if (!activeCwd) return;
     setActionError(undefined);
     setInitializingRepository(true);
     try {
-      await window.modus.git.init(cwd);
-      await refresh(cwd);
+      await window.modus.git.init(activeCwd);
+      await refresh(activeCwd);
     } catch (cause) {
       setActionError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -244,14 +250,14 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
       const key = event.key.toLowerCase();
       if (key === "r") {
         event.preventDefault();
-        void refresh(cwd);
+        void refresh(activeCwd);
       } else if (key === "f" && triggerFindInActiveDiff()) {
         event.preventDefault();
       }
     };
     node.addEventListener("keydown", handler);
     return () => node.removeEventListener("keydown", handler);
-  }, [cwd, refresh]);
+  }, [activeCwd, refresh]);
 
   return (
     <section className="flex h-full min-h-0 flex-col" ref={sectionRef}>
@@ -259,8 +265,8 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
         <button
           aria-label="Refresh changes"
           className="flex size-7 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-hover hover:text-fg-subtle disabled:opacity-40"
-          disabled={!cwd}
-          onClick={() => void refresh(cwd)}
+          disabled={!activeCwd}
+          onClick={() => void refresh(activeCwd)}
           type="button"
         >
           <IconRefresh size={15} stroke={1.65} />
@@ -268,13 +274,21 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
       </PanelHeader>
 
       <div className="scroll-thin min-h-0 flex-1 overflow-y-auto">
-        {cwd && isRepository ? (
+        {activeCwd && isRepository ? (
           <>
             <ComparisonBar
               branch={status?.branch}
-              cwd={cwd}
+              cwd={activeCwd}
               onError={setActionError}
               onRefresh={onCommitRefresh}
+              onWorktreeBranch={(worktreeCwd, branch) => {
+                setActionError(undefined);
+                setLinkedWorktree(
+                  normalizePath(worktreeCwd) === normalizePath(cwd)
+                    ? undefined
+                    : { rootCwd: cwd, cwd: worktreeCwd, branch },
+                );
+              }}
               onToggleTree={() => setTreeView(!treeView)}
               status={status}
               treeView={treeView}
@@ -287,8 +301,8 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
                   setExpandedCommits(new Set());
                 }}
                 onFind={() => triggerFindInActiveDiff()}
-                onRefresh={() => void refresh(cwd)}
-                onReview={() => void startReview(cwd, sessionId, workspaceId)}
+                onRefresh={() => void refresh(activeCwd)}
+                onReview={() => void startReview(activeCwd, sessionId, workspaceId)}
                 onSetLayout={setLayout}
                 onToggleWhitespace={() => setIgnoreWhitespace(!ignoreWhitespace)}
               />
@@ -303,6 +317,21 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
               scope={scope}
               showStats={!meta.commitHistory}
             />
+
+            {visibleLinkedWorktree ? (
+              <div className="flex items-center gap-2 border-hairline-soft border-b bg-fill/70 px-3 py-2 text-fg-subtle text-xs">
+                <span className="min-w-0 flex-1 truncate">
+                  Viewing linked worktree: {visibleLinkedWorktree.branch}
+                </span>
+                <button
+                  className="rounded border border-hairline px-2 py-1 text-fg transition-colors hover:bg-hover"
+                  onClick={() => setLinkedWorktree(undefined)}
+                  type="button"
+                >
+                  Back to main
+                </button>
+              </div>
+            ) : null}
           </>
         ) : null}
 
@@ -330,7 +359,7 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
           </div>
         ) : null}
 
-        {cwd && isRepository === false ? (
+        {activeCwd && isRepository === false ? (
           <div className="flex h-full min-h-[360px] flex-col items-center justify-center gap-3 px-6 text-center">
             <IconGitBranch className="text-fg-faint" size={22} stroke={1.4} />
             <span className="text-fg-subtle text-xs">Use Git to track changes</span>
@@ -345,9 +374,9 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
           </div>
         ) : count === 0 ? (
           <EmptyState
-            className={cwd ? "min-h-[220px]" : "h-full"}
+            className={activeCwd ? "min-h-[220px]" : "h-full"}
             hint={
-              cwd
+              activeCwd
                 ? meta.commitHistory
                   ? `No commits in ${cwdLabel}`
                   : `No ${meta.noun} Changes in ${cwdLabel}`
@@ -359,7 +388,7 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
           commits.map((commit) => (
             <CommitRow
               commit={commit}
-              cwd={cwd ?? ""}
+              cwd={activeCwd ?? ""}
               expanded={expandedCommits.has(commit.hash)}
               expandedFiles={expanded}
               files={commitFiles[commit.hash]}
@@ -373,7 +402,7 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
           ))
         ) : treeView ? (
           <TreeRows
-            cwd={cwd ?? ""}
+            cwd={activeCwd ?? ""}
             depth={0}
             expanded={expanded}
             ignoreWhitespace={ignoreWhitespace}
@@ -388,7 +417,7 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
           scopeFiles.map((change) => (
             <ChangeRow
               change={change}
-              cwd={cwd ?? ""}
+              cwd={activeCwd ?? ""}
               display="full"
               expanded={expanded.has(change.path)}
               ignoreWhitespace={ignoreWhitespace}
@@ -423,6 +452,10 @@ function toggleKey(set: Set<string>, key: string): Set<string> {
   return next;
 }
 
+function normalizePath(path: string | undefined): string {
+  return (path ?? "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+}
+
 /* ── Row 1: list/tree toggle · branch switcher · Commit or push · ⋯ ── */
 
 function ComparisonBar({
@@ -433,6 +466,7 @@ function ComparisonBar({
   onToggleTree,
   onRefresh,
   onError,
+  onWorktreeBranch,
   children,
 }: {
   branch: string | undefined;
@@ -442,6 +476,7 @@ function ComparisonBar({
   onToggleTree(): void;
   onRefresh(): void;
   onError(message: string): void;
+  onWorktreeBranch(path: string, branch: string): void;
   children: ReactNode;
 }) {
   return (
@@ -461,6 +496,7 @@ function ComparisonBar({
         cwd={cwd}
         onAfterSwitch={onRefresh}
         onError={onError}
+        onWorktreeBranch={onWorktreeBranch}
         triggerClassName="flex min-w-0 items-center gap-1.5 rounded-md py-0.5 pr-1.5 pl-1 text-sm outline-none transition-colors hover:bg-hover data-popup-open:bg-hover"
       >
         <IconGitBranch className="shrink-0 text-fg-subtle" size={13} stroke={1.7} />

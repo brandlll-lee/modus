@@ -14,6 +14,7 @@ import {
   createSubagentWorktree,
   discardFile,
   finishSubagentWorktree,
+  getChangeStatsSince,
   getStatusSummary,
   getWorkingChangeStats,
   initRepository,
@@ -190,6 +191,20 @@ describe("git-service", () => {
     const stats = await getWorkingChangeStats(repo);
     expect(stats.removed).toBe(1);
     expect(stats.added).toBe(0);
+  });
+
+  it("summarizes committed changes since a base commit", async () => {
+    const base = (await git(["rev-parse", "HEAD"])).trim();
+    await writeFile(join(repo, "tracked.txt"), "base\nextra\n");
+    await writeFile(join(repo, "added.txt"), "one\ntwo\n");
+    await git(["add", "."]);
+    await git(["commit", "-m", "second"]);
+
+    const stats = await getChangeStatsSince(repo, base);
+
+    expect(stats.fileCount).toBe(2);
+    expect(stats.added).toBe(3);
+    expect(stats.removed).toBe(0);
   });
 
   it("lists commit history newest-first with metadata", async () => {

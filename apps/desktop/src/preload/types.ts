@@ -239,6 +239,8 @@ export type ModusApi = {
     status(cwd: string): Promise<GitStatusSummary>;
     /** File list + ± line counters for the changes strip / apply review. */
     stats(cwd: string): Promise<WorkingChangeStats>;
+    /** File list + ± line counters since a Git commit-ish. */
+    statsSince(input: { cwd: string; base: string }): Promise<WorkingChangeStats>;
     /**
      * Session-scoped change summary: changes since this session's baseline
      * (its first checkpoint), for the composer strip. Empty when the session
