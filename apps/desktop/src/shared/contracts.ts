@@ -533,6 +533,10 @@ export type GitStatusSummary = {
   stagedCount: number;
   /** Number of unstaged (tracked-modified + untracked) files. */
   unstagedCount: number;
+  /** True while Git has an unfinished merge in this checkout. */
+  mergeInProgress: boolean;
+  /** Files with unresolved merge entries, when any. */
+  conflictFiles: string[];
 };
 
 /** Result of a commit and/or push action surfaced back to the renderer. */
@@ -555,6 +559,8 @@ export type GitBranch = {
   remote: boolean;
   /** Upstream tracking ref for a local branch, when configured. */
   upstream?: string;
+  /** Linked worktree path when this local branch is checked out elsewhere. */
+  worktreePath?: string;
 };
 
 /** Local + remote branch listing for the commit dialog branch switcher. */
@@ -571,6 +577,9 @@ export type GitBranchSummary = {
 export type GitActionResult = {
   /** Human-readable git output, shown on error or as a toast. */
   output: string;
+  kind?: "ok" | "worktree";
+  branch?: string;
+  worktreePath?: string;
 };
 
 /**

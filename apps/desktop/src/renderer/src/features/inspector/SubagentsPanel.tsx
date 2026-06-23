@@ -1,8 +1,10 @@
 import { IconArrowLeft, IconLayoutBoard, IconList, IconSearch } from "@tabler/icons-react";
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   AgentSessionInfo,
   ContextUsageInfo,
+  GitChangeEvent,
+  GitStatusSummary,
   ModelInfo,
   PlanRef,
   WorkspaceInfo,
@@ -56,6 +58,7 @@ export function SubagentsPanel({
   const [query, setQuery] = useState("");
   const [worktreeBusy, setWorktreeBusy] = useState<string | undefined>();
   const [worktreeError, setWorktreeError] = useState<string | undefined>();
+  const [parentGitStatus, setParentGitStatus] = useState<GitStatusSummary | undefined>();
   const lastSelectedIdRef = useRef<string | undefined>(undefined);
 
   const subagents = useMemo(
@@ -63,6 +66,7 @@ export function SubagentsPanel({
     [sessions, parentSessionId],
   );
   const parentSession = sessions.find((session) => session.id === parentSessionId);
+  const parentCwd = parentSession?.cwd;
   const selected = subagents.find((session) => session.id === selectedId);
   const filteredSubagents = useMemo(
     () => subagents.filter((session) => matchesSubagentQuery(session, query)),
@@ -76,6 +80,40 @@ export function SubagentsPanel({
     lastSelectedIdRef.current = selectedId;
   }, [selectedId]);
 
+  const refreshParentGitStatus = useCallback(async (): Promise<void> => {
+    if (!parentCwd) {
+      setParentGitStatus(undefined);
+      return;
+    }
+    setParentGitStatus(await window.modus.diff.status(parentCwd).catch(() => undefined));
+  }, [parentCwd]);
+
+  useEffect(() => {
+    if (!parentCwd) {
+      setParentGitStatus(undefined);
+      return;
+    }
+    let disposed = false;
+    void window.modus.git.watch(parentCwd);
+    void refreshParentGitStatus();
+    const off = window.modus.git.onChanged((event: GitChangeEvent) => {
+      if (!disposed && event.cwd === parentCwd) {
+        void refreshParentGitStatus();
+      }
+    });
+    return () => {
+      disposed = true;
+      off();
+      void window.modus.git.unwatch(parentCwd);
+    };
+  }, [parentCwd, refreshParentGitStatus]);
+
+  const applyBlockedReason = parentGitStatus?.mergeInProgress
+    ? "Commit or abort the pending worktree apply before applying another worktree."
+    : (parentGitStatus?.stagedCount ?? 0) + (parentGitStatus?.unstagedCount ?? 0) > 0
+      ? "Apply requires a clean main workspace."
+      : undefined;
+
   async function applyWorktree(session: AgentSessionInfo): Promise<void> {
     setWorktreeBusy("apply");
     setWorktreeError(undefined);
@@ -85,6 +123,21 @@ export function SubagentsPanel({
       setWorktreeError(error instanceof Error ? error.message : String(error));
     } finally {
       setWorktreeBusy(undefined);
+      await refreshParentGitStatus();
+      onSessionsChanged();
+    }
+  }
+
+  async function abortWorktreeApply(session: AgentSessionInfo): Promise<void> {
+    setWorktreeBusy("abort");
+    setWorktreeError(undefined);
+    try {
+      await window.modus.agent.abortSubagentWorktreeApply(session.id);
+    } catch (error) {
+      setWorktreeError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setWorktreeBusy(undefined);
+      await refreshParentGitStatus();
       onSessionsChanged();
     }
   }
@@ -98,6 +151,7 @@ export function SubagentsPanel({
       setWorktreeError(error instanceof Error ? error.message : String(error));
     } finally {
       setWorktreeBusy(undefined);
+      await refreshParentGitStatus();
       onSessionsChanged();
     }
   }
@@ -163,8 +217,11 @@ export function SubagentsPanel({
           <SubagentWorktreeBanner
             busy={worktreeBusy}
             error={worktreeError}
+            applyBlockedReason={applyBlockedReason}
+            mergeInProgress={Boolean(parentGitStatus?.mergeInProgress)}
             onApply={() => void applyWorktree(selected)}
             onAskRoot={() => void askRootToResolve(selected)}
+            onAbort={() => void abortWorktreeApply(selected)}
             onCleanup={() => void cleanupWorktree(selected)}
             onOpen={() =>
               void window.modus.file.open({
@@ -363,27 +420,47 @@ function StatusPill({ session }: { session: AgentSessionInfo }) {
 }
 
 function SubagentWorktreeBanner({
+  applyBlockedReason,
   busy,
   error,
+  mergeInProgress,
   onApply,
   onAskRoot,
+  onAbort,
   onCleanup,
   onOpen,
   worktree,
 }: {
+  applyBlockedReason: string | undefined;
   busy: string | undefined;
   error: string | undefined;
+  mergeInProgress: boolean;
   onApply(): void;
   onAskRoot(): void;
+  onAbort(): void;
   onCleanup(): void;
   onOpen(): void;
   worktree: NonNullable<AgentSessionInfo["subagentWorktree"]>;
 }) {
   const files = worktree.conflictFiles?.length ? worktree.conflictFiles : worktree.changedFiles;
   const canApply = worktree.integrationStatus === "ready";
+  const canAbort =
+    worktree.integrationStatus === "conflict" ||
+    (worktree.integrationStatus === "applied" && mergeInProgress);
   const canCleanup =
-    worktree.integrationStatus === "applied" || worktree.integrationStatus === "no_changes";
+    worktree.integrationStatus === "no_changes" ||
+    (worktree.integrationStatus === "applied" && !mergeInProgress);
   const canAskRoot = worktree.integrationStatus === "conflict";
+  const message =
+    worktree.integrationStatus === "applied"
+      ? mergeInProgress
+        ? "Applied. Commit or abort before applying another worktree."
+        : "Applied. Cleanup is available after review."
+      : worktree.integrationStatus === "conflict"
+        ? "Merge conflict. Resolve it or abort this apply."
+        : canApply
+          ? applyBlockedReason
+          : undefined;
   return (
     <div className="border-hairline border-b bg-elevated px-3 py-2 text-xs">
       <div className="flex flex-wrap items-center gap-2">
@@ -402,11 +479,22 @@ function SubagentWorktreeBanner({
         {canApply ? (
           <button
             className="rounded border-hairline px-2 py-1 hover:bg-hover"
-            disabled={Boolean(busy)}
+            disabled={Boolean(busy || applyBlockedReason)}
             onClick={onApply}
+            title={applyBlockedReason}
             type="button"
           >
             {busy === "apply" ? "Applying..." : "Apply"}
+          </button>
+        ) : null}
+        {canAbort ? (
+          <button
+            className="rounded border-hairline px-2 py-1 hover:bg-hover"
+            disabled={Boolean(busy)}
+            onClick={onAbort}
+            type="button"
+          >
+            {busy === "abort" ? "Aborting..." : "Abort apply"}
           </button>
         ) : null}
         {canAskRoot ? (
@@ -436,6 +524,7 @@ function SubagentWorktreeBanner({
           {files.length > 4 ? `, +${files.length - 4}` : ""}
         </div>
       ) : null}
+      {message ? <div className="mt-1 text-fg-subtle">{message}</div> : null}
       {error ? <div className="mt-1 text-danger">{error}</div> : null}
     </div>
   );

@@ -65,6 +65,7 @@ import { resolveContext, searchContext } from "../context/context-service";
 import { addDocSource, listDocSources, searchDocs } from "../docs/docs-service";
 import { listDirectory, readWorkspaceFile } from "../files/files-service";
 import {
+  abortSubagentWorktreeApply,
   applySubagentWorktree,
   checkoutBranch,
   cleanupSubagentWorktree,
@@ -82,7 +83,7 @@ import {
   readDiff,
   readFileVersions,
 } from "../git/git-service";
-import { unwatchRepo, watchRepo } from "../git/git-watcher";
+import { emitGitEvent, unwatchRepo, watchRepo } from "../git/git-watcher";
 import {
   ensurePersonalizationFile,
   getPersonalization,
@@ -398,9 +399,31 @@ export function registerAppIpc(): void {
     }
     const worktree = await applySubagentWorktree(parent.cwd, child.subagentWorktree);
     const updated = updateAgentSessionWorktree(child.id, worktree) ?? child;
-    if (worktree.integrationStatus === "conflict") {
-      throw new Error(`Merge conflict: ${(worktree.conflictFiles ?? []).join(", ")}`);
+    emitGitEvent({ cwd: parent.cwd, kind: "index" });
+    return updated;
+  });
+
+  ipcMain.handle(IPC_CHANNELS.agentAbortSubagentWorktreeApply, async (event, sessionId: string) => {
+    assertTrustedSender(event);
+    const id = parseIpcInput(
+      sessionIdSchema,
+      sessionId,
+      IPC_CHANNELS.agentAbortSubagentWorktreeApply,
+    );
+    const child = getAgentSession(id);
+    if (!child?.parentSessionId || !child.subagentWorktree) {
+      throw new Error("Subagent worktree not found.");
     }
+    if (!["applied", "conflict"].includes(child.subagentWorktree.integrationStatus)) {
+      throw new Error("Only applied or conflicted worktree applies can be aborted.");
+    }
+    const parent = getAgentSession(child.parentSessionId);
+    if (!parent) {
+      throw new Error("Parent session not found.");
+    }
+    const worktree = await abortSubagentWorktreeApply(parent.cwd, child.subagentWorktree);
+    const updated = updateAgentSessionWorktree(child.id, worktree) ?? child;
+    emitGitEvent({ cwd: parent.cwd, kind: "index" });
     return updated;
   });
 
@@ -419,7 +442,9 @@ export function registerAppIpc(): void {
       throw new Error("Parent session not found.");
     }
     const worktree = await cleanupSubagentWorktree(parent.cwd, child.subagentWorktree);
-    return updateAgentSessionWorktree(child.id, worktree) ?? child;
+    const updated = updateAgentSessionWorktree(child.id, worktree) ?? child;
+    emitGitEvent({ cwd: parent.cwd, kind: "refs" });
+    return updated;
   });
 
   ipcMain.handle(IPC_CHANNELS.agentSetModel, async (event, input) => {
@@ -732,7 +757,7 @@ export function registerAppIpc(): void {
   ipcMain.handle(IPC_CHANNELS.gitCheckout, async (event, input) => {
     assertTrustedSender(event);
     const parsed = parseIpcInput(gitCheckoutSchema, input, IPC_CHANNELS.gitCheckout);
-    return { output: await checkoutBranch(parsed.cwd, parsed.name, parsed.remote ?? false) };
+    return await checkoutBranch(parsed.cwd, parsed.name, parsed.remote ?? false);
   });
 
   ipcMain.handle(IPC_CHANNELS.gitIsRepository, async (event, cwd: string) => {

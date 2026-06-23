@@ -33,7 +33,7 @@ type WatchEntry = {
 
 const entries = new Map<string, WatchEntry>();
 
-function emitGitEvent(event: GitChangeEvent): void {
+export function emitGitEvent(event: GitChangeEvent): void {
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed()) {
       window.webContents.send(IPC_CHANNELS.gitEvent, event);

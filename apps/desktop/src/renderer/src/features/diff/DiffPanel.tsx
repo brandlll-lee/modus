@@ -318,6 +318,18 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
           </button>
         ) : null}
 
+        {status?.mergeInProgress ? (
+          <div className="flex items-start gap-2 border-hairline-soft border-b bg-danger/8 px-3 py-2 text-danger text-xs">
+            <IconAlertTriangle className="mt-0.5 shrink-0" size={13} stroke={1.8} />
+            <span className="min-w-0 flex-1 wrap-break-word">
+              Merge in progress
+              {status.conflictFiles.length
+                ? `: ${status.conflictFiles.slice(0, 4).join(", ")}${status.conflictFiles.length > 4 ? `, +${status.conflictFiles.length - 4}` : ""}`
+                : ". Commit or abort before applying another worktree."}
+            </span>
+          </div>
+        ) : null}
+
         {cwd && isRepository === false ? (
           <div className="flex h-full min-h-[360px] flex-col items-center justify-center gap-3 px-6 text-center">
             <IconGitBranch className="text-fg-faint" size={22} stroke={1.4} />

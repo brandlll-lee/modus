@@ -59,7 +59,11 @@ export function BranchSwitcher({
       }
       setBusy(name);
       try {
-        await window.modus.git.checkout({ cwd, name });
+        const result = await window.modus.git.checkout({ cwd, name });
+        if (result.kind === "worktree") {
+          onError?.(result.output);
+          return;
+        }
         onAfterSwitch?.();
       } catch (cause) {
         onError?.(cause instanceof Error ? cause.message : String(cause));
@@ -96,6 +100,7 @@ export function BranchSwitcher({
                     }
                     void switchTo(branch.name);
                   }}
+                  title={branch.worktreePath}
                 >
                   <span className="flex size-4 shrink-0 items-center justify-center text-accent">
                     {branch.current ? <IconCheck size={14} stroke={2} /> : null}
@@ -107,6 +112,8 @@ export function BranchSwitcher({
                   )}
                   {branch.current ? (
                     <span className="shrink-0 text-2xs text-fg-faint">current</span>
+                  ) : branch.worktreePath ? (
+                    <span className="shrink-0 text-2xs text-fg-faint">worktree</span>
                   ) : null}
                 </Menu.Item>
               ))

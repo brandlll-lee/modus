@@ -145,6 +145,7 @@ export type ModusApi = {
     rollback(input: { sessionId: string; userMessageId: string }): Promise<AgentRollbackResult>;
     delete(sessionId: string): Promise<void>;
     applySubagentWorktree(sessionId: string): Promise<AgentSessionInfo>;
+    abortSubagentWorktreeApply(sessionId: string): Promise<AgentSessionInfo>;
     cleanupSubagentWorktree(sessionId: string): Promise<AgentSessionInfo>;
     setModel(input: {
       sessionId: string;

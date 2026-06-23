@@ -6,7 +6,9 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  abortSubagentWorktreeApply,
   applySubagentWorktree,
+  checkoutBranch,
   cleanupSubagentWorktree,
   commitOrPush,
   createSubagentWorktree,
@@ -16,6 +18,7 @@ import {
   getWorkingChangeStats,
   initRepository,
   isGitRepository,
+  listBranches,
   listChanges,
   listCommitChanges,
   listCommitLog,
@@ -269,6 +272,10 @@ describe("git-service", () => {
     expect((await readFile(join(repo, "tracked.txt"), "utf8")).replace(/\r\n/g, "\n")).toBe(
       "child\n",
     );
+    const summary = await getStatusSummary(repo);
+    expect(summary.mergeInProgress).toBe(true);
+    expect(summary.stagedCount).toBe(1);
+    await git(["commit", "-m", "apply child"]);
 
     const cleaned = await cleanupSubagentWorktree(repo, applied);
     expect(cleaned.integrationStatus).toBe("cleaned");
@@ -308,5 +315,45 @@ describe("git-service", () => {
 
     expect(conflicted.integrationStatus).toBe("conflict");
     expect(conflicted.conflictFiles).toEqual(["tracked.txt"]);
+    const summary = await getStatusSummary(repo);
+    expect(summary.mergeInProgress).toBe(true);
+    expect(summary.conflictFiles).toEqual(["tracked.txt"]);
+  });
+
+  it("aborts a pending subagent apply back to ready", async () => {
+    const worktree = await createSubagentWorktree(repo, {
+      sessionId: "abcdef12-0000-0000-0000-ef1234567890",
+      name: "writer",
+    });
+    await writeFile(join(worktree.path, "tracked.txt"), "child\n");
+    const finished = await finishSubagentWorktree(worktree, "Child edit");
+    const applied = await applySubagentWorktree(repo, finished);
+
+    await expect(applySubagentWorktree(repo, finished)).rejects.toThrow("pending worktree apply");
+    const aborted = await abortSubagentWorktreeApply(repo, applied);
+
+    expect(aborted.integrationStatus).toBe("ready");
+    expect((await getStatusSummary(repo)).mergeInProgress).toBe(false);
+    expect(await listChanges(repo)).toEqual([]);
+    expect((await readFile(join(repo, "tracked.txt"), "utf8")).replace(/\r\n/g, "\n")).toBe(
+      "base\n",
+    );
+  });
+
+  it("reports branches already checked out by linked worktrees", async () => {
+    const current = (await git(["symbolic-ref", "--short", "HEAD"])).trim();
+    const worktree = await createSubagentWorktree(repo, {
+      sessionId: "abcdef12-2222-0000-0000-ef1234567890",
+      name: "writer",
+    });
+
+    const branches = await listBranches(repo);
+    const childBranch = branches.local.find((branch) => branch.name === worktree.branch);
+    expect(childBranch?.worktreePath?.replace(/\\/g, "/")).toBe(worktree.path.replace(/\\/g, "/"));
+
+    const result = await checkoutBranch(repo, worktree.branch);
+    expect(result.kind).toBe("worktree");
+    expect(result.worktreePath?.replace(/\\/g, "/")).toBe(worktree.path.replace(/\\/g, "/"));
+    expect((await git(["symbolic-ref", "--short", "HEAD"])).trim()).toBe(current);
   });
 });

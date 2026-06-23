@@ -32,6 +32,8 @@ const api: ModusApi = {
     delete: (sessionId) => ipcRenderer.invoke("agent:delete", sessionId),
     applySubagentWorktree: (sessionId) =>
       ipcRenderer.invoke("agent:apply-subagent-worktree", sessionId),
+    abortSubagentWorktreeApply: (sessionId) =>
+      ipcRenderer.invoke("agent:abort-subagent-worktree-apply", sessionId),
     cleanupSubagentWorktree: (sessionId) =>
       ipcRenderer.invoke("agent:cleanup-subagent-worktree", sessionId),
     setModel: (input) => ipcRenderer.invoke("agent:set-model", input),

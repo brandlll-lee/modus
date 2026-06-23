@@ -510,6 +510,8 @@ export async function getStatusSummary(cwd: string): Promise<GitStatusSummary> {
   const changes = await listChanges(cwd);
   const stagedCount = changes.filter((change) => change.staged).length;
   const unstagedCount = changes.filter((change) => change.unstaged || change.untracked).length;
+  const mergeInProgress = Boolean(await gitSafe(cwd, ["rev-parse", "--verify", "MERGE_HEAD"]));
+  const conflictFiles = mergeInProgress ? await unmergedFiles(cwd) : [];
 
   // added/removed reflect the WHOLE working tree (incl. untracked new files),
   // so the commit dialog header matches the panel summary — one source of truth.
@@ -525,6 +527,8 @@ export async function getStatusSummary(cwd: string): Promise<GitStatusSummary> {
     removed: working.removed,
     stagedCount,
     unstagedCount,
+    mergeInProgress,
+    conflictFiles,
   };
 }
 
@@ -601,6 +605,7 @@ export async function commitOrPush(
  *   remote: for-each-ref refs/remotes →  name   (origin/HEAD pointer dropped)
  */
 export async function listBranches(cwd: string): Promise<GitBranchSummary> {
+  const worktreeBranches = await listWorktreeBranches(cwd);
   const localRaw = await gitSafe(cwd, [
     "for-each-ref",
     "--format=%(refname:short)%09%(HEAD)%09%(upstream:short)",
@@ -619,11 +624,13 @@ export async function listBranches(cwd: string): Promise<GitBranchSummary> {
     if (!name) continue;
     const isCurrent = head === "*";
     if (isCurrent) current = name;
+    const worktreePath = worktreeBranches.get(name);
     local.push({
       name,
       current: isCurrent,
       remote: false,
       ...(upstream ? { upstream } : {}),
+      ...(worktreePath && !isCurrent ? { worktreePath } : {}),
     });
   }
   // Current branch first, then alphabetical — matches how GUIs surface "you are here".
@@ -650,6 +657,31 @@ async function branchExistsLocally(cwd: string, name: string): Promise<boolean> 
   }
 }
 
+async function listWorktreeBranches(cwd: string): Promise<Map<string, string>> {
+  const output = await gitSafe(cwd, ["worktree", "list", "--porcelain"]);
+  const branches = new Map<string, string>();
+  let worktreePath: string | undefined;
+  for (const line of output.split(/\r?\n/)) {
+    if (line.startsWith("worktree ")) {
+      worktreePath = line.slice("worktree ".length);
+    } else if (line.startsWith("branch refs/heads/") && worktreePath) {
+      branches.set(line.slice("branch refs/heads/".length), worktreePath);
+    } else if (!line) {
+      worktreePath = undefined;
+    }
+  }
+  return branches;
+}
+
+async function linkedWorktreeForBranch(cwd: string, branch: string): Promise<string | undefined> {
+  const worktreePath = (await listWorktreeBranches(cwd)).get(branch);
+  const repo = resolveRepo(cwd);
+  if (!worktreePath || !repo || resolve(worktreePath) === resolve(repo.root)) {
+    return undefined;
+  }
+  return worktreePath;
+}
+
 /**
  * Switch to a branch. `remote` distinguishes a remote-tracking ref
  * ("origin/feature") from a local head — local branch names may themselves
@@ -657,19 +689,41 @@ async function branchExistsLocally(cwd: string, name: string): Promise<boolean> 
  * to (or create + track) the matching local branch instead of detaching HEAD.
  * Git refuses (and we surface the error) when uncommitted changes would be lost.
  */
-export async function checkoutBranch(cwd: string, name: string, remote = false): Promise<string> {
+export async function checkoutBranch(
+  cwd: string,
+  name: string,
+  remote = false,
+): Promise<GitActionResult> {
   const target = name.trim();
   if (!target) {
     throw new Error("Branch name is required.");
   }
   if (!remote) {
-    return await git(cwd, ["switch", target]);
+    const worktreePath = await linkedWorktreeForBranch(cwd, target);
+    if (worktreePath) {
+      return {
+        kind: "worktree",
+        branch: target,
+        worktreePath,
+        output: `Branch "${target}" is checked out in a linked worktree: ${worktreePath}`,
+      };
+    }
+    return { kind: "ok", output: await git(cwd, ["switch", target]) };
   }
   const localName = target.includes("/") ? target.slice(target.indexOf("/") + 1) : target;
   if (await branchExistsLocally(cwd, localName)) {
-    return await git(cwd, ["switch", localName]);
+    const worktreePath = await linkedWorktreeForBranch(cwd, localName);
+    if (worktreePath) {
+      return {
+        kind: "worktree",
+        branch: localName,
+        worktreePath,
+        output: `Branch "${localName}" is checked out in a linked worktree: ${worktreePath}`,
+      };
+    }
+    return { kind: "ok", output: await git(cwd, ["switch", localName]) };
   }
-  return await git(cwd, ["switch", "--track", target]);
+  return { kind: "ok", output: await git(cwd, ["switch", "--track", target]) };
 }
 
 function subagentSlug(value: string): string {
@@ -771,6 +825,9 @@ export async function applySubagentWorktree(
   parentCwd: string,
   worktree: SubagentWorktreeInfo,
 ): Promise<SubagentWorktreeInfo> {
+  if (await mergeHead(parentCwd)) {
+    throw new Error("Commit or abort the pending worktree apply before applying another worktree.");
+  }
   if ((await gitSafe(parentCwd, ["status", "--porcelain=v1"])).trim()) {
     throw new Error("Apply requires a clean main workspace.");
   }
@@ -792,6 +849,21 @@ export async function applySubagentWorktree(
   }
 }
 
+export async function abortSubagentWorktreeApply(
+  parentCwd: string,
+  worktree: SubagentWorktreeInfo,
+): Promise<SubagentWorktreeInfo> {
+  if (!(await mergeHead(parentCwd))) {
+    throw new Error("No pending worktree apply to abort.");
+  }
+  if (!(await mergeHeadBelongsToWorktree(parentCwd, worktree))) {
+    throw new Error("The pending merge does not belong to this subagent worktree.");
+  }
+  await git(parentCwd, ["merge", "--abort"]);
+  const { conflictFiles: _conflictFiles, ...rest } = worktree;
+  return { ...rest, integrationStatus: "ready" };
+}
+
 export async function cleanupSubagentWorktree(
   parentCwd: string,
   worktree: SubagentWorktreeInfo,
@@ -801,10 +873,26 @@ export async function cleanupSubagentWorktree(
     throw new Error("Worktree cleanup requires a Git repository.");
   }
   assertManagedWorktreePath(repo.root, worktree.path);
+  if (await mergeHeadBelongsToWorktree(repo.root, worktree)) {
+    throw new Error("Commit or abort the pending worktree apply before cleanup.");
+  }
   await git(repo.root, ["worktree", "remove", "--force", worktree.path]);
   await gitSafe(repo.root, ["branch", "-D", worktree.branch]);
   await rm(worktree.path, { recursive: true, force: true }).catch(() => undefined);
   return { ...worktree, integrationStatus: "cleaned" };
+}
+
+async function mergeHead(cwd: string): Promise<string | undefined> {
+  return (await gitSafe(cwd, ["rev-parse", "--verify", "MERGE_HEAD"])) || undefined;
+}
+
+async function mergeHeadBelongsToWorktree(
+  cwd: string,
+  worktree: SubagentWorktreeInfo,
+): Promise<boolean> {
+  const head = await mergeHead(cwd);
+  if (!head) return false;
+  return head === (await gitSafe(cwd, ["rev-parse", "--verify", `${worktree.branch}^{commit}`]));
 }
 
 /* ── Agent checkpoints ───────────────────────────────────────────────────
