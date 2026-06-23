@@ -68,9 +68,10 @@ type ChatPaneProps = {
   onModelChange(model: string): void;
   onModelConfigChange(model: string, thinkingVariant: string): Promise<void> | void;
   /** "Review" on the changes strip: focus this pane and open the diff panel. */
-  onOpenReview(): void;
+  onOpenReview(cwd?: string): void;
   onOpenSubagent?(childSessionId: string): void;
   botColor?: string;
+  composerReplacement?: ReactNode;
   /** A plan was (re)written in Plan Mode: open it in the file panel. */
   onPlanUpdated(plan: PlanRef): void;
 };
@@ -93,6 +94,7 @@ export const ChatPane = forwardRef<ChatPaneHandle, ChatPaneProps>(function ChatP
     onOpenReview,
     onOpenSubagent,
     botColor,
+    composerReplacement,
     onPlanUpdated,
   },
   ref,
@@ -558,37 +560,43 @@ export const ChatPane = forwardRef<ChatPaneHandle, ChatPaneProps>(function ChatP
                   plan={reviewPlan}
                 />
               ) : null}
-              {workingStats && workingStats.fileCount > 0 ? (
-                <ChangesStrip
-                  onOpenFile={(path) =>
-                    void window.modus.file.open({ cwd: activeCwd, path }).catch(() => {})
-                  }
-                  onReview={onOpenReview}
-                  stats={workingStats}
-                />
-              ) : null}
-              {retryStatus ? <RetryStatusBar status={retryStatus} /> : null}
-              <Composer
-                canSubmit={Boolean(workspace) && Boolean(paneModel)}
-                contextItems={contextItems}
-                cwd={activeCwd}
-                hasSession
-                isRunning={isRunning}
-                mode={composerMode}
-                model={paneModel}
-                models={models}
-                {...(contextUsage ? { contextUsage } : {})}
-                onAbort={() => void abortPrompt()}
-                onContextChange={setContextItems}
-                onModeChange={setComposerMode}
-                onModelChange={(next) => void changeModel(next)}
-                onModelConfigChange={onModelConfigChange}
-                onSubmit={(message, context, delivery, attachments, skills, mode) =>
-                  submitPrompt(message, context, delivery, attachments, skills, mode)
-                }
-                sessionId={sessionId}
-                workspaceId={workspace?.id}
-              />
+              {composerReplacement ? (
+                composerReplacement
+              ) : (
+                <>
+                  {workingStats && workingStats.fileCount > 0 ? (
+                    <ChangesStrip
+                      onOpenFile={(path) =>
+                        void window.modus.file.open({ cwd: activeCwd, path }).catch(() => {})
+                      }
+                      onReview={() => onOpenReview(activeCwd)}
+                      stats={workingStats}
+                    />
+                  ) : null}
+                  {retryStatus ? <RetryStatusBar status={retryStatus} /> : null}
+                  <Composer
+                    canSubmit={Boolean(workspace) && Boolean(paneModel)}
+                    contextItems={contextItems}
+                    cwd={activeCwd}
+                    hasSession
+                    isRunning={isRunning}
+                    mode={composerMode}
+                    model={paneModel}
+                    models={models}
+                    {...(contextUsage ? { contextUsage } : {})}
+                    onAbort={() => void abortPrompt()}
+                    onContextChange={setContextItems}
+                    onModeChange={setComposerMode}
+                    onModelChange={(next) => void changeModel(next)}
+                    onModelConfigChange={onModelConfigChange}
+                    onSubmit={(message, context, delivery, attachments, skills, mode) =>
+                      submitPrompt(message, context, delivery, attachments, skills, mode)
+                    }
+                    sessionId={sessionId}
+                    workspaceId={workspace?.id}
+                  />
+                </>
+              )}
             </>
           )}
         </div>

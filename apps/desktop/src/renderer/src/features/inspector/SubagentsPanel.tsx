@@ -1,4 +1,10 @@
-import { IconArrowLeft, IconLayoutBoard, IconList, IconSearch } from "@tabler/icons-react";
+import {
+  IconArrowLeft,
+  IconChevronRight,
+  IconLayoutBoard,
+  IconList,
+  IconSearch,
+} from "@tabler/icons-react";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   AgentSessionInfo,
@@ -7,11 +13,14 @@ import type {
   GitStatusSummary,
   ModelInfo,
   PlanRef,
+  WorkingChangeStats,
   WorkspaceInfo,
 } from "../../../../shared/contracts";
+import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
 import { ModusBot } from "../../components/ui/ModusBot";
 import type { AgentEventHub } from "../agent/agentEventHub";
 import { ChatPane } from "../agent/ChatPane";
+import { ChangeFileList, LineDelta } from "../agent/changes/ChangeStats";
 import { subagentColor } from "../agent/subagentUi";
 
 type PanelView = "overview" | "detail";
@@ -31,7 +40,7 @@ type SubagentsPanelProps = {
   onSessionsChanged(): void;
   onModelChange(model: string): void;
   onModelConfigChange(model: string, thinkingVariant: string): Promise<void> | void;
-  onOpenReview(): void;
+  onOpenReview(cwd?: string): void;
   onOpenSubagent(childSessionId: string): void;
   onPlanUpdated(plan: PlanRef): void;
 };
@@ -58,7 +67,11 @@ export function SubagentsPanel({
   const [query, setQuery] = useState("");
   const [worktreeBusy, setWorktreeBusy] = useState<string | undefined>();
   const [worktreeError, setWorktreeError] = useState<string | undefined>();
+  const [conflictChoiceSessionId, setConflictChoiceSessionId] = useState<string | undefined>();
   const [parentGitStatus, setParentGitStatus] = useState<GitStatusSummary | undefined>();
+  const [worktreeStatsBySession, setWorktreeStatsBySession] = useState<
+    Record<string, WorkingChangeStats>
+  >({});
   const lastSelectedIdRef = useRef<string | undefined>(undefined);
 
   const subagents = useMemo(
@@ -108,6 +121,58 @@ export function SubagentsPanel({
     };
   }, [parentCwd, refreshParentGitStatus]);
 
+  useEffect(() => {
+    const targets = subagents.filter(
+      (session) =>
+        session.subagentWorktree?.path &&
+        session.subagentWorktree.baseSha &&
+        session.subagentWorktree.integrationStatus !== "cleaned",
+    );
+    let disposed = false;
+
+    async function refreshWorktreeStats(): Promise<void> {
+      const pairs = await Promise.all(
+        targets.map(async (session) => {
+          const worktree = session.subagentWorktree;
+          if (!worktree) return [session.id, undefined] as const;
+          const stats = await window.modus.diff
+            .statsSince({ cwd: worktree.path, base: worktree.baseSha })
+            .catch(() => undefined);
+          return [session.id, stats] as const;
+        }),
+      );
+      if (!disposed) {
+        setWorktreeStatsBySession(
+          Object.fromEntries(pairs.filter((entry) => entry[1])) as Record<
+            string,
+            WorkingChangeStats
+          >,
+        );
+      }
+    }
+
+    void refreshWorktreeStats();
+    const paths = Array.from(
+      new Set(targets.map((session) => session.subagentWorktree?.path).filter(Boolean)),
+    ) as string[];
+    const normalizedPaths = new Set(paths.map(normalizePath));
+    for (const path of paths) {
+      void window.modus.git.watch(path).catch(() => undefined);
+    }
+    const off = window.modus.git.onChanged((event: GitChangeEvent) => {
+      if (!disposed && normalizedPaths.has(normalizePath(event.cwd))) {
+        void refreshWorktreeStats();
+      }
+    });
+    return () => {
+      disposed = true;
+      off();
+      for (const path of paths) {
+        void window.modus.git.unwatch(path);
+      }
+    };
+  }, [subagents]);
+
   const applyBlockedReason = parentGitStatus?.mergeInProgress
     ? "Commit or abort the pending worktree apply before applying another worktree."
     : (parentGitStatus?.stagedCount ?? 0) + (parentGitStatus?.unstagedCount ?? 0) > 0
@@ -118,7 +183,10 @@ export function SubagentsPanel({
     setWorktreeBusy("apply");
     setWorktreeError(undefined);
     try {
-      await window.modus.agent.applySubagentWorktree(session.id);
+      const updated = await window.modus.agent.applySubagentWorktree(session.id);
+      setConflictChoiceSessionId(
+        updated.subagentWorktree?.integrationStatus === "conflict" ? session.id : undefined,
+      );
     } catch (error) {
       setWorktreeError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -133,6 +201,7 @@ export function SubagentsPanel({
     setWorktreeError(undefined);
     try {
       await window.modus.agent.abortSubagentWorktreeApply(session.id);
+      setConflictChoiceSessionId(undefined);
     } catch (error) {
       setWorktreeError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -147,6 +216,7 @@ export function SubagentsPanel({
     setWorktreeError(undefined);
     try {
       await window.modus.agent.cleanupSubagentWorktree(session.id);
+      setConflictChoiceSessionId(undefined);
     } catch (error) {
       setWorktreeError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -163,11 +233,12 @@ export function SubagentsPanel({
     try {
       await window.modus.agent.prompt({
         sessionId: parentSessionId,
-        message: `Resolve the merge conflict from subagent "${session.subagentTask ?? session.title}". Conflict files: ${session.subagentWorktree?.conflictFiles?.join(", ") || "see git status"}. Keep both intents where possible, then run the relevant checks.`,
+        message: formatConflictResolutionPrompt(session, parentCwd),
         context: [],
         delivery: "normal",
         model: parentSession?.model ?? defaultModel,
       });
+      setConflictChoiceSessionId(undefined);
     } catch (error) {
       setWorktreeError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -213,27 +284,42 @@ export function SubagentsPanel({
           </div>
           <StatusPill session={selected} />
         </div>
-        {selected.subagentWorktree ? (
-          <SubagentWorktreeBanner
-            busy={worktreeBusy}
-            error={worktreeError}
-            applyBlockedReason={applyBlockedReason}
-            mergeInProgress={Boolean(parentGitStatus?.mergeInProgress)}
-            onApply={() => void applyWorktree(selected)}
-            onAskRoot={() => void askRootToResolve(selected)}
-            onAbort={() => void abortWorktreeApply(selected)}
-            onCleanup={() => void cleanupWorktree(selected)}
-            onOpen={() =>
-              void window.modus.file.open({
-                cwd: parentSession?.cwd ?? selected.cwd,
-                path: selected.subagentWorktree?.path ?? selected.cwd,
-              })
-            }
-            worktree={selected.subagentWorktree}
-          />
-        ) : null}
         <div className="min-h-0 flex-1">
           <ChatPane
+            composerReplacement={
+              selected.subagentWorktree &&
+              conflictChoiceSessionId === selected.id &&
+              selected.subagentWorktree.integrationStatus === "conflict" ? (
+                <SubagentConflictChoiceCard
+                  busy={worktreeBusy}
+                  error={worktreeError}
+                  onAbort={() => void abortWorktreeApply(selected)}
+                  onAskRoot={() => void askRootToResolve(selected)}
+                  onResolveMyself={() => setConflictChoiceSessionId(undefined)}
+                  worktree={selected.subagentWorktree}
+                />
+              ) : selected.subagentWorktree ? (
+                <SubagentWorktreeReviewCard
+                  applyBlockedReason={applyBlockedReason}
+                  busy={worktreeBusy}
+                  error={worktreeError}
+                  mergeInProgress={Boolean(parentGitStatus?.mergeInProgress)}
+                  onAbort={() => void abortWorktreeApply(selected)}
+                  onApply={() => void applyWorktree(selected)}
+                  onCleanup={() => void cleanupWorktree(selected)}
+                  onOpen={() =>
+                    void window.modus.file.open({
+                      cwd: parentSession?.cwd ?? selected.cwd,
+                      path: selected.subagentWorktree?.path ?? selected.cwd,
+                    })
+                  }
+                  onReview={() => onOpenReview(selected.subagentWorktree?.path ?? selected.cwd)}
+                  onResolveConflict={() => setConflictChoiceSessionId(selected.id)}
+                  stats={worktreeStatsBySession[selected.id]}
+                  worktree={selected.subagentWorktree}
+                />
+              ) : undefined
+            }
             botColor={subagentColor(selected.id)}
             contextUsage={contextUsageBySession[selected.id]}
             defaultModel={defaultModel}
@@ -290,9 +376,17 @@ export function SubagentsPanel({
             No matching subagents.
           </div>
         ) : display === "board" ? (
-          <SubagentBoard sessions={filteredSubagents} onOpen={openDetail} />
+          <SubagentBoard
+            sessions={filteredSubagents}
+            statsBySession={worktreeStatsBySession}
+            onOpen={openDetail}
+          />
         ) : (
-          <SubagentList sessions={filteredSubagents} onOpen={openDetail} />
+          <SubagentList
+            sessions={filteredSubagents}
+            statsBySession={worktreeStatsBySession}
+            onOpen={openDetail}
+          />
         )}
       </div>
     </div>
@@ -324,15 +418,22 @@ function ViewButton({
 
 function SubagentBoard({
   sessions,
+  statsBySession,
   onOpen,
 }: {
   sessions: AgentSessionInfo[];
+  statsBySession: Record<string, WorkingChangeStats>;
   onOpen(session: AgentSessionInfo): void;
 }) {
   return (
     <div className="grid min-h-full content-start gap-4 bg-fill/30 px-5 py-6 sm:grid-cols-2 xl:grid-cols-3">
       {sessions.map((session) => (
-        <SubagentCard key={session.id} onOpen={onOpen} session={session} />
+        <SubagentCard
+          key={session.id}
+          onOpen={onOpen}
+          session={session}
+          stats={statsBySession[session.id]}
+        />
       ))}
     </div>
   );
@@ -340,12 +441,13 @@ function SubagentBoard({
 
 function SubagentCard({
   session,
+  stats,
   onOpen,
 }: {
   session: AgentSessionInfo;
+  stats?: WorkingChangeStats | undefined;
   onOpen(session: AgentSessionInfo): void;
 }) {
-  const worktreeStatus = session.subagentWorktree?.integrationStatus;
   return (
     <button
       className="flex min-h-20 w-full items-center gap-3 rounded-lg border border-hairline-soft bg-panel px-3 py-3 text-left shadow-composer transition-colors hover:bg-hover"
@@ -362,13 +464,15 @@ function SubagentCard({
         />
       </span>
       <div className="min-w-0 flex-1">
-        <div className="line-clamp-2 font-medium text-fg text-sm">{subagentTitle(session)}</div>
-        <div className="mt-1 flex min-w-0 items-center gap-2 text-fg-faint text-xs">
-          <span className="truncate">{relativeTime(session.updatedAt)}</span>
-          {worktreeStatus ? (
-            <span className="truncate text-fg-subtle">{worktreeStatus}</span>
+        <div className="flex min-w-0 items-start gap-2">
+          <div className="line-clamp-2 flex-1 font-medium text-fg text-sm">
+            {subagentTitle(session)}
+          </div>
+          {stats && stats.fileCount > 0 ? (
+            <LineDelta added={stats.added} removed={stats.removed} />
           ) : null}
         </div>
+        <div className="mt-1 truncate text-fg-faint text-xs">{relativeTime(session.updatedAt)}</div>
       </div>
       <span className={`size-2 shrink-0 rounded-full ${groupColor(subagentGroup(session))}`} />
     </button>
@@ -377,34 +481,44 @@ function SubagentCard({
 
 function SubagentList({
   sessions,
+  statsBySession,
   onOpen,
 }: {
   sessions: AgentSessionInfo[];
+  statsBySession: Record<string, WorkingChangeStats>;
   onOpen(session: AgentSessionInfo): void;
 }) {
   return (
-    <div className="p-2">
-      {sessions.map((session) => (
-        <button
-          className="flex min-h-12 w-full items-center gap-3 rounded-md px-3 text-left text-sm transition-colors hover:bg-hover"
-          key={session.id}
-          onClick={() => onOpen(session)}
-          title={subagentTitle(session)}
-          type="button"
-        >
-          <ModusBot
-            active={isSubagentLive(session.status)}
-            busy={isSubagentLive(session.status)}
-            className="size-5 shrink-0"
-            color={subagentColor(session.id)}
-          />
-          <div className="min-w-0 flex-1">
-            <div className="truncate font-medium text-fg">{subagentTitle(session)}</div>
-            <div className="truncate text-fg-faint text-xs">{subagentMeta(session)}</div>
-          </div>
-          <StatusPill session={session} />
-        </button>
-      ))}
+    <div className="flex flex-col gap-2 p-3">
+      {sessions.map((session) => {
+        const stats = statsBySession[session.id];
+        return (
+          <button
+            className="flex min-h-[58px] w-full items-center gap-3 rounded-md px-3 py-2.5 text-left text-sm transition-colors hover:bg-hover"
+            key={session.id}
+            onClick={() => onOpen(session)}
+            title={subagentTitle(session)}
+            type="button"
+          >
+            <ModusBot
+              active={isSubagentLive(session.status)}
+              busy={isSubagentLive(session.status)}
+              className="size-5 shrink-0"
+              color={subagentColor(session.id)}
+            />
+            <div className="min-w-0 flex-1">
+              <div className="flex min-w-0 items-center gap-2">
+                <div className="truncate font-medium text-fg">{subagentTitle(session)}</div>
+                {stats && stats.fileCount > 0 ? (
+                  <LineDelta added={stats.added} removed={stats.removed} />
+                ) : null}
+              </div>
+              <div className="truncate text-fg-faint text-xs">{subagentMeta(session)}</div>
+            </div>
+            <StatusPill session={session} />
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -412,23 +526,27 @@ function SubagentList({
 function StatusPill({ session }: { session: AgentSessionInfo }) {
   const group = subagentGroup(session);
   return (
-    <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-fill px-2 py-1 text-fg-subtle text-xs">
-      <span className={`size-1.5 rounded-full ${groupColor(group)}`} />
-      {groupLabel(group)}
-    </span>
+    <span
+      aria-label={groupLabel(group)}
+      className={`size-2 shrink-0 rounded-full ${groupColor(group)}`}
+      role="img"
+      title={groupLabel(group)}
+    />
   );
 }
 
-function SubagentWorktreeBanner({
+function SubagentWorktreeReviewCard({
   applyBlockedReason,
   busy,
   error,
   mergeInProgress,
   onApply,
-  onAskRoot,
   onAbort,
   onCleanup,
   onOpen,
+  onReview,
+  onResolveConflict,
+  stats,
   worktree,
 }: {
   applyBlockedReason: string | undefined;
@@ -436,96 +554,204 @@ function SubagentWorktreeBanner({
   error: string | undefined;
   mergeInProgress: boolean;
   onApply(): void;
-  onAskRoot(): void;
   onAbort(): void;
   onCleanup(): void;
   onOpen(): void;
+  onReview(): void;
+  onResolveConflict(): void;
+  stats?: WorkingChangeStats | undefined;
   worktree: NonNullable<AgentSessionInfo["subagentWorktree"]>;
 }) {
-  const files = worktree.conflictFiles?.length ? worktree.conflictFiles : worktree.changedFiles;
+  const [expanded, setExpanded] = useState(false);
   const canApply = worktree.integrationStatus === "ready";
-  const canAbort =
-    worktree.integrationStatus === "conflict" ||
-    (worktree.integrationStatus === "applied" && mergeInProgress);
+  const canAbort = worktree.integrationStatus === "applied" && mergeInProgress;
   const canCleanup =
     worktree.integrationStatus === "no_changes" ||
     (worktree.integrationStatus === "applied" && !mergeInProgress);
-  const canAskRoot = worktree.integrationStatus === "conflict";
   const message =
     worktree.integrationStatus === "applied"
       ? mergeInProgress
         ? "Applied. Commit or abort before applying another worktree."
         : "Applied. Cleanup is available after review."
       : worktree.integrationStatus === "conflict"
-        ? "Merge conflict. Resolve it or abort this apply."
-        : canApply
-          ? applyBlockedReason
-          : undefined;
+        ? "Apply paused with merge conflicts."
+        : worktree.integrationStatus === "no_changes"
+          ? "No changes to apply."
+          : canApply
+            ? applyBlockedReason
+            : undefined;
+  const hasStats = Boolean(stats && stats.fileCount > 0);
   return (
-    <div className="border-hairline border-b bg-elevated px-3 py-2 text-xs">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="font-medium">Worktree</span>
-        <span className="rounded bg-fill px-1.5 py-0.5 text-fg-subtle">
-          {worktree.integrationStatus}
-        </span>
-        <span className="truncate text-fg-faint">{worktree.branch}</span>
-        <button
-          className="rounded border-hairline px-2 py-1 hover:bg-hover"
-          onClick={onOpen}
-          type="button"
-        >
-          Open
-        </button>
-        {canApply ? (
+    <>
+      {hasStats && stats ? (
+        <div className="-mb-3 overflow-hidden rounded-t-[14px] bg-panel px-2.5 pt-1.5 pb-4">
+          <div className="flex h-8 items-center gap-1">
+            <button
+              aria-expanded={expanded}
+              className="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-md px-1 text-left transition-colors hover:bg-hover"
+              onClick={() => setExpanded((value) => !value)}
+              type="button"
+            >
+              <IconChevronRight
+                className={`shrink-0 transition-transform duration-150 ${expanded ? "rotate-90" : ""}`}
+                size={13}
+                stroke={1.8}
+              />
+              <span className="shrink-0 text-fg-muted text-sm">
+                {stats.fileCount} {stats.fileCount === 1 ? "file" : "files"}
+              </span>
+              <LineDelta added={stats.added} removed={stats.removed} />
+            </button>
+            <button
+              className="flex h-6 shrink-0 items-center rounded-md bg-chip px-2 text-fg-muted text-xs transition-colors hover:bg-chip-strong hover:text-fg"
+              onClick={onReview}
+              title="Review this worktree in Changes"
+              type="button"
+            >
+              Review
+            </button>
+          </div>
+          <CollapsibleMotion open={expanded} preset="compact">
+            <div className="mt-1 border-hairline-soft border-t px-1 pt-1.5">
+              <ChangeFileList className="max-h-44" stats={stats} />
+            </div>
+          </CollapsibleMotion>
+        </div>
+      ) : null}
+      <div className="mb-2 rounded-xl border border-composer-border bg-elevated px-3.5 py-3 shadow-composer-edge">
+        <div className="flex items-start gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="truncate font-semibold text-fg text-[15px]">{worktree.branch}</div>
+            {message ? <div className="mt-1 text-fg-subtle text-xs">{message}</div> : null}
+            {error ? <div className="mt-1 text-danger text-xs">{error}</div> : null}
+          </div>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center justify-end gap-2 text-xs">
           <button
-            className="rounded border-hairline px-2 py-1 hover:bg-hover"
-            disabled={Boolean(busy || applyBlockedReason)}
-            onClick={onApply}
-            title={applyBlockedReason}
+            className="rounded-md bg-chip px-2 py-1 text-fg-muted hover:bg-chip-strong"
+            onClick={onOpen}
             type="button"
           >
-            {busy === "apply" ? "Applying..." : "Apply"}
+            Open
           </button>
-        ) : null}
-        {canAbort ? (
-          <button
-            className="rounded border-hairline px-2 py-1 hover:bg-hover"
-            disabled={Boolean(busy)}
-            onClick={onAbort}
-            type="button"
-          >
-            {busy === "abort" ? "Aborting..." : "Abort apply"}
-          </button>
-        ) : null}
-        {canAskRoot ? (
-          <button
-            className="rounded border-hairline px-2 py-1 hover:bg-hover"
-            disabled={Boolean(busy)}
-            onClick={onAskRoot}
-            type="button"
-          >
-            {busy === "resolve" ? "Asking..." : "Ask root"}
-          </button>
-        ) : null}
-        {canCleanup ? (
-          <button
-            className="rounded border-hairline px-2 py-1 hover:bg-hover"
-            disabled={Boolean(busy)}
-            onClick={onCleanup}
-            type="button"
-          >
-            {busy === "cleanup" ? "Cleaning..." : "Cleanup"}
-          </button>
-        ) : null}
+          {canApply ? (
+            <button
+              className="rounded-md bg-chip px-2 py-1 text-fg-muted hover:bg-chip-strong disabled:opacity-50"
+              disabled={Boolean(busy || applyBlockedReason)}
+              onClick={onApply}
+              title={applyBlockedReason}
+              type="button"
+            >
+              {busy === "apply" ? "Applying..." : "Apply"}
+            </button>
+          ) : null}
+          {canAbort ? (
+            <button
+              className="rounded-md bg-chip px-2 py-1 text-fg-muted hover:bg-chip-strong disabled:opacity-50"
+              disabled={Boolean(busy)}
+              onClick={onAbort}
+              type="button"
+            >
+              {busy === "abort" ? "Aborting..." : "Abort apply"}
+            </button>
+          ) : null}
+          {worktree.integrationStatus === "conflict" ? (
+            <button
+              className="rounded-md bg-chip px-2 py-1 text-fg-muted hover:bg-chip-strong disabled:opacity-50"
+              disabled={Boolean(busy)}
+              onClick={onResolveConflict}
+              type="button"
+            >
+              Resolve conflict
+            </button>
+          ) : null}
+          {canCleanup ? (
+            <button
+              className="rounded-md bg-chip px-2 py-1 text-fg-muted hover:bg-chip-strong disabled:opacity-50"
+              disabled={Boolean(busy)}
+              onClick={onCleanup}
+              type="button"
+            >
+              {busy === "cleanup" ? "Cleaning..." : "Cleanup"}
+            </button>
+          ) : null}
+        </div>
       </div>
-      {files?.length ? (
-        <div className="mt-1 truncate text-fg-faint">
+    </>
+  );
+}
+
+function SubagentConflictChoiceCard({
+  busy,
+  error,
+  onAbort,
+  onAskRoot,
+  onResolveMyself,
+  worktree,
+}: {
+  busy: string | undefined;
+  error: string | undefined;
+  onAbort(): void;
+  onAskRoot(): void;
+  onResolveMyself(): void;
+  worktree: NonNullable<AgentSessionInfo["subagentWorktree"]>;
+}) {
+  const files = worktree.conflictFiles ?? [];
+  return (
+    <div className="mb-2 rounded-xl border border-composer-border bg-elevated px-3.5 py-3 shadow-composer-edge">
+      <div className="flex min-w-0 items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="font-semibold text-[14px] text-fg leading-snug">
+            Apply paused with merge conflicts
+          </div>
+          <div className="mt-1 text-fg-subtle text-xs leading-relaxed">
+            Choose how to handle this worktree apply. The merge is still open in the main workspace.
+          </div>
+          <div className="mt-2 truncate font-mono text-2xs text-fg-faint">{worktree.branch}</div>
+        </div>
+      </div>
+      {files.length > 0 ? (
+        <div className="mt-2 rounded-md bg-code-bg px-2.5 py-2 text-fg-muted text-xs">
           {files.slice(0, 4).join(", ")}
           {files.length > 4 ? `, +${files.length - 4}` : ""}
         </div>
       ) : null}
-      {message ? <div className="mt-1 text-fg-subtle">{message}</div> : null}
-      {error ? <div className="mt-1 text-danger">{error}</div> : null}
+      {error ? <div className="mt-2 text-danger text-xs">{error}</div> : null}
+      <div className="mt-3 grid gap-1">
+        <button
+          className="rounded-lg bg-build/12 px-2.5 py-2 text-left text-sm text-fg transition-colors hover:bg-build/16 disabled:opacity-50"
+          disabled={Boolean(busy)}
+          onClick={onAskRoot}
+          type="button"
+        >
+          {busy === "resolve" ? "Asking root..." : "Ask root to resolve"}
+          <span className="mt-0.5 block text-fg-faint text-xs">
+            Send the conflict context to the root agent.
+          </span>
+        </button>
+        <button
+          className="rounded-lg px-2.5 py-2 text-left text-fg-muted text-sm transition-colors hover:bg-hover hover:text-fg disabled:opacity-50"
+          disabled={Boolean(busy)}
+          onClick={onAbort}
+          type="button"
+        >
+          {busy === "abort" ? "Aborting..." : "Abort apply"}
+          <span className="mt-0.5 block text-fg-faint text-xs">
+            Run git merge --abort and return this worktree to ready.
+          </span>
+        </button>
+        <button
+          className="rounded-lg px-2.5 py-2 text-left text-fg-muted text-sm transition-colors hover:bg-hover hover:text-fg disabled:opacity-50"
+          disabled={Boolean(busy)}
+          onClick={onResolveMyself}
+          type="button"
+        >
+          Resolve myself
+          <span className="mt-0.5 block text-fg-faint text-xs">
+            Close this panel without changing Git state.
+          </span>
+        </button>
+      </div>
     </div>
   );
 }
@@ -585,4 +811,34 @@ function relativeTime(value: string): string {
 
 function isSubagentLive(status: AgentSessionInfo["status"]): boolean {
   return status === "starting" || status === "running";
+}
+
+function normalizePath(path: string | undefined): string {
+  return (path ?? "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+}
+
+export function formatConflictResolutionPrompt(
+  session: AgentSessionInfo,
+  parentCwd: string | undefined,
+) {
+  const worktree = session.subagentWorktree;
+  const conflictFiles = worktree?.conflictFiles?.length
+    ? worktree.conflictFiles.join(", ")
+    : "run git status to inspect unresolved files";
+  const changedFiles = worktree?.changedFiles?.length
+    ? worktree.changedFiles.join(", ")
+    : "unknown";
+  return [
+    `Resolve the merge conflicts from subagent "${subagentTitle(session)}".`,
+    "",
+    "Context:",
+    `- Main workspace: ${parentCwd ?? session.cwd}`,
+    `- Subagent branch: ${worktree?.branch ?? "unknown"}`,
+    `- Subagent worktree: ${worktree?.path ?? session.cwd}`,
+    `- Base SHA: ${worktree?.baseSha ?? "unknown"}`,
+    `- Changed files: ${changedFiles}`,
+    `- Conflict files: ${conflictFiles}`,
+    "",
+    "The merge is already open in the main workspace. Inspect git status, conflict markers, and the relevant diffs. Preserve both intents where correct, resolve the files, run the relevant checks, and summarize what you changed. Do not commit.",
+  ].join("\n");
 }
