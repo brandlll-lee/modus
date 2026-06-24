@@ -6,6 +6,8 @@ import type {
   ContextItem,
   MessageContextChip,
   PromptImageAttachment,
+  QuestionAnswer,
+  QuestionRequest,
   SkillSelection,
   SubagentActivity,
   SubagentStatus,
@@ -98,6 +100,9 @@ export type ToolBlockItem = {
   output: string;
   isComplete?: boolean;
   isError?: boolean;
+  questionRequest?: QuestionRequest;
+  questionAnswers?: QuestionAnswer[];
+  questionSkipped?: boolean;
 };
 
 export type ThoughtBlockItem = {
@@ -192,7 +197,6 @@ type ActivityGroupBlockItem = {
   summary: string;
   /** Interleaved members in stream order: thoughts and tools. */
   items: ActivityItem[];
-  isError?: boolean;
 };
 
 type TimelineBlock =
@@ -214,6 +218,8 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
   const todoToolCallIds = new Set<string>();
   const subagentToolCallIds = new Set<string>();
   const subagentsByChild = new Map<string, SubagentBlockItem>();
+  const questionToolByRequest = new Map<string, string>();
+  let activeQuestionToolId: string | undefined;
   let latestTodosBlock: TodosBlockItem | undefined;
   let todoLifecycleOpen = false;
   let hasRenderedAnyTodoBlock = false;
@@ -538,6 +544,9 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
         subagentToolCallIds.add(event.toolCallId);
         continue;
       }
+      if (toolRenderKind(event.toolName) === "question") {
+        activeQuestionToolId = event.toolCallId;
+      }
       const existing = blockById.get(event.toolCallId);
       if (existing?.type === "tool") {
         existing.args = event.args;
@@ -568,6 +577,9 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
       if (toolRenderKind(event.toolName) === "subagent") {
         subagentToolCallIds.add(event.toolCallId);
         continue;
+      }
+      if (toolRenderKind(event.toolName) === "question") {
+        activeQuestionToolId = event.toolCallId;
       }
       // Idempotent: a live `tool.delta` may have already created the block.
       // Refresh its args with the authoritative ones rather than forking a
@@ -620,6 +632,28 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
       if (block?.type === "tool") {
         block.isComplete = true;
         block.isError = event.isError;
+      }
+      if (activeQuestionToolId === event.toolCallId) {
+        activeQuestionToolId = undefined;
+      }
+      continue;
+    }
+
+    if (event.type === "question.requested") {
+      const block = activeQuestionToolId ? blockById.get(activeQuestionToolId) : undefined;
+      if (block?.type === "tool" && toolRenderKind(block.name) === "question") {
+        block.questionRequest = event.request;
+        questionToolByRequest.set(event.request.id, block.id);
+      }
+      continue;
+    }
+
+    if (event.type === "question.resolved") {
+      const toolId = questionToolByRequest.get(event.requestId);
+      const block = toolId ? blockById.get(toolId) : undefined;
+      if (block?.type === "tool") {
+        block.questionAnswers = event.answers;
+        block.questionSkipped = event.skipped;
       }
       continue;
     }
@@ -1100,7 +1134,6 @@ export function groupActivity(blocks: TimelineBlock[]): TimelineBlock[] {
               ? buildShellSummary(tools)
               : buildExploreSummary(tools),
         items: groupItems as ActivityItem[],
-        isError: tools.some((tool) => tool.isError),
       });
     } else {
       result.push(...groupItems);
@@ -1477,12 +1510,16 @@ export function Timeline({
                 isError={block.isError ?? false}
                 name={block.name}
                 output={block.output}
+                {...(block.questionAnswers ? { questionAnswers: block.questionAnswers } : {})}
+                {...(block.questionRequest ? { questionRequest: block.questionRequest } : {})}
+                {...(block.questionSkipped !== undefined
+                  ? { questionSkipped: block.questionSkipped }
+                  : {})}
               />
             ) : null}
             {block.type === "activity-group" ? (
               <ActivityGroup
                 active={block.active}
-                isError={block.isError ?? false}
                 items={block.items}
                 kind={block.kind}
                 summary={block.summary}

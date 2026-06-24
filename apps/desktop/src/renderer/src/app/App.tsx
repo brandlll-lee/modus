@@ -50,7 +50,13 @@ import {
   reduceActivity,
   type SessionActivity,
 } from "../features/agent/agentEventHub";
-import { ChatPane, type ChatPaneHandle } from "../features/agent/ChatPane";
+import {
+  type ChatComposerDraft,
+  type ChatComposerDraftUpdate,
+  ChatPane,
+  type ChatPaneHandle,
+  createEmptyChatComposerDraft,
+} from "../features/agent/ChatPane";
 import { Composer } from "../features/composer/Composer";
 import { BranchSwitcher } from "../features/git/BranchSwitcher";
 import { INSPECTOR_MIN_WIDTH, Inspector } from "../features/inspector/Inspector";
@@ -77,6 +83,9 @@ export function App() {
   const [activityBySession, setActivityBySession] = useState<Record<string, SessionActivity>>({});
   const [contextUsageBySession, setContextUsageBySession] = useState<
     Record<string, ContextUsageInfo>
+  >({});
+  const [composerDraftBySession, setComposerDraftBySession] = useState<
+    Record<string, ChatComposerDraft>
   >({});
   const [heroContextItems, setHeroContextItems] = useState<ContextItem[]>([]);
   // Composer mode for the hero (new-chat) screen — controlled so the "Plan New
@@ -593,6 +602,16 @@ export function App() {
     () => new Map(workspaces.map((workspace) => [workspace.id, workspace])),
     [workspaces],
   );
+  const updateSessionComposerDraft = useCallback(
+    (sessionId: string, update: ChatComposerDraftUpdate): void => {
+      setComposerDraftBySession((current) => {
+        const draft = current[sessionId] ?? createEmptyChatComposerDraft();
+        const next = typeof update === "function" ? update(draft) : update;
+        return { ...current, [sessionId]: next };
+      });
+    },
+    [],
+  );
 
   return (
     <LazyMotion features={domAnimation} strict>
@@ -703,6 +722,7 @@ export function App() {
                             transition={{ duration: 0.12, ease: "easeOut" }}
                           >
                             <ChatPane
+                              composerDraft={composerDraftBySession[activeSession.id]}
                               contextUsage={contextUsageBySession[activeSession.id]}
                               defaultModel={model}
                               hub={hubRef.current}
@@ -715,6 +735,9 @@ export function App() {
                               }
                               onOpenReview={openReview}
                               onOpenSubagent={openSubagent}
+                              onComposerDraftChange={(update) =>
+                                updateSessionComposerDraft(activeSession.id, update)
+                              }
                               onInitialEventsConsumed={(sessionId) => {
                                 setInitialEventsBySession((current) => {
                                   if (!current[sessionId]) {

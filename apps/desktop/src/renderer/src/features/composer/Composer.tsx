@@ -16,6 +16,7 @@ import {
   type ClipboardEvent,
   type DragEvent,
   type KeyboardEvent,
+  useCallback,
   useLayoutEffect,
   useRef,
   useState,
@@ -45,7 +46,11 @@ import { ContextMentionMenu } from "./ContextMentionMenu";
 import { ContextToken } from "./ContextToken";
 import { DesignElementToken } from "./DesignElementToken";
 import { SlashMenu } from "./SlashMenu";
-import { useComposerImages } from "./useComposerImages";
+import {
+  type ComposerImage,
+  type ComposerImageUpdate,
+  useComposerImages,
+} from "./useComposerImages";
 import { type MentionRow, useComposerMentions } from "./useComposerMentions";
 import { type SlashItem, useComposerSlash } from "./useComposerSlash";
 
@@ -87,7 +92,26 @@ type ComposerProps = {
   /** Controlled composer mode (build/plan); falls back to internal state. */
   mode?: AgentMode;
   onModeChange?(mode: AgentMode): void;
+  /** Optional per-session draft, owned by the caller when the composer can unmount. */
+  draft?: ComposerDraft;
+  onDraftChange?(update: ComposerDraftUpdate): void;
 };
+
+export type ComposerDraft = {
+  value: string;
+  images: ComposerImage[];
+  selectedSkills: SkillSelection[];
+};
+
+export type ComposerDraftUpdate = ComposerDraft | ((current: ComposerDraft) => ComposerDraft);
+
+export function createEmptyComposerDraft(): ComposerDraft {
+  return { value: "", images: [], selectedSkills: [] };
+}
+
+function resolveUpdate<T>(update: T | ((current: T) => T), current: T): T {
+  return typeof update === "function" ? (update as (value: T) => T)(current) : update;
+}
 
 export function Composer({
   model,
@@ -107,12 +131,46 @@ export function Composer({
   onSubmit,
   mode: controlledMode,
   onModeChange,
+  draft,
+  onDraftChange,
 }: ComposerProps) {
-  const [value, setValue] = useState("");
+  const [uncontrolledDraft, setUncontrolledDraft] =
+    useState<ComposerDraft>(createEmptyComposerDraft);
+  const activeDraft = draft ?? uncontrolledDraft;
   const [dragging, setDragging] = useState(false);
-  const [selectedSkills, setSelectedSkills] = useState<SkillSelection[]>([]);
   const [internalMode, setInternalMode] = useState<AgentMode>("build");
   const mode = controlledMode ?? internalMode;
+  const setDraft = useCallback(
+    (update: ComposerDraftUpdate): void => {
+      if (onDraftChange) {
+        onDraftChange(update);
+      } else {
+        setUncontrolledDraft(update);
+      }
+    },
+    [onDraftChange],
+  );
+  const setValue = useCallback(
+    (update: string | ((current: string) => string)): void => {
+      setDraft((current) => ({ ...current, value: resolveUpdate(update, current.value) }));
+    },
+    [setDraft],
+  );
+  const setSelectedSkills = useCallback(
+    (update: SkillSelection[] | ((current: SkillSelection[]) => SkillSelection[])): void => {
+      setDraft((current) => ({
+        ...current,
+        selectedSkills: resolveUpdate(update, current.selectedSkills),
+      }));
+    },
+    [setDraft],
+  );
+  const setImages = useCallback(
+    (update: ComposerImageUpdate): void => {
+      setDraft((current) => ({ ...current, images: resolveUpdate(update, current.images) }));
+    },
+    [setDraft],
+  );
   const setMode = (next: AgentMode): void => {
     onModeChange?.(next);
     if (controlledMode === undefined) {
@@ -121,7 +179,12 @@ export function Composer({
   };
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const { addFiles, clearImages, images, removeImage, toAttachments } = useComposerImages();
+  const { addFiles, clearImages, images, removeImage, toAttachments } = useComposerImages({
+    images: activeDraft.images,
+    onImagesChange: setImages,
+  });
+  const value = activeDraft.value;
+  const selectedSkills = activeDraft.selectedSkills;
   const hasText = value.trim().length > 0;
   const hasImages = images.length > 0;
   const hasSelectedSkills = selectedSkills.length > 0;

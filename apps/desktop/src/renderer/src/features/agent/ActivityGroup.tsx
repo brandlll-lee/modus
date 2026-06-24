@@ -1,4 +1,4 @@
-import { IconAlertCircle, IconChevronRight } from "@tabler/icons-react";
+import { IconChevronRight } from "@tabler/icons-react";
 import { m } from "motion/react";
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
@@ -121,13 +121,11 @@ export const ActivityGroup = memo(function ActivityGroup({
   active,
   summary,
   items,
-  isError = false,
 }: {
   kind: "explore" | "browser" | "shell";
   active: boolean;
   summary: string;
   items: ActivityItem[];
-  isError?: boolean;
 }) {
   const [open, setOpen] = useState(active);
   const interactedRef = useRef(false);
@@ -171,16 +169,13 @@ export const ActivityGroup = memo(function ActivityGroup({
         >
           <IconChevronRight size={12} stroke={1.8} />
         </m.span>
-        {isError ? (
-          <IconAlertCircle className="shrink-0 text-danger" size={14} stroke={1.7} />
-        ) : null}
         {active ? (
           <ShinyText>{label}</ShinyText>
         ) : (
           <span
             className={cn(
               "min-w-0 truncate transition-colors",
-              isError ? "text-danger" : "text-fg-subtle group-hover/activity:text-fg-muted",
+              "text-fg-subtle group-hover/activity:text-fg-muted",
             )}
           >
             {label}

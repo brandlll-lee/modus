@@ -1,6 +1,6 @@
-import { IconAlertCircle, IconChevronRight, IconCopy } from "@tabler/icons-react";
+import { IconChevronRight, IconCopy } from "@tabler/icons-react";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
-import { getToolUiMeta } from "../../../../../shared/tools";
+import { getToolUiMeta, type ToolUiMeta } from "../../../../../shared/tools";
 import { CollapsibleMotion } from "../../../components/ui/CollapsibleMotion";
 import { NumberTicker } from "../../../components/ui/NumberTicker";
 import { ShinyText } from "../../../components/ui/ShinyText";
@@ -27,11 +27,37 @@ type DiffToolCardProps = {
   cwd?: string | undefined;
 };
 
-/** Keep the tail (filename) visible when a path is long, instead of clipping. */
-function shortenPath(path: string, max = 52): string {
+function fileNameFromPath(path: string): string {
   const normalized = path.replace(/\\/g, "/");
-  if (normalized.length <= max) return normalized;
-  return `…${normalized.slice(-(max - 1))}`;
+  return normalized.split("/").filter(Boolean).pop() ?? normalized;
+}
+
+function argRecord(args: unknown): Record<string, unknown> {
+  return args && typeof args === "object" ? (args as Record<string, unknown>) : {};
+}
+
+function primaryTarget(meta: ToolUiMeta | undefined, args: Record<string, unknown>): string {
+  const key = meta?.primaryArgKey;
+  if (!key) return "";
+  const value = args[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function displayName(
+  path: string | undefined,
+  meta: ToolUiMeta | undefined,
+  args: Record<string, unknown>,
+  toolName: string,
+): string {
+  if (path) return fileNameFromPath(path);
+  return primaryTarget(meta, args) || meta?.verb || toolName;
+}
+
+function fileTypeGlyph(label: string): string | undefined {
+  const name = fileNameFromPath(label);
+  const dot = name.lastIndexOf(".");
+  if (dot < 0 || dot === name.length - 1) return undefined;
+  return `${name.slice(dot + 1, dot + 2).toUpperCase()}+`;
 }
 
 /** Reconstruct a unified-ish text blob for the clipboard from the diff lines. */
@@ -66,16 +92,29 @@ export const DiffToolCard = memo(
     const [open, setOpen] = useState(false);
     const [copied, setCopied] = useState(false);
     const scrollRef = useRef<HTMLDivElement>(null);
+    const sawRunningRef = useRef(false);
 
     const diff = useMemo(() => inlineDiffFromToolArgs(name, args), [name, args]);
     const path = toolTargetPath(args);
     const meta = getToolUiMeta(name);
-    const verb = meta?.verb ?? name;
-    const fileName = path ? shortenPath(path) : verb;
+    const argsRecord = argRecord(args);
+    const fileName = displayName(path, meta, argsRecord, name);
+    const fileTitle = path ? path.replace(/\\/g, "/") : fileName;
+    const glyph = fileTypeGlyph(fileName);
+    const isNewFileDiff = meta?.diffSource === "newFile";
     const running = !isComplete && !isError;
-    // While streaming, the live code viewport is always shown (Cursor-style);
-    // once settled it collapses to the header and is toggled by the chevron.
-    const bodyOpen = running || open;
+    // Keep live cards open after completion; old history cards never observe
+    // `running`, so they stay collapsed until the user expands them.
+    useEffect(() => {
+      if (running) {
+        sawRunningRef.current = true;
+        setOpen(true);
+      } else if (sawRunningRef.current && isComplete) {
+        setOpen(true);
+      }
+    }, [running, isComplete]);
+
+    const bodyOpen = running || isError || open;
 
     // Live performance: while streaming we only render the TAIL of the diff (the
     // window the user is actually watching at the bottom). This caps the work
@@ -135,19 +174,16 @@ export const DiffToolCard = memo(
     }
 
     return (
-      <div
-        className={cn(
-          "group/diff min-w-0 overflow-hidden rounded-lg border bg-code-bg",
-          isError ? "border-danger/30" : "border-hairline",
-        )}
-      >
-        {/* Header row: status glyph · filename · +N -N · copy · chevron */}
-        <div className="flex h-9 min-w-0 items-center gap-2 px-2.5">
-          <span className="flex shrink-0 items-center text-fg-faint">
-            {isError ? (
-              <IconAlertCircle className="text-danger" size={14} stroke={1.7} />
+      <div className="group/diff min-w-0 overflow-hidden rounded-[10px] border border-hairline bg-surface shadow-composer">
+        {/* Header row: file type · file name · optional controls · delta/status */}
+        <div className="flex h-10 min-w-0 items-center gap-2 px-3">
+          <span className="flex w-4 shrink-0 items-center justify-center text-link">
+            {glyph ? (
+              <span className="font-semibold font-mono text-[10px] leading-none tabular-nums">
+                {glyph}
+              </span>
             ) : (
-              toolIcon(meta?.iconName ?? "pencil")
+              toolIcon(meta?.iconName ?? "file-plus")
             )}
           </span>
 
@@ -158,53 +194,48 @@ export const DiffToolCard = memo(
             )}
             disabled={!(cwd && path)}
             onClick={openFile}
-            title={cwd && path ? `Open ${path}` : path}
+            title={cwd && path ? `Open ${fileTitle}` : fileTitle}
             type="button"
           >
             {running ? <ShinyText>{fileName}</ShinyText> : fileName}
           </button>
 
           {diff ? (
-            <span className="flex shrink-0 items-center gap-1.5 font-mono text-xs tabular-nums">
-              <span className="text-success">
-                +<NumberTicker value={diff.added} />
-              </span>
-              <span className="text-danger">
-                -<NumberTicker value={diff.removed} />
-              </span>
-            </span>
-          ) : null}
+            <>
+              <Tooltip content={copied ? "Copied" : "Copy diff"} side="bottom" sideOffset={6}>
+                <button
+                  aria-label="Copy diff"
+                  className="flex size-6 shrink-0 items-center justify-center rounded text-fg-faint opacity-0 transition-all hover:bg-hover hover:text-fg-subtle group-hover/diff:opacity-100"
+                  onClick={() => void copyDiff()}
+                  type="button"
+                >
+                  <IconCopy size={13} stroke={1.7} />
+                </button>
+              </Tooltip>
 
-          {isError ? <span className="shrink-0 text-2xs text-danger">failed</span> : null}
-
-          {diff ? (
-            <Tooltip content={copied ? "Copied" : "Copy diff"} side="bottom" sideOffset={6}>
               <button
-                aria-label="Copy diff"
-                className="flex size-6 shrink-0 items-center justify-center rounded text-fg-faint opacity-0 transition-all hover:bg-hover hover:text-fg-subtle group-hover/diff:opacity-100"
-                onClick={() => void copyDiff()}
+                aria-expanded={bodyOpen}
+                aria-label={bodyOpen ? "Collapse diff" : "Expand diff"}
+                className="flex size-6 shrink-0 items-center justify-center rounded text-fg-faint opacity-0 transition-all hover:bg-hover hover:text-fg-subtle disabled:opacity-40 group-hover/diff:opacity-100"
+                disabled={running || isError}
+                onClick={() => setOpen((value) => !value)}
                 type="button"
               >
-                <IconCopy size={13} stroke={1.7} />
+                <IconChevronRight
+                  className={cn("transition-transform duration-150", bodyOpen && "rotate-90")}
+                  size={14}
+                  stroke={1.7}
+                />
               </button>
-            </Tooltip>
-          ) : null}
 
-          {diff ? (
-            <button
-              aria-expanded={bodyOpen}
-              aria-label={bodyOpen ? "Collapse diff" : "Expand diff"}
-              className="flex size-6 shrink-0 items-center justify-center rounded text-fg-faint transition-colors hover:bg-hover hover:text-fg-subtle disabled:opacity-40"
-              disabled={running}
-              onClick={() => setOpen((value) => !value)}
-              type="button"
-            >
-              <IconChevronRight
-                className={cn("transition-transform duration-150", bodyOpen && "rotate-90")}
-                size={14}
-                stroke={1.7}
-              />
-            </button>
+              {isError ? (
+                <span className="shrink-0 rounded-[4px] bg-danger/15 px-1.5 py-0.5 text-danger text-xs">
+                  failed
+                </span>
+              ) : (
+                <DiffDelta added={diff.added} removed={diff.removed} />
+              )}
+            </>
           ) : null}
         </div>
 
@@ -213,14 +244,22 @@ export const DiffToolCard = memo(
             full diff toggled from the header. Syntax-highlighted + red/green. */}
         {running && liveDiff ? (
           <div
-            className="scroll-thin h-[168px] overflow-auto border-hairline-soft border-t"
+            className={cn(
+              "scroll-thin h-[168px] overflow-auto border-hairline-soft border-t",
+              isNewFileDiff ? "bg-diff-add-bg" : "bg-code-bg",
+            )}
             ref={scrollRef}
           >
             <InlineDiffView diff={liveDiff} path={path} />
           </div>
         ) : (
-          <CollapsibleMotion open={open && Boolean(diff)} preset="timeline">
-            <div className="scroll-thin max-h-96 overflow-auto border-hairline-soft border-t">
+          <CollapsibleMotion open={bodyOpen && Boolean(diff)} preset="timeline">
+            <div
+              className={cn(
+                "scroll-thin max-h-96 overflow-auto border-hairline-soft border-t",
+                isNewFileDiff ? "bg-diff-add-bg" : "bg-code-bg",
+              )}
+            >
               {diff ? <InlineDiffView diff={diff} path={path} /> : null}
             </div>
           </CollapsibleMotion>
@@ -235,3 +274,20 @@ export const DiffToolCard = memo(
     prev.cwd === next.cwd &&
     prev.args === next.args,
 );
+
+function DiffDelta({ added, removed }: { added: number; removed: number }) {
+  return (
+    <span className="flex shrink-0 items-center gap-1.5 font-mono text-xs tabular-nums">
+      {added > 0 || removed === 0 ? (
+        <span className="text-success">
+          +<NumberTicker value={added} />
+        </span>
+      ) : null}
+      {removed > 0 ? (
+        <span className="text-danger">
+          -<NumberTicker value={removed} />
+        </span>
+      ) : null}
+    </span>
+  );
+}

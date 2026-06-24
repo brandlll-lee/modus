@@ -26,7 +26,12 @@ import type {
   WorkspaceInfo,
 } from "../../../../shared/contracts";
 import { CollapsibleMotionProvider } from "../../components/ui/CollapsibleMotion";
-import { Composer } from "../composer/Composer";
+import {
+  Composer,
+  type ComposerDraft,
+  type ComposerDraftUpdate,
+  createEmptyComposerDraft,
+} from "../composer/Composer";
 import { buildPlanMessage, effectiveBuildStatus, normalizePlan } from "../plan/planState";
 import { QuestionsCard } from "../plan/QuestionsCard";
 import { ReviewPlanCard } from "../plan/ReviewPlanCard";
@@ -72,11 +77,30 @@ type ChatPaneProps = {
   onOpenSubagent?(childSessionId: string): void;
   botColor?: string;
   composerReplacement?: ReactNode;
+  composerDraft?: ChatComposerDraft | undefined;
+  onComposerDraftChange?(update: ChatComposerDraftUpdate): void;
   /** A plan was (re)written in Plan Mode: open it in the file panel. */
   onPlanUpdated(plan: PlanRef): void;
 };
 
 export type ChatPaneHandle = { buildActivePlan(): void };
+
+export type ChatComposerDraft = ComposerDraft & {
+  contextItems: ContextItem[];
+  mode: AgentMode;
+};
+
+export type ChatComposerDraftUpdate =
+  | ChatComposerDraft
+  | ((current: ChatComposerDraft) => ChatComposerDraft);
+
+export function createEmptyChatComposerDraft(): ChatComposerDraft {
+  return { ...createEmptyComposerDraft(), contextItems: [], mode: "build" };
+}
+
+function resolveDraftUpdate<T>(update: T | ((current: T) => T), current: T): T {
+  return typeof update === "function" ? (update as (value: T) => T)(current) : update;
+}
 
 export const ChatPane = forwardRef<ChatPaneHandle, ChatPaneProps>(function ChatPane(
   {
@@ -95,19 +119,63 @@ export const ChatPane = forwardRef<ChatPaneHandle, ChatPaneProps>(function ChatP
     onOpenSubagent,
     botColor,
     composerReplacement,
+    composerDraft,
+    onComposerDraftChange,
     onPlanUpdated,
   },
   ref,
 ) {
   const sessionId = session.id;
   const [agentEvents, setAgentEvents] = useState<AgentEventItem[]>([]);
-  const [contextItems, setContextItems] = useState<ContextItem[]>([]);
+  const [localComposerDraft, setLocalComposerDraft] = useState<ChatComposerDraft>(
+    createEmptyChatComposerDraft,
+  );
   const [promptError, setPromptError] = useState<string | undefined>();
   const [pendingPrompt, setPendingPrompt] = useState(false);
   const [aborting, setAborting] = useState(false);
   const [workingStats, setWorkingStats] = useState<WorkingChangeStats | undefined>();
   const [dismissedPlanHash, setDismissedPlanHash] = useState<string | undefined>(undefined);
-  const [composerMode, setComposerMode] = useState<AgentMode>("build");
+  const activeComposerDraft = composerDraft ?? localComposerDraft;
+  const contextItems = activeComposerDraft.contextItems;
+  const composerMode = activeComposerDraft.mode;
+  const setComposerDraft = useCallback(
+    (update: ChatComposerDraftUpdate): void => {
+      if (onComposerDraftChange) {
+        onComposerDraftChange(update);
+      } else {
+        setLocalComposerDraft(update);
+      }
+    },
+    [onComposerDraftChange],
+  );
+  const setContextItems = useCallback(
+    (update: ContextItem[] | ((current: ContextItem[]) => ContextItem[])): void => {
+      setComposerDraft((draft) => ({
+        ...draft,
+        contextItems: resolveDraftUpdate(update, draft.contextItems),
+      }));
+    },
+    [setComposerDraft],
+  );
+  const setComposerMode = useCallback(
+    (mode: AgentMode): void => {
+      setComposerDraft((draft) => ({ ...draft, mode }));
+    },
+    [setComposerDraft],
+  );
+  const setComposerFields = useCallback(
+    (update: ComposerDraftUpdate): void => {
+      setComposerDraft((draft) => ({
+        ...draft,
+        ...resolveDraftUpdate(update, {
+          value: draft.value,
+          images: draft.images,
+          selectedSkills: draft.selectedSkills,
+        }),
+      }));
+    },
+    [setComposerDraft],
+  );
 
   const queuedRef = useRef<AgentEventItem[]>([]);
   const flushTimerRef = useRef<number | undefined>(undefined);
@@ -226,7 +294,7 @@ export const ChatPane = forwardRef<ChatPaneHandle, ChatPaneProps>(function ChatP
         );
       }
     });
-  }, [workspace?.id]);
+  }, [workspace?.id, setContextItems]);
 
   const flushQueued = useCallback((): void => {
     flushTimerRef.current = undefined;
@@ -578,6 +646,11 @@ export const ChatPane = forwardRef<ChatPaneHandle, ChatPaneProps>(function ChatP
                     canSubmit={Boolean(workspace) && Boolean(paneModel)}
                     contextItems={contextItems}
                     cwd={activeCwd}
+                    draft={{
+                      images: activeComposerDraft.images,
+                      selectedSkills: activeComposerDraft.selectedSkills,
+                      value: activeComposerDraft.value,
+                    }}
                     hasSession
                     isRunning={isRunning}
                     mode={composerMode}
@@ -586,6 +659,7 @@ export const ChatPane = forwardRef<ChatPaneHandle, ChatPaneProps>(function ChatP
                     {...(contextUsage ? { contextUsage } : {})}
                     onAbort={() => void abortPrompt()}
                     onContextChange={setContextItems}
+                    onDraftChange={setComposerFields}
                     onModeChange={setComposerMode}
                     onModelChange={(next) => void changeModel(next)}
                     onModelConfigChange={onModelConfigChange}

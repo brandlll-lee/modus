@@ -114,6 +114,48 @@ describe("buildBlocks", () => {
     );
   });
 
+  it("attaches resolved ask_user answers to the question tool block", () => {
+    const request = {
+      id: "question-request",
+      sessionId: "s",
+      questions: [
+        {
+          id: "q1",
+          header: "Pick a direction",
+          multiSelect: false,
+          options: [{ label: "Fast" }, { label: "Careful", recommended: true }],
+        },
+      ],
+    };
+    const blocks = buildBlocks([
+      item("1", {
+        type: "tool.started",
+        sessionId: "s",
+        toolCallId: "t",
+        toolName: "ask_user",
+        args: { questions: [{ header: "Pick a direction" }] },
+      }),
+      item("2", { type: "question.requested", sessionId: "s", request }),
+      item("3", {
+        type: "question.resolved",
+        sessionId: "s",
+        requestId: request.id,
+        skipped: false,
+        answers: [{ questionId: "q1", selected: ["Careful"], custom: "plus tests" }],
+      }),
+      item("4", { type: "tool.ended", sessionId: "s", toolCallId: "t", isError: false }),
+    ]);
+
+    expect(blocks[0]).toEqual(
+      expect.objectContaining({
+        type: "tool",
+        questionRequest: request,
+        questionAnswers: [{ questionId: "q1", selected: ["Careful"], custom: "plus tests" }],
+        questionSkipped: false,
+      }),
+    );
+  });
+
   it("keeps approval prompts out of the timeline", () => {
     const blocks = buildBlocks([
       item("1", {
@@ -883,13 +925,17 @@ describe("groupActivity", () => {
     ]);
   });
 
-  it("flags an error when any member errored", () => {
+  it("keeps group chrome neutral when a member errored", () => {
     const result = groupActivity([
       tool("1", "grep"),
       tool("2", "grep", true, true),
       msg("m"),
     ] as Blocks);
-    expect(result[0]).toEqual(expect.objectContaining({ type: "activity-group", isError: true }));
+    expect(result[0]).toEqual(expect.objectContaining({ type: "activity-group" }));
+    expect(result[0]).not.toEqual(expect.objectContaining({ isError: true }));
+    expect((result[0] as { items: Array<{ id: string; isError?: boolean }> }).items).toContainEqual(
+      expect.objectContaining({ id: "2", isError: true }),
+    );
   });
 
   it("counts distinct read paths when args carry them", () => {

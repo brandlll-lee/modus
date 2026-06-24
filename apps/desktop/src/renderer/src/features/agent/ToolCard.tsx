@@ -1,5 +1,6 @@
 import { IconAlertCircle, IconChevronRight } from "@tabler/icons-react";
 import { memo, type ReactNode, useState } from "react";
+import type { QuestionAnswer, QuestionRequest } from "../../../../shared/contracts";
 import { getToolUiMeta, type ToolUiMeta, toolRenderKind } from "../../../../shared/tools";
 import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
 import { ShinyText } from "../../components/ui/ShinyText";
@@ -18,6 +19,9 @@ type ToolCardProps = {
   variant?: TerminalToolVariant;
   /** Session cwd, threaded to the diff card so it can open the edited file. */
   cwd?: string | undefined;
+  questionRequest?: QuestionRequest;
+  questionAnswers?: QuestionAnswer[];
+  questionSkipped?: boolean;
 };
 
 /** Cap how much tool output we drop into the DOM at once. */
@@ -39,6 +43,9 @@ export const ToolCard = memo(
     isError = false,
     variant,
     cwd,
+    questionRequest,
+    questionAnswers,
+    questionSkipped,
   }: ToolCardProps) {
     // The catalog declares how each tool renders; route on that capability
     // instead of matching names, so a new tool is a catalog entry, not an edit
@@ -65,7 +72,15 @@ export const ToolCard = memo(
     }
 
     if (render === "question") {
-      return <QuestionToolCard args={args} isComplete={isComplete} output={output} />;
+      return (
+        <QuestionToolCard
+          args={args}
+          isComplete={isComplete}
+          {...(questionAnswers ? { answers: questionAnswers } : {})}
+          {...(questionRequest ? { request: questionRequest } : {})}
+          {...(questionSkipped !== undefined ? { skipped: questionSkipped } : {})}
+        />
+      );
     }
 
     return (
@@ -85,6 +100,9 @@ export const ToolCard = memo(
     prev.isError === next.isError &&
     prev.variant === next.variant &&
     prev.cwd === next.cwd &&
+    prev.questionRequest === next.questionRequest &&
+    prev.questionAnswers === next.questionAnswers &&
+    prev.questionSkipped === next.questionSkipped &&
     argsEqual(prev.args, next.args),
 );
 
@@ -120,7 +138,6 @@ function FlatToolRow({
           </span>
         </>
       )}
-      {isError ? <span className="shrink-0 text-2xs text-danger">failed</span> : null}
       {expandable ? (
         <IconChevronRight
           className={cn(

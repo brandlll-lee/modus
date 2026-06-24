@@ -1,5 +1,6 @@
 import { IconChevronRight } from "@tabler/icons-react";
 import { memo, useMemo, useState } from "react";
+import type { QuestionAnswer, QuestionRequest } from "../../../../shared/contracts";
 import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
 import { ShinyText } from "../../components/ui/ShinyText";
 import { cn } from "../../lib/cn";
@@ -7,24 +8,24 @@ import { cn } from "../../lib/cn";
 /**
  * Transcript card for a completed `ask_user` call (Cursor/Codex-style): collapsed
  * it reads "Asked N questions"; expanded it lists each question with the answer
- * the user chose. Questions come from the call args; answers are recovered from
- * the tool's own output serialization ("Q: …\nA: …"), so the card needs no extra
- * event plumbing. "(Recommended)" is shown when the chosen answer was the option
- * the planner had marked recommended.
+ * the user chose from the structured `question.resolved` event.
  */
 
 type QuestionToolCardProps = {
   args?: unknown;
-  output: string;
   isComplete?: boolean;
+  request?: QuestionRequest;
+  answers?: QuestionAnswer[];
+  skipped?: boolean;
 };
 
 type ArgQuestion = {
+  id?: string;
   header: string;
   options?: Array<{ label?: string; recommended?: boolean }>;
 };
 
-type QnA = { header: string; answer: string; recommended: boolean };
+type QnA = { id: string; header: string; answer: string; recommended: boolean };
 
 function readQuestions(args: unknown): ArgQuestion[] {
   if (!args || typeof args !== "object") {
@@ -34,38 +35,46 @@ function readQuestions(args: unknown): ArgQuestion[] {
   return Array.isArray(value) ? (value as ArgQuestion[]) : [];
 }
 
-/** Pull the ordered "A: …" answer lines out of the tool's serialized output. */
-function readAnswerLines(output: string): string[] {
-  const answers: string[] = [];
-  for (const line of output.split("\n")) {
-    const match = /^A:\s?(.*)$/.exec(line.trim());
-    if (match) {
-      answers.push(match[1] ?? "");
-    }
+function answerText(answer: QuestionAnswer | undefined): string {
+  const parts = [...(answer?.selected ?? [])];
+  if (answer?.custom) {
+    parts.push(answer.custom);
   }
-  return answers;
+  return parts.join("; ");
 }
 
-function buildPairs(questions: ArgQuestion[], output: string): QnA[] {
-  const answers = readAnswerLines(output);
+function buildPairs(
+  questions: ArgQuestion[],
+  answers: QuestionAnswer[] | undefined,
+  skipped: boolean | undefined,
+): QnA[] {
+  const answersById = new Map((answers ?? []).map((answer) => [answer.questionId, answer]));
   return questions.map((question, index) => {
-    const answer = answers[index]?.trim() ?? "";
+    const structured = question.id ? answersById.get(question.id) : answers?.[index];
+    const answer = skipped ? "Skipped" : answerText(structured);
     const recommended = (question.options ?? []).some(
       (option) =>
-        option.recommended === true && option.label != null && answer.includes(option.label),
+        option.recommended === true &&
+        option.label != null &&
+        structured?.selected.includes(option.label),
     );
-    return { header: question.header, answer, recommended };
+    return { id: question.id ?? question.header, header: question.header, answer, recommended };
   });
 }
 
 export const QuestionToolCard = memo(function QuestionToolCard({
   args,
-  output,
   isComplete = false,
+  request,
+  answers,
+  skipped,
 }: QuestionToolCardProps) {
   const [open, setOpen] = useState(false);
-  const questions = useMemo(() => readQuestions(args), [args]);
-  const pairs = useMemo(() => buildPairs(questions, output), [questions, output]);
+  const questions = useMemo(() => request?.questions ?? readQuestions(args), [args, request]);
+  const pairs = useMemo(
+    () => buildPairs(questions, answers, skipped),
+    [answers, questions, skipped],
+  );
 
   const count = questions.length;
   const running = !isComplete;
@@ -102,7 +111,7 @@ export const QuestionToolCard = memo(function QuestionToolCard({
       <CollapsibleMotion open={open} preset="timeline">
         <div className="mt-1.5 flex flex-col gap-2.5 border-hairline border-l pl-3">
           {pairs.map((pair) => (
-            <div className="min-w-0" key={pair.header}>
+            <div className="min-w-0" key={pair.id}>
               <div className="font-medium text-[13px] text-fg">{pair.header}</div>
               <div className="mt-0.5 text-fg-faint text-xs">
                 {pair.answer || "—"}
