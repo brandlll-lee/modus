@@ -1,4 +1,5 @@
 import { IconCircleCheck, IconCircleDashed, IconLayoutList } from "@tabler/icons-react";
+import { memo } from "react";
 import type { PlanBuildStatus, PlanRef } from "../../../../shared/contracts";
 import { ShinyText } from "../../components/ui/ShinyText";
 import { cn } from "../../lib/cn";
@@ -11,7 +12,7 @@ import { effectiveBuildStatus } from "./planState";
  * plan's authoritative `buildStatus` reconciled against the session's live
  * working state. Lives in its own Inspector tab, not the file tree.
  */
-export function PlanPanel({
+export const PlanPanel = memo(function PlanPanel({
   plan,
   sessionWorking,
   onBuild,
@@ -94,7 +95,7 @@ export function PlanPanel({
       </div>
     </div>
   );
-}
+});
 
 /** Top-right pill mirroring Cursor's "Not built / Building… / Built" state. */
 function BuildStatusBadge({ status }: { status: PlanBuildStatus }) {

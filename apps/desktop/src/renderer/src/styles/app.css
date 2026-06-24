@@ -1,4 +1,9 @@
 @import "tailwindcss";
+@source "../../../../../../node_modules/streamdown/dist/*.js";
+@source "../../../../../../node_modules/@streamdown/code/dist/*.js";
+@source "../../../../../../node_modules/@streamdown/cjk/dist/*.js";
+@source "../../../../../../node_modules/@streamdown/math/dist/*.js";
+@source "../../../../../../node_modules/@streamdown/mermaid/dist/*.js";
 
 /*
  * Modus 设计系统 v4 —— 像素级对标 Cursor 3.0 桌面端：
@@ -416,7 +421,7 @@ input {
 
 /* AI response Markdown. Capability comes from Streamdown; visuals stay inside Modus tokens. */
 .modus-markdown {
-  --markdown-fg: color-mix(in oklab, var(--color-fg) 99%, var(--color-canvas));
+  --markdown-fg: var(--color-fg);
   --markdown-fg-strong: var(--color-fg);
   --markdown-fg-muted: color-mix(in oklab, var(--color-fg-muted) 99%, var(--color-canvas));
   --markdown-fg-subtle: color-mix(in oklab, var(--color-fg-subtle) 99%, var(--color-canvas));

@@ -1,18 +1,15 @@
-import { Component, type ErrorInfo, lazy, type ReactNode, Suspense } from "react";
+import { Component, type ErrorInfo, type ReactNode } from "react";
+import MarkdownMessageRenderer from "./MarkdownMessageRenderer";
 
 type MarkdownMessageProps = {
   content: string;
   streaming?: boolean;
 };
 
-const MarkdownMessageRenderer = lazy(() => import("./MarkdownMessageRenderer"));
-
 export function MarkdownMessage({ content, streaming = false }: MarkdownMessageProps) {
   return (
     <MarkdownMessageErrorBoundary content={content}>
-      <Suspense fallback={<PlainTextFallback content={content} />}>
-        <MarkdownMessageRenderer content={content} streaming={streaming} />
-      </Suspense>
+      <MarkdownMessageRenderer content={content} streaming={streaming} />
     </MarkdownMessageErrorBoundary>
   );
 }

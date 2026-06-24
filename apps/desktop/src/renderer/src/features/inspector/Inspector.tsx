@@ -270,13 +270,13 @@ export function Inspector({
                 <Tabs.Panel className="min-h-0 flex-1 outline-none" value="changes">
                   <DiffPanel cwd={cwd} sessionId={sessionId} workspaceId={activeWorkspace?.id} />
                 </Tabs.Panel>
-                <Tabs.Panel className="min-h-0 flex-1 outline-none" keepMounted value="plan">
+                <Tabs.Panel className="min-h-0 flex-1 outline-none" value="plan">
                   <PlanPanel plan={plan} sessionWorking={sessionWorking} onBuild={onBuildPlan} />
                 </Tabs.Panel>
-                <Tabs.Panel className="min-h-0 flex-1 outline-none" keepMounted value="files">
+                <Tabs.Panel className="min-h-0 flex-1 outline-none" value="files">
                   <FilesPanel cwd={cwd} />
                 </Tabs.Panel>
-                <Tabs.Panel className="min-h-0 flex-1 outline-none" keepMounted value="subagents">
+                <Tabs.Panel className="min-h-0 flex-1 outline-none" value="subagents">
                   <SubagentsPanel
                     contextUsageBySession={contextUsageBySession}
                     defaultModel={defaultModel}

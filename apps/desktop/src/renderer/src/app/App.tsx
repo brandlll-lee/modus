@@ -345,6 +345,30 @@ export function App() {
     setInspectorOpen(true);
   }
 
+  const buildActivePlan = useCallback(() => {
+    chatPaneRef.current?.buildActivePlan();
+  }, []);
+
+  const rememberActivePlan = useCallback(
+    (plan: PlanRef) => {
+      const key = plan.sessionId ?? activeSessionId ?? plan.id;
+      setActivePlanBySession((current) => (current[key] === plan ? current : { [key]: plan }));
+    },
+    [activeSessionId],
+  );
+
+  const handleChatPlanUpdated = useCallback(
+    (plan: PlanRef) => {
+      rememberActivePlan(plan);
+      if (!openedPlanHashesRef.current.has(plan.hash)) {
+        openedPlanHashesRef.current.add(plan.hash);
+        setInspectorTab("plan");
+        setInspectorOpen(true);
+      }
+    },
+    [rememberActivePlan],
+  );
+
   /**
    * Open the new-chat hero (Figure 1). The session row is created lazily by the
    * first prompt (`submitHeroPrompt`), so "New chat" never spawns an empty
@@ -700,21 +724,7 @@ export function App() {
                                   return next;
                                 });
                               }}
-                              onPlanUpdated={(plan) => {
-                                // Store under THIS session's id; auto-open the
-                                // Plan tab once per distinct plan (by hash) — a
-                                // build-status change or session re-open never
-                                // force-switches the tab.
-                                setActivePlanBySession((current) => ({
-                                  ...current,
-                                  [activeSession.id]: plan,
-                                }));
-                                if (!openedPlanHashesRef.current.has(plan.hash)) {
-                                  openedPlanHashesRef.current.add(plan.hash);
-                                  setInspectorTab("plan");
-                                  setInspectorOpen(true);
-                                }
-                              }}
+                              onPlanUpdated={handleChatPlanUpdated}
                               ref={chatPaneRef}
                               onSessionsChanged={() => void refreshSessions()}
                               session={activeSession}
@@ -795,15 +805,7 @@ export function App() {
                         onOpenChange={setInspectorOpen}
                         onOpenReview={openReview}
                         onOpenSubagent={openSubagent}
-                        onPlanUpdated={(plan) => {
-                          if (!activeSession) {
-                            return;
-                          }
-                          setActivePlanBySession((current) => ({
-                            ...current,
-                            [plan.sessionId ?? activeSession.id]: plan,
-                          }));
-                        }}
+                        onPlanUpdated={rememberActivePlan}
                         onSelectSubagent={setSelectedSubagentId}
                         onSessionsChanged={() => void refreshSessions()}
                         onTabChange={setInspectorTab}
@@ -813,7 +815,7 @@ export function App() {
                           ? { plan: activePlanBySession[activeSession.id] }
                           : {})}
                         sessionWorking={activeRunning}
-                        onBuildPlan={() => chatPaneRef.current?.buildActivePlan()}
+                        onBuildPlan={buildActivePlan}
                         securityState={securityState}
                         selectedSubagentId={selectedSubagentId}
                         sessions={agentSessions}
