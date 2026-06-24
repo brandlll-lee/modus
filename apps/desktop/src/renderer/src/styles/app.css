@@ -952,6 +952,58 @@ input {
   background: var(--color-hover);
 }
 
+/* Plan documents read like notebook pages, not chat bubbles. */
+.modus-markdown.modus-plan-markdown {
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.modus-plan-markdown :where(p) {
+  margin: 0.78rem 0;
+}
+
+.modus-plan-markdown :where(h1, h2, h3, h4, h5, h6) {
+  margin-top: 1.25rem;
+  margin-bottom: 0.45rem;
+  line-height: 1.28;
+}
+
+.modus-plan-markdown > :where(h1, h2, h3, h4, h5, h6):first-child {
+  margin-top: 0;
+}
+
+.modus-plan-markdown :where(ul, ol) {
+  margin: 0.85rem 0 1rem;
+  padding-left: 1.25rem;
+}
+
+.modus-plan-markdown :where(li) {
+  margin: 0.48rem 0;
+}
+
+.modus-plan-markdown :where(li > p) {
+  margin: 0.34rem 0;
+}
+
+.modus-plan-markdown [data-streamdown="table-wrapper"] > div:has(> table) {
+  border: 0;
+  border-radius: 0;
+}
+
+.modus-plan-markdown :where(th, td) {
+  padding: 0.65rem 0.75rem;
+  border: 0;
+  border-bottom: 1px solid var(--color-hairline-soft);
+}
+
+.modus-plan-markdown :where(th) {
+  background: transparent;
+}
+
+.modus-plan-markdown :where(tr:last-child > th, tr:last-child > td) {
+  border-bottom: 0;
+}
+
 /* Let KaTeX keep its native 1.21em scale (math glyphs read smaller than text at
  * the same em, so KaTeX upsizes on purpose). The previous `font-size: 1em` here
  * shrank every formula and made dense fractions cramped. We only retint to the

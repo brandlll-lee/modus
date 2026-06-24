@@ -41,7 +41,7 @@ describe("ToolRegistry profiles", () => {
         name: "plan_write",
         profiles: ["plan"],
         permission: { danger: "safe" },
-        ui: { iconName: "todo", verb: "Creating plan" },
+        ui: { iconName: "file-plus", verb: "Wrote plan", render: "diff", diffSource: "newFile" },
       },
       definition,
     });

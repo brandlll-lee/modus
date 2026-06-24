@@ -54,7 +54,7 @@ export const PlanPanel = memo(function PlanPanel({
       </div>
 
       <div className="scroll-thin min-h-0 flex-1 overflow-y-auto px-4 py-3">
-        <MarkdownMessage content={plan.content} />
+        <MarkdownMessage className="modus-plan-markdown" content={plan.content} />
 
         {plan.todos.length > 0 ? (
           <section className="mt-4 overflow-hidden rounded-lg border border-hairline-soft bg-panel">

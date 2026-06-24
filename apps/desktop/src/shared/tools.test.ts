@@ -38,6 +38,8 @@ describe("tool render descriptor (single source of truth)", () => {
     expect(getToolUiMeta("terminal_read")?.terminalFramed).toBe(true);
 
     expect(getToolUiMeta("todo_write")?.render).toBe("todo");
+    expect(getToolUiMeta("plan_write")?.render).toBe("diff");
+    expect(getToolUiMeta("plan_write")?.diffSource).toBe("newFile");
   });
 
   it("defaults unknown, MCP, and plain tools to a flat row", () => {
@@ -55,6 +57,7 @@ describe("tool render descriptor (single source of truth)", () => {
     expect(toolRenderKind("bash")).toBe("terminal");
     expect(toolRenderKind("terminal_run")).toBe("terminal");
     expect(toolRenderKind("todo_write")).toBe("todo");
+    expect(toolRenderKind("plan_write")).toBe("diff");
   });
 
   it("renders task as the only subagent model-visible tool", () => {

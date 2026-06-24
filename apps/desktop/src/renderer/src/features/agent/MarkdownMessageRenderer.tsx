@@ -11,6 +11,7 @@ import { cn } from "../../lib/cn";
 import { type ThemeMode, useTheme } from "../../lib/theme";
 
 type MarkdownMessageRendererProps = {
+  className?: string | undefined;
   content: string;
   streaming?: boolean;
 };
@@ -166,6 +167,7 @@ const components: Components = {
 
 /* ── Main renderer ─────────────────────────────────────────────────── */
 export default function MarkdownMessageRenderer({
+  className,
   content,
   streaming = false,
 }: MarkdownMessageRendererProps) {
@@ -193,8 +195,7 @@ export default function MarkdownMessageRenderer({
   return (
     <Streamdown
       animated={streaming ? STREAMING_ANIMATION : false}
-      caret="block"
-      className="modus-markdown text-fg"
+      className={cn("modus-markdown text-fg", className)}
       components={components}
       controls={controls}
       dir="auto"

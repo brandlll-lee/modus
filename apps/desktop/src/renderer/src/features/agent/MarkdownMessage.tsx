@@ -2,14 +2,15 @@ import { Component, type ErrorInfo, type ReactNode } from "react";
 import MarkdownMessageRenderer from "./MarkdownMessageRenderer";
 
 type MarkdownMessageProps = {
+  className?: string | undefined;
   content: string;
   streaming?: boolean;
 };
 
-export function MarkdownMessage({ content, streaming = false }: MarkdownMessageProps) {
+export function MarkdownMessage({ className, content, streaming = false }: MarkdownMessageProps) {
   return (
     <MarkdownMessageErrorBoundary content={content}>
-      <MarkdownMessageRenderer content={content} streaming={streaming} />
+      <MarkdownMessageRenderer className={className} content={content} streaming={streaming} />
     </MarkdownMessageErrorBoundary>
   );
 }

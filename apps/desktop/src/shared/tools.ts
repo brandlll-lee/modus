@@ -241,15 +241,16 @@ export const TODO_TOOL_UI: ToolUiMeta = {
 /** Agent-facing Plan Mode tool — writes the single plan.md artifact. */
 export const PLAN_TOOL_NAME = "plan_write";
 /**
- * UI metadata for the plan tool. It renders as an ordinary flat row whose
- * label shimmers while running ("Creating plan …") — the deliberately minimal
- * Cursor-style affordance, reusing the existing FlatToolRow/ShinyText, not a
- * diff card.
+ * UI metadata for the plan tool. Plan Mode writes a constrained Markdown
+ * artifact, so it reuses the same diff/new-file renderer as the ordinary
+ * `write` tool without exposing free-form workspace writes.
  */
 export const PLAN_TOOL_UI: ToolUiMeta = {
-  iconName: "todo",
-  verb: "Creating plan",
+  iconName: "file-plus",
+  verb: "Wrote plan",
   primaryArgKey: "title",
+  render: "diff",
+  diffSource: "newFile",
 };
 
 /** Agent-facing interactive question tool — asks the user, blocks on the answer. */
