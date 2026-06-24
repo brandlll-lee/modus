@@ -82,7 +82,7 @@ export function FileDiffPreview({
   const wholeDelete = versions.modified === "" && versions.original !== "";
   if (wholeAdd || wholeDelete) {
     return (
-      <div className="relative flex flex-col border-hairline-soft border-t">
+      <div className="relative mx-1 mb-1 flex flex-col overflow-hidden rounded-lg bg-code-bg">
         {versions.truncated ? (
           <span className="pointer-events-none absolute top-1.5 right-2 z-10 rounded bg-elevated/90 px-1.5 py-0.5 text-2xs text-fg-faint shadow-popup">
             Large file — preview truncated
@@ -100,7 +100,7 @@ export function FileDiffPreview({
   }
 
   return (
-    <div className="relative flex flex-col border-hairline-soft border-t">
+    <div className="relative mx-1 mb-1 flex flex-col overflow-hidden rounded-lg bg-code-bg">
       {versions.truncated ? (
         <span className="pointer-events-none absolute top-1.5 right-2 z-10 rounded bg-elevated/90 px-1.5 py-0.5 text-2xs text-fg-faint shadow-popup">
           Large file — preview truncated
@@ -122,5 +122,9 @@ export function FileDiffPreview({
 }
 
 function Notice({ children }: { children: React.ReactNode }) {
-  return <div className="px-6 py-3 text-fg-faint text-xs">{children}</div>;
+  return (
+    <div className="mx-1 mb-1 rounded-lg bg-code-bg px-4 py-3 text-fg-faint text-xs">
+      {children}
+    </div>
+  );
 }

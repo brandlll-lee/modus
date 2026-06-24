@@ -26,7 +26,7 @@ import type {
 } from "../../../../shared/contracts";
 import { triggerFindInActiveDiff } from "../../components/code/DiffViewer";
 import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
-import { EmptyState, PanelHeader } from "../../components/ui/Panel";
+import { EmptyState } from "../../components/ui/Panel";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
 import { BranchSwitcher } from "../git/BranchSwitcher";
@@ -261,83 +261,53 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
 
   return (
     <section className="flex h-full min-h-0 flex-col" ref={sectionRef}>
-      <PanelHeader title="Changes">
-        <button
-          aria-label="Refresh changes"
-          className="flex size-7 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-hover hover:text-fg-subtle disabled:opacity-40"
-          disabled={!activeCwd}
-          onClick={() => void refresh(activeCwd)}
-          type="button"
+      {activeCwd && isRepository ? (
+        <ReviewToolbar
+          added={totals.added}
+          branch={status?.branch}
+          count={count}
+          cwd={activeCwd}
+          linkedWorktree={visibleLinkedWorktree}
+          noun={meta.noun}
+          onBackToMain={() => setLinkedWorktree(undefined)}
+          onError={setActionError}
+          onRefresh={onCommitRefresh}
+          onScope={setScope}
+          onToggleTree={() => setTreeView(!treeView)}
+          onWorktreeBranch={(worktreeCwd, branch) => {
+            setActionError(undefined);
+            setLinkedWorktree(
+              normalizePath(worktreeCwd) === normalizePath(cwd)
+                ? undefined
+                : { rootCwd: cwd, cwd: worktreeCwd, branch },
+            );
+          }}
+          removed={totals.removed}
+          scope={scope}
+          showStats={!meta.commitHistory}
+          status={status}
+          treeView={treeView}
         >
-          <IconRefresh size={15} stroke={1.65} />
-        </button>
-      </PanelHeader>
+          <OverflowMenu
+            ignoreWhitespace={ignoreWhitespace}
+            layout={layout}
+            onCollapseAll={() => {
+              setExpanded(new Set());
+              setExpandedCommits(new Set());
+            }}
+            onFind={() => triggerFindInActiveDiff()}
+            onRefresh={() => void refresh(activeCwd)}
+            onReview={() => void startReview(activeCwd, sessionId, workspaceId)}
+            onSetLayout={setLayout}
+            onToggleWhitespace={() => setIgnoreWhitespace(!ignoreWhitespace)}
+          />
+        </ReviewToolbar>
+      ) : null}
 
-      <div className="scroll-thin min-h-0 flex-1 overflow-y-auto">
-        {activeCwd && isRepository ? (
-          <>
-            <ComparisonBar
-              branch={status?.branch}
-              cwd={activeCwd}
-              onError={setActionError}
-              onRefresh={onCommitRefresh}
-              onWorktreeBranch={(worktreeCwd, branch) => {
-                setActionError(undefined);
-                setLinkedWorktree(
-                  normalizePath(worktreeCwd) === normalizePath(cwd)
-                    ? undefined
-                    : { rootCwd: cwd, cwd: worktreeCwd, branch },
-                );
-              }}
-              onToggleTree={() => setTreeView(!treeView)}
-              status={status}
-              treeView={treeView}
-            >
-              <OverflowMenu
-                ignoreWhitespace={ignoreWhitespace}
-                layout={layout}
-                onCollapseAll={() => {
-                  setExpanded(new Set());
-                  setExpandedCommits(new Set());
-                }}
-                onFind={() => triggerFindInActiveDiff()}
-                onRefresh={() => void refresh(activeCwd)}
-                onReview={() => void startReview(activeCwd, sessionId, workspaceId)}
-                onSetLayout={setLayout}
-                onToggleWhitespace={() => setIgnoreWhitespace(!ignoreWhitespace)}
-              />
-            </ComparisonBar>
-
-            <SummaryRow
-              added={totals.added}
-              count={count}
-              noun={meta.noun}
-              onScope={setScope}
-              removed={totals.removed}
-              scope={scope}
-              showStats={!meta.commitHistory}
-            />
-
-            {visibleLinkedWorktree ? (
-              <div className="flex items-center gap-2 border-hairline-soft border-b bg-fill/70 px-3 py-2 text-fg-subtle text-xs">
-                <span className="min-w-0 flex-1 truncate">
-                  Viewing linked worktree: {visibleLinkedWorktree.branch}
-                </span>
-                <button
-                  className="rounded border border-hairline px-2 py-1 text-fg transition-colors hover:bg-hover"
-                  onClick={() => setLinkedWorktree(undefined)}
-                  type="button"
-                >
-                  Back to main
-                </button>
-              </div>
-            ) : null}
-          </>
-        ) : null}
-
+      <div className="scroll-thin min-h-0 flex-1 overflow-y-auto px-2 py-1.5">
         {actionError ? (
           <button
-            className="flex w-full items-start gap-2 border-hairline-soft border-b bg-danger/8 px-3 py-2 text-left text-danger text-xs"
+            className="mb-1.5 flex w-full items-start gap-2 rounded-lg bg-danger/8 px-3 py-2 text-left text-danger text-xs"
             onClick={() => setActionError(undefined)}
             title="Dismiss"
             type="button"
@@ -348,7 +318,7 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
         ) : null}
 
         {status?.mergeInProgress ? (
-          <div className="flex items-start gap-2 border-hairline-soft border-b bg-danger/8 px-3 py-2 text-danger text-xs">
+          <div className="mb-1.5 flex items-start gap-2 rounded-lg bg-danger/8 px-3 py-2 text-danger text-xs">
             <IconAlertTriangle className="mt-0.5 shrink-0" size={13} stroke={1.8} />
             <span className="min-w-0 flex-1 wrap-break-word">
               Merge in progress
@@ -456,55 +426,130 @@ function normalizePath(path: string | undefined): string {
   return (path ?? "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
 }
 
-/* ── Row 1: list/tree toggle · branch switcher · Commit or push · ⋯ ── */
-
-function ComparisonBar({
+function ReviewToolbar({
+  scope,
+  noun,
+  count,
+  added,
+  removed,
+  showStats,
   branch,
   cwd,
   status,
   treeView,
+  linkedWorktree,
+  onScope,
   onToggleTree,
   onRefresh,
   onError,
   onWorktreeBranch,
+  onBackToMain,
   children,
 }: {
+  scope: ChangeScope;
+  noun: string;
+  count: number;
+  added: number;
+  removed: number;
+  showStats: boolean;
   branch: string | undefined;
   cwd: string;
   status: GitStatusSummary | undefined;
   treeView: boolean;
+  linkedWorktree: { cwd: string; branch: string } | undefined;
+  onScope(scope: ChangeScope): void;
   onToggleTree(): void;
   onRefresh(): void;
   onError(message: string): void;
   onWorktreeBranch(path: string, branch: string): void;
+  onBackToMain(): void;
   children: ReactNode;
 }) {
+  const countLabel = noun === "Commit" ? (count === 1 ? "commit" : "commits") : "files";
   return (
-    <div className="flex h-10 items-center gap-2 border-hairline border-b px-2.5">
-      <Tooltip content={treeView ? "View as list" : "View as tree"} side="bottom" sideOffset={6}>
-        <button
-          aria-label={treeView ? "View as list" : "View as tree"}
-          aria-pressed={treeView}
-          className="flex size-6 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-hover hover:text-fg-subtle"
-          onClick={onToggleTree}
-          type="button"
-        >
-          {treeView ? <IconListTree size={15} stroke={1.7} /> : <IconList size={15} stroke={1.7} />}
-        </button>
-      </Tooltip>
+    <div
+      aria-label="Git review toolbar"
+      className="flex min-h-12 shrink-0 items-center gap-2 border-hairline-soft border-b px-3"
+      role="toolbar"
+    >
+      <Menu.Root>
+        <Menu.Trigger className="flex h-7 shrink-0 items-center gap-1 rounded-md bg-active px-2 text-fg text-sm outline-none transition-colors hover:bg-hover data-popup-open:bg-hover">
+          <span>{SCOPE_META[scope].label}</span>
+          <IconChevronDown className="text-fg-faint" size={13} stroke={1.8} />
+        </Menu.Trigger>
+        <Menu.Portal>
+          <Menu.Positioner align="start" side="bottom" sideOffset={6}>
+            <Menu.Popup className="origin-(--transform-origin) min-w-[170px] rounded-lg border border-hairline bg-elevated p-1 shadow-popup">
+              {CHANGE_SCOPES.map((value) => (
+                <MenuChoice checked={scope === value} key={value} onClick={() => onScope(value)}>
+                  {SCOPE_META[value].label}
+                </MenuChoice>
+              ))}
+            </Menu.Popup>
+          </Menu.Positioner>
+        </Menu.Portal>
+      </Menu.Root>
       <BranchSwitcher
         cwd={cwd}
         onAfterSwitch={onRefresh}
         onError={onError}
         onWorktreeBranch={onWorktreeBranch}
-        triggerClassName="flex min-w-0 items-center gap-1.5 rounded-md py-0.5 pr-1.5 pl-1 text-sm outline-none transition-colors hover:bg-hover data-popup-open:bg-hover"
+        triggerClassName="flex min-w-0 items-center gap-1.5 rounded-md px-1.5 py-0.5 text-sm outline-none transition-colors hover:bg-hover data-popup-open:bg-hover"
       >
         <IconGitBranch className="shrink-0 text-fg-subtle" size={13} stroke={1.7} />
         <span className="max-w-[160px] truncate text-fg-muted">{branch ?? "detached"}</span>
         <IconChevronDown className="shrink-0 text-fg-faint" size={12} stroke={1.8} />
       </BranchSwitcher>
+      {linkedWorktree ? (
+        <span className="flex min-w-0 items-center gap-1 rounded-full bg-chip px-2 py-1 text-fg-subtle text-xs">
+          <span className="min-w-0 max-w-[180px] truncate">worktree: {linkedWorktree.branch}</span>
+          <button
+            className="rounded-full px-1 text-fg-muted transition-colors hover:bg-hover hover:text-fg"
+            onClick={onBackToMain}
+            type="button"
+          >
+            Back
+          </button>
+        </span>
+      ) : null}
       <div className="ml-auto flex shrink-0 items-center gap-1">
+        <span className="mr-1 flex items-center gap-1.5 text-fg-muted text-xs">
+          <span className="tabular-nums">
+            {count} {countLabel}
+          </span>
+          {showStats && (added > 0 || removed > 0) ? (
+            <span className="flex items-center gap-1 font-mono tabular-nums">
+              <span className="text-success">+{added}</span>
+              <span className="text-danger">-{removed}</span>
+            </span>
+          ) : null}
+        </span>
+        <Tooltip content={treeView ? "View as list" : "View as tree"} side="bottom" sideOffset={6}>
+          <button
+            aria-label={treeView ? "View as list" : "View as tree"}
+            aria-pressed={treeView}
+            className="flex size-7 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-hover hover:text-fg-subtle"
+            onClick={onToggleTree}
+            type="button"
+          >
+            {treeView ? (
+              <IconListTree size={15} stroke={1.7} />
+            ) : (
+              <IconList size={15} stroke={1.7} />
+            )}
+          </button>
+        </Tooltip>
         <CommitLauncher cwd={cwd} onRefresh={onRefresh} status={status} />
+        <Tooltip content="Refresh changes" side="bottom" sideOffset={6}>
+          <button
+            aria-label="Refresh changes"
+            className="flex size-7 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-hover hover:text-fg-subtle"
+            onClick={onRefresh}
+            type="button"
+          >
+            <IconRefresh size={15} stroke={1.65} />
+          </button>
+        </Tooltip>
         {children}
       </div>
     </div>
@@ -693,57 +738,6 @@ function MenuChoice({
   );
 }
 
-/* ── Row 2: "{N} {Noun} Changes ⌄ +X -Y" (scope switch + counts) ── */
-
-function SummaryRow({
-  scope,
-  noun,
-  count,
-  added,
-  removed,
-  showStats,
-  onScope,
-}: {
-  scope: ChangeScope;
-  noun: string;
-  count: number;
-  added: number;
-  removed: number;
-  showStats: boolean;
-  onScope(scope: ChangeScope): void;
-}) {
-  const label = noun === "Commit" ? (count === 1 ? "Commit" : "Commits") : `${noun} Changes`;
-  return (
-    <div className="flex h-8 items-center gap-2 px-2.5">
-      <Menu.Root>
-        <Menu.Trigger className="flex items-center gap-1 rounded-md px-1 py-0.5 text-fg text-sm outline-none transition-colors hover:bg-hover data-popup-open:bg-hover">
-          <span className="font-medium tabular-nums">{count}</span>
-          <span>{label}</span>
-          <IconChevronDown className="text-fg-faint" size={13} stroke={1.8} />
-        </Menu.Trigger>
-        <Menu.Portal>
-          <Menu.Positioner align="start" side="bottom" sideOffset={6}>
-            <Menu.Popup className="origin-(--transform-origin) min-w-[170px] rounded-lg border border-hairline bg-elevated p-1 shadow-popup">
-              {CHANGE_SCOPES.map((value) => (
-                <MenuChoice checked={scope === value} key={value} onClick={() => onScope(value)}>
-                  {SCOPE_META[value].label}
-                </MenuChoice>
-              ))}
-            </Menu.Popup>
-          </Menu.Positioner>
-        </Menu.Portal>
-      </Menu.Root>
-
-      {showStats && (added > 0 || removed > 0) ? (
-        <span className="flex items-center gap-1.5 font-mono text-xs">
-          <span className="text-success">+{added}</span>
-          <span className="text-danger">-{removed}</span>
-        </span>
-      ) : null}
-    </div>
-  );
-}
-
 /* ── File row: icon · path · badge/±  · hover copy + discard ── */
 
 const ChangeRow = memo(function ChangeRow({
@@ -789,10 +783,10 @@ const ChangeRow = memo(function ChangeRow({
   }, [expanded]);
 
   return (
-    <div className="border-hairline-soft border-b">
+    <div className="py-0.5">
       <div
         className={cn(
-          "group flex h-8 w-full items-center gap-1.5 pr-2 text-left text-sm transition-colors",
+          "group flex h-8 w-full items-center gap-1.5 rounded-lg pr-2 text-left text-sm transition-colors",
           expanded ? "bg-chip-faint text-fg" : "text-fg-muted hover:bg-hover hover:text-fg",
         )}
         style={{ paddingLeft: 10 + depth * 14 }}
@@ -871,7 +865,7 @@ const ChangeRow = memo(function ChangeRow({
  * Monaco diff is mounted — keeps the open animation cheap and smooth. */
 function DiffBodyPlaceholder() {
   return (
-    <div className="flex h-[120px] items-center justify-center border-hairline-soft border-t text-fg-faint text-xs">
+    <div className="mx-1 mb-1 flex h-[120px] items-center justify-center rounded-lg bg-code-bg text-fg-faint text-xs">
       Loading diff…
     </div>
   );
@@ -926,10 +920,10 @@ function CommitRow({
   refreshToken: number;
 }) {
   return (
-    <div className="border-hairline-soft border-b">
+    <div className="py-0.5">
       <button
         className={cn(
-          "flex h-11 w-full items-center gap-2 px-2.5 text-left text-sm transition-colors",
+          "flex h-11 w-full items-center gap-2 rounded-lg px-2.5 text-left text-sm transition-colors",
           expanded ? "bg-chip-faint text-fg" : "text-fg-muted hover:bg-hover hover:text-fg",
         )}
         onClick={onToggle}
@@ -1071,9 +1065,9 @@ function TreeFolder({
 }) {
   const [open, setOpen] = useState(true);
   return (
-    <div>
+    <div className="py-0.5">
       <button
-        className="group flex h-8 w-full items-center gap-1.5 pr-2 text-left text-fg-muted text-sm transition-colors hover:bg-hover hover:text-fg"
+        className="group flex h-8 w-full items-center gap-1.5 rounded-lg pr-2 text-left text-fg-muted text-sm transition-colors hover:bg-hover hover:text-fg"
         onClick={() => setOpen((value) => !value)}
         style={{ paddingLeft: 10 + depth * 14 }}
         type="button"

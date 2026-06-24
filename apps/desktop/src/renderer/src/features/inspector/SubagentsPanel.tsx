@@ -1,10 +1,4 @@
-import {
-  IconArrowLeft,
-  IconChevronRight,
-  IconLayoutBoard,
-  IconList,
-  IconSearch,
-} from "@tabler/icons-react";
+import { IconArrowLeft, IconLayoutBoard, IconList, IconSearch } from "@tabler/icons-react";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   AgentSessionInfo,
@@ -16,11 +10,10 @@ import type {
   WorkingChangeStats,
   WorkspaceInfo,
 } from "../../../../shared/contracts";
-import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
 import { ModusBot } from "../../components/ui/ModusBot";
 import type { AgentEventHub } from "../agent/agentEventHub";
 import { ChatPane } from "../agent/ChatPane";
-import { ChangeFileList, LineDelta } from "../agent/changes/ChangeStats";
+import { LineDelta } from "../agent/changes/ChangeStats";
 import { subagentColor } from "../agent/subagentUi";
 
 type PanelView = "overview" | "detail";
@@ -562,122 +555,142 @@ function SubagentWorktreeReviewCard({
   stats?: WorkingChangeStats | undefined;
   worktree: NonNullable<AgentSessionInfo["subagentWorktree"]>;
 }) {
-  const [expanded, setExpanded] = useState(false);
   const canApply = worktree.integrationStatus === "ready";
   const canAbort = worktree.integrationStatus === "applied" && mergeInProgress;
   const canCleanup =
     worktree.integrationStatus === "no_changes" ||
     (worktree.integrationStatus === "applied" && !mergeInProgress);
-  const message =
+  const title =
+    worktree.integrationStatus === "applied"
+      ? "Worktree applied"
+      : worktree.integrationStatus === "conflict"
+        ? "Resolve this paused apply?"
+        : worktree.integrationStatus === "no_changes"
+          ? "No changes to apply"
+          : "Apply this subagent worktree?";
+  const detail =
     worktree.integrationStatus === "applied"
       ? mergeInProgress
-        ? "Applied. Commit or abort before applying another worktree."
-        : "Applied. Cleanup is available after review."
+        ? "Commit or abort before applying another worktree."
+        : "Review is complete; cleanup is available."
       : worktree.integrationStatus === "conflict"
-        ? "Apply paused with merge conflicts."
+        ? "Choose how to handle the merge conflicts in the main workspace."
         : worktree.integrationStatus === "no_changes"
-          ? "No changes to apply."
-          : canApply
-            ? applyBlockedReason
-            : undefined;
-  const hasStats = Boolean(stats && stats.fileCount > 0);
+          ? "This worktree does not have changes against its base."
+          : (applyBlockedReason ?? "Review the diff, then apply it to the main workspace.");
   return (
-    <>
-      {hasStats && stats ? (
-        <div className="-mb-3 overflow-hidden rounded-t-[14px] bg-panel px-2.5 pt-1.5 pb-4">
-          <div className="flex h-8 items-center gap-1">
-            <button
-              aria-expanded={expanded}
-              className="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-md px-1 text-left transition-colors hover:bg-hover"
-              onClick={() => setExpanded((value) => !value)}
-              type="button"
-            >
-              <IconChevronRight
-                className={`shrink-0 transition-transform duration-150 ${expanded ? "rotate-90" : ""}`}
-                size={13}
-                stroke={1.8}
-              />
-              <span className="shrink-0 text-fg-muted text-sm">
-                {stats.fileCount} {stats.fileCount === 1 ? "file" : "files"}
-              </span>
-              <LineDelta added={stats.added} removed={stats.removed} />
-            </button>
-            <button
-              className="flex h-6 shrink-0 items-center rounded-md bg-chip px-2 text-fg-muted text-xs transition-colors hover:bg-chip-strong hover:text-fg"
-              onClick={onReview}
-              title="Review this worktree in Changes"
-              type="button"
-            >
-              Review
-            </button>
+    <div className="mb-2 rounded-xl border border-composer-border bg-elevated px-3.5 py-3 shadow-composer-edge">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="font-semibold text-[14px] text-fg leading-snug">{title}</div>
+          <div className="mt-1 text-fg-subtle text-xs leading-relaxed">{detail}</div>
+          <div className="mt-2 truncate font-mono text-2xs text-fg-faint">{worktree.branch}</div>
+        </div>
+        {stats && stats.fileCount > 0 ? (
+          <div className="flex shrink-0 items-center gap-1.5 rounded-full bg-chip px-2 py-1 text-fg-muted text-xs">
+            <span>
+              {stats.fileCount} {stats.fileCount === 1 ? "file" : "files"}
+            </span>
+            <LineDelta added={stats.added} removed={stats.removed} />
           </div>
-          <CollapsibleMotion open={expanded} preset="compact">
-            <div className="mt-1 border-hairline-soft border-t px-1 pt-1.5">
-              <ChangeFileList className="max-h-44" stats={stats} />
-            </div>
-          </CollapsibleMotion>
-        </div>
-      ) : null}
-      <div className="mb-2 rounded-xl border border-composer-border bg-elevated px-3.5 py-3 shadow-composer-edge">
-        <div className="flex items-start gap-3">
-          <div className="min-w-0 flex-1">
-            <div className="truncate font-semibold text-fg text-[15px]">{worktree.branch}</div>
-            {message ? <div className="mt-1 text-fg-subtle text-xs">{message}</div> : null}
-            {error ? <div className="mt-1 text-danger text-xs">{error}</div> : null}
-          </div>
-        </div>
-        <div className="mt-3 flex flex-wrap items-center justify-end gap-2 text-xs">
-          <button
-            className="rounded-md bg-chip px-2 py-1 text-fg-muted hover:bg-chip-strong"
-            onClick={onOpen}
-            type="button"
-          >
-            Open
-          </button>
-          {canApply ? (
-            <button
-              className="rounded-md bg-chip px-2 py-1 text-fg-muted hover:bg-chip-strong disabled:opacity-50"
-              disabled={Boolean(busy || applyBlockedReason)}
-              onClick={onApply}
-              title={applyBlockedReason}
-              type="button"
-            >
-              {busy === "apply" ? "Applying..." : "Apply"}
-            </button>
-          ) : null}
-          {canAbort ? (
-            <button
-              className="rounded-md bg-chip px-2 py-1 text-fg-muted hover:bg-chip-strong disabled:opacity-50"
-              disabled={Boolean(busy)}
-              onClick={onAbort}
-              type="button"
-            >
-              {busy === "abort" ? "Aborting..." : "Abort apply"}
-            </button>
-          ) : null}
-          {worktree.integrationStatus === "conflict" ? (
-            <button
-              className="rounded-md bg-chip px-2 py-1 text-fg-muted hover:bg-chip-strong disabled:opacity-50"
-              disabled={Boolean(busy)}
-              onClick={onResolveConflict}
-              type="button"
-            >
-              Resolve conflict
-            </button>
-          ) : null}
-          {canCleanup ? (
-            <button
-              className="rounded-md bg-chip px-2 py-1 text-fg-muted hover:bg-chip-strong disabled:opacity-50"
-              disabled={Boolean(busy)}
-              onClick={onCleanup}
-              type="button"
-            >
-              {busy === "cleanup" ? "Cleaning..." : "Cleanup"}
-            </button>
-          ) : null}
-        </div>
+        ) : null}
       </div>
-    </>
+      {error ? <div className="mt-2 text-danger text-xs">{error}</div> : null}
+      <div className="mt-2.5 grid gap-1">
+        <WorktreeActionButton
+          description="Open this worktree diff in the Changes panel."
+          index={1}
+          label="Review diff"
+          onClick={onReview}
+        />
+        {canApply ? (
+          <WorktreeActionButton
+            description={
+              applyBlockedReason ?? "Merge this worktree into the main workspace for review."
+            }
+            disabled={Boolean(busy || applyBlockedReason)}
+            index={2}
+            label={busy === "apply" ? "Applying..." : "Apply worktree"}
+            onClick={onApply}
+            recommended
+          />
+        ) : null}
+        <WorktreeActionButton
+          description="Open the isolated worktree folder."
+          disabled={Boolean(busy)}
+          index={canApply ? 3 : 2}
+          label="Open worktree"
+          onClick={onOpen}
+        />
+        {canAbort ? (
+          <WorktreeActionButton
+            description="Run git merge --abort and return this worktree to ready."
+            disabled={Boolean(busy)}
+            index={3}
+            label={busy === "abort" ? "Aborting..." : "Abort apply"}
+            onClick={onAbort}
+          />
+        ) : null}
+        {worktree.integrationStatus === "conflict" ? (
+          <WorktreeActionButton
+            description="Choose whether root, you, or git merge --abort handles this conflict."
+            disabled={Boolean(busy)}
+            index={3}
+            label="Resolve conflict"
+            onClick={onResolveConflict}
+            recommended
+          />
+        ) : null}
+        {canCleanup ? (
+          <WorktreeActionButton
+            description="Remove the completed worktree."
+            disabled={Boolean(busy)}
+            index={3}
+            label={busy === "cleanup" ? "Cleaning..." : "Cleanup"}
+            onClick={onCleanup}
+          />
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function WorktreeActionButton({
+  description,
+  disabled,
+  index,
+  label,
+  onClick,
+  recommended,
+}: {
+  description: string;
+  disabled?: boolean | undefined;
+  index: number;
+  label: string;
+  onClick(): void;
+  recommended?: boolean | undefined;
+}) {
+  return (
+    <button
+      className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left transition-colors disabled:opacity-50 ${
+        recommended ? "bg-build/12 hover:bg-build/16" : "hover:bg-hover"
+      }`}
+      disabled={disabled}
+      onClick={onClick}
+      type="button"
+    >
+      <span
+        className={`flex size-[18px] shrink-0 items-center justify-center rounded-full font-semibold text-[11px] ${
+          recommended ? "bg-build text-build-fg" : "border border-hairline text-fg-faint"
+        }`}
+      >
+        {index}
+      </span>
+      <span className="min-w-0">
+        <span className="block truncate font-medium text-[13px] text-fg">{label}</span>
+        <span className="block truncate text-fg-faint text-xs">{description}</span>
+      </span>
+    </button>
   );
 }
 
