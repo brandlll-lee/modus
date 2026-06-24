@@ -741,30 +741,46 @@ function ModelSelect({
   );
 }
 
-function ContextRing({ percent }: { percent: number }) {
-  const radius = 6.5;
+function ContextUsageRing({ percent }: { percent: number | undefined }) {
+  const strokeWidth = 1.8;
+  const center = 8;
+  const radius = center - strokeWidth / 2;
   const circumference = 2 * Math.PI * radius;
-  const dash = (clampPercent(percent) / 100) * circumference;
+  const known = percent !== undefined;
+  const offset = circumference * (1 - clampPercent(percent ?? 0) / 100);
+
   return (
     <svg
-      aria-label={`${Math.round(clampPercent(percent))}% of context used`}
+      aria-hidden="true"
       className="-rotate-90 shrink-0"
       fill="none"
       height="15"
-      role="img"
       viewBox="0 0 16 16"
       width="15"
     >
-      <circle cx="8" cy="8" r={radius} stroke="var(--color-hairline-strong)" strokeWidth="1.6" />
       <circle
-        cx="8"
-        cy="8"
+        cx={center}
+        cy={center}
+        r={radius}
+        stroke="var(--color-hairline-strong)"
+        strokeWidth={strokeWidth}
+      />
+      <circle
+        cx={center}
+        cy={center}
         r={radius}
         stroke="currentColor"
-        strokeDasharray={`${dash} ${circumference}`}
-        strokeLinecap="round"
-        strokeWidth="1.6"
+        strokeDasharray={circumference}
+        strokeDashoffset={offset}
+        strokeWidth={strokeWidth}
+        className={cn(
+          "transition-[stroke-dashoffset] duration-300 ease-out",
+          !known && "opacity-0",
+        )}
       />
+      {!known ? (
+        <circle className="opacity-85" cx={center} cy={center} fill="currentColor" r="1.8" />
+      ) : null}
     </svg>
   );
 }
@@ -776,16 +792,16 @@ function ContextUsageIndicator({
   contextWindow?: number;
   usage?: ContextUsageInfo;
 }) {
-  const label = formatUsagePercent(usage?.percent);
+  const percent = contextUsagePercent(usage);
+  const label = percent === undefined ? "not available yet" : `${Math.round(percent)}%`;
 
   return (
     <Popover.Root>
       <Popover.Trigger
         aria-label={`Context usage ${label}`}
-        className="app-no-drag flex h-[22px] items-center gap-1.5 rounded-md px-1.5 text-[10px] text-fg-faint transition-colors hover:bg-hover hover:text-fg-subtle data-popup-open:text-fg-subtle"
+        className="app-no-drag flex h-[26px] w-[26px] items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-hover hover:text-fg data-popup-open:bg-hover data-popup-open:text-fg"
       >
-        <ContextRing percent={usage?.percent ?? 0} />
-        <span className="tabular-nums">{label} context</span>
+        <ContextUsageRing percent={percent} />
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Positioner align="end" side="top" sideOffset={8}>
@@ -808,20 +824,30 @@ function ContextUsageTooltip({
   contextWindow?: number;
   usage?: ContextUsageInfo;
 }) {
-  const total = usage?.percent;
+  const total = contextUsagePercent(usage);
   const usageWindow = usage?.contextWindow ?? contextWindow;
   const tokenLine =
     usage?.tokens !== null && usage?.tokens !== undefined && usageWindow
       ? `${usage.tokens.toLocaleString()} / ${usageWindow.toLocaleString()} tokens`
       : undefined;
 
+  if (total === undefined && !tokenLine) {
+    return (
+      <div className="w-[260px] px-1 py-1.5 text-sm text-fg">
+        <div className="mb-1 font-medium text-fg-muted">Context usage</div>
+        <div className="text-fg-faint text-xs">No context usage yet.</div>
+        {usageWindow ? (
+          <div className="mt-2 text-2xs text-fg-faint">
+            Context window {usageWindow.toLocaleString()} tokens
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
   return (
     <div className="w-[320px] px-1 py-1.5 text-sm text-fg">
       <div className="mb-2 font-medium text-fg-muted">Context usage</div>
-      <ContextUsageRow label="Conversation" value={formatUsagePercent(total)} />
-      <ContextUsageRow label="MCP tools" value="—" />
-      <ContextUsageRow label="Steering files" value="—" />
-      <div className="my-2 border-hairline-soft border-t" />
       <ContextUsageRow label="Total" strong value={formatUsagePercent(total)} />
       {tokenLine ? <div className="mt-2 text-xs text-fg-faint">{tokenLine}</div> : null}
     </div>
@@ -882,6 +908,23 @@ function clampPercent(value: number | null | undefined): number {
     return 0;
   }
   return Math.min(100, Math.max(0, value));
+}
+
+function contextUsagePercent(usage: ContextUsageInfo | undefined): number | undefined {
+  if (!usage) {
+    return undefined;
+  }
+  if (typeof usage.percent === "number" && Number.isFinite(usage.percent)) {
+    return clampPercent(usage.percent);
+  }
+  if (
+    typeof usage.tokens === "number" &&
+    Number.isFinite(usage.tokens) &&
+    usage.contextWindow > 0
+  ) {
+    return clampPercent((usage.tokens / usage.contextWindow) * 100);
+  }
+  return undefined;
 }
 
 function formatUsagePercent(value: number | null | undefined): string {

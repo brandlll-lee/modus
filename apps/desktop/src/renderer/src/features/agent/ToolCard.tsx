@@ -98,10 +98,10 @@ function FlatToolRow({
   isError = false,
 }: FlatToolRowProps) {
   const [open, setOpen] = useState(false);
-  const view = describeTool(name, args);
-  const detail = toolDetail(name, args, output);
-  const expandable = detail.trim().length > 0;
   const running = !isComplete && !isError;
+  const view = describeTool(name, running ? undefined : args);
+  const detail = running ? "" : toolDetail(name, args, output);
+  const expandable = detail.trim().length > 0;
 
   const body = (
     <>
@@ -109,10 +109,7 @@ function FlatToolRow({
         {isError ? <IconAlertCircle className="text-danger" size={14} stroke={1.7} /> : view.icon}
       </span>
       {running ? (
-        // Running tools shimmer their label (the timeline's "Thinking" effect).
-        <ShinyText className="min-w-0 flex-1 truncate">
-          {`${view.verb} ${view.target}`.trim()}
-        </ShinyText>
+        <ShinyText className="min-w-0 flex-1 truncate">{view.verb}</ShinyText>
       ) : (
         <>
           <span className={cn("shrink-0 font-medium", isError ? "text-danger" : "text-fg-subtle")}>
@@ -257,7 +254,7 @@ function bestEffortArg(args: Record<string, unknown>): string {
     if (typeof args[key] === "string") return args[key] as string;
   }
   const keys = Object.keys(args);
-  return keys.length ? JSON.stringify(args) : "";
+  return keys.length ? `${keys.length} parameters` : "";
 }
 
 function argsEqual(a: unknown, b: unknown): boolean {

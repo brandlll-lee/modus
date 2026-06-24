@@ -29,15 +29,15 @@ export function ThoughtRow({ text, streaming = false }: { text: string; streamin
     }
   }, [streaming]);
 
-  // Stick the streaming thought to its newest line inside the fixed-height box
-  // (same stick-to-bottom pattern as ActivityGroup's live viewport), so the
-  // latest tokens stay visible instead of being clipped below the fold.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: text is the content-growth signal that should retrigger the scroll; the node is read via ref.
+  const showBody = open;
+  const textLength = text.length;
+
   useLayoutEffect(() => {
-    if (streaming && open && preRef.current) {
-      preRef.current.scrollTop = preRef.current.scrollHeight;
+    if (!streaming || !showBody || !preRef.current || textLength === 0) {
+      return;
     }
-  }, [streaming, open, text]);
+    preRef.current.scrollTop = preRef.current.scrollHeight;
+  }, [streaming, showBody, textLength]);
 
   if (!streaming && !text.trim()) {
     return null;
@@ -65,7 +65,7 @@ export function ThoughtRow({ text, streaming = false }: { text: string; streamin
         </m.span>
         {streaming ? <ShinyText>{label}</ShinyText> : <span>{label}</span>}
       </button>
-      <CollapsibleMotion open={open} preset="timeline">
+      <CollapsibleMotion open={showBody} preset="timeline">
         <pre
           className="scroll-thin mt-1 max-h-44 max-w-full overflow-x-auto overflow-y-auto whitespace-pre-wrap text-2xs text-fg-faint leading-relaxed"
           ref={preRef}
@@ -88,8 +88,9 @@ const ACTIVE_LABEL = {
  * EVERY change that can push the newest tool down, not just streamed output:
  *  - the item COUNT, so a freshly-called tool (entering with empty output, and
  *    often a flat one-line card) scrolls into view the instant it appears;
- *  - each tool's streaming args + output;
- *  - streamed thought text.
+ *  - each tool's output;
+ *  - streamed thought text. Streaming args intentionally do not count:
+ *    serializing large args was the hot path during tool-call streaming.
  * Counting only output (the old bug) left a just-called tool clipped below the
  * fade until it produced output, so the preview lagged the latest tool.
  */
@@ -98,7 +99,6 @@ function streamSignature(items: ActivityItem[]): number {
   for (const item of items) {
     if (item.type === "tool") {
       total += item.output.length;
-      if (item.args) total += JSON.stringify(item.args).length;
     } else if (item.type === "thought") {
       total += item.text.length;
     }
