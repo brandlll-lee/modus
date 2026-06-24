@@ -166,7 +166,11 @@ export function parseMcpConfig(
 
 /** Candidate config paths for a workspace, lowest precedence first. */
 export function mcpConfigPaths(cwd: string, home: string = homedir()): string[] {
-  return [join(home, ".modus", "mcp.json"), join(cwd, ".modus", "mcp.json")];
+  return [userMcpConfigPath(home), join(cwd, ".modus", "mcp.json")];
+}
+
+export function userMcpConfigPath(home: string = homedir()): string {
+  return join(home, ".modus", "mcp.json");
 }
 
 /** Load + merge every mcp.json that exists for this workspace. */
@@ -305,7 +309,9 @@ export function upsertMcpServerEntry(
     throw new Error("Server name is required.");
   }
   const previous = findRawMcpEntry(cwd, input.originalName ?? name, home);
-  const target = previous?.source ?? defaultMcpConfigPath(cwd);
+  const target =
+    previous?.source ??
+    (input.scope === "user" ? userMcpConfigPath(home) : defaultMcpConfigPath(cwd));
   const doc = readMcpDocument(target);
   const serverMap = editableServerMap(doc);
 

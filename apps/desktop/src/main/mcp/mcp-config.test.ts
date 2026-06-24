@@ -1,6 +1,15 @@
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { defaultMcpConfigPath, interpolateEnv, mcpConfigPaths, parseMcpConfig } from "./mcp-config";
+import {
+  defaultMcpConfigPath,
+  interpolateEnv,
+  mcpConfigPaths,
+  parseMcpConfig,
+  upsertMcpServerEntry,
+  userMcpConfigPath,
+} from "./mcp-config";
 
 /** Literal "${env:NAME}" built from parts so lint doesn't read it as a template placeholder. */
 const envRef = (name: string): string => ["${", "env:", name, "}"].join("");
@@ -31,6 +40,29 @@ describe("mcpConfigPaths", () => {
 
   it("creates new servers in the project Modus config", () => {
     expect(defaultMcpConfigPath("workspace")).toBe(join("workspace", ".modus", "mcp.json"));
+  });
+
+  it("creates explicitly global servers in the user Modus config", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "modus-mcp-cwd-"));
+    const home = mkdtempSync(join(tmpdir(), "modus-mcp-home-"));
+    try {
+      const target = upsertMcpServerEntry(
+        cwd,
+        {
+          name: "global",
+          scope: "user",
+          transport: "stdio",
+          command: "run",
+          enabled: true,
+        },
+        home,
+      );
+      expect(target).toBe(userMcpConfigPath(home));
+      expect(readFileSync(target, "utf8")).toContain('"global"');
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });
 

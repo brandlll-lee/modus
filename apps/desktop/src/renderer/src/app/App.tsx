@@ -608,6 +608,7 @@ export function App() {
                     onClose={() => setSettingsOpen(false)}
                     onRefresh={() => void refreshModelSettings()}
                     state={modelSettings}
+                    workspaces={workspaces}
                     workspaceCwd={activeWorkspace?.rootPath}
                   />
                 ) : (

@@ -44,8 +44,10 @@ import type {
   RuleMode,
   RuleSource,
   SkillInfo,
+  SkillScope,
   SubagentDetail,
   SubagentInfo,
+  WorkspaceInfo,
 } from "../../../../shared/contracts";
 import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
 import { ShinyText } from "../../components/ui/ShinyText";
@@ -68,6 +70,8 @@ type SettingsPanelProps = {
   onRefresh(): void;
   /** Active workspace root — enables the MCP section's config + sync actions. */
   workspaceCwd?: string | undefined;
+  /** Recent workspaces — used as project MCP scopes. */
+  workspaces?: WorkspaceInfo[] | undefined;
 };
 
 type SettingsSectionId =
@@ -85,7 +89,13 @@ type ModelConfigPatch = {
   maxTokens?: number;
 };
 
-export function SettingsPanel({ state, onClose, onRefresh, workspaceCwd }: SettingsPanelProps) {
+export function SettingsPanel({
+  state,
+  onClose,
+  onRefresh,
+  workspaceCwd,
+  workspaces = [],
+}: SettingsPanelProps) {
   const [selectedProvider, setSelectedProvider] = useState<string | undefined>();
   const [detail, setDetail] = useState<ModelProviderDetail | undefined>();
   const [detailLoading, setDetailLoading] = useState(false);
@@ -255,8 +265,12 @@ export function SettingsPanel({ state, onClose, onRefresh, workspaceCwd }: Setti
           {activeSection === "appearance" ? <AppearanceSettingsPanel /> : null}
           {activeSection === "personalization" ? <PersonalizationSettingsPanel /> : null}
           {activeSection === "skills" ? <SkillsSettingsPanel cwd={workspaceCwd} /> : null}
-          {activeSection === "subagents" ? <SubagentsSettingsPanel cwd={workspaceCwd} /> : null}
-          {activeSection === "mcp" ? <McpSettingsPanel cwd={workspaceCwd} /> : null}
+          {activeSection === "subagents" ? (
+            <SubagentsSettingsPanel cwd={workspaceCwd} workspaces={workspaces} />
+          ) : null}
+          {activeSection === "mcp" ? (
+            <McpSettingsPanel cwd={workspaceCwd} workspaces={workspaces} />
+          ) : null}
           {activeSection === "rules" ? <RulesSettingsPanel cwd={workspaceCwd} /> : null}
           {activeSection === "model-provider" ? (
             <ModelProviderSettingsPanel
@@ -1044,10 +1058,14 @@ const MCP_PRESETS: ReadonlyArray<{ label: string; name: string; command: string 
 ];
 
 type KeyValuePair = { id: string; key: string; value: string };
+type McpScope = "user" | "project";
+type SettingsProjectTab = { rootPath: string; displayName: string };
 
 type McpFormState = {
   /** undefined = creating; otherwise the server being edited. */
   originalName: string | undefined;
+  scope: McpScope;
+  projectCwd: string;
   name: string;
   transport: "stdio" | "http";
   commandLine: string;
@@ -1057,8 +1075,10 @@ type McpFormState = {
   enabled: boolean;
 };
 
-const emptyMcpForm = (): McpFormState => ({
+const emptyMcpForm = (scope: McpScope = "project", projectCwd = ""): McpFormState => ({
   originalName: undefined,
+  scope,
+  projectCwd,
   name: "",
   transport: "stdio",
   commandLine: "",
@@ -1082,6 +1102,25 @@ const recordToPairs = (record: unknown): KeyValuePair[] =>
         .map(([key, value]) => pair(key, value))
     : [];
 
+const projectLabel = (cwd: string): string =>
+  cwd.split(/[\\/]/).filter(Boolean).at(-1) ?? "Project";
+
+function settingsProjectTabs(
+  cwd: string | undefined,
+  workspaces: WorkspaceInfo[],
+): SettingsProjectTab[] {
+  const seen = new Set<string>();
+  const tabs: SettingsProjectTab[] = [];
+  const push = (rootPath: string, displayName: string): void => {
+    if (!rootPath || seen.has(rootPath)) return;
+    seen.add(rootPath);
+    tabs.push({ rootPath, displayName: displayName || projectLabel(rootPath) });
+  };
+  if (cwd) push(cwd, workspaces.find((workspace) => workspace.rootPath === cwd)?.displayName ?? "");
+  for (const workspace of workspaces) push(workspace.rootPath, workspace.displayName);
+  return tabs;
+}
+
 const mcpInitial = (name: string): string => name.trim().slice(0, 1).toUpperCase() || "?";
 
 function mcpCount(count: number, label: string): string {
@@ -1102,28 +1141,42 @@ function mcpServerSummary(server: McpServerInfo): string {
  * without touching JSON; Modus writes the Cursor-compatible mcp.json behind
  * the scenes (the file stays available for power users).
  */
-function McpSettingsPanel({ cwd }: { cwd: string | undefined }) {
+function McpSettingsPanel({
+  cwd,
+  workspaces,
+}: {
+  cwd: string | undefined;
+  workspaces: WorkspaceInfo[];
+}) {
   const [serverList, setServerList] = useState<McpServerInfo[]>([]);
   const [syncing, setSyncing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [mcpError, setMcpError] = useState<string | undefined>();
   const [form, setForm] = useState<McpFormState | undefined>();
   const [confirmingDelete, setConfirmingDelete] = useState<string | undefined>();
-  const serverGroups = useMemo(() => {
-    const userServers = serverList.filter((server) => !cwd || !server.source.startsWith(cwd));
-    const projectServers = serverList.filter((server) => cwd && server.source.startsWith(cwd));
-    const groups: Array<[string, McpServerInfo[]]> = [];
-    if (userServers.length > 0) groups.push(["User MCP Servers", userServers]);
-    if (projectServers.length > 0) groups.push(["Project MCP Servers", projectServers]);
-    return groups;
-  }, [cwd, serverList]);
+  const [activeScope, setActiveScope] = useState<McpScope>("user");
+  const [selectedProjectCwd, setSelectedProjectCwd] = useState(cwd ?? "");
+  const projectTabs = useMemo(() => settingsProjectTabs(cwd, workspaces), [cwd, workspaces]);
+  const selectedProject =
+    projectTabs.find((project) => project.rootPath === selectedProjectCwd) ?? projectTabs[0];
+  const effectiveProjectCwd = selectedProject?.rootPath ?? selectedProjectCwd;
+  const visibleServers = useMemo(
+    () =>
+      serverList.filter((server) => {
+        const projectScoped = Boolean(
+          effectiveProjectCwd && server.source.startsWith(effectiveProjectCwd),
+        );
+        return activeScope === "project" ? projectScoped : !projectScoped;
+      }),
+    [activeScope, effectiveProjectCwd, serverList],
+  );
 
-  async function refresh(sync: boolean): Promise<void> {
+  async function refresh(targetCwd: string): Promise<void> {
     setMcpError(undefined);
     try {
-      if (sync && cwd) {
+      if (targetCwd) {
         setSyncing(true);
-        setServerList(await window.modus.mcp.sync(cwd));
+        setServerList(await window.modus.mcp.sync(targetCwd));
       } else {
         setServerList(await window.modus.mcp.list());
       }
@@ -1134,16 +1187,23 @@ function McpSettingsPanel({ cwd }: { cwd: string | undefined }) {
     }
   }
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: initial load only — refresh is stable per render and sync runs on demand.
   useEffect(() => {
-    void refresh(false);
-  }, []);
+    if (cwd) {
+      setSelectedProjectCwd(cwd);
+    }
+  }, [cwd]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reload when the selected config scope changes.
+  useEffect(() => {
+    void refresh(effectiveProjectCwd);
+  }, [effectiveProjectCwd]);
 
   async function openEdit(server: McpServerInfo): Promise<void> {
-    if (!cwd) return;
+    if (!effectiveProjectCwd) return;
     setMcpError(undefined);
     try {
-      const raw = await window.modus.mcp.entry({ cwd, name: server.name });
+      const scope = server.source.startsWith(effectiveProjectCwd) ? "project" : "user";
+      const raw = await window.modus.mcp.entry({ cwd: effectiveProjectCwd, name: server.name });
       const entry = raw?.entry ?? {};
       const command = typeof entry.command === "string" ? entry.command : "";
       const args = Array.isArray(entry.args)
@@ -1151,6 +1211,8 @@ function McpSettingsPanel({ cwd }: { cwd: string | undefined }) {
         : [];
       setForm({
         originalName: server.name,
+        scope,
+        projectCwd: effectiveProjectCwd,
         name: server.name,
         transport: typeof entry.url === "string" ? "http" : "stdio",
         commandLine: command ? joinCommandLine([command, ...args]) : "",
@@ -1165,16 +1227,18 @@ function McpSettingsPanel({ cwd }: { cwd: string | undefined }) {
   }
 
   async function saveForm(current: McpFormState): Promise<void> {
-    if (!cwd) return;
+    const targetCwd = current.scope === "project" ? current.projectCwd : effectiveProjectCwd;
+    if (!targetCwd) return;
     setSaving(true);
     setMcpError(undefined);
     try {
       const [command, ...args] = splitCommandLine(current.commandLine);
       setServerList(
         await window.modus.mcp.upsert({
-          cwd,
+          cwd: targetCwd,
           name: current.name.trim(),
           originalName: current.originalName,
+          scope: current.scope,
           transport: current.transport,
           enabled: current.enabled,
           ...(current.transport === "stdio"
@@ -1182,6 +1246,8 @@ function McpSettingsPanel({ cwd }: { cwd: string | undefined }) {
             : { url: current.url.trim(), headers: pairsToRecord(current.headers) }),
         }),
       );
+      setActiveScope(current.scope);
+      setSelectedProjectCwd(targetCwd);
       setForm(undefined);
     } catch (err) {
       setMcpError(err instanceof Error ? err.message : String(err));
@@ -1191,31 +1257,39 @@ function McpSettingsPanel({ cwd }: { cwd: string | undefined }) {
   }
 
   async function toggleServer(server: McpServerInfo, enabled: boolean): Promise<void> {
-    if (!cwd) return;
+    if (!effectiveProjectCwd) return;
     setMcpError(undefined);
     try {
-      setServerList(await window.modus.mcp.setEnabled({ cwd, name: server.name, enabled }));
+      setServerList(
+        await window.modus.mcp.setEnabled({ cwd: effectiveProjectCwd, name: server.name, enabled }),
+      );
     } catch (err) {
       setMcpError(err instanceof Error ? err.message : String(err));
     }
   }
 
   async function deleteServer(server: McpServerInfo): Promise<void> {
-    if (!cwd) return;
+    if (!effectiveProjectCwd) return;
     setMcpError(undefined);
     setConfirmingDelete(undefined);
     try {
-      setServerList(await window.modus.mcp.delete({ cwd, name: server.name }));
+      setServerList(await window.modus.mcp.delete({ cwd: effectiveProjectCwd, name: server.name }));
     } catch (err) {
       setMcpError(err instanceof Error ? err.message : String(err));
     }
   }
 
   function sourceBadge(source: string): string {
-    if (cwd && source.startsWith(cwd)) {
+    if (effectiveProjectCwd && source.startsWith(effectiveProjectCwd)) {
       return "Project";
     }
-    return "User";
+    return "Global";
+  }
+
+  function startCreate(scope: McpScope): void {
+    setConfirmingDelete(undefined);
+    setActiveScope(scope);
+    setForm(emptyMcpForm(scope, effectiveProjectCwd));
   }
 
   return (
@@ -1225,8 +1299,8 @@ function McpSettingsPanel({ cwd }: { cwd: string | undefined }) {
           <>
             <button
               className="flex h-8 items-center gap-1.5 rounded-md border border-hairline bg-surface px-2.5 text-xs text-fg transition-colors hover:bg-hover disabled:opacity-40"
-              disabled={!cwd || syncing}
-              onClick={() => void refresh(true)}
+              disabled={!effectiveProjectCwd || syncing}
+              onClick={() => void refresh(effectiveProjectCwd)}
               type="button"
             >
               <IconRefresh size={14} stroke={1.7} />
@@ -1234,10 +1308,11 @@ function McpSettingsPanel({ cwd }: { cwd: string | undefined }) {
             </button>
             <button
               className="flex h-8 items-center gap-1.5 rounded-md bg-fg px-2.5 text-canvas text-xs transition-colors hover:bg-fg-muted disabled:opacity-40"
-              disabled={!cwd}
+              disabled={!effectiveProjectCwd}
               onClick={() => {
-                setConfirmingDelete(undefined);
-                setForm((current) => (current ? undefined : emptyMcpForm()));
+                setForm((current) =>
+                  current ? undefined : emptyMcpForm(activeScope, effectiveProjectCwd),
+                );
               }}
               type="button"
             >
@@ -1250,9 +1325,48 @@ function McpSettingsPanel({ cwd }: { cwd: string | undefined }) {
         title="MCP"
       />
 
+      <div className="flex flex-wrap items-center gap-1">
+        <button
+          className={cn(
+            "h-8 rounded-md px-3 text-sm transition-colors",
+            activeScope === "user"
+              ? "bg-active text-fg"
+              : "text-fg-muted hover:bg-hover hover:text-fg",
+          )}
+          onClick={() => {
+            setActiveScope("user");
+            setForm(undefined);
+          }}
+          type="button"
+        >
+          Home
+        </button>
+        {projectTabs.map((project) => {
+          const active = activeScope === "project" && project.rootPath === effectiveProjectCwd;
+          return (
+            <button
+              className={cn(
+                "h-8 max-w-40 truncate rounded-md px-3 text-sm transition-colors",
+                active ? "bg-active text-fg" : "text-fg-muted hover:bg-hover hover:text-fg",
+              )}
+              key={project.rootPath}
+              onClick={() => {
+                setActiveScope("project");
+                setSelectedProjectCwd(project.rootPath);
+                setForm(undefined);
+              }}
+              title={project.rootPath}
+              type="button"
+            >
+              {project.displayName}
+            </button>
+          );
+        })}
+      </div>
+
       {mcpError ? <p className="-mt-4 text-danger text-xs">{mcpError}</p> : null}
 
-      <CollapsibleMotion open={Boolean(form && cwd)} preset="default">
+      <CollapsibleMotion open={Boolean(form && effectiveProjectCwd)} preset="default">
         {form ? (
           <McpServerForm
             busy={saving}
@@ -1260,115 +1374,116 @@ function McpSettingsPanel({ cwd }: { cwd: string | undefined }) {
             isNew={form.originalName === undefined}
             onCancel={() => setForm(undefined)}
             onChange={setForm}
+            projectOptions={projectTabs}
             onSubmit={(state) => void saveForm(state)}
           />
         ) : null}
       </CollapsibleMotion>
 
-      <SettingsSection title="Home MCP Servers">
+      <SettingsSection
+        title={
+          activeScope === "project"
+            ? `${selectedProject?.displayName ?? "Project"} MCP Servers`
+            : "Global MCP Servers"
+        }
+      >
         <SettingsList>
-          {serverGroups.length > 0 ? (
-            serverGroups.map(([group, servers]) => (
-              <div className="border-hairline-soft border-b last:border-b-0" key={group}>
-                <div className="px-4 pt-3 pb-1 text-fg text-xs">{group}</div>
-                {servers.map((server) => {
-                  const status = MCP_STATUS_STYLE[server.status];
-                  const deleting = confirmingDelete === server.name;
-                  return (
-                    <div
-                      className="group/mcp flex items-center gap-3 border-hairline-soft border-b px-4 py-3 last:border-b-0"
-                      key={server.name}
-                    >
-                      <span className="relative flex size-10 shrink-0 items-center justify-center rounded-lg bg-chip-strong font-mono text-fg-muted text-xs">
-                        {mcpInitial(server.name)}
-                        <span
-                          aria-hidden
-                          className={cn(
-                            "-right-0.5 absolute bottom-1 size-2.5 rounded-full border border-panel",
-                            status.dot,
-                          )}
-                        />
-                      </span>
-                      <button
-                        className="min-w-0 flex-1 text-left"
-                        onClick={() => void openEdit(server)}
-                        type="button"
-                      >
-                        <div className="flex items-center gap-2">
-                          <span className="truncate text-fg text-sm">{server.name}</span>
-                          <span className="shrink-0 text-2xs text-fg-faint">
-                            {sourceBadge(server.source)}
-                          </span>
-                        </div>
-                        <div
-                          className={cn(
-                            "flex items-center gap-1 text-xs",
-                            server.status === "failed" ? "text-danger" : "text-fg-muted",
-                          )}
-                        >
-                          <span>{mcpServerSummary(server)}</span>
-                          {server.tools.length > 0 ? (
-                            <IconChevronRight size={12} stroke={1.8} />
-                          ) : null}
-                        </div>
-                      </button>
-                      <span className="flex shrink-0 items-center gap-1">
-                        {deleting ? (
-                          <button
-                            className="flex h-7 items-center gap-1 rounded-md bg-danger/10 px-2 text-danger text-xs transition-colors hover:bg-danger/20"
-                            onClick={() => void deleteServer(server)}
-                            type="button"
-                          >
-                            <IconTrash size={13} stroke={1.9} />
-                            Delete
-                          </button>
-                        ) : (
-                          <>
-                            <Tooltip content="Edit server" side="bottom" sideOffset={6}>
-                              <button
-                                aria-label={`Edit ${server.name}`}
-                                className="flex size-7 items-center justify-center rounded-md text-fg-faint opacity-0 transition-all hover:bg-hover hover:text-fg-muted group-hover/mcp:opacity-100"
-                                onClick={() => void openEdit(server)}
-                                type="button"
-                              >
-                                <IconEdit size={14} stroke={1.8} />
-                              </button>
-                            </Tooltip>
-                            <Tooltip content="Remove server" side="bottom" sideOffset={6}>
-                              <button
-                                aria-label={`Remove ${server.name}`}
-                                className="flex size-7 items-center justify-center rounded-md text-fg-faint opacity-0 transition-all hover:bg-danger/10 hover:text-danger group-hover/mcp:opacity-100"
-                                onClick={() => setConfirmingDelete(server.name)}
-                                type="button"
-                              >
-                                <IconTrash size={14} stroke={1.8} />
-                              </button>
-                            </Tooltip>
-                            <Switch.Root
-                              checked={server.status !== "disabled"}
-                              className="ml-1 flex h-5 w-9 shrink-0 cursor-pointer rounded-full bg-chip-strong p-0.5 transition-colors data-checked:bg-success/70"
-                              onCheckedChange={(checked) => void toggleServer(server, checked)}
-                            >
-                              <Switch.Thumb className="size-4 rounded-full bg-fg transition-transform data-checked:translate-x-4" />
-                            </Switch.Root>
-                          </>
-                        )}
+          {visibleServers.length > 0 ? (
+            visibleServers.map((server) => {
+              const status = MCP_STATUS_STYLE[server.status];
+              const deleting = confirmingDelete === server.name;
+              return (
+                <div
+                  className="group/mcp flex items-center gap-3 border-hairline-soft border-b px-4 py-3 last:border-b-0"
+                  key={server.name}
+                >
+                  <span className="relative flex size-10 shrink-0 items-center justify-center rounded-lg bg-chip-strong font-mono text-fg-muted text-xs">
+                    {mcpInitial(server.name)}
+                    <span
+                      aria-hidden
+                      className={cn(
+                        "-right-0.5 absolute bottom-1 size-2.5 rounded-full border border-panel",
+                        status.dot,
+                      )}
+                    />
+                  </span>
+                  <button
+                    className="min-w-0 flex-1 text-left"
+                    onClick={() => void openEdit(server)}
+                    type="button"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-fg text-sm">{server.name}</span>
+                      <span className="shrink-0 text-2xs text-fg-faint">
+                        {sourceBadge(server.source)}
                       </span>
                     </div>
-                  );
-                })}
-              </div>
-            ))
+                    <div
+                      className={cn(
+                        "flex items-center gap-1 text-xs",
+                        server.status === "failed" ? "text-danger" : "text-fg-muted",
+                      )}
+                    >
+                      <span>{mcpServerSummary(server)}</span>
+                      {server.tools.length > 0 ? <IconChevronRight size={12} stroke={1.8} /> : null}
+                    </div>
+                  </button>
+                  <span className="flex shrink-0 items-center gap-1">
+                    {deleting ? (
+                      <button
+                        className="flex h-7 items-center gap-1 rounded-md bg-danger/10 px-2 text-danger text-xs transition-colors hover:bg-danger/20"
+                        onClick={() => void deleteServer(server)}
+                        type="button"
+                      >
+                        <IconTrash size={13} stroke={1.9} />
+                        Delete
+                      </button>
+                    ) : (
+                      <>
+                        <Tooltip content="Edit server" side="bottom" sideOffset={6}>
+                          <button
+                            aria-label={`Edit ${server.name}`}
+                            className="flex size-7 items-center justify-center rounded-md text-fg-faint opacity-0 transition-all hover:bg-hover hover:text-fg-muted group-hover/mcp:opacity-100"
+                            onClick={() => void openEdit(server)}
+                            type="button"
+                          >
+                            <IconEdit size={14} stroke={1.8} />
+                          </button>
+                        </Tooltip>
+                        <Tooltip content="Remove server" side="bottom" sideOffset={6}>
+                          <button
+                            aria-label={`Remove ${server.name}`}
+                            className="flex size-7 items-center justify-center rounded-md text-fg-faint opacity-0 transition-all hover:bg-danger/10 hover:text-danger group-hover/mcp:opacity-100"
+                            onClick={() => setConfirmingDelete(server.name)}
+                            type="button"
+                          >
+                            <IconTrash size={14} stroke={1.8} />
+                          </button>
+                        </Tooltip>
+                        <Switch.Root
+                          checked={server.status !== "disabled"}
+                          className="ml-1 flex h-5 w-9 shrink-0 cursor-pointer rounded-full bg-chip-strong p-0.5 transition-colors data-checked:bg-success/70"
+                          onCheckedChange={(checked) => void toggleServer(server, checked)}
+                        >
+                          <Switch.Thumb className="size-4 rounded-full bg-fg transition-transform data-checked:translate-x-4" />
+                        </Switch.Root>
+                      </>
+                    )}
+                  </span>
+                </div>
+              );
+            })
           ) : (
-            <div className="px-4 pt-3 pb-1 text-fg text-xs">User MCP Servers</div>
+            <div className="px-4 py-5 text-fg-muted text-sm">
+              {activeScope === "project"
+                ? "No project MCP servers yet."
+                : "No global MCP servers yet."}
+            </div>
           )}
           <button
             className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-hover disabled:opacity-40"
-            disabled={!cwd}
-            onClick={() => {
-              setConfirmingDelete(undefined);
-              setForm(emptyMcpForm());
-            }}
+            disabled={!effectiveProjectCwd}
+            onClick={() => startCreate(activeScope)}
             type="button"
           >
             <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-chip-strong text-fg-muted">
@@ -1377,26 +1492,32 @@ function McpSettingsPanel({ cwd }: { cwd: string | undefined }) {
             <span className="min-w-0">
               <span className="block text-fg text-sm">New MCP Server</span>
               <span className="block text-fg-muted text-xs">
-                {cwd ? "Add a Custom MCP Server" : "Open a workspace to configure MCP servers"}
+                {effectiveProjectCwd
+                  ? activeScope === "project"
+                    ? `Save to ${selectedProject?.displayName ?? "this project"}`
+                    : "Save globally for every workspace"
+                  : "Open a workspace to configure MCP servers"}
               </span>
             </span>
           </button>
         </SettingsList>
         <div className="flex items-center justify-between">
           <p className="text-fg-faint text-xs leading-relaxed">
-            MCP tools always ask for permission first; “Always allow” trusts a tool for this
-            workspace. New servers apply to new chats.
+            Global servers are available in every workspace. Project servers live in the selected
+            workspace. “Always allow” trusts a tool for this workspace.
           </p>
-          <button
-            className="flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-fg-faint text-xs transition-colors hover:bg-hover hover:text-fg-subtle disabled:opacity-40"
-            disabled={!cwd}
-            onClick={() => void window.modus.mcp.openConfig(cwd ?? "")}
-            title="Advanced: edit the underlying mcp.json directly"
-            type="button"
-          >
-            <IconCodeDots size={13} stroke={1.7} />
-            Edit JSON
-          </button>
+          {activeScope === "project" ? (
+            <button
+              className="flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-fg-faint text-xs transition-colors hover:bg-hover hover:text-fg-subtle disabled:opacity-40"
+              disabled={!effectiveProjectCwd}
+              onClick={() => void window.modus.mcp.openConfig(effectiveProjectCwd)}
+              title="Advanced: edit the underlying project mcp.json directly"
+              type="button"
+            >
+              <IconCodeDots size={13} stroke={1.7} />
+              Edit JSON
+            </button>
+          ) : null}
         </div>
       </SettingsSection>
     </>
@@ -1410,6 +1531,7 @@ function McpServerForm({
   isNew,
   onCancel,
   onChange,
+  projectOptions,
   onSubmit,
 }: {
   busy: boolean;
@@ -1417,10 +1539,16 @@ function McpServerForm({
   isNew: boolean;
   onCancel(): void;
   onChange(next: McpFormState): void;
+  projectOptions: SettingsProjectTab[];
   onSubmit(state: McpFormState): void;
 }) {
+  const projectSelectOptions = projectOptions.map((project) => ({
+    label: project.displayName,
+    value: project.rootPath,
+  }));
   const canSave =
     form.name.trim().length > 0 &&
+    (form.scope !== "project" || form.projectCwd.trim().length > 0) &&
     (form.transport === "stdio"
       ? form.commandLine.trim().length > 0
       : /^https?:\/\//.test(form.url.trim()));
@@ -1462,6 +1590,44 @@ function McpServerForm({
           </div>
         ) : null}
       </div>
+
+      {isNew ? (
+        <div className="grid gap-2">
+          <div className="grid grid-cols-2 gap-2">
+            <McpTypeCard
+              active={form.scope === "user"}
+              description="Available in every workspace."
+              icon={<IconUser size={16} stroke={1.7} />}
+              label="Home"
+              onClick={() => set({ scope: "user" })}
+            />
+            <McpTypeCard
+              active={form.scope === "project"}
+              description="Stored in one workspace."
+              icon={<IconCube size={16} stroke={1.7} />}
+              label="Project"
+              onClick={() =>
+                set({
+                  scope: "project",
+                  projectCwd: form.projectCwd || projectOptions[0]?.rootPath || "",
+                })
+              }
+            />
+          </div>
+          {form.scope === "project" && projectSelectOptions.length > 1 ? (
+            <SelectField
+              label="Project"
+              onChange={(projectCwd) => set({ projectCwd })}
+              options={projectSelectOptions}
+              value={form.projectCwd}
+            />
+          ) : null}
+        </div>
+      ) : (
+        <div className="rounded-md border border-hairline-soft bg-surface px-3 py-2 text-fg-muted text-xs">
+          Location: {form.scope === "project" ? "Project" : "Home"}
+        </div>
+      )}
 
       <div className="grid grid-cols-2 gap-2">
         <McpTypeCard
@@ -2084,6 +2250,8 @@ function SkillsSettingsPanel({ cwd }: { cwd: string | undefined }) {
 
 type SubagentFormState = {
   path?: string;
+  scope: SkillScope;
+  projectCwd: string;
   name: string;
   description: string;
   model: string;
@@ -2095,8 +2263,10 @@ type SubagentFormState = {
   body: string;
 };
 
-function emptySubagentForm(): SubagentFormState {
+function emptySubagentForm(scope: SkillScope = "workspace", projectCwd = ""): SubagentFormState {
   return {
+    scope,
+    projectCwd,
     name: "",
     description: "",
     model: "inherit",
@@ -2112,6 +2282,8 @@ function emptySubagentForm(): SubagentFormState {
 function formFromSubagent(subagent: SubagentDetail): SubagentFormState {
   return {
     path: subagent.path,
+    scope: subagent.scope,
+    projectCwd: "",
     name: subagent.name,
     description: subagent.description,
     model: subagent.model,
@@ -2132,22 +2304,45 @@ function splitToolList(value: string): string[] | undefined {
   return items.length > 0 ? items : undefined;
 }
 
-function SubagentsSettingsPanel({ cwd }: { cwd: string | undefined }) {
+function SubagentsSettingsPanel({
+  cwd,
+  workspaces,
+}: {
+  cwd: string | undefined;
+  workspaces: WorkspaceInfo[];
+}) {
   const [subagents, setSubagents] = useState<SubagentInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [form, setForm] = useState<SubagentFormState | undefined>();
   const [saving, setSaving] = useState(false);
+  const [activeScope, setActiveScope] = useState<SkillScope>("user");
+  const [selectedProjectCwd, setSelectedProjectCwd] = useState(cwd ?? "");
+  const projectTabs = useMemo(() => settingsProjectTabs(cwd, workspaces), [cwd, workspaces]);
+  const selectedProject =
+    projectTabs.find((project) => project.rootPath === selectedProjectCwd) ?? projectTabs[0];
+  const effectiveProjectCwd = selectedProject?.rootPath ?? selectedProjectCwd;
+  const visibleSubagents = useMemo(
+    () =>
+      subagents.filter((subagent) =>
+        activeScope === "workspace" ? subagent.scope === "workspace" : subagent.scope === "user",
+      ),
+    [activeScope, subagents],
+  );
+  const projectSelectOptions = projectTabs.map((project) => ({
+    label: project.displayName,
+    value: project.rootPath,
+  }));
 
-  async function refresh(): Promise<void> {
-    if (!cwd) {
+  async function refresh(targetCwd: string): Promise<void> {
+    if (!targetCwd) {
       setSubagents([]);
       return;
     }
     setLoading(true);
     setError(undefined);
     try {
-      setSubagents(await window.modus.subagents.list(cwd));
+      setSubagents(await window.modus.subagents.list(targetCwd));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -2155,18 +2350,27 @@ function SubagentsSettingsPanel({ cwd }: { cwd: string | undefined }) {
     }
   }
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refresh is recreated each render; cwd is the real trigger.
   useEffect(() => {
-    void refresh();
+    if (cwd) {
+      setSelectedProjectCwd(cwd);
+    }
   }, [cwd]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reload when the selected project scope changes.
+  useEffect(() => {
+    void refresh(effectiveProjectCwd);
+  }, [effectiveProjectCwd]);
+
   async function editSubagent(subagent: SubagentInfo): Promise<void> {
-    if (!cwd) return;
+    if (!effectiveProjectCwd) return;
     setError(undefined);
     try {
-      const detail = await window.modus.subagents.get({ cwd, path: subagent.path });
+      const detail = await window.modus.subagents.get({
+        cwd: effectiveProjectCwd,
+        path: subagent.path,
+      });
       if (detail) {
-        setForm(formFromSubagent(detail));
+        setForm({ ...formFromSubagent(detail), projectCwd: effectiveProjectCwd });
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -2174,7 +2378,8 @@ function SubagentsSettingsPanel({ cwd }: { cwd: string | undefined }) {
   }
 
   async function saveSubagent(current: SubagentFormState): Promise<void> {
-    if (!cwd || !current.name.trim() || !current.body.trim()) {
+    const targetCwd = current.scope === "workspace" ? current.projectCwd : effectiveProjectCwd;
+    if (!targetCwd || !current.name.trim() || !current.body.trim()) {
       return;
     }
     setSaving(true);
@@ -2183,7 +2388,7 @@ function SubagentsSettingsPanel({ cwd }: { cwd: string | undefined }) {
       const tools = splitToolList(current.tools);
       const disallowedTools = splitToolList(current.disallowedTools);
       const payload = {
-        cwd,
+        cwd: targetCwd,
         name: current.name.trim(),
         description: current.description.trim(),
         model: current.model.trim() || "inherit",
@@ -2197,10 +2402,12 @@ function SubagentsSettingsPanel({ cwd }: { cwd: string | undefined }) {
       if (current.path) {
         await window.modus.subagents.update({ ...payload, path: current.path });
       } else {
-        await window.modus.subagents.create(payload);
+        await window.modus.subagents.create({ ...payload, scope: current.scope });
       }
+      setActiveScope(current.scope);
+      setSelectedProjectCwd(targetCwd);
       setForm(undefined);
-      await refresh();
+      await refresh(targetCwd);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -2209,12 +2416,14 @@ function SubagentsSettingsPanel({ cwd }: { cwd: string | undefined }) {
   }
 
   async function removeSubagent(subagent: SubagentInfo): Promise<void> {
-    if (!cwd || !subagent.deletable) return;
+    if (!effectiveProjectCwd || !subagent.deletable) return;
     const confirmed = window.confirm(`Delete subagent "${subagent.name}"?`);
     if (!confirmed) return;
     setError(undefined);
     try {
-      setSubagents(await window.modus.subagents.delete({ cwd, path: subagent.path }));
+      setSubagents(
+        await window.modus.subagents.delete({ cwd: effectiveProjectCwd, path: subagent.path }),
+      );
       if (form?.path === subagent.path) {
         setForm(undefined);
       }
@@ -2224,7 +2433,12 @@ function SubagentsSettingsPanel({ cwd }: { cwd: string | undefined }) {
   }
 
   function scopeBadge(subagent: SubagentInfo): string {
-    return subagent.scope === "user" ? `user · ${subagent.source}` : `project · ${subagent.source}`;
+    return subagent.scope === "user" ? `home · ${subagent.source}` : `project · ${subagent.source}`;
+  }
+
+  function startCreate(scope: SkillScope): void {
+    setActiveScope(scope);
+    setForm(emptySubagentForm(scope, effectiveProjectCwd));
   }
 
   return (
@@ -2234,8 +2448,13 @@ function SubagentsSettingsPanel({ cwd }: { cwd: string | undefined }) {
           <>
             <button
               className="flex h-8 items-center gap-1.5 rounded-md border border-hairline bg-surface px-2.5 text-xs text-fg transition-colors hover:bg-hover disabled:opacity-40"
-              disabled={!cwd}
-              onClick={() => void window.modus.subagents.openDir(cwd as string)}
+              disabled={!effectiveProjectCwd}
+              onClick={() =>
+                void window.modus.subagents.openDir({
+                  cwd: effectiveProjectCwd,
+                  scope: activeScope,
+                })
+              }
               type="button"
             >
               <IconWorld size={14} stroke={1.7} />
@@ -2243,8 +2462,12 @@ function SubagentsSettingsPanel({ cwd }: { cwd: string | undefined }) {
             </button>
             <button
               className="flex h-8 items-center gap-1.5 rounded-md bg-fg px-2.5 text-canvas text-xs transition-colors hover:bg-fg-muted disabled:opacity-40"
-              disabled={!cwd}
-              onClick={() => setForm((current) => (current ? undefined : emptySubagentForm()))}
+              disabled={!effectiveProjectCwd}
+              onClick={() =>
+                setForm((current) =>
+                  current ? undefined : emptySubagentForm(activeScope, effectiveProjectCwd),
+                )
+              }
               type="button"
             >
               <IconPlus size={14} stroke={2} />
@@ -2256,11 +2479,88 @@ function SubagentsSettingsPanel({ cwd }: { cwd: string | undefined }) {
         title="Subagents"
       />
 
+      <div className="flex flex-wrap items-center gap-1">
+        <button
+          className={cn(
+            "h-8 rounded-md px-3 text-sm transition-colors",
+            activeScope === "user"
+              ? "bg-active text-fg"
+              : "text-fg-muted hover:bg-hover hover:text-fg",
+          )}
+          onClick={() => {
+            setActiveScope("user");
+            setForm(undefined);
+          }}
+          type="button"
+        >
+          Home
+        </button>
+        {projectTabs.map((project) => {
+          const active = activeScope === "workspace" && project.rootPath === effectiveProjectCwd;
+          return (
+            <button
+              className={cn(
+                "h-8 max-w-40 truncate rounded-md px-3 text-sm transition-colors",
+                active ? "bg-active text-fg" : "text-fg-muted hover:bg-hover hover:text-fg",
+              )}
+              key={project.rootPath}
+              onClick={() => {
+                setActiveScope("workspace");
+                setSelectedProjectCwd(project.rootPath);
+                setForm(undefined);
+              }}
+              title={project.rootPath}
+              type="button"
+            >
+              {project.displayName}
+            </button>
+          );
+        })}
+      </div>
+
       {error ? <p className="-mt-4 text-danger text-xs">{error}</p> : null}
 
-      <CollapsibleMotion open={Boolean(form && cwd)} preset="default">
+      <CollapsibleMotion open={Boolean(form && effectiveProjectCwd)} preset="default">
         {form ? (
           <div className="flex flex-col gap-3 rounded-lg border border-hairline-soft bg-panel px-5 py-4">
+            {!form.path ? (
+              <div className="grid gap-2">
+                <div className="grid grid-cols-2 gap-2">
+                  <McpTypeCard
+                    active={form.scope === "user"}
+                    description="Available in every workspace."
+                    icon={<IconUser size={16} stroke={1.7} />}
+                    label="Home"
+                    onClick={() => setForm({ ...form, scope: "user" })}
+                  />
+                  <McpTypeCard
+                    active={form.scope === "workspace"}
+                    description="Stored in one workspace."
+                    icon={<IconCube size={16} stroke={1.7} />}
+                    label="Project"
+                    onClick={() =>
+                      setForm({
+                        ...form,
+                        scope: "workspace",
+                        projectCwd: form.projectCwd || projectTabs[0]?.rootPath || "",
+                      })
+                    }
+                  />
+                </div>
+                {form.scope === "workspace" && projectSelectOptions.length > 1 ? (
+                  <SelectField
+                    label="Project"
+                    onChange={(projectCwd) => setForm({ ...form, projectCwd })}
+                    options={projectSelectOptions}
+                    value={form.projectCwd}
+                  />
+                ) : null}
+              </div>
+            ) : (
+              <div className="rounded-md border border-hairline-soft bg-surface px-3 py-2 text-fg-muted text-xs">
+                Location: {form.scope === "user" ? "Home" : "Project"}
+              </div>
+            )}
             <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,220px)]">
               <label className="flex flex-col gap-1.5">
                 <span className="text-xs text-fg-subtle">Name</span>
@@ -2393,26 +2693,34 @@ function SubagentsSettingsPanel({ cwd }: { cwd: string | undefined }) {
         ) : null}
       </CollapsibleMotion>
 
-      <SettingsSection title="Available subagents">
-        {!cwd ? (
+      <SettingsSection
+        title={
+          activeScope === "workspace"
+            ? `${selectedProject?.displayName ?? "Project"} subagents`
+            : "Home subagents"
+        }
+      >
+        {!effectiveProjectCwd ? (
           <div className="rounded-lg border border-hairline-soft bg-panel px-5 py-6">
             <p className="text-sm text-fg-muted">
               Open a workspace to discover and create subagents.
             </p>
           </div>
-        ) : loading && subagents.length === 0 ? (
+        ) : loading && visibleSubagents.length === 0 ? (
           <div className="rounded-lg border border-hairline-soft bg-panel px-5 py-6 text-sm text-fg-muted">
             <ShinyText>Discovering subagents…</ShinyText>
           </div>
-        ) : subagents.length === 0 ? (
+        ) : visibleSubagents.length === 0 ? (
           <div className="rounded-lg border border-hairline-soft bg-panel px-5 py-10 text-center">
             <div className="text-sm text-fg-muted">No Subagents Yet</div>
             <div className="mt-1 text-xs text-fg-faint">
-              Create specialized agents to handle focused tasks.
+              {activeScope === "workspace"
+                ? "Create project agents for this workspace."
+                : "Create home agents available in every workspace."}
             </div>
             <button
               className="mt-4 h-8 rounded-md border border-hairline bg-surface px-3 text-xs text-fg transition-colors hover:bg-hover"
-              onClick={() => setForm(emptySubagentForm())}
+              onClick={() => startCreate(activeScope)}
               type="button"
             >
               New Subagent
@@ -2420,7 +2728,7 @@ function SubagentsSettingsPanel({ cwd }: { cwd: string | undefined }) {
           </div>
         ) : (
           <SettingsList>
-            {subagents.map((subagent) => (
+            {visibleSubagents.map((subagent) => (
               <div
                 className="group/subagent grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-hairline-soft border-b px-4 py-3 last:border-b-0"
                 key={subagent.path}

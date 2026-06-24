@@ -85,6 +85,17 @@ export function loadWorkspaceSubagents(cwd: string, home: string = homedir()): S
   return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
+function loadSubagentsForSettings(cwd: string, home: string = homedir()): SubagentDetail[] {
+  return subagentRoots(cwd, home)
+    .flatMap((root) =>
+      subagentFilesIn(root).flatMap((file) => {
+        const subagent = loadSubagentFromFile(file, root);
+        return subagent ? [subagent] : [];
+      }),
+    )
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export function resolveSubagent(cwd: string, name: string): SubagentDetail | undefined {
   const normalized = normalizeSkillName(name);
   return loadWorkspaceSubagents(cwd).find((subagent) => subagent.name === normalized);
@@ -113,10 +124,10 @@ export function createSubagent(input: CreateSubagentInput): SubagentInfo {
   if (!name) {
     throw new Error("Subagent name must contain at least one letter or number.");
   }
-  const dir = subagentsDir(input.cwd);
+  const dir = subagentsDir(input.cwd, input.scope);
   const path = join(dir, `${name}.md`);
   if (existsSync(path)) {
-    throw new Error(`A subagent named "${name}" already exists in this workspace.`);
+    throw new Error(`A subagent named "${name}" already exists in this location.`);
   }
   mkdirSync(dir, { recursive: true });
   writeFileSync(path, renderSubagentFile({ ...input, name }), "utf8");
@@ -152,8 +163,8 @@ export function deleteSubagent(cwd: string, path: string): SubagentInfo[] {
   return listSubagents(cwd);
 }
 
-export function listSubagents(cwd: string): SubagentInfo[] {
-  return loadWorkspaceSubagents(cwd).map(toSubagentInfo);
+export function listSubagents(cwd: string, home: string = homedir()): SubagentInfo[] {
+  return loadSubagentsForSettings(cwd, home).map(toSubagentInfo);
 }
 
 export function resolveSubagentsPrompt(cwd: string): string {
@@ -195,12 +206,16 @@ export function resolveSubagentsPrompt(cwd: string): string {
   return kept.join("\n");
 }
 
-export function subagentsDir(cwd: string): string {
-  return join(cwd, ".modus", "agents");
+export function subagentsDir(
+  cwd: string,
+  scope: SkillScope = "workspace",
+  home: string = homedir(),
+): string {
+  return scope === "user" ? join(home, ".modus", "agents") : join(cwd, ".modus", "agents");
 }
 
-export function ensureSubagentsDir(cwd: string): string {
-  const dir = subagentsDir(cwd);
+export function ensureSubagentsDir(cwd: string, scope: SkillScope = "workspace"): string {
+  const dir = subagentsDir(cwd, scope);
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }

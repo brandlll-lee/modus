@@ -184,6 +184,7 @@ import {
   subagentsCreateSchema,
   subagentsDeleteSchema,
   subagentsGetSchema,
+  subagentsOpenDirSchema,
   subagentsUpdateSchema,
   terminalCreateSchema,
   terminalResizeSchema,
@@ -1085,9 +1086,10 @@ export function registerAppIpc(): void {
     return deleteSubagent(parsed.cwd, parsed.path);
   });
 
-  ipcMain.handle(IPC_CHANNELS.subagentsOpenDir, async (event, cwd: string) => {
+  ipcMain.handle(IPC_CHANNELS.subagentsOpenDir, async (event, input) => {
     assertTrustedSender(event);
-    const dir = ensureSubagentsDir(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.subagentsOpenDir));
+    const parsed = parseIpcInput(subagentsOpenDirSchema, input, IPC_CHANNELS.subagentsOpenDir);
+    const dir = ensureSubagentsDir(parsed.cwd, parsed.scope);
     await shell.openPath(dir);
     return dir;
   });

@@ -197,7 +197,7 @@ const api: ModusApi = {
     create: (input) => ipcRenderer.invoke("subagents:create", input),
     update: (input) => ipcRenderer.invoke("subagents:update", input),
     delete: (input) => ipcRenderer.invoke("subagents:delete", input),
-    openDir: (cwd) => ipcRenderer.invoke("subagents:open-dir", cwd),
+    openDir: (input) => ipcRenderer.invoke("subagents:open-dir", input),
   },
   window: {
     minimize: () => ipcRenderer.invoke("window:minimize") as Promise<void>,

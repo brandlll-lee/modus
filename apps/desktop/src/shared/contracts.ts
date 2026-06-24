@@ -1094,6 +1094,8 @@ export type McpServerUpsertInput = {
   name: string;
   /** Existing name when editing (handles renames). */
   originalName?: string | undefined;
+  /** New servers land in the selected config scope; existing servers write back to source. */
+  scope?: "user" | "project" | undefined;
   transport: McpTransportKind;
   command?: string | undefined;
   args?: string[] | undefined;
@@ -1268,6 +1270,8 @@ export type SubagentDetail = SubagentInfo & { body: string };
 
 export type CreateSubagentInput = {
   cwd: string;
+  /** New subagents are written to the selected agents folder. */
+  scope?: SkillScope | undefined;
   name: string;
   description: string;
   model?: string;

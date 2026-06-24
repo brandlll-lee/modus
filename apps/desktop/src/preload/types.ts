@@ -366,6 +366,7 @@ export type ModusApi = {
     get(input: { cwd: string; path: string }): Promise<SubagentDetail | undefined>;
     create(input: {
       cwd: string;
+      scope?: "user" | "workspace";
       name: string;
       description: string;
       model?: string;
@@ -390,7 +391,7 @@ export type ModusApi = {
       body: string;
     }): Promise<SubagentInfo>;
     delete(input: { cwd: string; path: string }): Promise<SubagentInfo[]>;
-    openDir(cwd: string): Promise<string>;
+    openDir(input: { cwd: string; scope?: "user" | "workspace" }): Promise<string>;
   };
   window: {
     minimize(): Promise<void>;

@@ -212,6 +212,7 @@ export const subagentsGetSchema = z.object({
 
 export const subagentsCreateSchema = z.object({
   cwd: nonEmptyString,
+  scope: z.enum(["user", "workspace"]).optional(),
   name: nonEmptyString.max(64),
   description: z.string().trim().max(280),
   model: z.string().trim().max(120).optional(),
@@ -230,6 +231,11 @@ export const subagentsUpdateSchema = subagentsCreateSchema.extend({
 export const subagentsDeleteSchema = z.object({
   cwd: nonEmptyString,
   path: nonEmptyString,
+});
+
+export const subagentsOpenDirSchema = z.object({
+  cwd: nonEmptyString,
+  scope: z.enum(["user", "workspace"]).optional(),
 });
 
 export const diffReadSchema = z.object({
@@ -386,6 +392,7 @@ export const mcpUpsertSchema = z
       .max(64)
       .regex(/^[\w.-]+$/, "Server names may use letters, numbers, dot, dash and underscore."),
     originalName: optionalNonEmptyString,
+    scope: z.enum(["user", "project"]).optional(),
     transport: z.enum(["stdio", "http"]),
     command: z.string().trim().optional(),
     args: z.array(z.string()).max(64).optional(),

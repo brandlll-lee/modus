@@ -5,9 +5,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   createSubagent,
   deleteSubagent,
+  listSubagents,
   loadWorkspaceSubagents,
   parseSubagent,
   resolveSubagentsPrompt,
+  subagentsDir,
   updateSubagent,
 } from "./subagents-config";
 
@@ -90,6 +92,22 @@ describe("loadWorkspaceSubagents", () => {
       scope: "workspace",
       source: ".modus",
     });
+  });
+
+  it("keeps overridden user agents visible for settings management", () => {
+    const user = writeAgent(join(home, ".modus"), "reviewer", "home modus");
+    const workspace = writeAgent(join(cwd, ".modus"), "reviewer", "workspace modus");
+
+    expect(loadWorkspaceSubagents(cwd, home)).toHaveLength(1);
+    expect(listSubagents(cwd, home).filter((agent) => agent.name === "reviewer")).toEqual([
+      expect.objectContaining({ path: user, scope: "user" }),
+      expect.objectContaining({ path: workspace, scope: "workspace" }),
+    ]);
+  });
+
+  it("resolves home and workspace Modus agent folders from explicit scope", () => {
+    expect(subagentsDir(cwd, "user", home)).toBe(join(home, ".modus", "agents"));
+    expect(subagentsDir(cwd, "workspace", home)).toBe(join(cwd, ".modus", "agents"));
   });
 
   it("renders an empty manifest that prevents invented subagent names", () => {
