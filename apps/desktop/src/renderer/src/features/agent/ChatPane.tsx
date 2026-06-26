@@ -1,3 +1,5 @@
+import { IconArrowDown } from "@tabler/icons-react";
+import { AnimatePresence, m } from "motion/react";
 import {
   forwardRef,
   type ReactNode,
@@ -43,12 +45,13 @@ import {
   foldAgentEvents,
   optimisticUserPromptEvents,
 } from "./agentEventHub";
+import { ConversationTimeline } from "./ConversationTimeline";
 import { ChangesStrip } from "./changes/ChangesStrip";
 import { latestPendingPermissionRequest } from "./permissionRequests";
 import { latestPendingQuestionRequest } from "./questionRequests";
 import { RetryStatusBar } from "./RetryStatusBar";
 import { latestSessionStatus } from "./runState";
-import { Timeline } from "./Timeline";
+import { buildVisibleTimelineBlocks, Timeline } from "./Timeline";
 import { useAutoScroll } from "./useAutoScroll";
 
 /**
@@ -193,6 +196,15 @@ export const ChatPane = forwardRef<ChatPaneHandle, ChatPaneProps>(function ChatP
   // Stick-to-bottom follows the bottom only while the session is working; idle
   // viewing/scrolling never snaps back (opencode's createAutoScroll model).
   const autoScroll = useAutoScroll(isRunning);
+  const [scrollContainer, setScrollContainer] = useState<HTMLDivElement | null>(null);
+  const setChatScrollRef = useCallback(
+    (el: HTMLDivElement | null): void => {
+      setScrollContainer(el);
+      autoScroll.scrollRef(el);
+    },
+    [autoScroll.scrollRef],
+  );
+  const visibleBlocks = useMemo(() => buildVisibleTimelineBlocks(agentEvents), [agentEvents]);
 
   useEffect(() => {
     if (agentEvents.length === 0) {
@@ -583,28 +595,51 @@ export const ChatPane = forwardRef<ChatPaneHandle, ChatPaneProps>(function ChatP
       ) : null}
 
       <CollapsibleMotionProvider>
-        <ChatViewport
-          contentRef={autoScroll.contentRef}
-          onScroll={autoScroll.handleScroll}
-          scrollRef={autoScroll.scrollRef}
-        >
-          <Timeline
-            agentEvents={agentEvents}
-            {...(botColor ? { botColor } : {})}
-            cwd={activeCwd}
-            onEditResend={editAndResend}
-            {...(onOpenSubagent ? { onOpenSubagent } : {})}
-            onRestoreCheckpoint={async (checkpointId) => {
-              await window.modus.checkpoint.restore({ checkpointId });
-              refreshStats();
-            }}
-            workspaceId={workspace?.id}
-          />
-        </ChatViewport>
+        <div className="relative flex min-h-0 min-w-0 flex-1">
+          <ConversationTimeline blocks={visibleBlocks} scrollContainer={scrollContainer} />
+          <ChatViewport
+            contentRef={autoScroll.contentRef}
+            onScroll={autoScroll.handleScroll}
+            scrollRef={setChatScrollRef}
+          >
+            <Timeline
+              agentEvents={agentEvents}
+              {...(botColor ? { botColor } : {})}
+              cwd={activeCwd}
+              onEditResend={editAndResend}
+              {...(onOpenSubagent ? { onOpenSubagent } : {})}
+              onRestoreCheckpoint={async (checkpointId) => {
+                await window.modus.checkpoint.restore({ checkpointId });
+                refreshStats();
+              }}
+              precomputedBlocks={visibleBlocks}
+              workspaceId={workspace?.id}
+            />
+          </ChatViewport>
+        </div>
       </CollapsibleMotionProvider>
 
       <div className="min-w-0 max-w-full shrink-0 px-4 pb-4">
-        <div className="mx-auto min-w-0 w-full max-w-5xl">
+        <div className="relative mx-auto min-w-0 w-full max-w-5xl">
+          <AnimatePresence initial={false}>
+            {autoScroll.showScrollToLatest ? (
+              <div className="pointer-events-none absolute bottom-full left-1/2 z-30 mb-2 -translate-x-1/2">
+                <m.button
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  aria-label="Scroll to latest"
+                  className="pointer-events-auto flex size-10 items-center justify-center rounded-full border border-hairline bg-elevated/95 text-fg-muted shadow-popup outline-none backdrop-blur transition-[background-color,color,transform] duration-150 hover:bg-hover hover:text-fg active:scale-[0.96] focus-visible:ring-2 focus-visible:ring-focus-ring/35"
+                  exit={{ opacity: 0, scale: 0.96, y: 4 }}
+                  initial={{ opacity: 0, scale: 0.96, y: 4 }}
+                  onClick={autoScroll.scrollToLatest}
+                  title="Scroll to latest"
+                  transition={{ duration: 0.12, ease: [0.22, 1, 0.36, 1] }}
+                  type="button"
+                >
+                  <IconArrowDown aria-hidden size={21} stroke={1.9} />
+                </m.button>
+              </div>
+            ) : null}
+          </AnimatePresence>
           {pendingPermission ? (
             <ApprovalPanel
               key={pendingPermission.id}

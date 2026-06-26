@@ -27,10 +27,18 @@ const BOTTOM_THRESHOLD = 10;
 const SETTLE_MS = 300;
 const AUTO_MARK_MS = 1500;
 
-const distanceFromBottom = (el: HTMLElement): number =>
+export const distanceFromBottom = (el: HTMLElement): number =>
   el.scrollHeight - el.clientHeight - el.scrollTop;
 
 const canScroll = (el: HTMLElement): boolean => el.scrollHeight - el.clientHeight > 1;
+
+export function shouldShowScrollToLatest(distance: number, viewportHeight: number): boolean {
+  return viewportHeight > 0 && distance > viewportHeight;
+}
+
+const prefersReducedMotion = (): boolean =>
+  typeof window.matchMedia === "function" &&
+  window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 export type AutoScroll = {
   /** Callback ref for the scroll container. */
@@ -43,15 +51,20 @@ export type AutoScroll = {
   scrollToBottom: () => void;
   /** Force back to following the bottom (new prompt, session switch). */
   resume: () => void;
+  /** The user is more than one viewport away from the latest content. */
+  showScrollToLatest: boolean;
+  /** User-requested return to the latest content with smooth movement. */
+  scrollToLatest: () => void;
 };
 
 export function useAutoScroll(working: boolean): AutoScroll {
   const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null);
   const [contentEl, setContentEl] = useState<HTMLElement | null>(null);
+  const [showScrollToLatest, setShowScrollToLatest] = useState(false);
 
   const userScrolledRef = useRef(false);
   const settlingRef = useRef(false);
-  const autoRef = useRef<{ top: number; time: number } | undefined>(undefined);
+  const autoRef = useRef<{ smooth: boolean; top: number; time: number } | undefined>(undefined);
   const settleTimerRef = useRef<number | undefined>(undefined);
   const autoTimerRef = useRef<number | undefined>(undefined);
   const workingRef = useRef(working);
@@ -63,8 +76,26 @@ export function useAutoScroll(working: boolean): AutoScroll {
     el.style.overflowAnchor = userScrolledRef.current ? "auto" : "none";
   }, []);
 
-  const markAuto = useCallback((el: HTMLElement): void => {
-    autoRef.current = { top: Math.max(0, el.scrollHeight - el.clientHeight), time: Date.now() };
+  const updateScrollToLatestVisibility = useCallback((el: HTMLElement | null): void => {
+    setShowScrollToLatest(
+      el ? shouldShowScrollToLatest(distanceFromBottom(el), el.clientHeight) : false,
+    );
+  }, []);
+
+  const setScrollRef = useCallback(
+    (el: HTMLDivElement | null): void => {
+      setScrollEl(el);
+      updateScrollToLatestVisibility(el);
+    },
+    [updateScrollToLatestVisibility],
+  );
+
+  const markAuto = useCallback((el: HTMLElement, smooth: boolean): void => {
+    autoRef.current = {
+      smooth,
+      top: Math.max(0, el.scrollHeight - el.clientHeight),
+      time: Date.now(),
+    };
     window.clearTimeout(autoTimerRef.current);
     autoTimerRef.current = window.setTimeout(() => {
       autoRef.current = undefined;
@@ -80,11 +111,14 @@ export function useAutoScroll(working: boolean): AutoScroll {
       autoRef.current = undefined;
       return false;
     }
+    if (a.smooth) {
+      return true;
+    }
     return Math.abs(el.scrollTop - a.top) < 2;
   }, []);
 
   const scrollToBottom = useCallback(
-    (force: boolean): void => {
+    (force: boolean, behavior: ScrollBehavior = "auto"): void => {
       const el = scrollEl;
       if (!el) {
         return;
@@ -93,21 +127,32 @@ export function useAutoScroll(working: boolean): AutoScroll {
         userScrolledRef.current = false;
         updateOverflowAnchor(el);
       }
+      if (force) {
+        setShowScrollToLatest(false);
+      }
       if (!force && (!active() || userScrolledRef.current)) {
         return;
       }
-      markAuto(el);
+      markAuto(el, behavior === "smooth");
       if (distanceFromBottom(el) >= 2) {
-        // Direct scrollTop assignment bypasses any CSS smooth-scroll, so
-        // following content stays glued to the bottom without catch-up jank.
-        el.scrollTop = el.scrollHeight;
+        if (behavior === "smooth") {
+          el.scrollTo({ top: el.scrollHeight, behavior });
+        } else {
+          // Direct scrollTop assignment bypasses any CSS smooth-scroll, so
+          // following content stays glued to the bottom without catch-up jank.
+          el.scrollTop = el.scrollHeight;
+        }
+      }
+      if (behavior !== "smooth") {
+        updateScrollToLatestVisibility(el);
       }
     },
-    [scrollEl, active, markAuto, updateOverflowAnchor],
+    [scrollEl, active, markAuto, updateOverflowAnchor, updateScrollToLatestVisibility],
   );
 
   const stop = useCallback((): void => {
     const el = scrollEl;
+    updateScrollToLatestVisibility(el);
     if (!el || !canScroll(el)) {
       if (userScrolledRef.current && el) {
         userScrolledRef.current = false;
@@ -120,7 +165,7 @@ export function useAutoScroll(working: boolean): AutoScroll {
     }
     userScrolledRef.current = true;
     updateOverflowAnchor(el);
-  }, [scrollEl, updateOverflowAnchor]);
+  }, [scrollEl, updateOverflowAnchor, updateScrollToLatestVisibility]);
 
   const handleScroll = useCallback((): void => {
     const el = scrollEl;
@@ -128,13 +173,7 @@ export function useAutoScroll(working: boolean): AutoScroll {
       return;
     }
     if (!canScroll(el)) {
-      if (userScrolledRef.current) {
-        userScrolledRef.current = false;
-        updateOverflowAnchor(el);
-      }
-      return;
-    }
-    if (distanceFromBottom(el) < BOTTOM_THRESHOLD) {
+      setShowScrollToLatest(false);
       if (userScrolledRef.current) {
         userScrolledRef.current = false;
         updateOverflowAnchor(el);
@@ -142,9 +181,22 @@ export function useAutoScroll(working: boolean): AutoScroll {
       return;
     }
     // Our own scrollToBottom fired this event — don't treat it as the user
-    // leaving the bottom.
+    // leaving the bottom. Smooth return-to-latest emits intermediate positions,
+    // so keep the affordance hidden until that programmatic scroll settles.
     if (!userScrolledRef.current && isAuto(el)) {
-      scrollToBottom(false);
+      setShowScrollToLatest(false);
+      if (!autoRef.current?.smooth) {
+        scrollToBottom(false);
+      }
+      return;
+    }
+    const distance = distanceFromBottom(el);
+    setShowScrollToLatest(shouldShowScrollToLatest(distance, el.clientHeight));
+    if (distance < BOTTOM_THRESHOLD) {
+      if (userScrolledRef.current) {
+        userScrolledRef.current = false;
+        updateOverflowAnchor(el);
+      }
       return;
     }
     stop();
@@ -156,6 +208,10 @@ export function useAutoScroll(working: boolean): AutoScroll {
 
   const resume = useCallback((): void => {
     scrollToBottom(true);
+  }, [scrollToBottom]);
+
+  const scrollToLatest = useCallback((): void => {
+    scrollToBottom(true, prefersReducedMotion() ? "auto" : "smooth");
   }, [scrollToBottom]);
 
   // Wheel-up is the authoritative "user wants to read history" signal. Scrolling
@@ -187,6 +243,7 @@ export function useAutoScroll(working: boolean): AutoScroll {
     }
     const observer = new ResizeObserver(() => {
       const el = scrollEl;
+      updateScrollToLatestVisibility(el);
       if (el && !canScroll(el)) {
         if (userScrolledRef.current) {
           userScrolledRef.current = false;
@@ -204,7 +261,14 @@ export function useAutoScroll(working: boolean): AutoScroll {
       observer.observe(scrollEl);
     }
     return () => observer.disconnect();
-  }, [contentEl, scrollEl, active, scrollToBottom, updateOverflowAnchor]);
+  }, [
+    contentEl,
+    scrollEl,
+    active,
+    scrollToBottom,
+    updateOverflowAnchor,
+    updateScrollToLatestVisibility,
+  ]);
 
   // Work start glues to the bottom (unless the user scrolled away); a short
   // settle window after work ends keeps late layout shifts pinned.
@@ -232,10 +296,12 @@ export function useAutoScroll(working: boolean): AutoScroll {
   );
 
   return {
-    scrollRef: setScrollEl,
+    scrollRef: setScrollRef,
     contentRef: setContentEl,
     handleScroll,
     scrollToBottom: follow,
     resume,
+    showScrollToLatest,
+    scrollToLatest,
   };
 }

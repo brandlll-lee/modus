@@ -40,6 +40,7 @@ import { ToolCard } from "./ToolCard";
 
 type TimelineProps = {
   agentEvents: Array<{ id: string; event: AgentEvent; createdAt?: string }>;
+  precomputedBlocks?: TimelineBlock[];
   /** Session cwd, threaded to diff tool cards so they can open edited files. */
   cwd?: string | undefined;
   onRestoreCheckpoint?(checkpointId: string): Promise<void> | void;
@@ -199,7 +200,7 @@ type ActivityGroupBlockItem = {
   items: ActivityItem[];
 };
 
-type TimelineBlock =
+export type TimelineBlock =
   | MessageBlockItem
   | ToolBlockItem
   | ThoughtBlockItem
@@ -1190,6 +1191,26 @@ export function relocateRunFooters(blocks: TimelineBlock[]): TimelineBlock[] {
   return result;
 }
 
+export function visibleTimelineBlocks(blocks: TimelineBlock[]): TimelineBlock[] {
+  return blocks.filter((block) => {
+    if (block.type === "thought") {
+      return block.text.trim().length > 0;
+    }
+    if (block.type !== "message") {
+      return true;
+    }
+    return block.content.trim().length > 0;
+  });
+}
+
+export function buildVisibleTimelineBlocks(
+  agentEvents: TimelineProps["agentEvents"],
+): TimelineBlock[] {
+  return visibleTimelineBlocks(
+    relocateRunFooters(groupActivity(attachTurnActions(buildBlocks(agentEvents)))),
+  );
+}
+
 /** Spell a run's duration for the settled footer ("1 second" / "37 seconds" / "2m 5s"). */
 function formatElapsedVerbose(end: number, start: number): string {
   const seconds = Math.max(0, Math.round((end - start) / 1000));
@@ -1436,6 +1457,7 @@ function Notice({ body, isError = false, title }: NoticeBlockItem) {
 
 export function Timeline({
   agentEvents,
+  precomputedBlocks,
   cwd,
   workspaceId,
   onRestoreCheckpoint,
@@ -1443,22 +1465,9 @@ export function Timeline({
   onOpenSubagent,
   botColor,
 }: TimelineProps) {
-  const blocks = useMemo(
-    () => relocateRunFooters(groupActivity(attachTurnActions(buildBlocks(agentEvents)))),
-    [agentEvents],
-  );
   const visibleBlocks = useMemo(
-    () =>
-      blocks.filter((block) => {
-        if (block.type === "thought") {
-          return block.text.trim().length > 0;
-        }
-        if (block.type !== "message") {
-          return true;
-        }
-        return block.content.trim().length > 0;
-      }),
-    [blocks],
+    () => precomputedBlocks ?? buildVisibleTimelineBlocks(agentEvents),
+    [agentEvents, precomputedBlocks],
   );
   const renderKeys = useMemo(() => blockRenderKeys(visibleBlocks), [visibleBlocks]);
 
