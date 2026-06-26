@@ -31,7 +31,7 @@ describe("Fast Codebase service", () => {
 
     expect(calls).toEqual([
       ["init", root, "--verbose"],
-      ["query", "-p", root, "-l", "8", "--json", "run"],
+      ["query", "-p", root, "-l", "32", "--json", "run"],
     ]);
     expect(result.details.indexDir).toBe(join(root, ".codegraph"));
     expect(result.details.indexed).toBe(true);
@@ -176,7 +176,7 @@ describe("Fast Codebase service", () => {
 
     expect(calls).toEqual([
       ["status", root, "--json"],
-      ["query", "-p", root, "-l", "8", "--json", "overview"],
+      ["query", "-p", root, "-l", "32", "--json", "overview"],
     ]);
     expect(result.text).toContain("Index: ready");
   });
@@ -215,7 +215,7 @@ describe("Fast Codebase service", () => {
     expect(calls).toEqual([
       ["status", root, "--json"],
       ["sync", root],
-      ["query", "-p", root, "-l", "8", "--json", "overview"],
+      ["query", "-p", root, "-l", "32", "--json", "overview"],
     ]);
     expect(result.text).toContain("Index: synced");
   });
@@ -232,8 +232,46 @@ describe("Fast Codebase service", () => {
 
     expect(calls).toEqual([
       ["init", root, "--verbose"],
-      ["explore", "-p", root, "--max-files", "12", "run"],
+      ["explore", "-p", root, "--max-files", "3", "run"],
     ]);
+  });
+
+  it("returns code-shaped query hits before low-signal matches", async () => {
+    const root = tempGitRoot();
+    const runner: CodeGraphRunner = async (args) =>
+      ok(
+        args[0] === "query"
+          ? JSON.stringify([
+              {
+                node: {
+                  filePath: "modules/mono/System.cs",
+                  kind: "import",
+                  name: "System",
+                  signature: "using System;",
+                },
+                score: 100,
+              },
+              {
+                node: {
+                  filePath: "modules/solers_ai/core/solers_tool_registry.cpp",
+                  kind: "file",
+                  name: "solers_tool_registry.cpp",
+                },
+                score: 10,
+              },
+            ])
+          : "ok",
+      );
+
+    const result = await runFastCodebase({
+      cwd: root,
+      limit: 1,
+      query: "solers ai tool registry",
+      runner,
+    });
+
+    expect(result.text).toContain("solers_tool_registry.cpp");
+    expect(result.text).not.toContain("using System");
   });
 
   it("summarizes stderr when queries fail", async () => {

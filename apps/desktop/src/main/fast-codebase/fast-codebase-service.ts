@@ -4,6 +4,7 @@ import { basename, isAbsolute, join, relative, resolve } from "node:path";
 
 const OUTPUT_CAP = 60_000;
 const STDERR_CAP = 20_000;
+const SOURCE_FILE_LIMIT = 3;
 const INDEX_TIMEOUT_MS = 5 * 60_000;
 const QUERY_TIMEOUT_MS = 90_000;
 // biome-ignore lint/complexity/useRegexLiterals: regex literals with ESC trip noControlCharactersInRegex.
@@ -38,6 +39,17 @@ type CodeGraphCallResult = {
   isError: boolean;
   stderr: string;
   text: string;
+};
+
+type CodeGraphQueryResult = {
+  node?: {
+    filePath?: string;
+    kind?: string;
+    name?: string;
+    qualifiedName?: string;
+    signature?: string;
+  };
+  score?: number;
 };
 
 export type CodeGraphRunner = (
@@ -371,6 +383,69 @@ function parseStatus(result: CodeGraphCallResult): { pending: boolean } {
   }
 }
 
+function queryTerms(query: string): string[] {
+  return [
+    ...new Set(
+      query
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter(Boolean),
+    ),
+  ];
+}
+
+function queryResultRank(result: CodeGraphQueryResult, terms: string[]): number {
+  const node = result.node;
+  if (!node) {
+    return 0;
+  }
+  const text = [node.name, node.qualifiedName, node.filePath, node.signature]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  const matchScore = terms.reduce((score, term) => score + (text.includes(term) ? 1 : 0), 0);
+  const kindScore =
+    {
+      file: 4,
+      class: 4,
+      function: 4,
+      method: 4,
+      interface: 3,
+      struct: 3,
+      type_alias: 3,
+      field: 1,
+      property: 1,
+      variable: 1,
+      enum: -3,
+      enum_member: -3,
+      import: -4,
+    }[node.kind ?? ""] ?? 0;
+  return matchScore + kindScore;
+}
+
+function rankedQueryText(text: string, query: string, limit: number): string {
+  try {
+    const results = JSON.parse(text) as CodeGraphQueryResult[];
+    if (!Array.isArray(results)) {
+      return text;
+    }
+    const terms = queryTerms(query);
+    return JSON.stringify(
+      results
+        .sort(
+          (left, right) =>
+            queryResultRank(right, terms) - queryResultRank(left, terms) ||
+            (right.score ?? 0) - (left.score ?? 0),
+        )
+        .slice(0, limit),
+      null,
+      2,
+    );
+  } catch {
+    return text;
+  }
+}
+
 type IndexFlight = {
   callbacks: Set<(progress: FastCodebaseProgress) => void>;
   controller: AbortController;
@@ -522,9 +597,17 @@ async function queryCodeGraph(input: {
   onProgress?: ((progress: FastCodebaseProgress) => void) | undefined;
 }): Promise<string> {
   input.onProgress?.({ phase: "querying", message: "Querying CodeGraph..." });
+  const queryLimit = Math.min(input.limit * 4, 48);
   const args = input.includeCode
-    ? ["explore", "-p", input.cwd, "--max-files", String(input.limit), input.query]
-    : ["query", "-p", input.cwd, "-l", String(input.limit), "--json", input.query];
+    ? [
+        "explore",
+        "-p",
+        input.cwd,
+        "--max-files",
+        String(Math.min(input.limit, SOURCE_FILE_LIMIT)),
+        input.query,
+      ]
+    : ["query", "-p", input.cwd, "-l", String(queryLimit), "--json", input.query];
   const result = await input.runner(args, {
     cwd: input.cwd,
     signal: input.signal,
@@ -533,7 +616,9 @@ async function queryCodeGraph(input: {
   if (result.isError) {
     throw new Error(`Fast Codebase query failed:\n${failureText(result)}`);
   }
-  return result.text.slice(0, OUTPUT_CAP);
+  return (
+    input.includeCode ? result.text : rankedQueryText(result.text, input.query, input.limit)
+  ).slice(0, OUTPUT_CAP);
 }
 
 function snapshot(cwd: string): string | undefined {
