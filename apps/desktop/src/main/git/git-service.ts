@@ -249,6 +249,7 @@ export async function listCommitLog(cwd: string, limit = 50): Promise<GitCommit[
 export async function listCommitChanges(cwd: string, commit: string): Promise<FileChange[]> {
   const output = await gitSafe(cwd, [
     "diff-tree",
+    "--root",
     "--no-commit-id",
     "--name-status",
     "-r",

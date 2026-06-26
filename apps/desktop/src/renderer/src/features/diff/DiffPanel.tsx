@@ -146,6 +146,7 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
         log.map((commit: GitCommit) => commit.hash),
       ),
     );
+    setCommitFiles((prev) => pruneRecordKeys(prev, log.map((commit: GitCommit) => commit.hash)));
     setChanges(list);
     setStatsByPath(
       new Map(
@@ -154,7 +155,6 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
     );
     setStatus(st);
     setCommits(log);
-    setCommitFiles({});
     setRefreshToken((token) => token + 1);
   }, []);
 
@@ -229,8 +229,18 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
   async function toggleCommit(hash: string): Promise<void> {
     setExpandedCommits((prev) => toggleKey(prev, hash));
     if (!activeCwd || commitFiles[hash]) return;
-    const files = await window.modus.diff.commitChanges({ cwd: activeCwd, commit: hash });
-    setCommitFiles((prev) => ({ ...prev, [hash]: files }));
+    setActionError(undefined);
+    try {
+      const files = await window.modus.diff.commitChanges({ cwd: activeCwd, commit: hash });
+      setCommitFiles((prev) => ({ ...prev, [hash]: files }));
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause.message : String(cause));
+      setExpandedCommits((prev) => {
+        const next = new Set(prev);
+        next.delete(hash);
+        return next;
+      });
+    }
   }
 
   const toggleFile = useCallback((key: string) => {
@@ -441,6 +451,12 @@ export function pruneExpandedKeys(set: Set<string>, validKeys: Iterable<string>)
   const valid = new Set(validKeys);
   const next = new Set([...set].filter((key) => valid.has(key)));
   return next.size === set.size ? set : next;
+}
+
+export function pruneRecordKeys<T>(record: Record<string, T>, validKeys: Iterable<string>) {
+  const valid = new Set(validKeys);
+  const next = Object.fromEntries(Object.entries(record).filter(([key]) => valid.has(key)));
+  return Object.keys(next).length === Object.keys(record).length ? record : next;
 }
 
 function normalizePath(path: string | undefined): string {
@@ -962,6 +978,8 @@ function CommitRow({
       <CollapsibleMotion open={expanded} preset="default">
         {files === undefined ? (
           <div className="px-6 py-3 text-fg-faint text-xs">Loading files…</div>
+        ) : files.length === 0 ? (
+          <div className="px-6 py-3 text-fg-faint text-xs">No files changed.</div>
         ) : (
           files.map((file) => {
             const key = `${commit.hash}:${file.path}`;

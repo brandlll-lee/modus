@@ -237,6 +237,14 @@ describe("git-service", () => {
     expect(files.every((file) => file.staged === false && file.unstaged === false)).toBe(true);
   });
 
+  it("lists files changed by the root commit", async () => {
+    const log = await listCommitLog(repo);
+    const files = await listCommitChanges(repo, log.at(-1)?.hash ?? "");
+
+    expect(files.map((file) => file.path)).toEqual(["tracked.txt"]);
+    expect(files[0]?.status).toBe("A");
+  });
+
   it("diffs a commit against its parent via file versions", async () => {
     await writeFile(join(repo, "tracked.txt"), "second\n");
     await git(["commit", "-am", "second commit"]);

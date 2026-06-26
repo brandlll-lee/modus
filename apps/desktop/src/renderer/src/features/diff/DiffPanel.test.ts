@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { pruneExpandedKeys, toggleKey } from "./DiffPanel";
+import { pruneExpandedKeys, pruneRecordKeys, toggleKey } from "./DiffPanel";
 
 describe("toggleKey", () => {
   it("keeps existing expanded file diffs open when another file opens", () => {
@@ -16,5 +16,13 @@ describe("pruneExpandedKeys", () => {
     expect([...pruneExpandedKeys(new Set(["a.ts", "stale.ts"]), ["a.ts", "b.ts"])]).toEqual([
       "a.ts",
     ]);
+  });
+});
+
+describe("pruneRecordKeys", () => {
+  it("keeps cached commit files that still exist in the current commit log", () => {
+    expect(pruneRecordKeys({ keep: ["a.ts"], stale: ["b.ts"] }, ["keep", "next"])).toEqual({
+      keep: ["a.ts"],
+    });
   });
 });
