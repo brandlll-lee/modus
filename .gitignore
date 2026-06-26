@@ -16,3 +16,4 @@ coverage/
 .tmp/
 .modus/
 .dev-smoke.log
+apps/desktop/resources/bin/
