@@ -609,7 +609,7 @@ function BrowserViewport({
 
   return (
     <div className="relative min-h-0 flex-1 bg-panel">
-      <div className="absolute inset-0" ref={hostRef} />
+      <div className="absolute inset-y-0 right-0 left-3" ref={hostRef} />
       {!tabId ? (
         <div className="flex h-full flex-col items-center justify-center gap-3 text-sm text-fg-faint">
           <span>No browser tab</span>
