@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 const OUTPUT_CAP = 60_000;
@@ -18,6 +18,7 @@ export type FastCodebaseResult = {
   text: string;
   details: {
     cacheDir: string;
+    candidateWorkspaces?: string[];
     indexed: boolean;
     kernel: string;
     project: string;
@@ -53,6 +54,7 @@ export type FastCodebaseInput = {
   includeCode?: boolean | undefined;
   limit?: number | undefined;
   query: string;
+  workspacePath?: string | undefined;
   signal?: AbortSignal | undefined;
   onProgress?: ((progress: FastCodebaseProgress) => void) | undefined;
   runner?: CbmRunner | undefined;
@@ -123,6 +125,86 @@ export function projectNameFromPath(path: string): string {
   }
   out = out.replace(/^[-.]+/, "").replace(/-+$/, "");
   return out || "root";
+}
+
+function pathKey(path: string): string {
+  const value = resolve(path);
+  return process.platform === "win32" ? value.toLowerCase() : value;
+}
+
+function samePath(left: string, right: string): boolean {
+  return pathKey(left) === pathKey(right);
+}
+
+function isPathInside(parent: string, child: string): boolean {
+  const rel = relative(resolve(parent), resolve(child));
+  return rel === "" || (!!rel && !rel.startsWith("..") && !isAbsolute(rel));
+}
+
+function gitRoot(cwd: string): string | undefined {
+  const result = spawnSync("git", ["-C", cwd, "rev-parse", "--show-toplevel"], {
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  if (result.status !== 0) {
+    return undefined;
+  }
+  const root = result.stdout.trim();
+  return root ? resolve(root) : undefined;
+}
+
+function directChildGitRoots(cwd: string): string[] {
+  try {
+    return readdirSync(cwd, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => resolve(cwd, entry.name))
+      .filter((child) => {
+        const root = gitRoot(child);
+        return root ? samePath(root, child) : false;
+      });
+  } catch {
+    return [];
+  }
+}
+
+function skippedResult(input: {
+  cacheDir: string;
+  candidateWorkspaces?: string[];
+  query: string;
+  reason: string;
+  workspace: string;
+}): FastCodebaseResult {
+  const candidates = input.candidateWorkspaces ?? [];
+  const next =
+    candidates.length > 0
+      ? "Next: call fast_codebase again with workspace_path set to one candidate."
+      : "Next: switch to a valid git workspace, or fall back to read/grep/find for this turn.";
+  const candidateText =
+    candidates.length > 0
+      ? ["Candidate workspaces:", ...candidates.map((path) => `- ${path}`)].join("\n")
+      : "Candidate workspaces: none";
+  return {
+    text: [
+      "# Fast Codebase",
+      `Workspace: ${input.workspace}`,
+      "Index: skipped",
+      "",
+      input.reason,
+      "",
+      candidateText,
+      "",
+      next,
+    ].join("\n"),
+    details: {
+      cacheDir: input.cacheDir,
+      ...(candidates.length > 0 ? { candidateWorkspaces: candidates } : {}),
+      indexed: false,
+      kernel: resolveFastCodebaseBinary(),
+      project: projectNameFromPath(input.workspace),
+      query: input.query,
+      workspace: input.workspace,
+    },
+  };
 }
 
 export const runCbmCli: CbmRunner = (tool, args, options) =>
@@ -578,11 +660,31 @@ async function queryKernel(input: {
 }
 
 export async function runFastCodebase(input: FastCodebaseInput): Promise<FastCodebaseResult> {
-  const cwd = resolve(input.cwd);
+  const baseCwd = resolve(input.cwd);
+  const cwd = input.workspacePath ? resolve(baseCwd, input.workspacePath) : baseCwd;
   const cacheDir = resolve(input.cacheDir);
   const limit = Math.max(1, Math.min(input.limit ?? 8, 12));
   const runner = input.runner ?? runCbmCli;
   mkdirSync(cacheDir, { recursive: true });
+  if (!isPathInside(baseCwd, cwd)) {
+    return skippedResult({
+      cacheDir,
+      query: input.query,
+      reason: `Fast Codebase did not start indexing because workspace_path is outside the current workspace: ${cwd}`,
+      workspace: cwd,
+    });
+  }
+  const root = gitRoot(cwd);
+  if (!root || !samePath(root, cwd)) {
+    return skippedResult({
+      cacheDir,
+      candidateWorkspaces: input.workspacePath ? [] : directChildGitRoots(baseCwd),
+      query: input.query,
+      reason:
+        "Fast Codebase did not start indexing because the selected workspace is not a valid git root.",
+      workspace: cwd,
+    });
+  }
   let project = projectNameFromPath(cwd);
   let dbPath = join(cacheDir, `${project}.db`);
   let indexed = false;

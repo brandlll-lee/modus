@@ -33,6 +33,7 @@ describe("Fast Codebase service", () => {
 
   it("indexes before querying when the project db is missing", async () => {
     const root = mkdtempSync(join(tmpdir(), "modus-fast-codebase-"));
+    initGitRoot(root);
     const calls: string[] = [];
     const runner: CbmRunner = async (tool) => {
       calls.push(tool);
@@ -66,8 +67,79 @@ describe("Fast Codebase service", () => {
     expect(result.text).toContain('"start_line": 7');
   });
 
+  it("returns child git workspace candidates without indexing unsafe cwd", async () => {
+    const root = mkdtempSync(join(tmpdir(), "modus-fast-codebase-"));
+    const child = join(root, "repo");
+    mkdirSync(child);
+    initGitRoot(child);
+    const runner: CbmRunner = async () => {
+      throw new Error("sidecar should not start");
+    };
+
+    const result = await runFastCodebase({
+      cacheDir: join(root, "cache"),
+      cwd: root,
+      query: "tools",
+      runner,
+    });
+
+    expect(result.details.indexed).toBe(false);
+    expect(result.details.candidateWorkspaces).toEqual([child]);
+    expect(result.text).toContain("Index: skipped");
+    expect(result.text).toContain("workspace_path");
+  });
+
+  it("indexes an explicit child git workspace", async () => {
+    const root = mkdtempSync(join(tmpdir(), "modus-fast-codebase-"));
+    const child = join(root, "repo");
+    mkdirSync(child);
+    initGitRoot(child);
+    const calls: string[] = [];
+    const repoPaths: unknown[] = [];
+    const runner: CbmRunner = async (tool, args) => {
+      calls.push(tool);
+      if (tool === "index_repository") {
+        repoPaths.push(args.repo_path);
+        return ok(tool, { project: "repo" });
+      }
+      return ok(tool, { total: 0, results: [] });
+    };
+
+    await runFastCodebase({
+      cacheDir: join(root, "cache"),
+      cwd: root,
+      query: "tools",
+      runner,
+      workspacePath: child,
+    });
+
+    expect(calls[0]).toBe("index_repository");
+    expect(repoPaths).toEqual([child]);
+  });
+
+  it("does not index workspace_path outside the current workspace", async () => {
+    const root = mkdtempSync(join(tmpdir(), "modus-fast-codebase-"));
+    const outside = mkdtempSync(join(tmpdir(), "modus-fast-codebase-outside-"));
+    initGitRoot(outside);
+    const runner: CbmRunner = async () => {
+      throw new Error("sidecar should not start");
+    };
+
+    const result = await runFastCodebase({
+      cacheDir: join(root, "cache"),
+      cwd: root,
+      query: "tools",
+      runner,
+      workspacePath: outside,
+    });
+
+    expect(result.details.indexed).toBe(false);
+    expect(result.text).toContain("outside the current workspace");
+  });
+
   it("uses the existing db for overview queries", async () => {
     const root = mkdtempSync(join(tmpdir(), "modus-fast-codebase-"));
+    initGitRoot(root);
     const cacheDir = join(root, "cache");
     mkdirSync(cacheDir, { recursive: true });
     writeFileSync(join(cacheDir, `${projectNameFromPath(root)}.db`), "");
@@ -109,6 +181,7 @@ describe("Fast Codebase service", () => {
 
   it("adds architecture context when search returns no results", async () => {
     const root = mkdtempSync(join(tmpdir(), "modus-fast-codebase-"));
+    initGitRoot(root);
     const cacheDir = join(root, "cache");
     mkdirSync(cacheDir, { recursive: true });
     writeFileSync(join(cacheDir, `${projectNameFromPath(root)}.db`), "");
@@ -134,6 +207,7 @@ describe("Fast Codebase service", () => {
 
   it("fetches snippets only when includeCode is requested", async () => {
     const root = mkdtempSync(join(tmpdir(), "modus-fast-codebase-"));
+    initGitRoot(root);
     const cacheDir = join(root, "cache");
     mkdirSync(cacheDir, { recursive: true });
     writeFileSync(join(cacheDir, `${projectNameFromPath(root)}.db`), "");
@@ -178,6 +252,7 @@ describe("Fast Codebase service", () => {
 
   it("summarizes stderr when queries fail", async () => {
     const root = mkdtempSync(join(tmpdir(), "modus-fast-codebase-"));
+    initGitRoot(root);
     const cacheDir = join(root, "cache");
     mkdirSync(cacheDir, { recursive: true });
     writeFileSync(join(cacheDir, `${projectNameFromPath(root)}.db`), "");
@@ -261,6 +336,10 @@ function fail(tool: string, text: string, stderr: string) {
     text,
     tool,
   };
+}
+
+function initGitRoot(path: string): void {
+  execFileSync("git", ["init"], { cwd: path, stdio: "ignore" });
 }
 
 function writeIndexDb(dbPath: string, project: string): void {

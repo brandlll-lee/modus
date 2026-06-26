@@ -31,7 +31,7 @@ describe("fast_codebase tool", () => {
     const updates: unknown[] = [];
     const result = await execute(
       "call-1",
-      { query: "overview" },
+      { query: "overview", workspace_path: "F:\\repo\\child" },
       new AbortController().signal,
       (update: unknown) => updates.push(update),
       { cwd: "F:\\repo" } as Parameters<typeof execute>[4],
@@ -42,5 +42,8 @@ describe("fast_codebase tool", () => {
       details,
     });
     expect(updates.at(-1)).toEqual(result);
+    expect(runFastCodebase).toHaveBeenCalledWith(
+      expect.objectContaining({ workspacePath: "F:\\repo\\child" }),
+    );
   });
 });

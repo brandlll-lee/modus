@@ -52,6 +52,12 @@ const fastCodebaseParams = Type.Object({
       description: "Maximum search results to return, from 1 to 12. Default 8.",
     }),
   ),
+  workspace_path: Type.Optional(
+    Type.String({
+      description:
+        "Optional valid git root inside the current workspace. Use a candidate returned by Fast Codebase when the current workspace is not indexable.",
+    }),
+  ),
 });
 
 const fastCodebaseTool: ToolDefinition<typeof fastCodebaseParams> = defineTool({
@@ -69,6 +75,7 @@ const fastCodebaseTool: ToolDefinition<typeof fastCodebaseParams> = defineTool({
     "Treat Fast Codebase as navigation, not the source of truth: read the specific current file before editing.",
     "Keep include_code false by default; set it true only for a specific function/class implementation, not broad project discovery.",
     "Keep limit between 8 and 12; use a narrower query instead of a larger limit.",
+    "If Fast Codebase returns candidate workspaces, call it again with workspace_path set to the best candidate.",
   ],
   parameters: fastCodebaseParams,
   execute: async (
@@ -98,6 +105,7 @@ const fastCodebaseTool: ToolDefinition<typeof fastCodebaseParams> = defineTool({
         limit: params.limit,
         query: params.query,
         signal,
+        workspacePath: params.workspace_path,
         onProgress: (progress) => {
           update?.({
             content: [{ type: "text", text: `${progress.phase}: ${progress.message}` }],
