@@ -1,5 +1,5 @@
 import { IconAlertCircle, IconChevronRight } from "@tabler/icons-react";
-import { memo, type ReactNode, useState } from "react";
+import { memo, type ReactNode, useEffect, useRef, useState } from "react";
 import type { QuestionAnswer, QuestionRequest } from "../../../../shared/contracts";
 import { getToolUiMeta, type ToolUiMeta, toolRenderKind } from "../../../../shared/tools";
 import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
@@ -71,6 +71,18 @@ export const ToolCard = memo(
       );
     }
 
+    if (render === "live") {
+      return (
+        <LiveToolCard
+          args={args}
+          isComplete={isComplete}
+          isError={isError}
+          name={name}
+          output={output}
+        />
+      );
+    }
+
     if (render === "question") {
       return (
         <QuestionToolCard
@@ -107,6 +119,104 @@ export const ToolCard = memo(
 );
 
 type FlatToolRowProps = Omit<ToolCardProps, "cwd">;
+
+const LIVE_AUTO_COLLAPSE_MS = 800;
+
+function LiveToolCard({
+  name,
+  args,
+  output,
+  isComplete = false,
+  isError = false,
+}: FlatToolRowProps) {
+  const running = !isComplete && !isError;
+  const [open, setOpen] = useState(() => running || isError);
+  const sawRunningRef = useRef(false);
+  const scrollRef = useRef<HTMLPreElement>(null);
+  const view = describeTool(name, args);
+  const status = running ? liveStatus(output) || "Starting" : isError ? "Failed" : "Complete";
+  const detail = output.trimEnd() || (running || isError ? status : "");
+  const cappedDetail = clampTailDetail(detail);
+  const bodyOpen = open && Boolean(cappedDetail.trim());
+
+  useEffect(() => {
+    if (running) {
+      sawRunningRef.current = true;
+      setOpen(true);
+      return;
+    }
+    if (isError) {
+      setOpen(true);
+      return;
+    }
+    if (sawRunningRef.current && isComplete) {
+      const timeout = globalThis.setTimeout(() => setOpen(false), LIVE_AUTO_COLLAPSE_MS);
+      return () => globalThis.clearTimeout(timeout);
+    }
+    return undefined;
+  }, [running, isComplete, isError]);
+
+  useEffect(() => {
+    if (!bodyOpen || !cappedDetail || !scrollRef.current) return undefined;
+    scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    return undefined;
+  }, [bodyOpen, cappedDetail]);
+
+  return (
+    <div className="min-w-0 overflow-hidden rounded-lg border border-hairline bg-canvas text-sm">
+      <button
+        aria-expanded={bodyOpen}
+        className="flex w-full min-w-0 items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-hover"
+        onClick={() => setOpen((value) => !value)}
+        type="button"
+      >
+        <span className="shrink-0 text-fg-faint">
+          {isError ? <IconAlertCircle className="text-danger" size={14} stroke={1.7} /> : view.icon}
+        </span>
+        {running ? (
+          <ShinyText className="shrink-0 font-medium">{view.verb}</ShinyText>
+        ) : (
+          <span className={cn("shrink-0 font-medium", isError ? "text-danger" : "text-fg")}>
+            {view.verb}
+          </span>
+        )}
+        <span className="min-w-0 flex-1 truncate text-fg-subtle" title={view.target}>
+          {view.target}
+        </span>
+        <span
+          className={cn(
+            "min-w-0 max-w-[35%] truncate text-xs",
+            isError ? "text-danger" : "text-fg-faint",
+          )}
+          title={status}
+        >
+          {status}
+        </span>
+        <IconChevronRight
+          className={cn(
+            "shrink-0 text-fg-faint transition-transform duration-150",
+            bodyOpen && "rotate-90",
+          )}
+          size={13}
+          stroke={1.7}
+        />
+      </button>
+
+      <CollapsibleMotion open={bodyOpen} preset="timeline">
+        <pre
+          className={cn(
+            "scroll-thin max-h-80 overflow-auto border-hairline border-t bg-code-bg px-3 py-2",
+            "whitespace-pre-wrap wrap-break-word text-[12px] text-fg-faint leading-relaxed",
+            isError && "text-danger/90",
+          )}
+          ref={scrollRef}
+        >
+          {cappedDetail}
+        </pre>
+      </CollapsibleMotion>
+    </div>
+  );
+}
 
 function FlatToolRow({
   name,
@@ -248,6 +358,10 @@ function clampDetail(detail: string): string {
   return trimmed.length > MAX_DETAIL_CHARS
     ? `${trimmed.slice(0, MAX_DETAIL_CHARS)}\n…(truncated)`
     : trimmed;
+}
+
+function clampTailDetail(detail: string): string {
+  return detail.length > MAX_DETAIL_CHARS ? detail.slice(-MAX_DETAIL_CHARS) : detail;
 }
 
 function liveStatus(output: string): string {
