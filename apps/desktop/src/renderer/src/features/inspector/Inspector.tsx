@@ -216,7 +216,7 @@ export function Inspector({
         <>
           <button
             aria-label="Resize right panel"
-            className="app-no-drag absolute top-0 bottom-0 left-0 z-20 w-1 cursor-col-resize hover:bg-chip-strong"
+            className="app-no-drag absolute top-0 bottom-0 left-0 z-20 w-3 cursor-col-resize before:absolute before:top-0 before:bottom-0 before:left-0 before:w-px before:bg-transparent hover:before:bg-chip-strong"
             onPointerDown={startResize}
             onPointerMove={resize}
             onPointerCancel={stopResize}
