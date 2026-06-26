@@ -1,26 +1,27 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { registerFastCodebaseTools } from "./fast-codebase-tools";
 import { toolRegistry } from "./registry";
 
 const runFastCodebase = vi.hoisted(() => vi.fn());
-
-vi.mock("electron", () => ({
-  app: { getPath: () => "C:\\Modus" },
-}));
 
 vi.mock("../../fast-codebase/fast-codebase-service", () => ({
   runFastCodebase,
 }));
 
 describe("fast_codebase tool", () => {
+  beforeEach(() => {
+    runFastCodebase.mockReset();
+  });
+
   it("streams the final result to the tool card and returns it to the agent", async () => {
     registerFastCodebaseTools();
     const tool = toolRegistry
       .getCustomToolDefinitions("chat", { enable: ["fast_codebase"] })
       .find((definition) => definition.name === "fast_codebase");
     const details = {
-      cacheDir: "C:\\Modus\\fast-codebase",
+      indexDir: "F:\\repo\\.codegraph",
       indexed: true,
+      kernel: "CodeGraph local index",
       project: "demo",
       query: "overview",
       workspace: "F:\\repo",
@@ -45,5 +46,20 @@ describe("fast_codebase tool", () => {
     expect(runFastCodebase).toHaveBeenCalledWith(
       expect.objectContaining({ workspacePath: "F:\\repo\\child" }),
     );
+  });
+
+  it("lets failed tool calls use the agent error path", async () => {
+    registerFastCodebaseTools();
+    const tool = toolRegistry
+      .getCustomToolDefinitions("chat", { enable: ["fast_codebase"] })
+      .find((definition) => definition.name === "fast_codebase");
+    runFastCodebase.mockRejectedValue(new Error("index failed"));
+
+    const execute = tool?.execute as NonNullable<typeof tool>["execute"];
+    await expect(
+      execute("call-1", { query: "overview" }, new AbortController().signal, undefined, {
+        cwd: "F:\\repo",
+      } as Parameters<typeof execute>[4]),
+    ).rejects.toThrow(/index failed/);
   });
 });
