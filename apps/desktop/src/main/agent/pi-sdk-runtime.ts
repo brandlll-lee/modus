@@ -82,6 +82,7 @@ import { describeAgentShellForPrompt, resolveAgentShell } from "./shell-resolver
 import { resolveSubagent, resolveSubagentsPrompt } from "./subagents-config";
 import { registerAppTools } from "./tools/app-tools";
 import { registerBrowserTools } from "./tools/browser-tools";
+import { registerFastCodebaseTools } from "./tools/fast-codebase-tools";
 import { plansRoot, registerPlanTools } from "./tools/plan-tools";
 import { registerQuestionTools } from "./tools/question-tools";
 import { toolRegistry } from "./tools/registry";
@@ -214,6 +215,7 @@ export class PiSdkRuntime implements AgentRuntime {
     registerWebTools();
     registerBrowserTools();
     registerAppTools();
+    registerFastCodebaseTools();
     registerTodoTools();
     registerPlanTools();
     registerQuestionTools();

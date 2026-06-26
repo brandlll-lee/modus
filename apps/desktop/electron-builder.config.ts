@@ -1,4 +1,10 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import type { Configuration } from "electron-builder";
+
+const fastCodebaseBinary =
+  process.platform === "win32" ? "codebase-memory-mcp.exe" : "codebase-memory-mcp";
+const fastCodebaseResource = join("resources", "bin", fastCodebaseBinary);
 
 const config: Configuration = {
   appId: "dev.modus.desktop",
@@ -22,6 +28,14 @@ const config: Configuration = {
       from: "../../target/release/modus-pty-host.exe",
       to: "bin/modus-pty-host.exe",
     },
+    ...(existsSync(fastCodebaseResource)
+      ? [
+          {
+            from: fastCodebaseResource,
+            to: `bin/${fastCodebaseBinary}`,
+          },
+        ]
+      : []),
   ],
   asar: true,
   icon: "resources/icon.png",

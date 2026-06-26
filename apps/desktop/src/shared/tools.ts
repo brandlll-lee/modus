@@ -229,6 +229,17 @@ export const APP_TOOL_UI: Record<AppToolName, ToolUiMeta> = {
   launch_app: { iconName: "terminal", verb: "Launched app", primaryArgKey: "path" },
 };
 
+/** Agent-facing local codebase index tool. */
+export const FAST_CODEBASE_TOOL_NAME = "fast_codebase";
+
+/** UI metadata for Fast Codebase. */
+export const FAST_CODEBASE_TOOL_UI: ToolUiMeta = {
+  iconName: "file-search",
+  verb: "Fast Codebase",
+  primaryArgKey: "query",
+  activity: "explore",
+};
+
 /** Agent-facing to-do tool (custom tool registered at runtime). */
 export const TODO_TOOL_NAME = "todo_write";
 /** UI metadata for the to-do tool (its calls render as the live TodosCard). */
@@ -418,6 +429,7 @@ export function getToolUiMeta(name: string): ToolUiMeta | undefined {
     getBuiltinToolUiMeta(name) ??
     TERMINAL_TOOL_UI[name as TerminalToolName] ??
     APP_TOOL_UI[name as AppToolName] ??
+    (name === FAST_CODEBASE_TOOL_NAME ? FAST_CODEBASE_TOOL_UI : undefined) ??
     SUBAGENT_TOOL_UI[name as SubagentToolName] ??
     WEB_TOOL_UI[name as WebToolName] ??
     BROWSER_TOOL_UI[name as BrowserToolName]
