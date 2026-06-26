@@ -144,7 +144,7 @@ function LiveToolCard({
   const scrollRef = useRef<HTMLPreElement>(null);
   const view = describeTool(name, args);
   const status = running ? liveStatus(output) || "Starting" : isError ? "Failed" : "Complete";
-  const rawDetail = output.trimEnd();
+  const rawDetail = clampTailDetail(output.trimEnd());
   const visibleRawDetail = useSmoothStreamingText(
     rawDetail,
     smoothOutput && open && !isError && rawDetail.length > 0,
@@ -157,8 +157,7 @@ function LiveToolCard({
     : rawDetail
       ? visibleRawDetail
       : fallbackDetail;
-  const cappedDetail = clampTailDetail(detail);
-  const bodyOpen = open && Boolean(cappedDetail.trim());
+  const bodyOpen = open && Boolean(detail.trim());
 
   useEffect(() => {
     if (running) {
@@ -181,10 +180,10 @@ function LiveToolCard({
   }, [running, isComplete, isError, playbackComplete]);
 
   useEffect(() => {
-    if (!bodyOpen || !cappedDetail || !scrollRef.current) return undefined;
+    if (!bodyOpen || !detail || !scrollRef.current) return undefined;
     scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     return undefined;
-  }, [bodyOpen, cappedDetail]);
+  }, [bodyOpen, detail]);
 
   return (
     <div className="min-w-0 overflow-hidden rounded-lg border border-hairline bg-canvas text-sm">
@@ -235,7 +234,7 @@ function LiveToolCard({
           )}
           ref={scrollRef}
         >
-          {cappedDetail}
+          {detail}
         </pre>
       </CollapsibleMotion>
     </div>
