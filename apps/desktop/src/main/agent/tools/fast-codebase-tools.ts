@@ -1,11 +1,9 @@
-import { join } from "node:path";
 import {
   type AgentToolResult,
   type AgentToolUpdateCallback,
   defineTool,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { app } from "electron";
 import { type Static, Type } from "typebox";
 import { FAST_CODEBASE_TOOL_UI } from "../../../shared/tools";
 import {
@@ -17,23 +15,6 @@ import { resolveAgentToolContext } from "./tool-context";
 
 function toResult(result: FastCodebaseResult): AgentToolResult<FastCodebaseResult["details"]> {
   return { content: [{ type: "text", text: result.text }], details: result.details };
-}
-
-function toErrorResult(
-  message: string,
-  details: Partial<FastCodebaseResult["details"]>,
-): AgentToolResult<Partial<FastCodebaseResult["details"]>> {
-  return {
-    content: [
-      {
-        type: "text",
-        text:
-          `${message}\n\n` +
-          "Fast Codebase is unavailable for this turn. Fall back to read/grep/find and keep going.",
-      },
-    ],
-    details,
-  };
 }
 
 const fastCodebaseParams = Type.Object({
@@ -86,12 +67,10 @@ const fastCodebaseTool: ToolDefinition<typeof fastCodebaseParams> = defineTool({
     ctx,
   ) => {
     const context = resolveAgentToolContext(ctx.cwd);
-    const cacheDir = join(app.getPath("userData"), "fast-codebase");
     const update = onUpdate as
       | AgentToolUpdateCallback<Partial<FastCodebaseResult["details"]>>
       | undefined;
     const progressDetails = {
-      cacheDir,
       indexed: false,
       project: "",
       query: params.query,
@@ -99,7 +78,6 @@ const fastCodebaseTool: ToolDefinition<typeof fastCodebaseParams> = defineTool({
     };
     try {
       const result = await runFastCodebase({
-        cacheDir,
         cwd: context.cwd || ctx.cwd,
         includeCode: params.include_code,
         limit: params.limit,
@@ -121,7 +99,9 @@ const fastCodebaseTool: ToolDefinition<typeof fastCodebaseParams> = defineTool({
         throw error;
       }
       const message = error instanceof Error ? error.message : String(error);
-      return toErrorResult(message, progressDetails);
+      throw new Error(
+        `${message}\n\nFast Codebase is unavailable for this turn. Fall back to read/grep/find and keep going.`,
+      );
     }
   },
 });

@@ -2,9 +2,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { Configuration } from "electron-builder";
 
-const fastCodebaseBinary =
-  process.platform === "win32" ? "codebase-memory-mcp.exe" : "codebase-memory-mcp";
-const fastCodebaseResource = join("resources", "bin", fastCodebaseBinary);
+const fastCodebaseResource = join("resources", "bin", "codegraph");
 
 const config: Configuration = {
   appId: "dev.modus.desktop",
@@ -32,7 +30,7 @@ const config: Configuration = {
       ? [
           {
             from: fastCodebaseResource,
-            to: `bin/${fastCodebaseBinary}`,
+            to: "bin/codegraph",
           },
         ]
       : []),

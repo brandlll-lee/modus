@@ -21,13 +21,13 @@
     "test": "vitest run --root ../.. apps/desktop/src"
   },
   "devDependencies": {
+    "@colbymchenry/codegraph": "^1.1.1",
     "@tailwindcss/vite": "^4.3.0",
     "@types/node": "^25.9.1",
     "@types/react": "^19.2.15",
     "@types/react-dom": "^19.2.3",
     "@types/turndown": "^5.0.6",
     "@vitejs/plugin-react": "^5.2.0",
-    "codebase-memory-mcp": "^0.8.1",
     "electron": "^42.3.0",
     "electron-builder": "^26.8.1",
     "electron-vite": "^5.0.0",
