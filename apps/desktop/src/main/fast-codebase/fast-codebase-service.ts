@@ -1,10 +1,11 @@
-import { spawn, spawnSync } from "node:child_process";
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 const OUTPUT_CAP = 60_000;
 const STDERR_CAP = 20_000;
+const INDEX_TIMEOUT_MS = 5 * 60_000;
 const OVERVIEW_LIMIT = 5;
 
 type JsonObject = Record<string, unknown>;
@@ -44,6 +45,7 @@ export type CbmRunner = (
     cwd: string;
     progress?: boolean | undefined;
     signal?: AbortSignal | undefined;
+    timeoutMs?: number | undefined;
     onProgress?: ((line: string) => void) | undefined;
   },
 ) => Promise<CbmCallResult>;
@@ -125,6 +127,22 @@ export function projectNameFromPath(path: string): string {
   }
   out = out.replace(/^[-.]+/, "").replace(/-+$/, "");
   return out || "root";
+}
+
+function killProcessTree(child: ChildProcess): void {
+  if (!child.pid) {
+    child.kill("SIGTERM");
+    return;
+  }
+  if (process.platform === "win32") {
+    const killer = spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    killer.on("error", () => child.kill("SIGKILL"));
+    return;
+  }
+  child.kill("SIGTERM");
 }
 
 function pathKey(path: string): string {
@@ -225,6 +243,7 @@ export const runCbmCli: CbmRunner = (tool, args, options) =>
     let stderr = "";
     let lastProgress = "";
     let aborted = false;
+    let timedOut = false;
     let settled = false;
     const child = spawn(command, cliArgs, {
       cwd: options.cwd,
@@ -237,17 +256,27 @@ export const runCbmCli: CbmRunner = (tool, args, options) =>
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     });
+    const timeout =
+      options.timeoutMs && options.timeoutMs > 0
+        ? globalThis.setTimeout(() => {
+            timedOut = true;
+            killProcessTree(child);
+          }, options.timeoutMs)
+        : undefined;
     const finish = (fn: () => void): void => {
       if (settled) {
         return;
       }
       settled = true;
+      if (timeout !== undefined) {
+        globalThis.clearTimeout(timeout);
+      }
       options.signal?.removeEventListener("abort", abort);
       fn();
     };
     const abort = (): void => {
       aborted = true;
-      child.kill("SIGTERM");
+      killProcessTree(child);
     };
     options.signal?.addEventListener("abort", abort, { once: true });
     child.stdout.on("data", (chunk) => {
@@ -278,6 +307,14 @@ export const runCbmCli: CbmRunner = (tool, args, options) =>
       finish(() => {
         if (aborted || options.signal?.aborted) {
           reject(abortError());
+          return;
+        }
+        if (timedOut) {
+          reject(
+            new Error(
+              `Fast Codebase timed out after ${Math.round((options.timeoutMs ?? 0) / 1000)}s.`,
+            ),
+          );
           return;
         }
         const parsed = textFromEnvelope(stdout);
@@ -566,7 +603,65 @@ function indexSnapshot(dbPath: string): string | undefined {
   return statSync(dbPath).mtime.toISOString();
 }
 
-async function indexWorkspace(
+type IndexFlight = {
+  callbacks: Set<(progress: FastCodebaseProgress) => void>;
+  controller: AbortController;
+  promise: Promise<string>;
+  waiters: number;
+};
+
+const indexFlights = new Map<string, IndexFlight>();
+
+function indexFlightKey(cacheDir: string, cwd: string): string {
+  return `${pathKey(cacheDir)}\0${pathKey(cwd)}`;
+}
+
+function joinIndexFlight(
+  flight: IndexFlight,
+  input: Pick<FastCodebaseInput, "onProgress" | "signal">,
+): Promise<string> {
+  if (input.signal?.aborted) {
+    return Promise.reject(abortError());
+  }
+  let done = false;
+  flight.waiters += 1;
+  if (input.onProgress) {
+    flight.callbacks.add(input.onProgress);
+  }
+  return new Promise<string>((resolvePromise, reject) => {
+    const cleanup = (): void => {
+      if (done) {
+        return;
+      }
+      done = true;
+      flight.waiters -= 1;
+      if (input.onProgress) {
+        flight.callbacks.delete(input.onProgress);
+      }
+      input.signal?.removeEventListener("abort", abort);
+    };
+    const abort = (): void => {
+      cleanup();
+      if (flight.waiters === 0) {
+        flight.controller.abort();
+      }
+      reject(abortError());
+    };
+    input.signal?.addEventListener("abort", abort, { once: true });
+    flight.promise.then(
+      (project) => {
+        cleanup();
+        resolvePromise(project);
+      },
+      (error) => {
+        cleanup();
+        reject(error);
+      },
+    );
+  });
+}
+
+async function runIndexWorkspace(
   input: Required<Pick<FastCodebaseInput, "cacheDir" | "cwd">> &
     Pick<FastCodebaseInput, "onProgress" | "runner" | "signal">,
 ): Promise<string> {
@@ -580,6 +675,7 @@ async function indexWorkspace(
       cwd: input.cwd,
       progress: true,
       signal: input.signal,
+      timeoutMs: INDEX_TIMEOUT_MS,
       onProgress: (line) => input.onProgress?.({ phase: "indexing", message: line }),
     },
   );
@@ -588,6 +684,38 @@ async function indexWorkspace(
   }
   const project = asObject(result.json)?.project;
   return typeof project === "string" && project ? project : projectNameFromPath(input.cwd);
+}
+
+async function indexWorkspace(
+  input: Required<Pick<FastCodebaseInput, "cacheDir" | "cwd">> &
+    Pick<FastCodebaseInput, "onProgress" | "runner" | "signal">,
+): Promise<string> {
+  const key = indexFlightKey(input.cacheDir, input.cwd);
+  let flight = indexFlights.get(key);
+  if (!flight) {
+    const controller = new AbortController();
+    const callbacks = new Set<(progress: FastCodebaseProgress) => void>();
+    flight = {
+      callbacks,
+      controller,
+      promise: Promise.resolve()
+        .then(() =>
+          runIndexWorkspace({
+            ...input,
+            signal: controller.signal,
+            onProgress: (progress) => {
+              for (const callback of callbacks) {
+                callback(progress);
+              }
+            },
+          }),
+        )
+        .finally(() => indexFlights.delete(key)),
+      waiters: 0,
+    };
+    indexFlights.set(key, flight);
+  }
+  return joinIndexFlight(flight, input);
 }
 
 async function queryKernel(input: {

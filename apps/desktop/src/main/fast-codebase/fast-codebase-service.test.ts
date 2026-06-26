@@ -35,9 +35,11 @@ describe("Fast Codebase service", () => {
     const root = mkdtempSync(join(tmpdir(), "modus-fast-codebase-"));
     initGitRoot(root);
     const calls: string[] = [];
-    const runner: CbmRunner = async (tool) => {
+    const timeouts: unknown[] = [];
+    const runner: CbmRunner = async (tool, _args, options) => {
       calls.push(tool);
       if (tool === "index_repository") {
+        timeouts.push(options.timeoutMs);
         return ok(tool, { project: "demo", status: "indexed", nodes: 1, edges: 0 });
       }
       return ok(tool, {
@@ -62,9 +64,88 @@ describe("Fast Codebase service", () => {
     });
 
     expect(calls).toEqual(["index_repository", "search_graph"]);
+    expect(timeouts).toEqual([300_000]);
     expect(result.text).toContain("Index: created");
     expect(result.text).toContain('"file_path": "src/run.ts"');
     expect(result.text).toContain('"start_line": 7');
+  });
+
+  it("shares one index process for concurrent calls to the same workspace", async () => {
+    const root = mkdtempSync(join(tmpdir(), "modus-fast-codebase-"));
+    initGitRoot(root);
+    let releaseIndex!: () => void;
+    const indexReady = new Promise<void>((resolve) => {
+      releaseIndex = resolve;
+    });
+    let indexStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      indexStarted = resolve;
+    });
+    const calls: string[] = [];
+    const runner: CbmRunner = async (tool) => {
+      calls.push(tool);
+      if (tool === "index_repository") {
+        indexStarted();
+        await indexReady;
+        return ok(tool, { project: "demo" });
+      }
+      return ok(tool, { total: 0, results: [] });
+    };
+
+    const first = runFastCodebase({
+      cacheDir: join(root, "cache"),
+      cwd: root,
+      query: "one",
+      runner,
+    });
+    const second = runFastCodebase({
+      cacheDir: join(root, "cache"),
+      cwd: root,
+      query: "two",
+      runner,
+    });
+    await started;
+
+    expect(calls.filter((tool) => tool === "index_repository")).toHaveLength(1);
+    releaseIndex();
+    await Promise.all([first, second]);
+    expect(calls.filter((tool) => tool === "search_graph")).toHaveLength(2);
+  });
+
+  it("aborts the shared index when the only waiter cancels", async () => {
+    const root = mkdtempSync(join(tmpdir(), "modus-fast-codebase-"));
+    initGitRoot(root);
+    const controller = new AbortController();
+    let sharedSignal: AbortSignal | undefined;
+    let indexStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      indexStarted = resolve;
+    });
+    const runner: CbmRunner = async (tool, _args, options) => {
+      if (tool !== "index_repository") {
+        return ok(tool, { total: 0, results: [] });
+      }
+      sharedSignal = options.signal;
+      indexStarted();
+      return new Promise((_, reject) => {
+        options.signal?.addEventListener("abort", () => reject(new Error("index aborted")), {
+          once: true,
+        });
+      });
+    };
+
+    const result = runFastCodebase({
+      cacheDir: join(root, "cache"),
+      cwd: root,
+      query: "tools",
+      runner,
+      signal: controller.signal,
+    });
+    await started;
+    controller.abort();
+
+    await expect(result).rejects.toMatchObject({ name: "AbortError" });
+    expect(sharedSignal?.aborted).toBe(true);
   });
 
   it("returns child git workspace candidates without indexing unsafe cwd", async () => {
