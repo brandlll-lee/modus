@@ -1,9 +1,11 @@
-import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 const OUTPUT_CAP = 60_000;
 const STDERR_CAP = 20_000;
+const OVERVIEW_LIMIT = 5;
 
 type JsonObject = Record<string, unknown>;
 
@@ -252,6 +254,219 @@ function formatKernelResult(title: string, result: CbmCallResult): string {
   return `## ${title}\n\n\`\`\`${language}\n${body.slice(0, OUTPUT_CAP)}\n\`\`\``;
 }
 
+function cleanPath(path: string): string {
+  return path.replace(/\\/g, "/").replace(/^\.\//, "");
+}
+
+function gitTrackedFiles(cwd: string): Set<string> | undefined {
+  const result = spawnSync("git", ["-C", cwd, "ls-files", "-z", "--cached", "--", "."], {
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  if (result.status !== 0) {
+    return undefined;
+  }
+  const files = result.stdout
+    .split("\0")
+    .map(cleanPath)
+    .filter((file) => file && !file.startsWith(".modus/"));
+  return files.length > 0 ? new Set(files) : undefined;
+}
+
+function configuredGeneratedFiles(files: Set<string>, cwd: string): Set<string> {
+  const prefixes = new Set<string>();
+  for (const file of files) {
+    if (!/(^|\/)tsconfig[^/]*\.json$/i.test(file)) {
+      continue;
+    }
+    let config: JsonObject | undefined;
+    try {
+      config = asObject(parseMaybeJson(readFileSync(join(cwd, file), "utf8")));
+    } catch {
+      continue;
+    }
+    const outDir = asObject(config?.compilerOptions)?.outDir;
+    if (typeof outDir !== "string" || !outDir.trim()) {
+      continue;
+    }
+    prefixes.add(cleanPath(join(dirname(file), outDir)).replace(/\/+$/, ""));
+  }
+  return new Set(
+    [...files].filter((file) =>
+      [...prefixes].some(
+        (prefix) => file.startsWith(`${prefix}/`) || file.startsWith(`${prefix}-`),
+      ),
+    ),
+  );
+}
+
+function pruneIndexToGitTracked(dbPath: string, cwd: string): Set<string> | undefined {
+  const files = gitTrackedFiles(cwd);
+  if (!files || !existsSync(dbPath)) {
+    return files;
+  }
+  const generatedFiles = configuredGeneratedFiles(files, cwd);
+  const keptFiles = new Set([...files].filter((file) => !generatedFiles.has(file)));
+  const db = new DatabaseSync(dbPath);
+  try {
+    db.exec("begin");
+    db.exec("create temp table if not exists allowed_files(path text primary key) without rowid");
+    db.exec("create temp table if not exists generated_files(path text primary key) without rowid");
+    db.exec("delete from allowed_files");
+    db.exec("delete from generated_files");
+    const insert = db.prepare("insert into allowed_files(path) values (?)");
+    for (const file of keptFiles) {
+      insert.run(file);
+    }
+    const insertGenerated = db.prepare("insert into generated_files(path) values (?)");
+    for (const file of generatedFiles) {
+      insertGenerated.run(file);
+    }
+    db.exec(`
+      create temp table removed_nodes as
+      select id from nodes
+      where file_path <> ''
+        and (file_path like '.modus/%'
+          or exists (select 1 from generated_files where generated_files.path = nodes.file_path)
+          or not exists (
+          select 1 from allowed_files where allowed_files.path = nodes.file_path
+        ))
+    `);
+    db.exec(`
+      delete from edges
+      where source_id in (select id from removed_nodes)
+         or target_id in (select id from removed_nodes)
+    `);
+    db.exec("delete from nodes where id in (select id from removed_nodes)");
+    db.exec(`
+      delete from file_hashes
+      where rel_path like '.modus/%'
+         or exists (select 1 from generated_files where generated_files.path = file_hashes.rel_path)
+         or not exists (select 1 from allowed_files where allowed_files.path = file_hashes.rel_path)
+    `);
+    db.exec("drop table removed_nodes");
+    db.exec("commit");
+  } catch (error) {
+    try {
+      db.exec("rollback");
+    } catch {
+      // Keep the original failure.
+    }
+    throw error;
+  } finally {
+    db.close();
+  }
+  return keptFiles;
+}
+
+function hasLanguage(root: JsonObject, language: string): boolean {
+  const languages = Array.isArray(root.languages) ? root.languages : [];
+  return languages.some((item) => asObject(item)?.language === language);
+}
+
+function itemFile(item: unknown): string {
+  const obj = asObject(item);
+  const file = obj?.file ?? obj?.file_path;
+  return typeof file === "string" ? cleanPath(file).toLowerCase() : "";
+}
+
+function sourceRank(item: unknown, root: JsonObject): number {
+  const file = itemFile(item);
+  if (!file) {
+    return 0;
+  }
+  if (/\.d\.ts$/.test(file)) {
+    return 1;
+  }
+  if (hasLanguage(root, "TypeScript") && /\.(js|jsx)$/.test(file)) {
+    return 1;
+  }
+  return 0;
+}
+
+function takeArray(root: JsonObject, key: string, limit: number): unknown[] | undefined {
+  const value = root[key];
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const ranked = [...value].sort((a, b) => sourceRank(a, root) - sourceRank(b, root));
+  const preferred = ranked.filter((item) => sourceRank(item, root) === 0);
+  return (preferred.length > 0 ? preferred : ranked).slice(0, limit);
+}
+
+function addFile(value: unknown, files: string[]): void {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      addFile(item, files);
+    }
+    return;
+  }
+  const obj = asObject(value);
+  if (!obj) {
+    return;
+  }
+  for (const key of ["file", "file_path"]) {
+    const file = obj[key];
+    if (typeof file === "string" && file) {
+      files.push(cleanPath(file));
+    }
+  }
+}
+
+function suggestedReads(
+  root: JsonObject,
+  indexedFiles: Set<string> | undefined,
+  limit: number,
+): string[] {
+  const files: string[] = [];
+  if (indexedFiles) {
+    for (const file of indexedFiles) {
+      if (/(^|\/)(readme\.md|package\.json)$/i.test(file)) {
+        files.push(file);
+      }
+    }
+  }
+  addFile(root.entry_points, files);
+  addFile(root.routes, files);
+  addFile(root.hotspots, files);
+  return [...new Set(files.filter((file) => !file.startsWith(".modus/")))].slice(0, limit);
+}
+
+function formatArchitectureOverview(
+  result: CbmCallResult,
+  indexedFiles: Set<string> | undefined,
+): string {
+  const root = asObject(result.json);
+  if (!root) {
+    return formatKernelResult("Architecture Overview", result);
+  }
+  const body: JsonObject = {};
+  for (const key of ["project", "total_nodes", "total_edges"]) {
+    if (root[key] !== undefined) {
+      body[key] = root[key];
+    }
+  }
+  for (const key of [
+    "languages",
+    "packages",
+    "entry_points",
+    "routes",
+    "hotspots",
+    "node_labels",
+    "edge_types",
+  ]) {
+    const items = takeArray(root, key, OVERVIEW_LIMIT);
+    if (items) {
+      body[key] = items;
+    }
+  }
+  const reads = suggestedReads(body, indexedFiles, OVERVIEW_LIMIT);
+  if (reads.length > 0) {
+    body.suggested_reads = reads;
+  }
+  return `## Architecture Overview\n\n\`\`\`json\n${JSON.stringify(body, null, 2)}\n\`\`\``;
+}
+
 function failureText(result: CbmCallResult): string {
   const text = result.text.trim();
   const stderr = result.stderr.trim();
@@ -303,6 +518,7 @@ async function queryKernel(input: {
   runner: CbmRunner;
   signal?: AbortSignal | undefined;
   onProgress?: ((progress: FastCodebaseProgress) => void) | undefined;
+  indexedFiles?: Set<string> | undefined;
 }): Promise<{ body: string; result: CbmCallResult }> {
   const overview = isOverviewQuery(input.query);
   input.onProgress?.({
@@ -323,7 +539,9 @@ async function queryKernel(input: {
   if (result.isError) {
     return { body: failureText(result), result };
   }
-  let primary = formatKernelResult(overview ? "Architecture Overview" : "Search Results", result);
+  let primary = overview
+    ? formatArchitectureOverview(result, input.indexedFiles)
+    : formatKernelResult("Search Results", result);
   if (!overview && resultItems(result.json).length === 0) {
     input.onProgress?.({ phase: "querying", message: "Search was empty; reading architecture..." });
     const fallback = await input.runner(
@@ -379,6 +597,7 @@ export async function runFastCodebase(input: FastCodebaseInput): Promise<FastCod
     dbPath = join(cacheDir, `${project}.db`);
     indexed = true;
   }
+  const indexedFiles = pruneIndexToGitTracked(dbPath, cwd);
   let queried = await queryKernel({
     cacheDir,
     cwd,
@@ -389,6 +608,7 @@ export async function runFastCodebase(input: FastCodebaseInput): Promise<FastCod
     runner,
     signal: input.signal,
     onProgress: input.onProgress,
+    indexedFiles,
   });
   if (queried.result.isError && isNotIndexed(queried.result)) {
     project = await indexWorkspace({
@@ -409,6 +629,7 @@ export async function runFastCodebase(input: FastCodebaseInput): Promise<FastCod
       runner,
       signal: input.signal,
       onProgress: input.onProgress,
+      indexedFiles: pruneIndexToGitTracked(join(cacheDir, `${project}.db`), cwd),
     });
   }
   if (queried.result.isError) {
