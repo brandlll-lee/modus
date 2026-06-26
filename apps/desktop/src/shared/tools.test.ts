@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { getMcpToolUiMeta, getToolUiMeta, isMcpToolName, toolRenderKind } from "./tools";
+import {
+  FAST_CODEBASE_TOOL_NAME,
+  getMcpToolUiMeta,
+  getToolUiMeta,
+  isMcpToolName,
+  toolRenderKind,
+} from "./tools";
 
 describe("MCP tool UI metadata", () => {
   it("detects MCP-bridged tool names", () => {
@@ -38,6 +44,8 @@ describe("tool render descriptor (single source of truth)", () => {
     expect(getToolUiMeta("terminal_read")?.terminalFramed).toBe(true);
 
     expect(getToolUiMeta("todo_write")?.render).toBe("todo");
+    expect(getToolUiMeta(FAST_CODEBASE_TOOL_NAME)?.render).toBe("live");
+    expect(getToolUiMeta(FAST_CODEBASE_TOOL_NAME)?.activity).toBeUndefined();
     expect(getToolUiMeta("plan_write")?.render).toBe("diff");
     expect(getToolUiMeta("plan_write")?.diffSource).toBe("newFile");
   });
@@ -57,6 +65,7 @@ describe("tool render descriptor (single source of truth)", () => {
     expect(toolRenderKind("bash")).toBe("terminal");
     expect(toolRenderKind("terminal_run")).toBe("terminal");
     expect(toolRenderKind("todo_write")).toBe("todo");
+    expect(toolRenderKind(FAST_CODEBASE_TOOL_NAME)).toBe("live");
     expect(toolRenderKind("plan_write")).toBe("diff");
   });
 

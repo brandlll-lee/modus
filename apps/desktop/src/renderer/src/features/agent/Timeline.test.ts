@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentEvent } from "../../../../shared/contracts";
+import { FAST_CODEBASE_TOOL_NAME } from "../../../../shared/tools";
 import { optimisticUserPromptEvents } from "./agentEventHub";
 import { subagentColor } from "./subagentUi";
 import {
@@ -680,6 +681,18 @@ describe("groupActivity", () => {
     ] as Blocks);
     expect(result[0]).toEqual(expect.objectContaining({ type: "tool", name: "web_fetch" }));
     expect(result[1]).toEqual(expect.objectContaining({ type: "activity-group", kind: "shell" }));
+  });
+
+  it("keeps live-rendered tools standalone", () => {
+    const result = groupActivity([
+      tool("1", FAST_CODEBASE_TOOL_NAME),
+      tool("2", "read"),
+      msg("m"),
+    ] as Blocks);
+    expect(result[0]).toEqual(
+      expect.objectContaining({ type: "tool", name: FAST_CODEBASE_TOOL_NAME }),
+    );
+    expect(result[1]).toEqual(expect.objectContaining({ type: "activity-group", kind: "explore" }));
   });
 
   it("folds browser-control tools into a Browser group", () => {

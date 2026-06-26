@@ -48,10 +48,18 @@ export type ToolCapability = "read" | "write" | "shell" | "network" | "process";
  * - `flat`: a one-line collapsible row (the default for any tool).
  * - `diff`: a Cursor-style diff card (see `diffSource`).
  * - `terminal`: a terminal card with a live output preview (see `terminalFramed`).
+ * - `live`: a standalone live-output card.
  * - `todo`: rendered as the live to-do list, not as a tool row.
  * - `question`: a collapsible "Asked N questions" card listing each question + the chosen answer.
  */
-export type ToolRenderKind = "flat" | "diff" | "terminal" | "todo" | "question" | "subagent";
+export type ToolRenderKind =
+  | "flat"
+  | "diff"
+  | "terminal"
+  | "live"
+  | "todo"
+  | "question"
+  | "subagent";
 
 /**
  * How a `render: "diff"` tool's diff is derived from its call arguments.
@@ -237,7 +245,7 @@ export const FAST_CODEBASE_TOOL_UI: ToolUiMeta = {
   iconName: "file-search",
   verb: "Fast Codebase",
   primaryArgKey: "query",
-  activity: "explore",
+  render: "live",
 };
 
 /** Agent-facing to-do tool (custom tool registered at runtime). */
