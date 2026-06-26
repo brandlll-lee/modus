@@ -580,7 +580,7 @@ async function queryKernel(input: {
 export async function runFastCodebase(input: FastCodebaseInput): Promise<FastCodebaseResult> {
   const cwd = resolve(input.cwd);
   const cacheDir = resolve(input.cacheDir);
-  const limit = Math.max(1, Math.min(input.limit ?? 12, 50));
+  const limit = Math.max(1, Math.min(input.limit ?? 8, 12));
   const runner = input.runner ?? runCbmCli;
   mkdirSync(cacheDir, { recursive: true });
   let project = projectNameFromPath(cwd);

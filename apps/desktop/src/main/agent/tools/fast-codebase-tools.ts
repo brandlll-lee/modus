@@ -49,7 +49,7 @@ const fastCodebaseParams = Type.Object({
   ),
   limit: Type.Optional(
     Type.Number({
-      description: "Maximum search results to return, from 1 to 50. Default 12.",
+      description: "Maximum search results to return, from 1 to 12. Default 8.",
     }),
   ),
 });
@@ -63,11 +63,12 @@ const fastCodebaseTool: ToolDefinition<typeof fastCodebaseParams> = defineTool({
     "with far fewer tokens than grep/read exploration. It is read-only and local; read the live " +
     "file before editing because the index is a navigation snapshot.",
   promptSnippet:
-    "fast_codebase(query, include_code?, limit?) — use the local codebase index to locate relevant files, symbols, and small snippets.",
+    "fast_codebase(query, include_code=false, limit=8) — locate relevant files and symbols before reading source.",
   promptGuidelines: [
     "Use fast_codebase before broad grep/read sweeps when you need to understand where code lives in the current workspace.",
     "Treat Fast Codebase as navigation, not the source of truth: read the specific current file before editing.",
-    "Keep queries focused on the task or symbol you need; ask for include_code only when coordinates are not enough.",
+    "Keep include_code false by default; set it true only for a specific function/class implementation, not broad project discovery.",
+    "Keep limit between 8 and 12; use a narrower query instead of a larger limit.",
   ],
   parameters: fastCodebaseParams,
   execute: async (

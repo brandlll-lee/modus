@@ -138,8 +138,12 @@ describe("Fast Codebase service", () => {
     mkdirSync(cacheDir, { recursive: true });
     writeFileSync(join(cacheDir, `${projectNameFromPath(root)}.db`), "");
     const calls: string[] = [];
-    const runner: CbmRunner = async (tool) => {
+    const searchArgs: unknown[] = [];
+    const runner: CbmRunner = async (tool, args) => {
       calls.push(tool);
+      if (tool === "search_graph") {
+        searchArgs.push(args);
+      }
       if (tool === "get_code_snippet") {
         return ok(tool, {
           qualified_name: "demo.src.run",
@@ -159,11 +163,15 @@ describe("Fast Codebase service", () => {
       cacheDir,
       cwd: root,
       includeCode: true,
+      limit: 30,
       query: "run",
       runner,
     });
 
     expect(calls).toEqual(["search_graph", "get_code_snippet"]);
+    expect(searchArgs).toEqual([
+      { project: projectNameFromPath(root), query: "run", include_connected: true, limit: 12 },
+    ]);
     expect(result.text).toContain("Source Snippets");
     expect(result.text).toContain("export function run() {}");
   });
