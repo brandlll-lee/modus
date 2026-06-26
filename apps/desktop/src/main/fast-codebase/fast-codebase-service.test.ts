@@ -2,11 +2,31 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { type CbmRunner, projectNameFromPath, runFastCodebase } from "./fast-codebase-service";
+import {
+  type CbmRunner,
+  fastCodebaseBinaryName,
+  projectNameFromPath,
+  resolveFastCodebaseBinary,
+  runFastCodebase,
+} from "./fast-codebase-service";
 
 describe("Fast Codebase service", () => {
   it("derives the same safe project key as the sidecar", () => {
     expect(projectNameFromPath("F:\\CodeHub\\my project")).toBe("F-CodeHub-my-project");
+  });
+
+  it("uses the dev resource sidecar when running from the desktop workspace", () => {
+    const root = mkdtempSync(join(tmpdir(), "modus-fast-codebase-"));
+    const cwd = process.cwd();
+    const bin = join(root, "resources", "bin", fastCodebaseBinaryName());
+    mkdirSync(join(root, "resources", "bin"), { recursive: true });
+    writeFileSync(bin, "");
+    try {
+      process.chdir(root);
+      expect(resolveFastCodebaseBinary()).toBe(bin);
+    } finally {
+      process.chdir(cwd);
+    }
   });
 
   it("indexes before querying when the project db is missing", async () => {

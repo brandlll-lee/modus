@@ -100,7 +100,11 @@ export function resolveFastCodebaseBinary(): string {
   const resourcesPath =
     (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath ?? process.cwd();
   const bundled = join(resourcesPath, "bin", fastCodebaseBinaryName());
-  return existsSync(bundled) ? bundled : fastCodebaseBinaryName();
+  if (existsSync(bundled)) {
+    return bundled;
+  }
+  const devResource = join(process.cwd(), "resources", "bin", fastCodebaseBinaryName());
+  return existsSync(devResource) ? devResource : fastCodebaseBinaryName();
 }
 
 export function projectNameFromPath(path: string): string {
