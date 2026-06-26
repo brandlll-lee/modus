@@ -104,7 +104,9 @@ const fastCodebaseTool: ToolDefinition<typeof fastCodebaseParams> = defineTool({
           });
         },
       });
-      return toResult(result);
+      const final = toResult(result);
+      update?.(final);
+      return final;
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") {
         throw error;
