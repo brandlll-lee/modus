@@ -64,6 +64,30 @@ describe("normalizePiEvent", () => {
     ]);
   });
 
+  it("extracts text content from tool execution updates", () => {
+    expect(
+      normalizePiEvent(
+        "session-1",
+        event({
+          type: "tool_execution_update",
+          toolCallId: "tooluse_abc",
+          toolName: "any_tool",
+          partialResult: {
+            content: [{ type: "text", text: "indexing: parsed 120 files" }],
+            details: { project: "demo" },
+          },
+        }),
+      ),
+    ).toEqual([
+      {
+        type: "tool.output",
+        sessionId: "session-1",
+        toolCallId: "tooluse_abc",
+        output: "indexing: parsed 120 files\n",
+      },
+    ]);
+  });
+
   it("ignores a streaming tool call until the provider assigns it an id", () => {
     // Early in the stream the id may not be set yet; emitting then would fork a
     // second card that can't merge with the durable tool.started.

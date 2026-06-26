@@ -59,6 +59,23 @@ function stringify(value: unknown): string {
   if (typeof value === "string") {
     return value;
   }
+  if (
+    value &&
+    typeof value === "object" &&
+    Array.isArray((value as { content?: unknown }).content)
+  ) {
+    const text = (value as { content: unknown[] }).content
+      .map((item) =>
+        item && typeof item === "object" && typeof (item as { text?: unknown }).text === "string"
+          ? (item as { text: string }).text
+          : "",
+      )
+      .filter(Boolean)
+      .join("\n");
+    if (text) {
+      return text.endsWith("\n") ? text : `${text}\n`;
+    }
+  }
   return JSON.stringify(value, null, 2);
 }
 

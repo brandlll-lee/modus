@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const OUTPUT_CAP = 60_000;
@@ -121,6 +121,10 @@ export function projectNameFromPath(path: string): string {
 
 export const runCbmCli: CbmRunner = (tool, args, options) =>
   new Promise<CbmCallResult>((resolveCall, reject) => {
+    if (options.signal?.aborted) {
+      reject(abortError());
+      return;
+    }
     const command = resolveFastCodebaseBinary();
     const cliArgs = [
       "cli",
@@ -132,6 +136,7 @@ export const runCbmCli: CbmRunner = (tool, args, options) =>
     let stdout = "";
     let stderr = "";
     let lastProgress = "";
+    let aborted = false;
     let settled = false;
     const child = spawn(command, cliArgs, {
       cwd: options.cwd,
@@ -153,13 +158,10 @@ export const runCbmCli: CbmRunner = (tool, args, options) =>
       fn();
     };
     const abort = (): void => {
+      aborted = true;
       child.kill("SIGTERM");
     };
-    if (options.signal?.aborted) {
-      abort();
-    } else {
-      options.signal?.addEventListener("abort", abort, { once: true });
-    }
+    options.signal?.addEventListener("abort", abort, { once: true });
     child.stdout.on("data", (chunk) => {
       stdout = appendCapped(stdout, String(chunk), OUTPUT_CAP);
     });
@@ -186,6 +188,10 @@ export const runCbmCli: CbmRunner = (tool, args, options) =>
     });
     child.on("close", (code) => {
       finish(() => {
+        if (aborted || options.signal?.aborted) {
+          reject(abortError());
+          return;
+        }
         const parsed = textFromEnvelope(stdout);
         resolveCall({
           exitCode: code ?? 0,
@@ -198,6 +204,12 @@ export const runCbmCli: CbmRunner = (tool, args, options) =>
       });
     });
   });
+
+function abortError(): Error {
+  const error = new Error("Fast Codebase cancelled.");
+  error.name = "AbortError";
+  return error;
+}
 
 function isOverviewQuery(query: string): boolean {
   return (
@@ -236,6 +248,23 @@ function formatKernelResult(title: string, result: CbmCallResult): string {
   return `## ${title}\n\n\`\`\`${language}\n${body.slice(0, OUTPUT_CAP)}\n\`\`\``;
 }
 
+function failureText(result: CbmCallResult): string {
+  const text = result.text.trim();
+  const stderr = result.stderr.trim();
+  if (!stderr || text.includes(stderr)) {
+    return text || stderr;
+  }
+  const tail = stderr.split(/\r?\n/).filter(Boolean).slice(-12).join("\n");
+  return [text, tail ? `stderr:\n${tail}` : ""].filter(Boolean).join("\n\n");
+}
+
+function indexSnapshot(dbPath: string): string | undefined {
+  if (!existsSync(dbPath)) {
+    return undefined;
+  }
+  return statSync(dbPath).mtime.toISOString();
+}
+
 async function indexWorkspace(
   input: Required<Pick<FastCodebaseInput, "cacheDir" | "cwd">> &
     Pick<FastCodebaseInput, "onProgress" | "runner" | "signal">,
@@ -254,7 +283,7 @@ async function indexWorkspace(
     },
   );
   if (result.isError) {
-    throw new Error(`Fast Codebase indexing failed: ${result.text || result.stderr}`);
+    throw new Error(`Fast Codebase indexing failed:\n${failureText(result)}`);
   }
   const project = asObject(result.json)?.project;
   return typeof project === "string" && project ? project : projectNameFromPath(input.cwd);
@@ -288,12 +317,24 @@ async function queryKernel(input: {
         { cacheDir: input.cacheDir, cwd: input.cwd, signal: input.signal },
       );
   if (result.isError) {
-    return { body: result.text || result.stderr, result };
+    return { body: failureText(result), result };
   }
-  const primary = formatKernelResult(overview ? "Architecture Overview" : "Search Results", result);
+  let primary = formatKernelResult(overview ? "Architecture Overview" : "Search Results", result);
+  if (!overview && resultItems(result.json).length === 0) {
+    input.onProgress?.({ phase: "querying", message: "Search was empty; reading architecture..." });
+    const fallback = await input.runner(
+      "get_architecture",
+      { project: input.project, aspects: ["all"] },
+      { cacheDir: input.cacheDir, cwd: input.cwd, signal: input.signal },
+    );
+    if (!fallback.isError) {
+      primary = `${primary}\n\n${formatKernelResult("Architecture Fallback", fallback)}`;
+    }
+  }
   if (overview || !input.includeCode) {
     return { body: primary, result };
   }
+  input.onProgress?.({ phase: "querying", message: "Reading source snippets..." });
   const snippets: string[] = [];
   for (const qn of resultItems(result.json).map(qnOf).filter(Boolean).slice(0, 3)) {
     const snippet = await input.runner(
@@ -301,7 +342,9 @@ async function queryKernel(input: {
       { project: input.project, qualified_name: qn, include_neighbors: false },
       { cacheDir: input.cacheDir, cwd: input.cwd, signal: input.signal },
     );
-    snippets.push(formatKernelResult(`Snippet: ${qn}`, snippet));
+    if (!snippet.isError) {
+      snippets.push(formatKernelResult(`Snippet: ${qn}`, snippet));
+    }
   }
   return {
     body:
@@ -319,8 +362,9 @@ export async function runFastCodebase(input: FastCodebaseInput): Promise<FastCod
   const runner = input.runner ?? runCbmCli;
   mkdirSync(cacheDir, { recursive: true });
   let project = projectNameFromPath(cwd);
+  let dbPath = join(cacheDir, `${project}.db`);
   let indexed = false;
-  if (!existsSync(join(cacheDir, `${project}.db`))) {
+  if (!existsSync(dbPath)) {
     project = await indexWorkspace({
       cacheDir,
       cwd,
@@ -328,6 +372,7 @@ export async function runFastCodebase(input: FastCodebaseInput): Promise<FastCod
       runner,
       signal: input.signal,
     });
+    dbPath = join(cacheDir, `${project}.db`);
     indexed = true;
   }
   let queried = await queryKernel({
@@ -363,13 +408,16 @@ export async function runFastCodebase(input: FastCodebaseInput): Promise<FastCod
     });
   }
   if (queried.result.isError) {
-    throw new Error(`Fast Codebase query failed: ${queried.body}`);
+    throw new Error(`Fast Codebase query failed:\n${queried.body}`);
   }
+  const snapshot = indexSnapshot(dbPath);
   const text = [
     `# Fast Codebase`,
     `Workspace: ${cwd}`,
     `Project: ${project}`,
-    `Index: ${indexed ? "created" : "cache hit"} (snapshot; read current files before editing)`,
+    `Index: ${indexed ? "created" : "cache hit"}${
+      snapshot ? ` (snapshot: ${snapshot}; read current files before editing)` : ""
+    }`,
     "",
     queried.body,
   ].join("\n");

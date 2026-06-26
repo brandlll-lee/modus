@@ -64,7 +64,33 @@ describe("Fast Codebase service", () => {
 
     expect(calls).toEqual(["get_architecture"]);
     expect(result.text).toContain("Index: cache hit");
+    expect(result.text).toContain("snapshot:");
     expect(result.text).toContain("Architecture Overview");
+  });
+
+  it("adds architecture context when search returns no results", async () => {
+    const root = mkdtempSync(join(tmpdir(), "modus-fast-codebase-"));
+    const cacheDir = join(root, "cache");
+    mkdirSync(cacheDir, { recursive: true });
+    writeFileSync(join(cacheDir, `${projectNameFromPath(root)}.db`), "");
+    const calls: string[] = [];
+    const runner: CbmRunner = async (tool) => {
+      calls.push(tool);
+      if (tool === "get_architecture") {
+        return ok(tool, { languages: [{ language: "TypeScript", file_count: 3 }] });
+      }
+      return ok(tool, { total: 0, results: [] });
+    };
+
+    const result = await runFastCodebase({
+      cacheDir,
+      cwd: root,
+      query: "missing thing",
+      runner,
+    });
+
+    expect(calls).toEqual(["search_graph", "get_architecture"]);
+    expect(result.text).toContain("Architecture Fallback");
   });
 
   it("fetches snippets only when includeCode is requested", async () => {
@@ -102,6 +128,24 @@ describe("Fast Codebase service", () => {
     expect(result.text).toContain("Source Snippets");
     expect(result.text).toContain("export function run() {}");
   });
+
+  it("summarizes stderr when queries fail", async () => {
+    const root = mkdtempSync(join(tmpdir(), "modus-fast-codebase-"));
+    const cacheDir = join(root, "cache");
+    mkdirSync(cacheDir, { recursive: true });
+    writeFileSync(join(cacheDir, `${projectNameFromPath(root)}.db`), "");
+    const runner: CbmRunner = async (tool) =>
+      fail(tool, "project failed", "debug line 1\ndebug line 2");
+
+    await expect(
+      runFastCodebase({
+        cacheDir,
+        cwd: root,
+        query: "run",
+        runner,
+      }),
+    ).rejects.toThrow(/stderr:\ndebug line 1\ndebug line 2/);
+  });
 });
 
 function ok(tool: string, json: unknown) {
@@ -111,6 +155,16 @@ function ok(tool: string, json: unknown) {
     json,
     stderr: "",
     text: JSON.stringify(json),
+    tool,
+  };
+}
+
+function fail(tool: string, text: string, stderr: string) {
+  return {
+    exitCode: 1,
+    isError: true,
+    stderr,
+    text,
     tool,
   };
 }

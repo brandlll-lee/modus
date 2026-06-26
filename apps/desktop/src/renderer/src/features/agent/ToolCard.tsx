@@ -118,6 +118,7 @@ function FlatToolRow({
   const [open, setOpen] = useState(false);
   const running = !isComplete && !isError;
   const view = describeTool(name, running ? undefined : args);
+  const status = running ? liveStatus(output) : "";
   const detail = running ? "" : toolDetail(name, args, output);
   const expandable = detail.trim().length > 0;
 
@@ -127,7 +128,14 @@ function FlatToolRow({
         {isError ? <IconAlertCircle className="text-danger" size={14} stroke={1.7} /> : view.icon}
       </span>
       {running ? (
-        <ShinyText className="min-w-0 flex-1 truncate">{view.verb}</ShinyText>
+        <>
+          <ShinyText className="shrink-0">{view.verb}</ShinyText>
+          {status ? (
+            <span className="min-w-0 flex-1 truncate text-fg-faint" title={status}>
+              {status}
+            </span>
+          ) : null}
+        </>
       ) : (
         <>
           <span className={cn("shrink-0 font-medium", isError ? "text-danger" : "text-fg-subtle")}>
@@ -240,6 +248,14 @@ function clampDetail(detail: string): string {
   return trimmed.length > MAX_DETAIL_CHARS
     ? `${trimmed.slice(0, MAX_DETAIL_CHARS)}\n…(truncated)`
     : trimmed;
+}
+
+function liveStatus(output: string): string {
+  const lines = output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return lines.at(-1) ?? "";
 }
 
 function str(value: unknown): string {
