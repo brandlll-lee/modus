@@ -112,6 +112,8 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
       setIsRepository(undefined);
       setCommits([]);
       setCommitFiles({});
+      setExpanded(new Set());
+      setExpandedCommits(new Set());
       return;
     }
     const repository = await window.modus.git.isRepository(targetCwd);
@@ -122,6 +124,8 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
       setStatus(undefined);
       setCommits([]);
       setCommitFiles({});
+      setExpanded(new Set());
+      setExpandedCommits(new Set());
       return;
     }
     const [list, stats, st, log] = await Promise.all([
@@ -130,6 +134,18 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
       window.modus.diff.status(targetCwd).catch(() => undefined),
       window.modus.git.log({ cwd: targetCwd }).catch(() => [] as GitCommit[]),
     ]);
+    setExpanded((prev) =>
+      pruneExpandedKeys(
+        prev,
+        list.map((change: FileChange) => change.path),
+      ),
+    );
+    setExpandedCommits((prev) =>
+      pruneExpandedKeys(
+        prev,
+        log.map((commit: GitCommit) => commit.hash),
+      ),
+    );
     setChanges(list);
     setStatsByPath(
       new Map(
@@ -268,7 +284,6 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
           count={count}
           cwd={activeCwd}
           linkedWorktree={visibleLinkedWorktree}
-          noun={meta.noun}
           onBackToMain={() => setLinkedWorktree(undefined)}
           onError={setActionError}
           onRefresh={onCommitRefresh}
@@ -304,7 +319,7 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
         </ReviewToolbar>
       ) : null}
 
-      <div className="scroll-thin min-h-0 flex-1 overflow-y-auto px-2 py-1.5">
+      <div className="scroll-thin min-h-0 flex-1 overflow-y-auto py-1">
         {actionError ? (
           <button
             className="mb-1.5 flex w-full items-start gap-2 rounded-lg bg-danger/8 px-3 py-2 text-left text-danger text-xs"
@@ -415,11 +430,17 @@ async function startReview(
   await window.modus.review.start({ cwd, sessionId, workspaceId });
 }
 
-function toggleKey(set: Set<string>, key: string): Set<string> {
+export function toggleKey(set: Set<string>, key: string): Set<string> {
   const next = new Set(set);
   if (next.has(key)) next.delete(key);
   else next.add(key);
   return next;
+}
+
+export function pruneExpandedKeys(set: Set<string>, validKeys: Iterable<string>): Set<string> {
+  const valid = new Set(validKeys);
+  const next = new Set([...set].filter((key) => valid.has(key)));
+  return next.size === set.size ? set : next;
 }
 
 function normalizePath(path: string | undefined): string {
@@ -428,7 +449,6 @@ function normalizePath(path: string | undefined): string {
 
 function ReviewToolbar({
   scope,
-  noun,
   count,
   added,
   removed,
@@ -447,7 +467,6 @@ function ReviewToolbar({
   children,
 }: {
   scope: ChangeScope;
-  noun: string;
   count: number;
   added: number;
   removed: number;
@@ -465,16 +484,18 @@ function ReviewToolbar({
   onBackToMain(): void;
   children: ReactNode;
 }) {
-  const countLabel = noun === "Commit" ? (count === 1 ? "commit" : "commits") : "files";
   return (
     <div
       aria-label="Git review toolbar"
-      className="flex min-h-12 shrink-0 items-center gap-2 border-hairline-soft border-b px-3"
+      className="flex h-14 shrink-0 items-center gap-2 border-hairline-soft border-b px-3"
       role="toolbar"
     >
       <Menu.Root>
-        <Menu.Trigger className="flex h-7 shrink-0 items-center gap-1 rounded-md bg-active px-2 text-fg text-sm outline-none transition-colors hover:bg-hover data-popup-open:bg-hover">
+        <Menu.Trigger className="flex h-8 shrink-0 items-center gap-2 rounded-md px-2 text-fg text-sm outline-none transition-colors hover:bg-hover data-popup-open:bg-hover">
           <span>{SCOPE_META[scope].label}</span>
+          <span className="rounded-full bg-chip px-1.5 py-px text-2xs text-fg-muted tabular-nums">
+            {count}
+          </span>
           <IconChevronDown className="text-fg-faint" size={13} stroke={1.8} />
         </Menu.Trigger>
         <Menu.Portal>
@@ -489,15 +510,21 @@ function ReviewToolbar({
           </Menu.Positioner>
         </Menu.Portal>
       </Menu.Root>
+      {showStats && (added > 0 || removed > 0) ? (
+        <span className="flex items-center gap-1.5 font-mono text-xs tabular-nums">
+          <span className="text-success">+{added}</span>
+          <span className="text-danger">-{removed}</span>
+        </span>
+      ) : null}
       <BranchSwitcher
         cwd={cwd}
         onAfterSwitch={onRefresh}
         onError={onError}
         onWorktreeBranch={onWorktreeBranch}
-        triggerClassName="flex min-w-0 items-center gap-1.5 rounded-md px-1.5 py-0.5 text-sm outline-none transition-colors hover:bg-hover data-popup-open:bg-hover"
+        triggerClassName="ml-1 flex min-w-0 items-center gap-1.5 rounded-md px-1.5 py-0.5 text-sm outline-none transition-colors hover:bg-hover data-popup-open:bg-hover"
       >
-        <IconGitBranch className="shrink-0 text-fg-subtle" size={13} stroke={1.7} />
-        <span className="max-w-[160px] truncate text-fg-muted">{branch ?? "detached"}</span>
+        <IconGitBranch className="shrink-0 text-fg-faint" size={13} stroke={1.7} />
+        <span className="max-w-[150px] truncate text-fg-subtle">{branch ?? "detached"}</span>
         <IconChevronDown className="shrink-0 text-fg-faint" size={12} stroke={1.8} />
       </BranchSwitcher>
       {linkedWorktree ? (
@@ -513,17 +540,6 @@ function ReviewToolbar({
         </span>
       ) : null}
       <div className="ml-auto flex shrink-0 items-center gap-1">
-        <span className="mr-1 flex items-center gap-1.5 text-fg-muted text-xs">
-          <span className="tabular-nums">
-            {count} {countLabel}
-          </span>
-          {showStats && (added > 0 || removed > 0) ? (
-            <span className="flex items-center gap-1 font-mono tabular-nums">
-              <span className="text-success">+{added}</span>
-              <span className="text-danger">-{removed}</span>
-            </span>
-          ) : null}
-        </span>
         <Tooltip content={treeView ? "View as list" : "View as tree"} side="bottom" sideOffset={6}>
           <button
             aria-label={treeView ? "View as list" : "View as tree"}
@@ -774,25 +790,25 @@ const ChangeRow = memo(function ChangeRow({
 }) {
   const { dir, name } = splitPath(change.path);
   const badge = changeBadge(change);
-  // Defer mounting the heavy Monaco body until the expand animation finishes —
-  // otherwise the height animation re-lays-out a still-mounting editor every
-  // frame. Resets when the row collapses so the next open re-defers.
   const [bodyReady, setBodyReady] = useState(false);
   useEffect(() => {
-    if (!expanded) setBodyReady(false);
+    setBodyReady(false);
+    if (!expanded) return;
+    const frame = requestAnimationFrame(() => setBodyReady(true));
+    return () => cancelAnimationFrame(frame);
   }, [expanded]);
 
   return (
-    <div className="py-0.5">
+    <div className="border-hairline-soft border-b">
       <div
         className={cn(
-          "group flex h-8 w-full items-center gap-1.5 rounded-lg pr-2 text-left text-sm transition-colors",
-          expanded ? "bg-chip-faint text-fg" : "text-fg-muted hover:bg-hover hover:text-fg",
+          "group/row flex h-10 w-full items-center gap-2 pr-3 text-left text-sm transition-colors",
+          expanded ? "bg-active text-fg" : "text-fg-muted hover:bg-hover hover:text-fg",
         )}
-        style={{ paddingLeft: 10 + depth * 14 }}
+        style={{ paddingLeft: 12 + depth * 16 }}
       >
         <button
-          className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+          className="flex min-w-0 flex-1 items-center gap-2 text-left"
           onClick={() => onToggle(rowKey)}
           type="button"
         >
@@ -813,7 +829,7 @@ const ChangeRow = memo(function ChangeRow({
           <ChangeMeta badge={badge} stat={stat} />
         </button>
 
-        <span className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+        <span className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100">
           <IconBtn
             label="Copy path"
             onClick={() => void navigator.clipboard.writeText(change.path)}
@@ -839,11 +855,7 @@ const ChangeRow = memo(function ChangeRow({
           ) : null}
         </span>
       </div>
-      <CollapsibleMotion
-        onOpenAnimationComplete={() => setBodyReady(true)}
-        open={expanded}
-        preset="default"
-      >
+      <CollapsibleMotion open={expanded} preset="default">
         {bodyReady ? (
           <FileDiffPreview
             change={change}
@@ -920,11 +932,11 @@ function CommitRow({
   refreshToken: number;
 }) {
   return (
-    <div className="py-0.5">
+    <div className="border-hairline-soft border-b">
       <button
         className={cn(
-          "flex h-11 w-full items-center gap-2 rounded-lg px-2.5 text-left text-sm transition-colors",
-          expanded ? "bg-chip-faint text-fg" : "text-fg-muted hover:bg-hover hover:text-fg",
+          "flex h-11 w-full items-center gap-2 px-3 text-left text-sm transition-colors",
+          expanded ? "bg-active text-fg" : "text-fg-muted hover:bg-hover hover:text-fg",
         )}
         onClick={onToggle}
         type="button"
@@ -1065,11 +1077,11 @@ function TreeFolder({
 }) {
   const [open, setOpen] = useState(true);
   return (
-    <div className="py-0.5">
+    <div>
       <button
-        className="group flex h-8 w-full items-center gap-1.5 rounded-lg pr-2 text-left text-fg-muted text-sm transition-colors hover:bg-hover hover:text-fg"
+        className="group flex h-9 w-full items-center gap-2 pr-3 text-left text-fg-muted text-sm transition-colors hover:bg-hover hover:text-fg"
         onClick={() => setOpen((value) => !value)}
-        style={{ paddingLeft: 10 + depth * 14 }}
+        style={{ paddingLeft: 12 + depth * 16 }}
         type="button"
       >
         <span className="flex size-4 shrink-0 items-center justify-center text-fg-faint">

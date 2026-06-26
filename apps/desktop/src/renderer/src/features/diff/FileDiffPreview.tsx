@@ -40,6 +40,7 @@ export function FileDiffPreview({
   useEffect(() => {
     let cancelled = false;
     setError(undefined);
+    setVersions(undefined);
     void window.modus.diff
       .fileVersions({
         cwd,

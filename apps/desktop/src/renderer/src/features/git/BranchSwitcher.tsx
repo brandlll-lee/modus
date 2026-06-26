@@ -41,19 +41,34 @@ export function BranchSwitcher({
   onWorktreeBranch,
 }: BranchSwitcherProps) {
   const [open, setOpen] = useState(false);
-  const [branches, setBranches] = useState<GitBranchSummary | undefined>();
+  const [branchState, setBranchState] = useState<
+    { cwd: string; summary: GitBranchSummary } | undefined
+  >();
   const [busy, setBusy] = useState<string | undefined>();
+  const branches = branchState && branchState.cwd === cwd ? branchState.summary : undefined;
+
+  const refreshBranches = useCallback(
+    async (targetCwd: string, active: () => boolean = () => true) => {
+      try {
+        const summary = await window.modus.git.branches(targetCwd);
+        if (active()) setBranchState({ cwd: targetCwd, summary });
+      } catch {
+        if (active()) setBranchState({ cwd: targetCwd, summary: { local: [], remote: [] } });
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!open || !cwd) {
       return;
     }
-    setBranches(undefined);
-    void window.modus.git
-      .branches(cwd)
-      .then(setBranches)
-      .catch(() => setBranches({ local: [], remote: [] }));
-  }, [open, cwd]);
+    let active = true;
+    void refreshBranches(cwd, () => active);
+    return () => {
+      active = false;
+    };
+  }, [open, cwd, refreshBranches]);
 
   const switchTo = useCallback(
     async (name: string): Promise<void> => {
@@ -67,6 +82,7 @@ export function BranchSwitcher({
           onWorktreeBranch?.(result.worktreePath, result.branch ?? name);
           return;
         }
+        void refreshBranches(cwd);
         onAfterSwitch?.();
       } catch (cause) {
         onError?.(cause instanceof Error ? cause.message : String(cause));
@@ -74,7 +90,7 @@ export function BranchSwitcher({
         setBusy(undefined);
       }
     },
-    [cwd, onAfterSwitch, onError, onWorktreeBranch],
+    [cwd, onAfterSwitch, onError, onWorktreeBranch, refreshBranches],
   );
 
   const locals = branches?.local ?? [];

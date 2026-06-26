@@ -62,19 +62,11 @@ export function CollapsibleMotion({
   className,
   open,
   preset = "default",
-  onOpenAnimationComplete,
 }: {
   children: ReactNode;
   className?: string;
   open: boolean;
   preset?: CollapsibleMotionPreset;
-  /**
-   * Fires once the open animation finishes. Lets a caller defer mounting an
-   * expensive child (e.g. a Monaco editor) until after the height animation has
-   * run, so the animation stays smooth instead of re-measuring a heavy,
-   * still-laying-out subtree every frame.
-   */
-  onOpenAnimationComplete?(): void;
 }) {
   const reduceMotion = useReducedMotion();
   const firstRenderRef = useRef(true);
@@ -98,7 +90,6 @@ export function CollapsibleMotion({
           data-collapsible-motion
           exit={{ height: 0, opacity: 0 }}
           initial={{ height: 0, opacity: 0 }}
-          onAnimationComplete={() => onOpenAnimationComplete?.()}
           style={{ transformOrigin: "top" }}
           transition={
             reduceMotion
