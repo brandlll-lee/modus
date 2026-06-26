@@ -36,6 +36,14 @@ const MAX_LAG = 480; // hard cap: never lag more than this many chars
 const FRAME_CAP = 12; // max graphemes revealed in a single frame, kills the burst/flash
 const MAX_DT = 0.05; // clamp frame delta (s) to avoid jumps after tab blur
 
+type SmoothStreamingTextOptions = {
+  minCps?: number;
+  maxCps?: number;
+  pressureScale?: number;
+  maxLag?: number;
+  frameCap?: number;
+};
+
 const segmenter =
   typeof Intl !== "undefined" && "Segmenter" in Intl
     ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
@@ -70,7 +78,16 @@ function advanceGraphemes(text: string, fromIndex: number, count: number): numbe
   return fromIndex + endOffset;
 }
 
-export function useSmoothStreamingText(fullText: string, isStreaming: boolean): string {
+export function useSmoothStreamingText(
+  fullText: string,
+  isStreaming: boolean,
+  options?: SmoothStreamingTextOptions,
+): string {
+  const minCps = options?.minCps ?? MIN_CPS;
+  const maxCps = options?.maxCps ?? MAX_CPS;
+  const pressureScale = options?.pressureScale ?? PRESSURE_SCALE;
+  const maxLag = options?.maxLag ?? MAX_LAG;
+  const frameCap = options?.frameCap ?? FRAME_CAP;
   const [visible, setVisible] = useState(isStreaming ? "" : fullText);
 
   const fullRef = useRef(fullText);
@@ -112,8 +129,8 @@ export function useSmoothStreamingText(fullText: string, isStreaming: boolean): 
 
       const backlog = total - index;
       if (backlog > 0) {
-        const pressure = Math.min(1, backlog / PRESSURE_SCALE);
-        const cps = MIN_CPS + (MAX_CPS - MIN_CPS) * pressure;
+        const pressure = Math.min(1, backlog / pressureScale);
+        const cps = minCps + (maxCps - minCps) * pressure;
         budgetRef.current += cps * dt;
 
         let reveal = Math.floor(budgetRef.current);
@@ -123,10 +140,10 @@ export function useSmoothStreamingText(fullText: string, isStreaming: boolean): 
           reveal = 0;
         }
         // Catch up hard if we have fallen too far behind.
-        if (backlog - reveal > MAX_LAG) {
-          reveal = backlog - MAX_LAG;
+        if (backlog - reveal > maxLag) {
+          reveal = backlog - maxLag;
         }
-        reveal = Math.min(reveal, FRAME_CAP, backlog);
+        reveal = Math.min(reveal, frameCap, backlog);
 
         if (reveal > 0) {
           index = advanceGraphemes(full, index, reveal);
@@ -146,7 +163,7 @@ export function useSmoothStreamingText(fullText: string, isStreaming: boolean): 
       }
       lastTsRef.current = null;
     };
-  }, [isStreaming]);
+  }, [isStreaming, minCps, maxCps, pressureScale, maxLag, frameCap]);
 
   return visible;
 }
