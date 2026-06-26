@@ -201,6 +201,7 @@ export default function MarkdownMessageRenderer({
       dir="auto"
       isAnimating={streaming}
       linkSafety={LINK_SAFETY}
+      lineNumbers={false}
       mermaid={mermaidProp}
       mode={streaming ? "streaming" : "static"}
       normalizeHtmlIndentation
