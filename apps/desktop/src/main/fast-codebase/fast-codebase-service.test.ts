@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,8 +18,8 @@ describe("Fast Codebase service", () => {
     expect(resolveFastCodebaseBinary()).toBe("C:\\Tools\\codegraph.exe");
   });
 
-  it("indexes before querying when .codegraph is missing", async () => {
-    const root = tempGitRoot();
+  it("indexes the current workspace before querying when .codegraph is missing", async () => {
+    const root = tempWorkspace();
     const calls: string[][] = [];
     const runner: CodeGraphRunner = async (args) => {
       calls.push(args);
@@ -40,7 +39,7 @@ describe("Fast Codebase service", () => {
   });
 
   it("shares one index process for concurrent calls to the same workspace", async () => {
-    const root = tempGitRoot();
+    const root = tempWorkspace();
     let releaseIndex!: () => void;
     const indexReady = new Promise<void>((resolve) => {
       releaseIndex = resolve;
@@ -70,7 +69,7 @@ describe("Fast Codebase service", () => {
   });
 
   it("aborts the shared index when the only waiter cancels", async () => {
-    const root = tempGitRoot();
+    const root = tempWorkspace();
     const controller = new AbortController();
     let sharedSignal: AbortSignal | undefined;
     let indexStarted!: () => void;
@@ -103,28 +102,10 @@ describe("Fast Codebase service", () => {
     expect(sharedSignal?.aborted).toBe(true);
   });
 
-  it("returns child git workspace candidates without indexing unsafe cwd", async () => {
+  it("indexes an explicit child workspace", async () => {
     const root = mkdtempSync(join(tmpdir(), "modus-fast-codebase-"));
     const child = join(root, "repo");
     mkdirSync(child);
-    initGitRoot(child);
-    const runner: CodeGraphRunner = async () => {
-      throw new Error("CodeGraph should not start");
-    };
-
-    const result = await runFastCodebase({ cwd: root, query: "tools", runner });
-
-    expect(result.details.indexed).toBe(false);
-    expect(result.details.candidateWorkspaces).toEqual([child]);
-    expect(result.text).toContain("Index: skipped");
-    expect(result.text).toContain("workspace_path");
-  });
-
-  it("indexes an explicit child git workspace", async () => {
-    const root = mkdtempSync(join(tmpdir(), "modus-fast-codebase-"));
-    const child = join(root, "repo");
-    mkdirSync(child);
-    initGitRoot(child);
     const calls: string[][] = [];
     const runner: CodeGraphRunner = async (args) => {
       calls.push(args);
@@ -144,7 +125,7 @@ describe("Fast Codebase service", () => {
 
   it("does not index workspace_path outside the current workspace", async () => {
     const root = mkdtempSync(join(tmpdir(), "modus-fast-codebase-"));
-    const outside = tempGitRoot();
+    const outside = tempWorkspace();
     const runner: CodeGraphRunner = async () => {
       throw new Error("CodeGraph should not start");
     };
@@ -161,7 +142,7 @@ describe("Fast Codebase service", () => {
   });
 
   it("queries an existing clean index without syncing", async () => {
-    const root = tempGitRoot();
+    const root = tempWorkspace();
     writeIndex(root);
     const calls: string[][] = [];
     const runner: CodeGraphRunner = async (args) => {
@@ -182,7 +163,7 @@ describe("Fast Codebase service", () => {
   });
 
   it("does not sync only because CodeGraph recommends a future reindex", async () => {
-    const root = tempGitRoot();
+    const root = tempWorkspace();
     writeIndex(root);
     const calls: string[][] = [];
     const runner: CodeGraphRunner = async (args) => {
@@ -199,7 +180,7 @@ describe("Fast Codebase service", () => {
   });
 
   it("syncs an existing index when CodeGraph reports pending changes", async () => {
-    const root = tempGitRoot();
+    const root = tempWorkspace();
     writeIndex(root);
     const calls: string[][] = [];
     const runner: CodeGraphRunner = async (args) => {
@@ -221,7 +202,7 @@ describe("Fast Codebase service", () => {
   });
 
   it("uses explore only when source snippets are requested", async () => {
-    const root = tempGitRoot();
+    const root = tempWorkspace();
     const calls: string[][] = [];
     const runner: CodeGraphRunner = async (args) => {
       calls.push(args);
@@ -237,7 +218,7 @@ describe("Fast Codebase service", () => {
   });
 
   it("returns code-shaped query hits before low-signal matches", async () => {
-    const root = tempGitRoot();
+    const root = tempWorkspace();
     const runner: CodeGraphRunner = async (args) =>
       ok(
         args[0] === "query"
@@ -275,7 +256,7 @@ describe("Fast Codebase service", () => {
   });
 
   it("summarizes stderr when queries fail", async () => {
-    const root = tempGitRoot();
+    const root = tempWorkspace();
     writeIndex(root);
     const runner: CodeGraphRunner = async (args) =>
       args[0] === "status"
@@ -306,14 +287,8 @@ function fail(text: string, stderr: string) {
   };
 }
 
-function initGitRoot(path: string): void {
-  execFileSync("git", ["init"], { cwd: path, stdio: "ignore" });
-}
-
-function tempGitRoot(): string {
-  const root = mkdtempSync(join(tmpdir(), "modus-fast-codebase-"));
-  initGitRoot(root);
-  return root;
+function tempWorkspace(): string {
+  return mkdtempSync(join(tmpdir(), "modus-fast-codebase-"));
 }
 
 function writeIndex(root: string): void {

@@ -1,5 +1,5 @@
-import { type ChildProcess, spawn, spawnSync } from "node:child_process";
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { type ChildProcess, spawn } from "node:child_process";
+import { existsSync, statSync } from "node:fs";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 
 const OUTPUT_CAP = 60_000;
@@ -18,7 +18,6 @@ export type FastCodebaseProgress = {
 export type FastCodebaseResult = {
   text: string;
   details: {
-    candidateWorkspaces?: string[];
     indexDir: string;
     indexed: boolean;
     kernel: string;
@@ -267,50 +266,17 @@ function pathKey(path: string): string {
   return process.platform === "win32" ? value.toLowerCase() : value;
 }
 
-function samePath(left: string, right: string): boolean {
-  return pathKey(left) === pathKey(right);
-}
-
 function isPathInside(parent: string, child: string): boolean {
   const rel = relative(resolve(parent), resolve(child));
   return rel === "" || (!!rel && !rel.startsWith("..") && !isAbsolute(rel));
 }
 
-function gitRoot(cwd: string): string | undefined {
-  const result = spawnSync("git", ["-C", cwd, "rev-parse", "--show-toplevel"], {
-    encoding: "utf8",
-    windowsHide: true,
-  });
-  if (result.status !== 0) {
-    return undefined;
-  }
-  const root = result.stdout.trim();
-  return root ? resolve(root) : undefined;
-}
-
-function directChildGitRoots(cwd: string): string[] {
-  try {
-    return readdirSync(cwd, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => resolve(cwd, entry.name))
-      .filter((child) => {
-        const root = gitRoot(child);
-        return root ? samePath(root, child) : false;
-      });
-  } catch {
-    return [];
-  }
-}
-
 function details(input: {
-  candidateWorkspaces?: string[];
   indexed: boolean;
   query: string;
   workspace: string;
 }): FastCodebaseResult["details"] {
-  const candidates = input.candidateWorkspaces ?? [];
   return {
-    ...(candidates.length > 0 ? { candidateWorkspaces: candidates } : {}),
     indexDir: codeGraphIndexDir(input.workspace),
     indexed: input.indexed,
     kernel: resolveFastCodebaseBinary(),
@@ -321,20 +287,10 @@ function details(input: {
 }
 
 function skippedResult(input: {
-  candidateWorkspaces?: string[];
   query: string;
   reason: string;
   workspace: string;
 }): FastCodebaseResult {
-  const candidates = input.candidateWorkspaces ?? [];
-  const next =
-    candidates.length > 0
-      ? "Next: call fast_codebase again with workspace_path set to one candidate."
-      : "Next: switch to a valid git workspace, or fall back to read/grep/find for this turn.";
-  const candidateText =
-    candidates.length > 0
-      ? ["Candidate workspaces:", ...candidates.map((path) => `- ${path}`)].join("\n")
-      : "Candidate workspaces: none";
   return {
     text: [
       "# Fast Codebase",
@@ -343,12 +299,9 @@ function skippedResult(input: {
       "",
       input.reason,
       "",
-      candidateText,
-      "",
-      next,
+      "Next: use a workspace_path inside the current workspace, or fall back to read/grep/find for this turn.",
     ].join("\n"),
     details: details({
-      candidateWorkspaces: candidates,
       indexed: false,
       query: input.query,
       workspace: input.workspace,
@@ -635,16 +588,6 @@ export async function runFastCodebase(input: FastCodebaseInput): Promise<FastCod
     return skippedResult({
       query: input.query,
       reason: `Fast Codebase did not start indexing because workspace_path is outside the current workspace: ${cwd}`,
-      workspace: cwd,
-    });
-  }
-  const root = gitRoot(cwd);
-  if (!root || !samePath(root, cwd)) {
-    return skippedResult({
-      candidateWorkspaces: input.workspacePath ? [] : directChildGitRoots(baseCwd),
-      query: input.query,
-      reason:
-        "Fast Codebase did not start indexing because the selected workspace is not a valid git root.",
       workspace: cwd,
     });
   }
