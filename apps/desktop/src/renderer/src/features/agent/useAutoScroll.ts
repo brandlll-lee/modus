@@ -53,7 +53,7 @@ export type AutoScroll = {
   resume: () => void;
   /** The user is more than one viewport away from the latest content. */
   showScrollToLatest: boolean;
-  /** User-requested return to the latest content with smooth movement. */
+  /** User-requested return to the latest content. */
   scrollToLatest: () => void;
 };
 
@@ -211,7 +211,7 @@ export function useAutoScroll(working: boolean): AutoScroll {
   }, [scrollToBottom]);
 
   const scrollToLatest = useCallback((): void => {
-    scrollToBottom(true, prefersReducedMotion() ? "auto" : "smooth");
+    scrollToBottom(true);
   }, [scrollToBottom]);
 
   // Wheel-up is the authoritative "user wants to read history" signal. Scrolling

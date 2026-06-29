@@ -1,5 +1,4 @@
 import { IconArrowDown } from "@tabler/icons-react";
-import { AnimatePresence, m } from "motion/react";
 import {
   forwardRef,
   type ReactNode,
@@ -621,25 +620,19 @@ export const ChatPane = forwardRef<ChatPaneHandle, ChatPaneProps>(function ChatP
 
       <div className="min-w-0 max-w-full shrink-0 px-4 pb-4">
         <div className="relative mx-auto min-w-0 w-full max-w-5xl">
-          <AnimatePresence initial={false}>
-            {autoScroll.showScrollToLatest ? (
-              <div className="pointer-events-none absolute bottom-full left-1/2 z-30 mb-2 -translate-x-1/2">
-                <m.button
-                  animate={{ opacity: 1, scale: 1, y: 0 }}
-                  aria-label="Scroll to latest"
-                  className="pointer-events-auto flex size-10 items-center justify-center rounded-full border border-hairline bg-elevated/95 text-fg-muted shadow-popup outline-none backdrop-blur transition-[background-color,color,transform] duration-150 hover:bg-hover hover:text-fg active:scale-[0.96] focus-visible:ring-2 focus-visible:ring-focus-ring/35"
-                  exit={{ opacity: 0, scale: 0.96, y: 4 }}
-                  initial={{ opacity: 0, scale: 0.96, y: 4 }}
-                  onClick={autoScroll.scrollToLatest}
-                  title="Scroll to latest"
-                  transition={{ duration: 0.12, ease: [0.22, 1, 0.36, 1] }}
-                  type="button"
-                >
-                  <IconArrowDown aria-hidden size={21} stroke={1.9} />
-                </m.button>
-              </div>
-            ) : null}
-          </AnimatePresence>
+          {autoScroll.showScrollToLatest ? (
+            <div className="pointer-events-none absolute bottom-full left-1/2 z-30 mb-2 -translate-x-1/2">
+              <button
+                aria-label="Scroll to latest"
+                className="pointer-events-auto flex size-10 items-center justify-center rounded-full border border-hairline bg-elevated text-fg-muted shadow-popup outline-none transition-colors duration-100 hover:bg-hover hover:text-fg focus-visible:ring-2 focus-visible:ring-focus-ring/35"
+                onClick={autoScroll.scrollToLatest}
+                title="Scroll to latest"
+                type="button"
+              >
+                <IconArrowDown aria-hidden size={21} stroke={1.9} />
+              </button>
+            </div>
+          ) : null}
           {pendingPermission ? (
             <ApprovalPanel
               key={pendingPermission.id}
