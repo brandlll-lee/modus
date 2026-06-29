@@ -15,6 +15,7 @@ import { useSuppressNativeSurface } from "./nativeSurface";
 
 /** A rect in viewport (CSS px) coordinates — the thumbnail the viewer grows from. */
 type OriginRect = { x: number; y: number; width: number; height: number };
+type ViewportSize = { width: number; height: number };
 
 type ViewerState = {
   src: string;
@@ -33,6 +34,10 @@ type ImageViewerContextValue = {
 };
 
 const ImageViewerContext = createContext<ImageViewerContextValue | null>(null);
+const getViewportSize = (): ViewportSize => ({
+  width: window.innerWidth,
+  height: window.innerHeight,
+});
 
 /**
  * App-level image lightbox. Any thumbnail in the app (composer attachments, the
@@ -44,11 +49,6 @@ const ImageViewerContext = createContext<ImageViewerContextValue | null>(null);
  */
 export function ImageViewerProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<ViewerState | null>(null);
-  // Recompute the centered target on viewport resize while open.
-  const [viewport, setViewport] = useState(() => ({
-    width: window.innerWidth,
-    height: window.innerHeight,
-  }));
 
   const open = useCallback<ImageViewerContextValue["open"]>((src, alt, originRect) => {
     const origin: OriginRect = {
@@ -90,12 +90,9 @@ export function ImageViewerProvider({ children }: { children: ReactNode }) {
         close();
       }
     };
-    const onResize = () => setViewport({ width: window.innerWidth, height: window.innerHeight });
     window.addEventListener("keydown", onKey, true);
-    window.addEventListener("resize", onResize);
     return () => {
       window.removeEventListener("keydown", onKey, true);
-      window.removeEventListener("resize", onResize);
     };
   }, [state, close]);
 
@@ -110,7 +107,6 @@ export function ImageViewerProvider({ children }: { children: ReactNode }) {
             key="image-viewer"
             onClose={close}
             state={state}
-            viewport={viewport}
           />
         ) : null}
       </AnimatePresence>
@@ -181,43 +177,54 @@ const EASE_BEZIER = [0.16, 1, 0.3, 1] as const;
 
 function ImageViewerOverlay({
   state,
-  viewport,
   onClose,
 }: {
   state: ViewerState;
-  viewport: { width: number; height: number };
   onClose(): void;
 }) {
   const { src, alt, origin, natural } = state;
+  const [viewport, setViewport] = useState(getViewportSize);
 
   // The lightbox lives in the renderer DOM, but Electron composites embedded
   // browser views above the DOM — so hide them while the viewer (and its exit
   // animation) is mounted, letting the dark backdrop dim everything uniformly.
   useSuppressNativeSurface();
 
-  // Centered target rect: fit the intrinsic image within most of the viewport,
-  // upscaling small element clips so they read clearly (Cursor does the same).
-  const target = useMemo(() => {
-    const maxW = viewport.width * 0.9;
-    const maxH = viewport.height * 0.86;
+  useEffect(() => {
+    const onResize = () => setViewport(getViewportSize());
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  // Center a real visual stage first, then fit the image inside it. This keeps
+  // screenshot gutters from visually blending into the backdrop and looking off-center.
+  const stage = useMemo(() => {
+    const padding = Math.min(28, Math.max(16, viewport.width * 0.015));
+    const maxW = Math.max(1, Math.min(viewport.width * 0.82, 1360) - padding * 2);
+    const maxH = Math.max(1, viewport.height * 0.66 - padding * 2);
     const scale = Math.min(maxW / natural.width, maxH / natural.height);
-    const width = Math.max(1, natural.width * scale);
-    const height = Math.max(1, natural.height * scale);
+    const imageWidth = Math.max(1, natural.width * scale);
+    const imageHeight = Math.max(1, natural.height * scale);
+    const width = imageWidth + padding * 2;
+    const height = imageHeight + padding * 2;
     return {
-      left: (viewport.width - width) / 2,
-      top: (viewport.height - height) / 2,
       width,
       height,
+      padding,
+      imageWidth,
+      imageHeight,
     };
   }, [viewport, natural]);
 
   // FLIP: animate a transform from the thumbnail rect to the centered target
   // (transform is GPU-cheap and smooth, unlike animating top/left/width/height).
+  const centeredLeft = (viewport.width - stage.width) / 2;
+  const centeredTop = (viewport.height - stage.height) / 2;
   const fromTransform = {
-    x: origin.x - target.left,
-    y: origin.y - target.top,
-    scaleX: origin.width / target.width,
-    scaleY: origin.height / target.height,
+    x: origin.x - centeredLeft,
+    y: origin.y - centeredTop,
+    scaleX: origin.width / stage.width,
+    scaleY: origin.height / stage.height,
   };
 
   return (
@@ -231,32 +238,35 @@ function ImageViewerOverlay({
         onClick={onClose}
         transition={{ duration: 0.28, ease: "easeOut" }}
       />
-      <m.img
-        alt={alt}
+      <m.div
         animate={{ x: 0, y: 0, scaleX: 1, scaleY: 1, opacity: 1 }}
-        className="absolute select-none rounded-xl object-contain shadow-popup"
-        draggable={false}
+        className="relative z-10 flex items-center justify-center overflow-hidden rounded-xl border border-hairline bg-elevated shadow-popup"
         exit={{ ...fromTransform, opacity: 0 }}
         initial={{ ...fromTransform, opacity: 0.4 }}
-        src={src}
         style={{
-          left: target.left,
-          top: target.top,
-          width: target.width,
-          height: target.height,
+          width: stage.width,
+          height: stage.height,
+          padding: stage.padding,
           transformOrigin: "top left",
         }}
         transition={{ duration: 0.34, ease: EASE_BEZIER }}
-      />
+      >
+        <img
+          alt={alt}
+          className="select-none rounded-lg object-contain"
+          draggable={false}
+          src={src}
+          style={{
+            width: stage.imageWidth,
+            height: stage.imageHeight,
+          }}
+        />
+      </m.div>
       <m.div
         animate={{ opacity: 1, y: 0 }}
-        className="absolute flex items-center gap-1.5 rounded-lg border border-hairline bg-elevated/95 p-1 shadow-popup backdrop-blur"
+        className="absolute top-3 right-3 flex items-center gap-1.5 rounded-lg border border-hairline bg-elevated p-1 shadow-popup"
         exit={{ opacity: 0 }}
         initial={{ opacity: 0, y: -4 }}
-        style={{
-          top: Math.max(12, target.top + 12),
-          right: Math.max(12, viewport.width - (target.left + target.width) + 12),
-        }}
         transition={{ duration: 0.2, ease: "easeOut", delay: 0.12 }}
       >
         <ViewerAction
