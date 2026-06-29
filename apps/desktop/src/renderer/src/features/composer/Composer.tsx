@@ -30,8 +30,8 @@ import type {
   PromptImageAttachment,
   SkillSelection,
 } from "../../../../shared/contracts";
-import { BorderBeam } from "../../components/ui/BorderBeam";
 import { ImageThumb } from "../../components/ui/ImageViewer";
+import { ShineBorder } from "../../components/ui/ShineBorder";
 import { TypingAnimation } from "../../components/ui/TypingAnimation";
 import { cn } from "../../lib/cn";
 import {
@@ -434,7 +434,7 @@ export function Composer({
         onDragOver={handleDragOver}
         onDrop={handleDrop}
       >
-        {isRunning ? <BorderBeam /> : null}
+        {isRunning ? <ShineBorder /> : null}
         <div className="relative">
           {!hasText && !hasInlineTokens ? (
             <div
@@ -561,8 +561,6 @@ export function Composer({
 
         {/* @container: controls collapse their labels to icons as the composer
           narrows (responsive to the composer's own width, not the viewport). */}
-        {/* @container: controls collapse their labels to icons as the composer
-          narrows (responsive to the composer's own width, not the viewport). */}
         <div className="@container flex items-center gap-2 px-3 pt-1 pb-2.5">
           <button
             aria-label="Attach files"
@@ -587,6 +585,8 @@ export function Composer({
             type="file"
           />
 
+          <ApprovalModeSelect />
+
           {mode === "plan" ? <PlanModePill onExit={() => setMode("build")} /> : null}
 
           <ModelSelect
@@ -598,14 +598,18 @@ export function Composer({
 
           <div className="flex-1" />
 
-          {/* Stop while running; otherwise the send button is always shown (active in
-            brand purple, muted/disabled when there's nothing to send). */}
+          <ContextUsageIndicator
+            {...(currentModel?.contextWindow ? { contextWindow: currentModel.contextWindow } : {})}
+            {...(contextUsage ? { usage: contextUsage } : {})}
+          />
+
+          {/* Stop while running; otherwise the send button is always shown. */}
           <AnimatePresence initial={false} mode="popLayout">
             {isRunning && onAbort ? (
               <m.button
                 animate={{ opacity: 1, scale: 1 }}
                 aria-label="Stop"
-                className="flex size-[26px] shrink-0 items-center justify-center rounded-full bg-focus-ring text-white shadow-composer transition-colors hover:bg-focus-ring-soft active:scale-[0.94]"
+                className="flex size-[26px] shrink-0 items-center justify-center rounded-full bg-fg text-canvas shadow-composer transition-colors hover:bg-fg-muted active:scale-[0.94]"
                 exit={{ opacity: 0 }}
                 initial={{ opacity: 0, scale: 0.96 }}
                 key="stop"
@@ -619,7 +623,7 @@ export function Composer({
               <m.button
                 animate={{ opacity: 1 }}
                 aria-label="Send"
-                className="flex size-[26px] shrink-0 items-center justify-center rounded-full bg-focus-ring text-white transition-colors hover:bg-focus-ring-soft active:scale-[0.94] disabled:bg-chip-strong disabled:text-fg-faint"
+                className="flex size-[26px] shrink-0 items-center justify-center rounded-full bg-fg text-canvas transition-colors hover:bg-fg-muted active:scale-[0.94] disabled:bg-chip-strong disabled:text-fg-faint"
                 disabled={!hasContent || !canSubmit || models.length === 0 || !model}
                 exit={{ opacity: 0 }}
                 initial={{ opacity: 0 }}
@@ -633,16 +637,6 @@ export function Composer({
             )}
           </AnimatePresence>
         </div>
-      </div>
-
-      {/* Outside the box, Cursor-style: permission at bottom-left, context usage
-        at bottom-right — quiet metadata that doesn't crowd the input itself. */}
-      <div className="mt-1.5 flex items-center justify-between px-1.5">
-        <ApprovalModeSelect />
-        <ContextUsageIndicator
-          {...(currentModel?.contextWindow ? { contextWindow: currentModel.contextWindow } : {})}
-          {...(contextUsage ? { usage: contextUsage } : {})}
-        />
       </div>
     </div>
   );
@@ -841,9 +835,6 @@ function ContextUsageRing({ percent }: { percent: number | undefined }) {
           !known && "opacity-0",
         )}
       />
-      {!known ? (
-        <circle className="opacity-85" cx={center} cy={center} fill="currentColor" r="1.8" />
-      ) : null}
     </svg>
   );
 }

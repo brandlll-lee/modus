@@ -54,10 +54,9 @@ export function ApprovalModeSelect() {
 
   return (
     <Select.Root onValueChange={(next) => changeMode(next as ApprovalMode)} value={mode}>
-      {/* Icon-only control: the mode glyph + dropdown chevron (label lives in the menu). */}
       <Select.Trigger
         aria-label={`Approval mode: ${current.label}`}
-        className="app-no-drag flex h-[26px] shrink-0 items-center gap-0.5 rounded-md px-1.5 transition-colors hover:bg-hover data-popup-open:bg-hover"
+        className="app-no-drag flex h-[26px] shrink-0 items-center gap-1.5 rounded-md px-1.5 text-sm transition-colors hover:bg-hover data-popup-open:bg-hover"
         title={current.label}
       >
         <TriggerIcon
@@ -65,6 +64,9 @@ export function ApprovalModeSelect() {
           size={15}
           stroke={1.8}
         />
+        <span className={cn("max-w-[120px] truncate", danger ? "text-accent" : "text-fg-subtle")}>
+          {current.label}
+        </span>
         <Select.Icon>
           <IconChevronDown className="shrink-0 text-fg-faint" size={12} stroke={2} />
         </Select.Icon>

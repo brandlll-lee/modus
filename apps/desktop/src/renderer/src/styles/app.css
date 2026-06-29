@@ -37,6 +37,7 @@
   /* Composer border on hover/focus: lifts clearly above the resting edge — a
      quiet "alive" cue, never a glow. Replaces the old purple focus ring. */
   --color-composer-border-strong: rgba(255, 255, 255, 0.2);
+  --color-composer-shine: rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0.16);
 
   /* 悬停 / 选中 半透明白叠层 */
   --color-hover: rgba(255, 255, 255, 0.04);
@@ -129,7 +130,7 @@
   --shadow-composer-focus:
     0 1px 10px -6px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--color-focus-ring),
     0 0 16px -3px rgba(133, 63, 244, 0.4);
-  --shadow-popup: 0 6px 24px -10px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  --shadow-popup: 0 1px 2px rgba(0, 0, 0, 0.28);
 
   --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
 }
@@ -181,6 +182,7 @@
   --color-composer-border: rgba(0, 0, 0, 0.09);
   /* Hover/focus: a clearly darker edge — the deliberate cue, no glow. */
   --color-composer-border-strong: rgba(0, 0, 0, 0.22);
+  --color-composer-shine: rgba(0, 0, 0, 0.34), rgba(0, 0, 0, 0.1);
 
   /* Hover / active overlays — black-alpha */
   --color-hover: rgba(0, 0, 0, 0.04);
@@ -234,7 +236,7 @@
   --shadow-composer-focus:
     0 1px 3px rgba(0, 0, 0, 0.08), 0 0 0 1px var(--color-focus-ring),
     0 0 16px -4px rgba(133, 63, 244, 0.28);
-  --shadow-popup: 0 8px 28px -8px rgba(0, 0, 0, 0.18), 0 0 0 1px rgba(0, 0, 0, 0.07);
+  --shadow-popup: 0 1px 2px rgba(0, 0, 0, 0.06);
 }
 
 /*
@@ -382,39 +384,37 @@ input {
   }
 }
 
-/* Magic UI Border Beam —— 仅在 agent 工作时挂载于 composer。
-   关键性能取舍：用纯 CSS @keyframes 驱动 offset-distance（脱离 JS rAF 调度），
-   agent 流式输出占满主线程时也不抢占 JS，比 Motion 逐帧 set 更不易掉帧；
-   彗星元素 will-change 提层，mask 把绘制裁剪到 1.5px 边框环，重绘面积极小。 */
-@keyframes modus-border-beam {
-  from {
-    offset-distance: 0%;
+@keyframes modus-shine-border {
+  0% {
+    background-position: 0% 0%;
+  }
+  50% {
+    background-position: 100% 100%;
   }
   to {
-    offset-distance: 100%;
+    background-position: 0% 0%;
   }
 }
 
 @layer utilities {
-  /* 边框环：mask 求交 padding-box 透明 ∩ border-box 实色 = 只保留描边区域 */
-  .modus-border-beam-ring {
-    border: var(--mbb-border-width, 1.5px) solid transparent;
+  .modus-shine-border {
+    padding: var(--shine-border-width, 1px);
+    background-size: 360% 360%;
     mask:
-      linear-gradient(transparent, transparent) padding-box,
-      linear-gradient(#000, #000) border-box;
-    mask-composite: intersect;
-  }
-
-  .modus-border-beam-comet {
-    position: absolute;
-    aspect-ratio: 1 / 1;
-    will-change: offset-distance;
-    animation: modus-border-beam var(--mbb-duration, 6s) linear infinite;
+      linear-gradient(#fff 0 0) content-box,
+      linear-gradient(#fff 0 0);
+    mask-composite: exclude;
+    -webkit-mask:
+      linear-gradient(#fff 0 0) content-box,
+      linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    will-change: background-position;
+    animation: modus-shine-border var(--shine-duration, 11s) linear infinite;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .modus-border-beam-comet {
+  .modus-shine-border {
     animation: none;
   }
 }
@@ -746,6 +746,11 @@ input {
   line-height: 1.55;
 }
 
+.modus-markdown [data-streamdown="code-block-body"] :where(pre, code) {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /*
  * Shiki syntax colours. Streamdown highlights with a [light, dark] theme pair
  * and stamps each token with inline CSS vars — `--sdm-c` (light colour) and
@@ -761,6 +766,9 @@ input {
 .modus-markdown [data-streamdown="code-block-body"] span[style*="--sdm-tbg"] {
   background-color: var(--sdm-tbg);
   border-radius: 3px;
+}
+.modus-markdown [data-streamdown="code-block-body"] code > span {
+  display: block;
 }
 :root[data-theme="dark"] .modus-markdown [data-streamdown="code-block-body"] span {
   color: var(--shiki-dark, var(--sdm-c, inherit));
