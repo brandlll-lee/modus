@@ -90,7 +90,9 @@ export const MessageBlock = memo(function MessageBlock({
   const displayContent = useSmoothStreamingText(content, streaming);
 
   if (messageRole === "user") {
-    if (!content.trim()) return null;
+    const hasAttachments = Boolean(attachments?.length);
+    const hasText = content.trim().length > 0;
+    if (!hasText && !hasAttachments) return null;
 
     if (editing && onEditResend) {
       const editableContextItems =
@@ -114,39 +116,41 @@ export const MessageBlock = memo(function MessageBlock({
 
     return (
       <div className="group flex min-w-0 max-w-full flex-col items-end gap-1">
-        <div className="min-w-0 max-w-[78%] rounded-xl border border-hairline-soft bg-surface/95 px-4 py-2.5 text-sm text-fg leading-relaxed shadow-composer">
-          {attachments && attachments.length > 0 ? (
-            <div className="mb-2 flex flex-wrap justify-end gap-1.5">
-              {attachments.map((attachment, index) => (
-                <ImageThumb
-                  alt={attachment.name ?? `attachment ${index + 1}`}
-                  className="max-h-44 max-w-full rounded-lg border border-hairline object-contain"
-                  key={`${attachment.name ?? "image"}:${attachment.data.length}:${attachment.data.slice(-24)}`}
-                  src={`data:${attachment.mimeType};base64,${attachment.data}`}
-                  title={attachment.name}
-                />
-              ))}
-            </div>
-          ) : null}
-          <div className="whitespace-pre-wrap wrap-break-word">
-            {contextChips?.map((chip) => (
-              <InlineContextToken
-                chip={chip}
-                key={`${chip.kind}:${chip.label}:${chip.detail ?? ""}`}
+        {attachments && attachments.length > 0 ? (
+          <div className="flex max-w-[78%] flex-wrap justify-end gap-2">
+            {attachments.map((attachment, index) => (
+              <ImageThumb
+                alt={attachment.name ?? `attachment ${index + 1}`}
+                className="size-24 rounded-lg border border-hairline object-cover shadow-composer"
+                key={`${attachment.name ?? "image"}:${attachment.data.length}:${attachment.data.slice(-24)}`}
+                src={`data:${attachment.mimeType};base64,${attachment.data}`}
+                title={attachment.name}
               />
             ))}
-            {(skills ?? []).map((skill) => (
-              <InlineSkillToken key={skill.path} name={skill.name} />
-            ))}
-            {content}
           </div>
-        </div>
+        ) : null}
+        {hasText ? (
+          <div className="min-w-0 max-w-[78%] rounded-xl border border-hairline-soft bg-surface/95 px-4 py-2.5 text-sm text-fg leading-relaxed shadow-composer">
+            <div className="whitespace-pre-wrap wrap-break-word">
+              {contextChips?.map((chip) => (
+                <InlineContextToken
+                  chip={chip}
+                  key={`${chip.kind}:${chip.label}:${chip.detail ?? ""}`}
+                />
+              ))}
+              {(skills ?? []).map((skill) => (
+                <InlineSkillToken key={skill.path} name={skill.name} />
+              ))}
+              {content}
+            </div>
+          </div>
+        ) : null}
         <div className="flex h-6 max-w-full items-center gap-1 pr-0.5 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
           <span className="text-2xs text-fg-faint tabular-nums">{formatClock(createdAt)}</span>
           {checkpointId && onRestoreCheckpoint ? (
             <CheckpointRestoreButton checkpointId={checkpointId} onRestore={onRestoreCheckpoint} />
           ) : null}
-          <CopyButton label="Copy message" text={content} />
+          {hasText ? <CopyButton label="Copy message" text={content} /> : null}
           {editable && onEditResend ? (
             <Tooltip content="Edit" side="top" sideOffset={6}>
               <button
@@ -384,9 +388,8 @@ function UserMessageEditor({
     <m.div
       animate={{ opacity: 1, scale: 1 }}
       className={cn(
-        "rounded-[14px] border border-composer-border bg-surface px-4 pt-3 pb-2.5 shadow-composer-edge",
-        "transition-[border-color,box-shadow] duration-150",
-        !sending && "focus-within:border-focus-ring focus-within:shadow-composer-focus",
+        "rounded-[22px] bg-chip-faint px-4 pt-3 pb-3",
+        "transition-colors duration-150 focus-within:bg-chip",
       )}
       initial={{ opacity: 0, scale: 0.99 }}
       transition={{ duration: 0.14, ease: [0.22, 1, 0.36, 1] }}
@@ -457,11 +460,12 @@ function UserMessageEditor({
           />
         ) : null}
       </div>
-      <div className="mt-2 flex items-center gap-2">
+      <div className="mt-5 flex items-center justify-end gap-2">
         <span
           className={cn(
             "min-w-0 flex-1 truncate text-2xs",
             error ? "text-danger" : "text-fg-faint",
+            !error && "sr-only",
           )}
           title={error}
         >
@@ -471,7 +475,7 @@ function UserMessageEditor({
               : "Sending removes the messages after this point.")}
         </span>
         <button
-          className="flex h-7 shrink-0 items-center rounded-full border border-hairline bg-transparent px-3.5 text-xs text-fg-muted transition-colors hover:bg-hover hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+          className="flex h-8 shrink-0 items-center rounded-full border border-hairline bg-elevated px-3.5 text-sm text-fg-muted transition-colors hover:bg-hover hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
           disabled={sending}
           onClick={onCancel}
           type="button"
@@ -479,7 +483,7 @@ function UserMessageEditor({
           Cancel
         </button>
         <button
-          className="flex h-7 shrink-0 items-center gap-1.5 rounded-full bg-fg px-4 text-xs font-medium text-canvas transition-colors hover:bg-fg-muted active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-chip-strong disabled:text-fg-faint"
+          className="flex h-8 shrink-0 items-center gap-1.5 rounded-full bg-fg px-4 text-sm font-medium text-canvas transition-colors hover:bg-fg-muted active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-chip-strong disabled:text-fg-faint"
           disabled={!canSend}
           onClick={() => void send()}
           type="button"
