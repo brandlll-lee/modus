@@ -23,14 +23,15 @@ describe("Fast Codebase service", () => {
     const calls: string[][] = [];
     const runner: CodeGraphRunner = async (args) => {
       calls.push(args);
-      return ok(args[0] === "query" ? '[{"node":{"filePath":"src/run.ts","startLine":7}}]' : "ok");
+      return ok(args[0] === "explore" ? "Relevant map\n- src/run.ts:7" : "ok");
     };
 
     const result = await runFastCodebase({ cwd: root, query: "run", runner });
 
     expect(calls).toEqual([
       ["init", root, "--verbose"],
-      ["query", "-p", root, "-l", "32", "--json", "run"],
+      ["query", "-p", root, "-l", "8", "--json", "run"],
+      ["explore", "-p", root, "--max-files", "1", "run"],
     ]);
     expect(result.details.indexDir).toBe(join(root, ".codegraph"));
     expect(result.details.indexed).toBe(true);
@@ -65,7 +66,7 @@ describe("Fast Codebase service", () => {
     expect(calls.filter(([command]) => command === "init")).toHaveLength(1);
     releaseIndex();
     await Promise.all([first, second]);
-    expect(calls.filter(([command]) => command === "query")).toHaveLength(2);
+    expect(calls.filter(([command]) => command === "explore")).toHaveLength(2);
   });
 
   it("aborts the shared index when the only waiter cancels", async () => {
@@ -109,7 +110,7 @@ describe("Fast Codebase service", () => {
     const calls: string[][] = [];
     const runner: CodeGraphRunner = async (args) => {
       calls.push(args);
-      return ok(args[0] === "query" ? "[]" : "ok");
+      return ok(args[0] === "explore" ? "map" : "ok");
     };
 
     const result = await runFastCodebase({
@@ -157,7 +158,8 @@ describe("Fast Codebase service", () => {
 
     expect(calls).toEqual([
       ["status", root, "--json"],
-      ["query", "-p", root, "-l", "32", "--json", "overview"],
+      ["query", "-p", root, "-l", "8", "--json", "overview"],
+      ["explore", "-p", root, "--max-files", "1", "overview"],
     ]);
     expect(result.text).toContain("Index: ready");
   });
@@ -176,7 +178,7 @@ describe("Fast Codebase service", () => {
 
     await runFastCodebase({ cwd: root, query: "overview", runner });
 
-    expect(calls.map(([command]) => command)).toEqual(["status", "query"]);
+    expect(calls.map(([command]) => command)).toEqual(["status", "query", "explore"]);
   });
 
   it("syncs an existing index when CodeGraph reports pending changes", async () => {
@@ -196,12 +198,13 @@ describe("Fast Codebase service", () => {
     expect(calls).toEqual([
       ["status", root, "--json"],
       ["sync", root],
-      ["query", "-p", root, "-l", "32", "--json", "overview"],
+      ["query", "-p", root, "-l", "8", "--json", "overview"],
+      ["explore", "-p", root, "--max-files", "1", "overview"],
     ]);
     expect(result.text).toContain("Index: synced");
   });
 
-  it("uses explore only when source snippets are requested", async () => {
+  it("allows one source file when source snippets are requested", async () => {
     const root = tempWorkspace();
     const calls: string[][] = [];
     const runner: CodeGraphRunner = async (args) => {
@@ -213,11 +216,12 @@ describe("Fast Codebase service", () => {
 
     expect(calls).toEqual([
       ["init", root, "--verbose"],
-      ["explore", "-p", root, "--max-files", "3", "run"],
+      ["query", "-p", root, "-l", "12", "--json", "run"],
+      ["explore", "-p", root, "--max-files", "1", "run"],
     ]);
   });
 
-  it("returns code-shaped query hits before low-signal matches", async () => {
+  it("adds compact exact hits before the code map", async () => {
     const root = tempWorkspace();
     const runner: CodeGraphRunner = async (args) =>
       ok(
@@ -225,34 +229,64 @@ describe("Fast Codebase service", () => {
           ? JSON.stringify([
               {
                 node: {
-                  filePath: "modules/mono/System.cs",
-                  kind: "import",
-                  name: "System",
-                  signature: "using System;",
+                  filePath: "src/run.ts",
+                  kind: "function",
+                  name: "run",
+                  signature: "function run(): void",
+                  startLine: 7,
                 },
-                score: 100,
-              },
-              {
-                node: {
-                  filePath: "modules/solers_ai/core/solers_tool_registry.cpp",
-                  kind: "file",
-                  name: "solers_tool_registry.cpp",
-                },
-                score: 10,
               },
             ])
-          : "ok",
+          : args[0] === "explore"
+            ? "map"
+            : "ok",
       );
+
+    const result = await runFastCodebase({ cwd: root, query: "run", runner });
+
+    expect(result.text).toContain("**Exact hits**");
+    expect(result.text).toContain("src/run.ts:7 — function run");
+    expect(result.text).not.toContain("function run(): void");
+    expect(result.text).toContain("**Code map**");
+    expect(result.text.indexOf("**Exact hits**")).toBeLessThan(result.text.indexOf("**Code map**"));
+  });
+
+  it("caps long tool output with a narrower-query hint", async () => {
+    const root = tempWorkspace();
+    const runner: CodeGraphRunner = async (args) =>
+      ok(args[0] === "explore" ? "x".repeat(40_000) : "ok");
 
     const result = await runFastCodebase({
       cwd: root,
-      limit: 1,
+      includeCode: true,
+      query: "run",
+      runner,
+    });
+
+    expect(result.text.length).toBeLessThan(25_000);
+    expect(result.text).toContain("output truncated");
+    expect(result.text).toContain("narrower query");
+  });
+
+  it("adds guidance that prefers narrower map queries before broad grep", async () => {
+    const root = tempWorkspace();
+    const runner: CodeGraphRunner = async (args) =>
+      ok(args[0] === "explore" ? "map codegraph_explore" : "ok");
+
+    const result = await runFastCodebase({
+      cwd: root,
       query: "solers ai tool registry",
       runner,
     });
 
-    expect(result.text).toContain("solers_tool_registry.cpp");
-    expect(result.text).not.toContain("using System");
+    expect(result.text).toContain("How to use this map");
+    expect(result.text).toContain("Read exact hit line ranges first");
+    expect(result.text).toContain("Prefer small reads around listed lines");
+    expect(result.text).toContain("ask fast_codebase again with a narrower query");
+    expect(result.text).toContain("include_code only for a narrow implementation lookup");
+    expect(result.text).toContain("preferably scoped");
+    expect(result.text).not.toContain("codegraph_explore");
+    expect(result.text.indexOf("How to use this map")).toBeLessThan(result.text.indexOf("map"));
   });
 
   it("summarizes stderr when queries fail", async () => {

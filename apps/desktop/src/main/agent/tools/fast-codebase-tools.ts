@@ -25,12 +25,12 @@ const fastCodebaseParams = Type.Object({
   include_code: Type.Optional(
     Type.Boolean({
       description:
-        "Include small source snippets for the top matches. Default false to save tokens.",
+        "Include source snippets only for narrow implementation lookups. Omit for first discovery queries.",
     }),
   ),
   limit: Type.Optional(
     Type.Number({
-      description: "Maximum search results to return, from 1 to 12. Default 8.",
+      description: "Result detail budget from 1 to 12. Default 8.",
     }),
   ),
   workspace_path: Type.Optional(
@@ -49,12 +49,16 @@ const fastCodebaseTool: ToolDefinition<typeof fastCodebaseParams> = defineTool({
     "with far fewer tokens than grep/read exploration. It is read-only and local; read the live " +
     "file before editing because the index is a navigation snapshot.",
   promptSnippet:
-    "fast_codebase(query, include_code=false, limit=8) — locate relevant files and symbols before reading source.",
+    "fast_codebase(query, include_code=false, limit=8) — locate exact hits, files, and symbols before reading source.",
   promptGuidelines: [
-    "Use fast_codebase before broad grep/read sweeps when you need to understand where code lives in the current workspace.",
-    "Treat Fast Codebase as navigation, not the source of truth: read the specific current file before editing.",
-    "Keep include_code false by default; set it true only for a specific function/class implementation, not broad project discovery.",
+    "Prefer fast_codebase for codebase discovery, architecture, where-is, dependencies, relationships, and locating likely files; it is usually cheaper than broad read/grep.",
+    "Treat Fast Codebase as a code map, not the source of truth: read the specific current file before editing.",
+    "For the first broad query in a task, omit include_code and ask for coordinates first.",
+    "Set include_code true only for a narrow follow-up on an exact function, class, or file implementation.",
     "Keep limit between 8 and 12; use a narrower query instead of a larger limit.",
+    "When the first map is close but lacks exact evidence, call fast_codebase again with a narrower query using returned names, files, APIs, or relationships.",
+    "Use read after Fast Codebase identifies specific files or line ranges and you need implementation details.",
+    "Use grep mainly for exact literal checks, absence proof, or when the code map clearly misses the area; scope it to mapped files or directories when possible.",
     "Use workspace_path only when you need to focus on a subdirectory inside the current workspace.",
   ],
   parameters: fastCodebaseParams,

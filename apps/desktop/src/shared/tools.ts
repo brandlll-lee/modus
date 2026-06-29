@@ -23,6 +23,7 @@ export type ToolIconName =
   | "mcp"
   | "modus"
   | "todo"
+  | "hierarchy"
   | "tool";
 
 /**
@@ -242,7 +243,7 @@ export const FAST_CODEBASE_TOOL_NAME = "fast_codebase";
 
 /** UI metadata for Fast Codebase. */
 export const FAST_CODEBASE_TOOL_UI: ToolUiMeta = {
-  iconName: "file-search",
+  iconName: "hierarchy",
   verb: "Fast Codebase",
   primaryArgKey: "query",
   render: "live",

@@ -3,8 +3,9 @@ import { existsSync, statSync } from "node:fs";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 
 const OUTPUT_CAP = 60_000;
+const RESULT_BODY_CAP = 24_000;
 const STDERR_CAP = 20_000;
-const SOURCE_FILE_LIMIT = 3;
+const SOURCE_FILE_LIMIT = 1;
 const INDEX_TIMEOUT_MS = 5 * 60_000;
 const QUERY_TIMEOUT_MS = 90_000;
 // biome-ignore lint/complexity/useRegexLiterals: regex literals with ESC trip noControlCharactersInRegex.
@@ -46,9 +47,8 @@ type CodeGraphQueryResult = {
     kind?: string;
     name?: string;
     qualifiedName?: string;
-    signature?: string;
+    startLine?: number;
   };
-  score?: number;
 };
 
 export type CodeGraphRunner = (
@@ -75,6 +75,13 @@ export type FastCodebaseInput = {
 function appendCapped(current: string, chunk: string, cap: number): string {
   const next = `${current}${chunk}`;
   return next.length > cap ? next.slice(next.length - cap) : next;
+}
+
+function capResultBody(text: string): string {
+  if (text.length <= RESULT_BODY_CAP) {
+    return text;
+  }
+  return `${text.slice(0, RESULT_BODY_CAP).trimEnd()}\n\n[Fast Codebase output truncated. Use a narrower query or read the listed files.]`;
 }
 
 function codeGraphIndexDir(cwd: string): string {
@@ -336,66 +343,27 @@ function parseStatus(result: CodeGraphCallResult): { pending: boolean } {
   }
 }
 
-function queryTerms(query: string): string[] {
-  return [
-    ...new Set(
-      query
-        .toLowerCase()
-        .split(/[^a-z0-9]+/)
-        .filter(Boolean),
-    ),
-  ];
-}
-
-function queryResultRank(result: CodeGraphQueryResult, terms: string[]): number {
-  const node = result.node;
-  if (!node) {
-    return 0;
-  }
-  const text = [node.name, node.qualifiedName, node.filePath, node.signature]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-  const matchScore = terms.reduce((score, term) => score + (text.includes(term) ? 1 : 0), 0);
-  const kindScore =
-    {
-      file: 4,
-      class: 4,
-      function: 4,
-      method: 4,
-      interface: 3,
-      struct: 3,
-      type_alias: 3,
-      field: 1,
-      property: 1,
-      variable: 1,
-      enum: -3,
-      enum_member: -3,
-      import: -4,
-    }[node.kind ?? ""] ?? 0;
-  return matchScore + kindScore;
-}
-
-function rankedQueryText(text: string, query: string, limit: number): string {
+function exactHitsText(text: string, limit: number): string {
   try {
     const results = JSON.parse(text) as CodeGraphQueryResult[];
     if (!Array.isArray(results)) {
-      return text;
+      return "";
     }
-    const terms = queryTerms(query);
-    return JSON.stringify(
-      results
-        .sort(
-          (left, right) =>
-            queryResultRank(right, terms) - queryResultRank(left, terms) ||
-            (right.score ?? 0) - (left.score ?? 0),
-        )
-        .slice(0, limit),
-      null,
-      2,
-    );
+    const hits = results
+      .map(({ node }) => {
+        if (!node?.filePath) {
+          return undefined;
+        }
+        const line = typeof node.startLine === "number" ? `:${node.startLine}` : "";
+        const symbol = node.qualifiedName ?? node.name;
+        const label = [node.kind, symbol].filter(Boolean).join(" ");
+        return `- ${node.filePath}${line}${label ? ` — ${label}` : ""}`;
+      })
+      .filter((line): line is string => Boolean(line))
+      .slice(0, limit);
+    return hits.length ? `**Exact hits**\n\n${hits.join("\n")}\n\n` : "";
   } catch {
-    return text;
+    return "";
   }
 }
 
@@ -550,18 +518,23 @@ async function queryCodeGraph(input: {
   onProgress?: ((progress: FastCodebaseProgress) => void) | undefined;
 }): Promise<string> {
   input.onProgress?.({ phase: "querying", message: "Querying CodeGraph..." });
-  const queryLimit = Math.min(input.limit * 4, 48);
-  const args = input.includeCode
-    ? [
-        "explore",
-        "-p",
-        input.cwd,
-        "--max-files",
-        String(Math.min(input.limit, SOURCE_FILE_LIMIT)),
-        input.query,
-      ]
-    : ["query", "-p", input.cwd, "-l", String(queryLimit), "--json", input.query];
-  const result = await input.runner(args, {
+  const exact = await input.runner(
+    ["query", "-p", input.cwd, "-l", String(input.limit), "--json", input.query],
+    {
+      cwd: input.cwd,
+      signal: input.signal,
+      timeoutMs: QUERY_TIMEOUT_MS,
+    },
+  );
+  const exploreArgs = [
+    "explore",
+    "-p",
+    input.cwd,
+    "--max-files",
+    String(input.includeCode ? Math.min(input.limit, SOURCE_FILE_LIMIT) : 1),
+    input.query,
+  ];
+  const result = await input.runner(exploreArgs, {
     cwd: input.cwd,
     signal: input.signal,
     timeoutMs: QUERY_TIMEOUT_MS,
@@ -569,9 +542,18 @@ async function queryCodeGraph(input: {
   if (result.isError) {
     throw new Error(`Fast Codebase query failed:\n${failureText(result)}`);
   }
-  return (
-    input.includeCode ? result.text : rankedQueryText(result.text, input.query, input.limit)
-  ).slice(0, OUTPUT_CAP);
+  return capResultBody(
+    `How to use this map:
+- Read exact hit line ranges first, not whole files.
+- Prefer small reads around listed lines.
+- If it is close but missing exact evidence, ask fast_codebase again with a narrower query using the files, symbols, APIs, or relationships below.
+- Keep follow-up maps coordinate-first; use include_code only for a narrow implementation lookup.
+- Use grep for exact text existence or absence checks, preferably scoped to files or directories found here.
+
+${exact.isError ? "" : exactHitsText(exact.text, input.limit)}**Code map**
+
+${result.text.replaceAll("codegraph_explore", "fast_codebase")}`,
+  );
 }
 
 function snapshot(cwd: string): string | undefined {
