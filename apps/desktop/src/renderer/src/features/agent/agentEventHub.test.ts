@@ -114,6 +114,15 @@ describe("appendAgentEvents", () => {
     expect(merged).toHaveLength(2);
   });
 
+  it("deduplicates run lifecycle echoes from history and live events", () => {
+    const merged = appendAgentEvents(
+      [item(runStarted)],
+      [item(runStarted), item(runCompleted), item(runCompleted)],
+    );
+
+    expect(merged.map((entry) => entry.event.type)).toEqual(["run.started", "run.completed"]);
+  });
+
   it("collapses a run of tool.delta for the same call to the latest args", () => {
     const merged = appendAgentEvents(
       [],

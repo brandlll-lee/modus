@@ -22,6 +22,9 @@ export type AgentEventItem = {
  * replaced by the runtime's authoritative echo.
  */
 function foldKey(event: AgentEvent): string | undefined {
+  if ("runId" in event && typeof event.runId === "string") {
+    return `${event.type}:${event.runId}`;
+  }
   switch (event.type) {
     case "message.started":
     case "message.completed":
