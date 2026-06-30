@@ -1,5 +1,5 @@
 import { IconFileUnknown } from "@tabler/icons-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { DiffFileVersions, FileChange } from "../../../../shared/contracts";
 import { CodeViewer } from "../../components/code/CodeViewer";
 import { DiffViewer } from "../../components/code/DiffViewer";
@@ -35,12 +35,23 @@ export function FileDiffPreview({
 
   // Working-tree pair: show the staged version only when nothing remains unstaged.
   const mode = change.staged && !change.unstaged ? "staged" : "unstaged";
+  const requestKey = previewRequestKey({
+    cwd,
+    path: change.path,
+    mode,
+    originalPath: change.renamedFrom,
+    commit,
+  });
+  const previousRequestKeyRef = useRef(requestKey);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: refreshToken is a deliberate refetch trigger bumped by the parent after stage/unstage/discard.
   useEffect(() => {
     let cancelled = false;
     setError(undefined);
-    setVersions(undefined);
+    if (previousRequestKeyRef.current !== requestKey) {
+      setVersions(undefined);
+      previousRequestKeyRef.current = requestKey;
+    }
     void window.modus.diff
       .fileVersions({
         cwd,
@@ -58,7 +69,7 @@ export function FileDiffPreview({
     return () => {
       cancelled = true;
     };
-  }, [cwd, change.path, change.renamedFrom, mode, commit, refreshToken]);
+  }, [cwd, change.path, change.renamedFrom, mode, commit, refreshToken, requestKey]);
 
   if (error) {
     return <Notice>{error}</Notice>;
@@ -119,6 +130,18 @@ export function FileDiffPreview({
         wordWrap={false}
       />
     </div>
+  );
+}
+
+export function previewRequestKey(input: {
+  cwd: string;
+  path: string;
+  mode: "unstaged" | "staged";
+  originalPath?: string | undefined;
+  commit?: string | undefined;
+}): string {
+  return [input.cwd, input.path, input.mode, input.originalPath ?? "", input.commit ?? ""].join(
+    "\0",
   );
 }
 
