@@ -106,8 +106,8 @@ export function DiffViewer({
 
       const styles = getComputedStyle(document.documentElement);
       const fontFamily =
-        styles.getPropertyValue("--font-sans").trim() ||
-        '"Inter Variable", "Inter", system-ui, sans-serif';
+        styles.getPropertyValue("--font-mono").trim() ||
+        '"Cascadia Mono", "SFMono-Regular", Consolas, Menlo, monospace';
 
       const originalModel = monaco.editor.createModel(
         original,
@@ -151,7 +151,8 @@ export function DiffViewer({
         selectionHighlight: false,
         renderLineHighlight: "none",
         fontFamily,
-        fontSize: 12.5,
+        fontSize: 13,
+        fontWeight: "400",
         lineHeight: 22,
         wordWrap: wordWrap ? "on" : "off",
         guides: { indentation: false },

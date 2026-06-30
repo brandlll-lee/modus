@@ -13,10 +13,19 @@ import {
 } from "@tabler/icons-react";
 import type { ReactNode } from "react";
 import type { ContextItem } from "../../../../shared/contracts";
-import { iconForPath } from "../diff/fileIcon";
+import { materialIconForFile } from "../files/fileIcons";
 
 function basename(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
+}
+
+function fileTokenIcon(path: string): ReactNode {
+  const iconUrl = materialIconForFile(path);
+  return iconUrl ? (
+    <img alt="" className="size-[13px]" draggable={false} src={iconUrl} />
+  ) : (
+    <IconFileText size={13} stroke={1.7} />
+  );
 }
 
 /** Icon + display label for a context item — the single source for both the
@@ -25,7 +34,7 @@ export function tokenMeta(item: ContextItem): { icon: ReactNode; label: string }
   const props = { size: 13, stroke: 1.7 } as const;
   switch (item.type) {
     case "file":
-      return { icon: iconForPath(item.path, props), label: basename(item.path) };
+      return { icon: fileTokenIcon(item.path), label: basename(item.path) };
     case "folder":
       return { icon: <IconFolder {...props} />, label: `${basename(item.path)}/` };
     case "doc":

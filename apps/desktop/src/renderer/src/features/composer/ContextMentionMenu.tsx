@@ -15,7 +15,7 @@ import {
 import { Fragment } from "react";
 import type { ContextKind } from "../../../../shared/contracts";
 import { cn } from "../../lib/cn";
-import { iconForPath } from "../diff/fileIcon";
+import { materialIconForFile } from "../files/fileIcons";
 import type { MentionRow } from "./useComposerMentions";
 
 type ContextMentionMenuProps = {
@@ -53,10 +53,19 @@ function iconForKind(kind: ContextKind) {
   }
 }
 
+function fileRowIcon(path: string) {
+  const iconUrl = materialIconForFile(path);
+  return iconUrl ? (
+    <img alt="" className="size-[15px]" draggable={false} src={iconUrl} />
+  ) : (
+    <IconFileText size={15} stroke={1.6} />
+  );
+}
+
 /** Colored file-type glyph for file rows; otherwise the kind glyph. */
 function rowIcon(row: Extract<MentionRow, { row: "add" | "nav" }>) {
   if (row.row === "add" && row.item.type === "file") {
-    return iconForPath(row.item.path, { size: 15, stroke: 1.65 });
+    return fileRowIcon(row.item.path);
   }
   return iconForKind(row.icon);
 }

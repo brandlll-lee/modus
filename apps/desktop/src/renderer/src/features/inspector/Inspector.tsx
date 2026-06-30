@@ -74,13 +74,13 @@ const INSPECTOR_COLLAPSED_WIDTH = 0;
 const INSPECTOR_TRANSITION = { duration: 0.18, ease: [0.22, 1, 0.36, 1] } as const;
 
 const TABS = [
-  { value: "changes", label: "Changes", icon: <IconGitBranch size={15} stroke={1.65} /> },
-  { value: "plan", label: "Plan", icon: <IconLayoutList size={15} stroke={1.65} /> },
-  { value: "files", label: "Files", icon: <IconFileText size={15} stroke={1.65} /> },
-  { value: "subagents", label: "Subagents", icon: <IconGridDots size={15} stroke={1.65} /> },
-  { value: "browser", label: "Browser", icon: <IconWorld size={15} stroke={1.65} /> },
-  { value: "terminal", label: "Terminal", icon: <IconTerminal2 size={15} stroke={1.65} /> },
-  { value: "security", label: "Security", icon: <IconShieldCheck size={15} stroke={1.65} /> },
+  { value: "changes", label: "Changes", icon: <IconGitBranch size={18} stroke={1.7} /> },
+  { value: "plan", label: "Plan", icon: <IconLayoutList size={18} stroke={1.7} /> },
+  { value: "files", label: "Files", icon: <IconFileText size={18} stroke={1.7} /> },
+  { value: "subagents", label: "Subagents", icon: <IconGridDots size={18} stroke={1.7} /> },
+  { value: "browser", label: "Browser", icon: <IconWorld size={18} stroke={1.7} /> },
+  { value: "terminal", label: "Terminal", icon: <IconTerminal2 size={18} stroke={1.7} /> },
+  { value: "security", label: "Security", icon: <IconShieldCheck size={18} stroke={1.7} /> },
 ];
 
 export function Inspector({
@@ -207,7 +207,7 @@ export function Inspector({
   return (
     <m.aside
       className={cn(
-        "relative flex min-w-0 shrink-0 flex-col overflow-hidden bg-panel",
+        "relative flex min-w-0 shrink-0 flex-col overflow-hidden bg-canvas",
         open && "border-hairline-strong border-t border-l",
       )}
       style={{ width: panelWidth }}
@@ -236,15 +236,14 @@ export function Inspector({
                 onValueChange={(value) => setTab(value as string)}
                 value={tab}
               >
-                <div className="flex h-9 shrink-0 items-center bg-panel px-2">
+                <div className="toolbar-row flex shrink-0 items-center bg-canvas px-2">
                   <Tabs.List className="relative flex min-w-0 flex-1 items-center gap-0.5">
                     {TABS.map((tab) => (
                       <Tooltip content={tab.label} key={tab.value} side="bottom" sideOffset={6}>
                         <Tabs.Tab
                           aria-label={tab.label}
                           className={cn(
-                            "relative z-10 flex size-7 items-center justify-center rounded-md text-sm font-normal transition-colors outline-none",
-                            "text-fg-subtle hover:bg-hover hover:text-fg-muted data-selected:text-fg",
+                            "toolbar-icon-button relative z-10 flex items-center justify-center rounded-md text-sm font-normal transition-colors outline-none hover:bg-hover data-selected:text-[var(--color-icon)]",
                           )}
                           value={tab.value}
                         >
@@ -252,17 +251,17 @@ export function Inspector({
                         </Tabs.Tab>
                       </Tooltip>
                     ))}
-                    <Tabs.Indicator className="absolute top-1/2 left-0 z-0 h-7 w-(--active-tab-width) -translate-y-1/2 translate-x-(--active-tab-left) rounded-md bg-active transition-all duration-200 ease-out-quint" />
+                    <Tabs.Indicator className="absolute top-1/2 left-0 z-0 h-8 w-(--active-tab-width) -translate-y-1/2 translate-x-(--active-tab-left) rounded-md bg-active transition-all duration-200 ease-out-quint" />
                   </Tabs.List>
                   <div className="ml-1 flex shrink-0 items-center gap-0.5">
                     <InspectorIconButton label="More">
-                      <IconDots size={15} stroke={1.65} />
+                      <IconDots size={18} stroke={1.7} />
                     </InspectorIconButton>
                     <InspectorIconButton
                       label="Collapse right panel"
                       onClick={() => onOpenChange(false)}
                     >
-                      <IconLayoutSidebarRight size={15} stroke={1.65} />
+                      <IconLayoutSidebarRight size={18} stroke={1.7} />
                     </InspectorIconButton>
                   </div>
                 </div>
@@ -335,7 +334,7 @@ function InspectorIconButton({
     <Tooltip content={label} side="bottom">
       <button
         aria-label={label}
-        className="flex size-7 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-hover hover:text-fg-subtle"
+        className="toolbar-icon-button flex items-center justify-center rounded-md transition-colors hover:bg-hover"
         onClick={onClick}
         type="button"
       >

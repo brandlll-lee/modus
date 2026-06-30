@@ -13,14 +13,24 @@
  *   - 强调色仅用于 send 等极少处，平时全灰阶
  */
 @theme {
-  /* 纯深黑分层：主区/Chat 纯深黑，侧栏/Inspector 仅一丝提亮，composer 在主区上轻微浮起 */
+  /* 纯深黑分层：主区/Chat/Inspector 纯深黑，侧栏/菜单栏仅一丝提亮，composer 在主区上轻微浮起 */
   --color-canvas: #131314; /* 主区 / Chat（纯深黑） */
-  --color-panel: #161617; /* 侧栏 / Inspector（一丝提亮） */
+  --color-panel: #161617; /* 侧栏 / 菜单栏（一丝提亮） */
   --color-surface: #1c1c1d; /* 输入框（在主区上轻浮起，对比克制） */
   --color-elevated: #232325; /* 下拉 / 弹层 */
 
-  /* 代码块背景：暗色比主区略浮起，亮色用浅灰让代码块从白底"读"出来 */
-  --color-code-bg: #1c1c1d;
+  /* Code surfaces: editor-specific tokens stay out of app UI semantic colours. */
+  --color-code-bg: #131314;
+  --color-code-fg: #d4d4d4;
+  --color-code-line-number: #858585;
+  --color-code-line-number-active: #b8b8b8;
+  --color-code-active-line: rgba(255, 255, 255, 0);
+  --color-code-indent-guide: rgba(255, 255, 255, 0.08);
+  --color-code-comment: #6a9955;
+  --color-code-keyword: #c586c0;
+  --color-code-string: #ce9178;
+  --color-code-number: #b5cea8;
+  --color-code-type: #4fc1ff;
 
   /* hairline 三级 —— 用途分层（明度对齐 Cursor 实测）：
      - soft (0.03)     内部 list 分隔、超细分割
@@ -48,6 +58,8 @@
   --color-fg-muted: #b4b4b1;
   --color-fg-subtle: #8a8a87;
   --color-fg-faint: #5a5a5d;
+  --color-icon: #d8d8d6;
+  --color-icon-muted: #a6a6a3;
 
   /* 单一品牌电压：Cursor Orange，仅用于主操作（发送）等极少处 */
   --color-accent: #f54e00;
@@ -82,23 +94,45 @@
   --color-success: #3fae87;
   --color-danger: #e5687a;
 
-  /* Diff 行底纹 —— 内联 diff（edit/write 工具卡）的红绿语义层。
-     派生自 success/danger，低 alpha 整行底纹，文字仍清晰可读（对标 Cursor）：
-     - *-bg     变更行整行底纹
-     - *-gutter 行号槽 / 变更标记列（略高 alpha，强调归属） */
-  --color-diff-add-bg: color-mix(in oklab, var(--color-success) 16%, transparent);
-  --color-diff-add-gutter: color-mix(in oklab, var(--color-success) 30%, transparent);
-  --color-diff-del-bg: color-mix(in oklab, var(--color-danger) 16%, transparent);
-  --color-diff-del-gutter: color-mix(in oklab, var(--color-danger) 30%, transparent);
+  /* Diff 行底纹：Git 面板、agent diff、整文件预览共用同一套语义层。 */
+  --color-diff-add-bg: #23352b;
+  --color-diff-add-gutter: #2d4637;
+  --color-diff-del-bg: #3a2824;
+  --color-diff-del-gutter: #4b302a;
 
-  /* 字体：全 UI 使用同一套 sans 栈；系统 CJK 字体负责中日韩 fallback。 */
+  /* 字体：UI 用 sans；代码与终端用等宽。终端有专属栈，避免 app 字体特性污染 xterm cell 度量。 */
   --font-sans:
     "Inter Variable", "Inter", "Noto Sans SC", "Source Han Sans SC", "PingFang SC",
     "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans TC", "PingFang TC",
     "Microsoft JhengHei", "Noto Sans JP", "Yu Gothic", "Hiragino Sans", "Noto Sans KR",
     "Malgun Gothic", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
-  --font-mono: var(--font-sans);
+  --font-mono:
+    "Cascadia Mono", "Cascadia Code", "JetBrains Mono", "SFMono-Regular", Consolas, Menlo, Monaco,
+    monospace;
+  --font-terminal:
+    "Cascadia Mono", "Cascadia Code", "SFMono-Regular", Consolas, Menlo, "DejaVu Sans Mono",
+    monospace;
+
+  --color-terminal-bg: #0c0c0c;
+  --color-terminal-fg: #cccccc;
+  --color-terminal-selection: rgba(255, 255, 255, 0.22);
+  --color-terminal-ansi-black: #0c0c0c;
+  --color-terminal-ansi-red: #c50f1f;
+  --color-terminal-ansi-green: #13a10e;
+  --color-terminal-ansi-yellow: #c19c00;
+  --color-terminal-ansi-blue: #0037da;
+  --color-terminal-ansi-magenta: #881798;
+  --color-terminal-ansi-cyan: #3a96dd;
+  --color-terminal-ansi-white: #cccccc;
+  --color-terminal-ansi-bright-black: #767676;
+  --color-terminal-ansi-bright-red: #e74856;
+  --color-terminal-ansi-bright-green: #16c60c;
+  --color-terminal-ansi-bright-yellow: #f9f1a5;
+  --color-terminal-ansi-bright-blue: #3b78ff;
+  --color-terminal-ansi-bright-magenta: #b4009e;
+  --color-terminal-ansi-bright-cyan: #61d6d6;
+  --color-terminal-ansi-bright-white: #f2f2f2;
 
   /* 字号阶梯 —— 校准 Cursor 桌面 Agent Window：
      2xs 11 → status / kbd
@@ -165,11 +199,21 @@
   color-scheme: light;
 
   /* Surfaces — clean editor white + neutral panel chrome */
-  --color-canvas: #ffffff; /* app base (chat / main) */
-  --color-panel: #f8f8f8; /* sidebar / inspector */
+  --color-canvas: #ffffff; /* app base (chat / main / inspector) */
+  --color-panel: #f8f8f8; /* sidebar / menubar */
   --color-surface: #ffffff; /* composer / cards / input */
   --color-elevated: #ffffff; /* dropdowns / popovers — white + shadow-popup */
-  --color-code-bg: #f8f8f8; /* code blocks — soft gray so they read on white */
+  --color-code-bg: #ffffff; /* code blocks/editors — pure white, matching the clean editor canvas */
+  --color-code-fg: #1f2328;
+  --color-code-line-number: #6e7781;
+  --color-code-line-number-active: #24292f;
+  --color-code-active-line: rgba(0, 0, 0, 0);
+  --color-code-indent-guide: rgba(0, 0, 0, 0.12);
+  --color-code-comment: #008000;
+  --color-code-keyword: #af00db;
+  --color-code-string: #a31515;
+  --color-code-number: #098658;
+  --color-code-type: #0000ff;
 
   /* Hairlines — neutral grays close to #e5e5e5 / #d0d0d0 on white */
   --color-hairline: rgba(0, 0, 0, 0.1);
@@ -193,6 +237,8 @@
   --color-fg-muted: #444444;
   --color-fg-subtle: #737373;
   --color-fg-faint: #9a9a9a;
+  --color-icon: #242424;
+  --color-icon-muted: #5f5f5f;
 
   /* Brand accent (send): orange fill works on both themes */
   --color-accent: #f54e00;
@@ -216,16 +262,35 @@
   --color-chip: rgba(0, 0, 0, 0.055);
   --color-chip-strong: rgba(0, 0, 0, 0.09);
 
+  --color-terminal-bg: #ffffff;
+  --color-terminal-fg: #111111;
+  --color-terminal-selection: rgba(0, 0, 0, 0.16);
+  --color-terminal-ansi-black: #000000;
+  --color-terminal-ansi-red: #a31515;
+  --color-terminal-ansi-green: #008000;
+  --color-terminal-ansi-yellow: #795e00;
+  --color-terminal-ansi-blue: #0451a5;
+  --color-terminal-ansi-magenta: #af00db;
+  --color-terminal-ansi-cyan: #007c8a;
+  --color-terminal-ansi-white: #555555;
+  --color-terminal-ansi-bright-black: #666666;
+  --color-terminal-ansi-bright-red: #cd3131;
+  --color-terminal-ansi-bright-green: #098658;
+  --color-terminal-ansi-bright-yellow: #9a6700;
+  --color-terminal-ansi-bright-blue: #0000ff;
+  --color-terminal-ansi-bright-magenta: #bc05bc;
+  --color-terminal-ansi-bright-cyan: #008c99;
+  --color-terminal-ansi-bright-white: #111111;
+
   /* Semantic — darkened for contrast on white */
   --color-success: #1f9d6b;
   --color-danger: #d63a4f;
 
-  /* Diff line tints — light theme. Slightly higher alpha so the wash survives on
-     the white canvas while keeping dark-on-light code fully legible. */
-  --color-diff-add-bg: color-mix(in oklab, var(--color-success) 14%, transparent);
-  --color-diff-add-gutter: color-mix(in oklab, var(--color-success) 26%, transparent);
-  --color-diff-del-bg: color-mix(in oklab, var(--color-danger) 13%, transparent);
-  --color-diff-del-gutter: color-mix(in oklab, var(--color-danger) 24%, transparent);
+  /* Diff line tints — light theme. Matches the muted Cursor-style review wash. */
+  --color-diff-add-bg: #e5f0e1;
+  --color-diff-add-gutter: #d4e6ce;
+  --color-diff-del-bg: #ffe8df;
+  --color-diff-del-gutter: #ffd9cc;
 
   /* Shadows — soft & low to carry elevation that dark gets from lightness, kept
      light at rest so the input/bubble don't read as heavily outlined (图5). */
@@ -295,6 +360,21 @@ input {
   }
   .app-no-drag {
     -webkit-app-region: no-drag;
+  }
+  .toolbar-row {
+    height: 48px;
+  }
+  .toolbar-icon-button {
+    color: var(--color-icon-muted);
+    width: 32px;
+    height: 32px;
+  }
+  .toolbar-icon-button[data-active="true"],
+  .toolbar-icon-button:hover {
+    color: var(--color-icon);
+  }
+  .toolbar-icon {
+    color: var(--color-icon-muted);
   }
   /* 明确保留给极少数标题使用；默认正文始终归零。 */
   .tracking-snug {
@@ -958,6 +1038,29 @@ input {
 .modus-markdown [data-streamdown="mermaid"] [class*="absolute"] button:hover {
   color: var(--markdown-fg-strong);
   background: var(--color-hover);
+}
+
+.modus-terminal-host,
+.modus-terminal-host .xterm,
+.xterm-char-measure-element {
+  font-family: var(--font-terminal);
+  font-feature-settings: normal;
+  font-variation-settings: normal;
+  font-synthesis: none;
+  letter-spacing: 0;
+  text-rendering: auto;
+}
+
+.modus-terminal-host {
+  background-color: var(--color-terminal-bg);
+}
+
+.modus-terminal-host .xterm {
+  padding: 0;
+}
+
+.modus-terminal-host .xterm-viewport {
+  background-color: var(--color-terminal-bg);
 }
 
 /* Plan documents read like notebook pages, not chat bubbles. */

@@ -39,7 +39,6 @@ const SIDEBAR_TRANSITION = { duration: 0.18, ease: [0.22, 1, 0.36, 1] } as const
 
 type SidebarProps = {
   workspaces: WorkspaceInfo[];
-  activeWorkspace: WorkspaceInfo | null;
   agentSessions: AgentSessionInfo[];
   activeSessionId?: string | undefined;
   /** Live run/needs-input/unread state per session for the status dots. */
@@ -49,7 +48,6 @@ type SidebarProps = {
   /** Upper bound from App so the panel can't crush the main column's min width. */
   maxWidth: number;
   onOpenWorkspace(): void;
-  onSelectWorkspace(workspace: WorkspaceInfo): void;
   onSelectSession(session: AgentSessionInfo): void;
   onNewSession(): void;
   onNewWorkspaceSession(workspace: WorkspaceInfo): void;
@@ -67,7 +65,6 @@ type SidebarProps = {
 
 export function Sidebar({
   workspaces,
-  activeWorkspace,
   agentSessions,
   activeSessionId,
   activityBySession,
@@ -75,7 +72,6 @@ export function Sidebar({
   width,
   maxWidth,
   onOpenWorkspace,
-  onSelectWorkspace,
   onSelectSession,
   onNewSession,
   onNewWorkspaceSession,
@@ -173,7 +169,7 @@ export function Sidebar({
       style={{ width: panelWidth }}
     >
       <m.div className="flex h-full flex-col bg-panel" style={{ width: contentWidth }}>
-        <div className="scroll-thin flex-1 overflow-y-auto px-2.5 pt-4 pb-2">
+        <div className="px-2.5 pt-4 pb-2">
           <NavRow
             disabled={!canCreateSession}
             icon={<IconEdit size={17} stroke={1.75} />}
@@ -184,7 +180,9 @@ export function Sidebar({
           <NavRow icon={<IconSearch size={17} stroke={1.75} />}>Search</NavRow>
           <NavRow icon={<IconGridDots size={17} stroke={1.75} />}>Plugins</NavRow>
           <NavRow icon={<IconClock size={17} stroke={1.75} />}>Automations</NavRow>
+        </div>
 
+        <div className="scroll-thin mr-1 min-h-0 flex-1 overflow-y-auto pr-2 pl-2.5 pb-2">
           <SectionHeader
             expanded={projectsExpanded}
             onToggle={() => setProjectsExpanded((expanded) => !expanded)}
@@ -201,11 +199,9 @@ export function Sidebar({
               workspaces.map((workspace) => (
                 <WorkspaceItem
                   activityBySession={activityBySession}
-                  isActive={activeWorkspace?.id === workspace.id}
                   key={workspace.id}
                   onArchiveSession={onArchiveSession}
                   onNewSession={() => onNewWorkspaceSession(workspace)}
-                  onSelect={() => onSelectWorkspace(workspace)}
                   onSelectSession={onSelectSession}
                   activeSessionId={activeSessionId}
                   sessions={sessionsByWorkspace.get(workspace.id) ?? []}
@@ -249,7 +245,7 @@ export function Sidebar({
             </NavRow>
           </div>
           <ToolbarButton label="Collapse sidebar" onClick={() => onOpenChange(false)}>
-            <IconLayoutSidebar size={15} stroke={1.65} />
+            <IconLayoutSidebar size={18} stroke={1.7} />
           </ToolbarButton>
         </div>
       </m.div>
@@ -270,11 +266,9 @@ export function Sidebar({
 
 function WorkspaceItem({
   workspace,
-  isActive,
   activeSessionId,
   activityBySession,
   sessions,
-  onSelect,
   onSelectSession,
   onNewSession,
   onArchiveSession,
@@ -288,11 +282,9 @@ function WorkspaceItem({
   onRemove,
 }: {
   workspace: WorkspaceInfo;
-  isActive: boolean;
   activeSessionId?: string | undefined;
   activityBySession: Record<string, SessionActivity>;
   sessions: AgentSessionInfo[];
-  onSelect(): void;
   onSelectSession(session: AgentSessionInfo): void;
   onNewSession(): void;
   onArchiveSession(session: AgentSessionInfo): void;
@@ -310,12 +302,10 @@ function WorkspaceItem({
     <>
       <ProjectRow
         expanded={expanded}
-        isActive={isActive}
         pinned={workspace.pinned}
         renaming={renaming}
         onClick={() => {
           setExpanded((value) => !value);
-          onSelect();
         }}
         onCreate={(event) => {
           event.stopPropagation();
@@ -408,7 +398,6 @@ function SessionRow({
 function ProjectRow({
   children,
   expanded,
-  isActive,
   pinned,
   renaming,
   onClick,
@@ -424,7 +413,6 @@ function ProjectRow({
 }: {
   children: ReactNode;
   expanded: boolean;
-  isActive: boolean;
   pinned: boolean;
   renaming: boolean;
   onClick(): void;
@@ -466,7 +454,7 @@ function ProjectRow({
           className={cn(
             "group flex h-[36px] w-full items-center rounded-lg pr-1 text-sm font-normal transition-colors hover:bg-hover",
             menuOpen && "bg-hover",
-            isActive ? "text-fg" : "text-fg-muted hover:text-fg",
+            "text-fg",
           )}
           layout
           transition={{ duration: 0.14, ease: "easeOut" }}
@@ -478,7 +466,7 @@ function ProjectRow({
             title={title}
             type="button"
           >
-            <span className={cn("shrink-0", isActive ? "text-fg" : "text-fg-subtle")}>
+            <span className="shrink-0 text-fg">
               <FolderIcon size={17} stroke={1.6} />
             </span>
             <span className="flex min-w-0 items-center gap-1.5">
@@ -593,7 +581,7 @@ function NavRow({
     <button
       className={cn(
         "group relative flex h-[36px] w-full items-center gap-3 rounded-lg px-2 text-left text-sm font-normal transition-colors",
-        active ? "text-fg hover:bg-hover" : "text-fg-muted hover:bg-hover hover:text-fg",
+        "text-fg hover:bg-hover",
         highlight && "bg-active text-fg hover:bg-hover",
         muted && "text-fg-subtle hover:text-fg-muted",
         disabled && "cursor-not-allowed opacity-40 hover:bg-transparent hover:text-fg-subtle",
@@ -610,14 +598,7 @@ function NavRow({
           transition={{ duration: 0.12, ease: "easeOut" }}
         />
       ) : null}
-      <span
-        className={cn(
-          "relative shrink-0",
-          active || highlight ? "text-fg" : "text-fg-subtle group-hover:text-fg-muted",
-        )}
-      >
-        {icon}
-      </span>
+      <span className="relative shrink-0 text-fg">{icon}</span>
       <span className="relative flex min-w-0 flex-1 items-center truncate">{children}</span>
       {trailing ? <span className="relative shrink-0">{trailing}</span> : null}
     </button>

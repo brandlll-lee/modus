@@ -69,52 +69,66 @@ export function defineModusTheme(monaco: Monaco): void {
   const styles = getComputedStyle(document.documentElement);
   const isLight = document.documentElement.getAttribute("data-theme") === "light";
 
-  const canvas = token(styles, "--color-canvas", isLight ? "#f7f7f6" : "#131314");
-  const fg = token(styles, "--color-fg", isLight ? "#1b1b1d" : "#e4e4e3");
-  const fgMuted = token(styles, "--color-fg-muted", isLight ? "#44464a" : "#b4b4b1");
+  const codeBg = token(styles, "--color-code-bg", isLight ? "#ffffff" : "#131314");
+  const codeFg = token(styles, "--color-code-fg", isLight ? "#1f2328" : "#d4d4d4");
+  const lineNumber = token(styles, "--color-code-line-number", isLight ? "#6e7781" : "#858585");
+  const activeLineNumber = token(
+    styles,
+    "--color-code-line-number-active",
+    isLight ? "#24292f" : "#b8b8b8",
+  );
+  const activeLine = token(styles, "--color-code-active-line", isLight ? "#0000000e" : "#ffffff09");
+  const indentGuide = token(
+    styles,
+    "--color-code-indent-guide",
+    isLight ? "#0000002e" : "#ffffff1f",
+  );
+  const comment = token(styles, "--color-code-comment", isLight ? "#008000" : "#7f8a77");
+  const keyword = token(styles, "--color-code-keyword", isLight ? "#af00db" : "#c586c0");
+  const string = token(styles, "--color-code-string", isLight ? "#a31515" : "#ce9178");
+  const number = token(styles, "--color-code-number", isLight ? "#098658" : "#b5cea8");
+  const type = token(styles, "--color-code-type", isLight ? "#0000ff" : "#4fc1ff");
   const fgSubtle = token(styles, "--color-fg-subtle", isLight ? "#6a6c72" : "#8a8a87");
-  const fgFaint = token(styles, "--color-fg-faint", isLight ? "#9a9ca2" : "#5a5a5d");
   const selection = token(styles, "--color-selection", "#853ff46b");
-  const success = token(styles, "--color-success", isLight ? "#1f9d6b" : "#3fae87");
-  const danger = token(styles, "--color-danger", isLight ? "#d63a4f" : "#e5687a");
-  const link = token(styles, "--color-link", isLight ? "#2563eb" : "#7bbcff");
   const hairline = token(styles, "--color-hairline", isLight ? "#00000017" : "#ffffff0d");
+  const diffAddBg = token(styles, "--color-diff-add-bg", isLight ? "#e5f0e1" : "#23352b");
+  const diffDelBg = token(styles, "--color-diff-del-bg", isLight ? "#ffe8df" : "#3a2824");
+  const diffAddGutter = token(styles, "--color-diff-add-gutter", isLight ? "#d4e6ce" : "#2d4637");
+  const diffDelGutter = token(styles, "--color-diff-del-gutter", isLight ? "#ffd9cc" : "#4b302a");
 
   monaco.editor.defineTheme(MONACO_THEME, {
     base: isLight ? "vs" : "vs-dark",
     inherit: true,
     rules: [
-      { token: "comment", foreground: fgFaint.slice(1), fontStyle: "italic" },
-      { token: "string", foreground: success.slice(1) },
-      { token: "keyword", foreground: link.slice(1) },
-      { token: "number", foreground: danger.slice(1) },
-      { token: "type", foreground: fgMuted.slice(1) },
+      { token: "comment", foreground: comment.slice(1) },
+      { token: "string", foreground: string.slice(1) },
+      { token: "keyword", foreground: keyword.slice(1) },
+      { token: "number", foreground: number.slice(1) },
+      { token: "type", foreground: type.slice(1) },
     ],
     colors: {
-      "editor.background": canvas,
-      "editor.foreground": fg,
-      "editorLineNumber.foreground": fgFaint,
-      "editorLineNumber.activeForeground": fgSubtle,
+      "editor.background": codeBg,
+      "editor.foreground": codeFg,
+      "editorIndentGuide.background1": indentGuide,
+      "editorLineNumber.foreground": lineNumber,
+      "editorLineNumber.activeForeground": activeLineNumber,
       "editor.selectionBackground": selection,
-      "editor.lineHighlightBackground": "#00000000",
+      "editor.lineHighlightBackground": activeLine,
       "editor.lineHighlightBorder": "#00000000",
-      "editorGutter.background": canvas,
-      "editorWidget.background": canvas,
+      "editorGutter.background": codeBg,
+      "editorWidget.background": codeBg,
       "editorWidget.border": hairline,
       "scrollbarSlider.background": isLight ? "#00000026" : "#ffffff1f",
       "scrollbarSlider.hoverBackground": isLight ? "#00000040" : "#ffffff33",
       "scrollbarSlider.activeBackground": isLight ? "#00000040" : "#ffffff33",
-      "diffEditor.insertedTextBackground": `${success}${isLight ? "26" : "30"}`,
-      "diffEditor.removedTextBackground": `${danger}${isLight ? "24" : "30"}`,
-      "diffEditor.insertedLineBackground": `${success}${isLight ? "12" : "16"}`,
-      "diffEditor.removedLineBackground": `${danger}${isLight ? "11" : "16"}`,
-      // Gutter tint MUST equal the line tint so each changed line reads as one
-      // uniform full-width band (Cursor/VS Code look). A heavier gutter alpha
-      // here is exactly what produced the mismatched dark strip down the left.
-      "diffEditorGutter.insertedLineBackground": `${success}${isLight ? "12" : "16"}`,
-      "diffEditorGutter.removedLineBackground": `${danger}${isLight ? "11" : "16"}`,
+      "diffEditor.insertedTextBackground": diffAddBg,
+      "diffEditor.removedTextBackground": diffDelBg,
+      "diffEditor.insertedLineBackground": diffAddBg,
+      "diffEditor.removedLineBackground": diffDelBg,
+      "diffEditorGutter.insertedLineBackground": diffAddGutter,
+      "diffEditorGutter.removedLineBackground": diffDelGutter,
       "diffEditor.diagonalFill": "#00000000",
-      "diffEditor.unchangedRegionBackground": canvas,
+      "diffEditor.unchangedRegionBackground": codeBg,
       "diffEditor.unchangedRegionForeground": fgSubtle,
       "diffEditor.unchangedCodeBackground": "#00000000",
     },

@@ -1,7 +1,7 @@
-import type { ThemedToken } from "shiki/core";
 import { memo, useMemo } from "react";
-import { highlightToLines, languageForPath, useCodeHighlighter } from "../../../lib/codeHighlight";
+import type { ThemedToken } from "shiki/core";
 import { cn } from "../../../lib/cn";
+import { highlightToLines, languageForPath, useCodeHighlighter } from "../../../lib/codeHighlight";
 import { useTheme } from "../../../lib/theme";
 import type { InlineDiff, InlineDiffLine } from "./computeInlineDiff";
 
@@ -50,7 +50,7 @@ export const InlineDiffView = memo(function InlineDiffView({ diff, path }: Inlin
   }, [diff.lines, lang, themeMode, ready]);
 
   return (
-    <div className="overflow-x-auto font-mono text-[12px] leading-[1.65]">
+    <div className="overflow-x-auto font-mono text-[13px] leading-[22px]">
       <div className="min-w-full">
         {diff.lines.map((line, index) => (
           <DiffRow
@@ -124,20 +124,34 @@ function DiffRow({ line, tokens }: { line: InlineDiffLine; tokens?: ThemedToken[
 }
 
 /** Highlighted tokens when a grammar is ready, else the raw line text. */
-function DiffLineText({ line, tokens }: { line: InlineDiffLine; tokens?: ThemedToken[] | undefined }) {
+function DiffLineText({
+  line,
+  tokens,
+}: {
+  line: InlineDiffLine;
+  tokens?: ThemedToken[] | undefined;
+}) {
   if (line.text === "") {
     return <span> </span>;
   }
   if (!tokens || tokens.length === 0) {
     return <span className="text-fg-subtle">{line.text}</span>;
   }
+  let fallbackOffset = 0;
   return (
     <>
-      {tokens.map((token, index) => (
-        <span key={`${index}:${token.offset ?? index}`} style={{ color: token.color }}>
-          {token.content}
-        </span>
-      ))}
+      {tokens.map((token) => {
+        const offset = token.offset ?? fallbackOffset;
+        fallbackOffset = offset + token.content.length;
+        return (
+          <span
+            key={`${offset}:${token.content}:${token.color ?? ""}`}
+            style={{ color: token.color }}
+          >
+            {token.content}
+          </span>
+        );
+      })}
     </>
   );
 }

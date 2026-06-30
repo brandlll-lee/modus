@@ -11,7 +11,7 @@ type ToolbarButtonProps = {
 };
 
 /**
- * Shared 28px icon button for chrome toggles (header panel toggles, sidebar
+ * Shared 32px icon button for chrome toggles (header panel toggles, sidebar
  * collapse). One definition → identical look, hover, tooltip, and tokens
  * everywhere, so the left/right panel controls stay perfectly symmetric and
  * theme-adaptive (colors come from `--color-*` tokens, so dark/light just work).
@@ -28,10 +28,11 @@ export function ToolbarButton({
       <button
         aria-label={label}
         className={cn(
-          "app-no-drag flex size-7 items-center justify-center rounded-md transition-colors hover:bg-hover hover:text-fg-subtle",
-          active ? "bg-active text-fg-subtle" : "text-fg-faint",
-          disabled && "cursor-not-allowed opacity-40 hover:bg-transparent hover:text-fg-faint",
+          "toolbar-icon-button app-no-drag flex items-center justify-center rounded-md transition-colors hover:bg-hover",
+          active && "bg-active",
+          disabled && "cursor-not-allowed opacity-40 hover:bg-transparent",
         )}
+        data-active={active}
         disabled={disabled}
         onClick={onClick}
         type="button"

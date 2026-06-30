@@ -633,7 +633,6 @@ export function App() {
                 ) : (
                   <>
                     <Sidebar
-                      activeWorkspace={activeWorkspace}
                       activityBySession={activityBySession}
                       agentSessions={rootSessions}
                       canCreateSession={canCreateSession}
@@ -649,7 +648,6 @@ export function App() {
                       onOpenWorkspace={() => void openWorkspace()}
                       onOpenSettings={() => setSettingsOpen(true)}
                       onSelectSession={selectSession}
-                      onSelectWorkspace={setActiveWorkspace}
                       onWidthChange={setSidebarWidth}
                       activeSessionId={activeSessionId}
                       maxWidth={sidebarMaxWidth}
@@ -662,7 +660,7 @@ export function App() {
                       className="relative flex flex-1 flex-col overflow-hidden rounded-tl-xl border-hairline-strong border-t border-l bg-canvas"
                       style={{ minWidth: MAIN_MIN_WIDTH }}
                     >
-                      <header className="relative flex h-12 shrink-0 items-center px-3">
+                      <header className="toolbar-row relative flex shrink-0 items-center px-3">
                         <div className="app-no-drag flex flex-1 items-center gap-1.5">
                           <AnimatePresence initial={false}>
                             {!sidebarOpen ? (
@@ -677,7 +675,7 @@ export function App() {
                                   label="Show left sidebar"
                                   onClick={() => setSidebarOpen(true)}
                                 >
-                                  <IconLayoutSidebar size={15} stroke={1.65} />
+                                  <IconLayoutSidebar size={18} stroke={1.7} />
                                 </ToolbarButton>
                               </m.div>
                             ) : null}
@@ -988,7 +986,7 @@ function CaptionButton({
 
 /** Shared look for the two top-bar dropdown triggers (folder + branch). */
 const TOPBAR_TRIGGER_CLASS =
-  "flex h-7 items-center gap-1.5 rounded-md px-2 outline-none transition-colors hover:bg-hover hover:text-fg-muted data-popup-open:bg-hover data-popup-open:text-fg-muted disabled:opacity-60 disabled:hover:bg-transparent";
+  "flex h-8 items-center gap-1.5 rounded-md px-2 outline-none transition-colors text-fg-muted hover:bg-hover hover:text-fg data-popup-open:bg-hover data-popup-open:text-fg disabled:opacity-60 disabled:hover:bg-transparent";
 
 /**
  * New-chat hero top bar: the workspace folder and its git branch, both now
@@ -1023,11 +1021,11 @@ function ChatTopBar({
         workspaces={workspaces}
       />
       <BranchSwitcher cwd={cwd} onError={onError} triggerClassName={TOPBAR_TRIGGER_CLASS}>
-        <span className="text-fg-faint">
-          <IconGitBranch size={15} stroke={1.65} />
+        <span className="toolbar-icon">
+          <IconGitBranch size={18} stroke={1.7} />
         </span>
         <span className="max-w-40 truncate">{branch ?? "No branch"}</span>
-        <IconChevronDown className="text-fg-faint" size={11} stroke={2} />
+        <IconChevronDown className="toolbar-icon" size={13} stroke={2} />
       </BranchSwitcher>
     </div>
   );
@@ -1053,11 +1051,11 @@ function WorkspaceMenu({
   return (
     <Menu.Root>
       <Menu.Trigger className={TOPBAR_TRIGGER_CLASS}>
-        <span className="text-fg-faint">
-          <IconFolder size={15} stroke={1.65} />
+        <span className="toolbar-icon">
+          <IconFolder size={18} stroke={1.7} />
         </span>
         <span className="max-w-40 truncate">{activeWorkspace?.displayName ?? "No workspace"}</span>
-        <IconChevronDown className="text-fg-faint" size={11} stroke={2} />
+        <IconChevronDown className="toolbar-icon" size={13} stroke={2} />
       </Menu.Trigger>
       <Menu.Portal>
         <Menu.Positioner align="start" side="bottom" sideOffset={6}>
@@ -1122,7 +1120,7 @@ function HeaderActions({
   onToggleInspector(): void;
 }) {
   return (
-    <div className="app-no-drag flex h-7 items-center gap-1">
+    <div className="app-no-drag flex h-8 items-center gap-1">
       <EnvironmentPopover
         activeWorkspace={activeWorkspace}
         branch={branch}
@@ -1133,7 +1131,7 @@ function HeaderActions({
         label={inspectorOpen ? "Hide right sidebar" : "Show right sidebar"}
         onClick={onToggleInspector}
       >
-        <IconLayoutSidebarRight size={15} stroke={1.65} />
+        <IconLayoutSidebarRight size={18} stroke={1.7} />
       </ToolbarButton>
     </div>
   );
@@ -1155,11 +1153,12 @@ function EnvironmentPopover({
       <Popover.Trigger
         aria-label="Environment"
         className={cn(
-          "flex size-7 items-center justify-center rounded-md transition-colors hover:bg-hover hover:text-fg-subtle",
-          open ? "bg-active text-fg-subtle" : "text-fg-faint",
+          "toolbar-icon-button flex items-center justify-center rounded-md transition-colors hover:bg-hover",
+          open && "bg-active",
         )}
+        data-active={open}
       >
-        <IconListDetails size={15} stroke={1.65} />
+        <IconListDetails size={18} stroke={1.7} />
       </Popover.Trigger>
       <AnimatePresence>
         {open ? (
@@ -1177,10 +1176,10 @@ function EnvironmentPopover({
                     <h2 className="text-sm font-normal text-fg-subtle">Environment</h2>
                     <button
                       aria-label="Environment settings"
-                      className="flex size-7 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-hover hover:text-fg-subtle"
+                      className="toolbar-icon-button flex items-center justify-center rounded-md transition-colors hover:bg-hover"
                       type="button"
                     >
-                      <IconSettings size={15} stroke={1.65} />
+                      <IconSettings size={18} stroke={1.7} />
                     </button>
                   </div>
                   <div className="space-y-3 text-sm text-fg">
