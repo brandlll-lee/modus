@@ -2,6 +2,7 @@ import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { connect as netConnect } from "node:net";
+import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 import { app, BrowserWindow, type BrowserWindow as BrowserWindowType } from "electron";
 import type {
@@ -416,11 +417,24 @@ function spawnTerminal(input: SpawnTerminalInput): TerminalRecord {
 
 export function createTerminal(
   window: BrowserWindowType,
-  input: { workspaceId: string; cwd: string; cols?: number; rows?: number; sessionId?: string },
+  input: { workspaceId: string; cwd?: string; cols?: number; rows?: number; sessionId?: string },
 ): TerminalInfo {
+  const cwd = input.cwd ?? homedir();
+  if (input.cwd === undefined) {
+    const existing = [...terminals.values()].find(
+      (terminal) =>
+        terminal.info.workspaceId === input.workspaceId &&
+        terminal.info.origin === "user" &&
+        terminal.info.status === "running" &&
+        terminal.info.cwd === cwd,
+    );
+    if (existing) {
+      return { ...existing.info };
+    }
+  }
   const record = spawnTerminal({
     workspaceId: input.workspaceId,
-    cwd: input.cwd,
+    cwd,
     shell: defaultShell(),
     cols: input.cols ?? 80,
     rows: input.rows ?? 24,

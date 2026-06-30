@@ -475,7 +475,7 @@ export function registerAppIpc(): void {
     const parsed = parseIpcInput(terminalCreateSchema, input, IPC_CHANNELS.terminalCreate);
     return createTerminal(getSenderWindow(event), {
       workspaceId: parsed.workspaceId,
-      cwd: parsed.cwd,
+      ...(parsed.cwd !== undefined ? { cwd: parsed.cwd } : {}),
       ...(parsed.cols !== undefined ? { cols: parsed.cols } : {}),
       ...(parsed.rows !== undefined ? { rows: parsed.rows } : {}),
     });

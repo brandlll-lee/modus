@@ -10,10 +10,11 @@ import {
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { type ITheme, Terminal } from "@xterm/xterm";
-import { m } from "motion/react";
+import { animate, m, useMotionValue } from "motion/react";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { TerminalEvent, TerminalInfo } from "../../../../shared/contracts";
 import { EmptyState } from "../../components/ui/Panel";
+import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
 
 /** "C:\\WINDOWS\\system32\\cmd.exe" → "cmd", "/bin/bash" → "bash". */
@@ -47,6 +48,9 @@ type TerminalSink = {
 };
 type Registry = Map<string, TerminalSink>;
 
+const DEFAULT_TERMINAL_LIST_WIDTH = 240;
+const TERMINAL_LIST_TRANSITION = { duration: 0.2, ease: [0.22, 1, 0.36, 1] } as const;
+
 type TerminalPanelProps = {
   workspaceId?: string | undefined;
   cwd?: string | undefined;
@@ -72,37 +76,34 @@ function token(styles: CSSStyleDeclaration, name: string, fallback: string): str
   return styles.getPropertyValue(name).trim() || fallback;
 }
 
-/** Build an xterm theme from the live Modus design tokens so it tracks the app. */
+/** Terminal owns its palette; app UI tokens should not make the shell feel like a document. */
 function createTerminalTheme(): ITheme {
   const s = getComputedStyle(document.documentElement);
-  const fg = token(s, "--color-fg", "#e4e4e3");
-  const bg = token(s, "--color-canvas", "#131314");
-  const muted = token(s, "--color-fg-muted", "#b4b4b1");
-  const faint = token(s, "--color-fg-faint", "#5a5a5d");
-  const success = token(s, "--color-success", "#3fae87");
-  const danger = token(s, "--color-danger", "#e5687a");
+  const fg = token(s, "--color-terminal-fg", "#cccccc");
+  const bg = token(s, "--color-terminal-bg", "#0c0c0c");
+  const selection = token(s, "--color-terminal-selection", "rgba(255, 255, 255, 0.22)");
   return {
     background: bg,
     foreground: fg,
     cursor: fg,
     cursorAccent: bg,
-    selectionBackground: "rgba(255, 255, 255, 0.16)",
-    black: "#15151a",
-    red: danger,
-    green: success,
-    yellow: "#d8b56b",
-    blue: "#6aa0ff",
-    magenta: "#c08cff",
-    cyan: "#56b6c2",
-    white: muted,
-    brightBlack: faint,
-    brightRed: "#ff7b8a",
-    brightGreen: "#57c99a",
-    brightYellow: "#e6c87b",
-    brightBlue: "#8bbbff",
-    brightMagenta: "#d0a8ff",
-    brightCyan: "#74c7d4",
-    brightWhite: fg,
+    selectionBackground: selection,
+    black: token(s, "--color-terminal-ansi-black", "#0c0c0c"),
+    red: token(s, "--color-terminal-ansi-red", "#c50f1f"),
+    green: token(s, "--color-terminal-ansi-green", "#13a10e"),
+    yellow: token(s, "--color-terminal-ansi-yellow", "#c19c00"),
+    blue: token(s, "--color-terminal-ansi-blue", "#0037da"),
+    magenta: token(s, "--color-terminal-ansi-magenta", "#881798"),
+    cyan: token(s, "--color-terminal-ansi-cyan", "#3a96dd"),
+    white: token(s, "--color-terminal-ansi-white", "#cccccc"),
+    brightBlack: token(s, "--color-terminal-ansi-bright-black", "#767676"),
+    brightRed: token(s, "--color-terminal-ansi-bright-red", "#e74856"),
+    brightGreen: token(s, "--color-terminal-ansi-bright-green", "#16c60c"),
+    brightYellow: token(s, "--color-terminal-ansi-bright-yellow", "#f9f1a5"),
+    brightBlue: token(s, "--color-terminal-ansi-bright-blue", "#3b78ff"),
+    brightMagenta: token(s, "--color-terminal-ansi-bright-magenta", "#b4009e"),
+    brightCyan: token(s, "--color-terminal-ansi-bright-cyan", "#61d6d6"),
+    brightWhite: token(s, "--color-terminal-ansi-bright-white", "#f2f2f2"),
   };
 }
 
@@ -159,13 +160,13 @@ function TerminalView({
       cursorStyle: "bar",
       fontFamily: token(
         getComputedStyle(document.documentElement),
-        "--font-sans",
-        '"Inter Variable", "Inter", system-ui, sans-serif',
+        "--font-terminal",
+        '"Cascadia Mono", "Cascadia Code", "SFMono-Regular", Consolas, Menlo, "DejaVu Sans Mono", monospace',
       ),
-      fontSize: 12,
+      fontSize: 13,
       fontWeight: 400,
       fontWeightBold: 600,
-      lineHeight: 1.4,
+      lineHeight: 1.2,
       letterSpacing: 0,
       scrollback: 10_000,
       theme: createTerminalTheme(),
@@ -250,6 +251,10 @@ function TerminalView({
     const resizeObserver = new ResizeObserver(scheduleSync);
     resizeObserver.observe(host);
     scheduleSync();
+    void document.fonts?.ready.then(() => {
+      scheduleSync();
+      term.refresh(0, term.rows - 1);
+    });
 
     return () => {
       if (raf) cancelAnimationFrame(raf);
@@ -289,7 +294,10 @@ function TerminalView({
   }, [active, tab.id, tab.status]);
 
   return (
-    <div className={cn("absolute inset-0 px-2.5 py-1.5", !active && "hidden")} ref={hostRef} />
+    <div
+      className={cn("modus-terminal-host absolute inset-x-3 top-2 bottom-2", !active && "hidden")}
+      ref={hostRef}
+    />
   );
 }
 
@@ -299,10 +307,25 @@ export function TerminalPanel({ workspaceId, cwd, sessionId, active = true }: Te
   const spawning = useRef(false);
   const [tabs, setTabs] = useState<TerminalTab[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const sidebarW = useMotionValue(DEFAULT_TERMINAL_LIST_WIDTH);
+
+  const addTab = useCallback((info: TerminalTab): void => {
+    setTabs((prev) => (prev.some((item) => item.id === info.id) ? prev : [...prev, info]));
+  }, []);
 
   useEffect(() => {
     tabsRef.current = tabs;
   }, [tabs]);
+
+  useEffect(() => {
+    const controls = animate(
+      sidebarW,
+      sidebarOpen ? DEFAULT_TERMINAL_LIST_WIDTH : 0,
+      TERMINAL_LIST_TRANSITION,
+    );
+    return () => controls.stop();
+  }, [sidebarOpen, sidebarW]);
 
   // Subscribe to PTY output exactly once, ahead of any spawn, so the first
   // prompt is parked in the registry until a view claims it.
@@ -314,7 +337,7 @@ export function TerminalPanel({ workspaceId, cwd, sessionId, active = true }: Te
       if (event.type === "terminal.created") {
         const info = event.terminal;
         if (workspaceId && info.workspaceId !== workspaceId) return;
-        setTabs((prev) => (prev.some((item) => item.id === info.id) ? prev : [...prev, info]));
+        addTab(info);
         return;
       }
       let entry = registry.get(event.terminalId);
@@ -344,19 +367,46 @@ export function TerminalPanel({ workspaceId, cwd, sessionId, active = true }: Te
       }
     });
     return unsubscribe;
-  }, [workspaceId]);
+  }, [addTab, workspaceId]);
 
-  const spawn = useCallback(async (): Promise<void> => {
-    if (!workspaceId || !cwd || spawning.current) return;
+  const createTab = useCallback(
+    async (targetCwd: string | null | undefined): Promise<TerminalTab | undefined> => {
+      if (!workspaceId) return undefined;
+      const info = await window.modus.terminal.create({
+        workspaceId,
+        ...(targetCwd !== null && targetCwd !== undefined ? { cwd: targetCwd } : {}),
+        cols: 80,
+        rows: 24,
+      });
+      addTab(info);
+      return info;
+    },
+    [addTab, workspaceId],
+  );
+
+  const spawn = useCallback(async (): Promise<TerminalTab | undefined> => {
+    if (spawning.current) return undefined;
     spawning.current = true;
     try {
-      const info = await window.modus.terminal.create({ workspaceId, cwd, cols: 80, rows: 24 });
-      setTabs((prev) => [...prev, info]);
-      setActiveId(info.id);
+      const info = await createTab(cwd);
+      if (info) setActiveId(info.id);
+      return info;
     } finally {
       spawning.current = false;
     }
-  }, [workspaceId, cwd]);
+  }, [createTab, cwd]);
+
+  const spawnDefaultTerminals = useCallback(async (): Promise<void> => {
+    if (!workspaceId || !cwd || spawning.current) return;
+    spawning.current = true;
+    try {
+      const project = await createTab(cwd);
+      const home = await createTab(null);
+      setActiveId(project?.id ?? home?.id ?? null);
+    } finally {
+      spawning.current = false;
+    }
+  }, [createTab, cwd, workspaceId]);
 
   // Reconnect existing sessions when the terminal tab opens; auto-start one if
   // there are none. Gated on `active` so we never spawn a hidden background
@@ -372,14 +422,14 @@ export function TerminalPanel({ workspaceId, cwd, sessionId, active = true }: Te
         : all;
       setTabs(mine);
       setActiveId((current) => current ?? mine[0]?.id ?? null);
-      if (mine.length === 0 && cwd) {
-        await spawn();
+      if (!mine.some((item: TerminalInfo) => item.origin === "user") && cwd) {
+        await spawnDefaultTerminals();
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [active, workspaceId, cwd, spawn]);
+  }, [active, workspaceId, cwd, spawnDefaultTerminals]);
 
   const closeTab = useCallback((id: string): void => {
     void window.modus.terminal.remove(id).catch(() => {});
@@ -401,8 +451,6 @@ export function TerminalPanel({ workspaceId, cwd, sessionId, active = true }: Te
     () => tabs.filter((tab) => isTabInScope(tab, sessionId)),
     [tabs, sessionId],
   );
-  const agentTabs = visibleTabs.filter((tab) => tab.origin === "agent");
-  const userTabs = visibleTabs.filter((tab) => tab.origin === "user");
   const visibleKey = visibleTabs.map((tab) => tab.id).join(",");
 
   // Keep the selection inside the visible set: switching session/project can
@@ -421,67 +469,76 @@ export function TerminalPanel({ workspaceId, cwd, sessionId, active = true }: Te
   const agentOwnsActive = activeTab?.origin === "agent" && activeTab.status !== "exited";
 
   return (
-    <section className="flex h-full min-h-0 flex-col bg-panel">
-      <div className="flex h-9 shrink-0 items-center justify-between gap-2 border-hairline border-b px-2">
-        <div className="flex min-w-0 items-center gap-2 text-sm text-fg">
-          <IconTerminal2 className="shrink-0 text-fg-subtle" size={15} stroke={1.65} />
-          <span className="truncate">{activeTab ? tabLabel(activeTab) : "Terminal"}</span>
-          {activeTab?.origin === "agent" ? (
-            <span className="shrink-0 rounded bg-accent-soft px-1 py-px font-medium text-2xs text-accent">
-              Agent
-            </span>
-          ) : null}
-          {activeTab?.status === "exited" ? (
-            <span className="shrink-0 font-mono text-2xs text-fg-faint">
-              exited {activeTab.exitCode}
-            </span>
-          ) : null}
-        </div>
-        <div className="flex shrink-0 items-center gap-0.5">
-          <TermAction
+    <section className="flex h-full min-h-0 flex-col">
+      <div className="toolbar-row flex shrink-0 items-center justify-end gap-1 border-hairline border-b pr-1.5 pl-3">
+        <div className="ml-auto flex shrink-0 items-center gap-1">
+          <TerminalAction
             disabled={!activeTab || activeTab.status === "exited"}
             label="Clear terminal"
             onClick={clearActive}
           >
-            <IconEraser size={15} stroke={1.65} />
-          </TermAction>
-          <TermAction
+            <IconEraser size={18} stroke={1.7} />
+          </TerminalAction>
+          <TerminalAction
             disabled={!activeTab}
             label="Kill terminal"
             onClick={() => activeId && closeTab(activeId)}
           >
-            <IconTrash size={15} stroke={1.65} />
-          </TermAction>
-          <TermAction disabled={!hasWorkspace} label="New terminal" onClick={() => void spawn()}>
-            <IconPlus size={15} stroke={1.65} />
-          </TermAction>
+            <IconTrash size={18} stroke={1.7} />
+          </TerminalAction>
+          <TerminalAction
+            disabled={!hasWorkspace}
+            label="New terminal"
+            onClick={() => void spawn()}
+          >
+            <IconPlus size={18} stroke={1.7} />
+          </TerminalAction>
+          <TerminalAction
+            active={sidebarOpen}
+            label={sidebarOpen ? "Hide terminal list" : "Show terminal list"}
+            onClick={() => setSidebarOpen((open) => !open)}
+          >
+            <IconTerminal2 size={18} stroke={1.7} />
+          </TerminalAction>
         </div>
       </div>
 
       {hasWorkspace ? (
         <div className="flex min-h-0 flex-1">
-          <div className="flex w-[200px] shrink-0 flex-col border-hairline border-r">
-            <div className="scroll-thin min-h-0 flex-1 space-y-2 overflow-y-auto px-1.5 py-2">
-              {agentTabs.length > 0 ? (
-                <TerminalGroup
-                  activeId={activeId}
-                  label="Agent"
-                  onClose={closeTab}
-                  onSelect={setActiveId}
-                  tabs={agentTabs}
-                />
-              ) : null}
-              {userTabs.length > 0 ? (
-                <TerminalGroup
-                  activeId={activeId}
-                  label="Terminals"
-                  onClose={closeTab}
-                  onSelect={setActiveId}
-                  tabs={userTabs}
-                />
-              ) : null}
+          <m.div
+            className="shrink-0 overflow-hidden border-hairline border-r"
+            style={{ width: sidebarW }}
+          >
+            <div className="flex h-full min-h-0 flex-col">
+              <div className="flex h-10 shrink-0 items-center gap-2 px-2 text-fg-muted text-sm">
+                <span className="min-w-0 flex-1 truncate">
+                  {visibleTabs.length} {visibleTabs.length === 1 ? "Terminal" : "Terminals"}
+                </span>
+                <TerminalAction
+                  disabled={!hasWorkspace}
+                  label="New terminal"
+                  onClick={() => void spawn()}
+                >
+                  <IconPlus size={18} stroke={1.7} />
+                </TerminalAction>
+              </div>
+              <div className="scroll-thin min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-1.5 py-1">
+                {visibleTabs.length > 0 ? (
+                  visibleTabs.map((tab) => (
+                    <TerminalTabRow
+                      active={tab.id === activeId}
+                      key={tab.id}
+                      onClose={() => closeTab(tab.id)}
+                      onSelect={() => setActiveId(tab.id)}
+                      tab={tab}
+                    />
+                  ))
+                ) : (
+                  <div className="px-3 py-2 text-fg-faint text-xs">No terminals</div>
+                )}
+              </div>
             </div>
-          </div>
+          </m.div>
 
           <div className="relative flex min-h-0 flex-1 flex-col bg-canvas">
             {agentOwnsActive ? (
@@ -519,35 +576,6 @@ export function TerminalPanel({ workspaceId, cwd, sessionId, active = true }: Te
   );
 }
 
-function TerminalGroup({
-  label,
-  tabs,
-  activeId,
-  onSelect,
-  onClose,
-}: {
-  label: string;
-  tabs: TerminalTab[];
-  activeId: string | null;
-  onSelect(id: string): void;
-  onClose(id: string): void;
-}) {
-  return (
-    <div className="space-y-0.5">
-      <div className="px-1.5 pb-0.5 text-2xs uppercase tracking-wide text-fg-faint">{label}</div>
-      {tabs.map((tab) => (
-        <TerminalTabRow
-          active={tab.id === activeId}
-          key={tab.id}
-          onClose={() => onClose(tab.id)}
-          onSelect={() => onSelect(tab.id)}
-          tab={tab}
-        />
-      ))}
-    </div>
-  );
-}
-
 function TerminalTabRow({
   tab,
   active,
@@ -561,64 +589,68 @@ function TerminalTabRow({
 }) {
   const exited = tab.status === "exited";
   return (
-    <m.div
-      animate={{ opacity: 1, y: 0 }}
+    <div
       className={cn(
-        "group flex h-7 items-center gap-1 rounded-md pr-1 pl-2 transition-colors",
-        active ? "bg-active text-fg" : "text-fg-muted hover:bg-hover hover:text-fg",
+        "group flex h-8 items-center gap-1 rounded-md pr-1 transition-colors",
+        active ? "bg-active text-fg" : "text-fg hover:bg-active/80",
         exited && "opacity-50",
       )}
-      initial={{ opacity: 0, y: 2 }}
-      transition={{ duration: 0.14, ease: [0.22, 1, 0.36, 1] }}
     >
       <button
-        className="flex min-w-0 flex-1 items-center gap-2 text-left text-sm"
+        className="flex h-full min-w-0 flex-1 items-center gap-2 rounded-l-md px-2 text-left text-sm"
         onClick={onSelect}
         title={tab.command ?? tabLabel(tab)}
         type="button"
       >
-        <span
-          aria-hidden
-          className={cn(
-            "size-1.5 shrink-0 rounded-full",
-            exited ? "bg-fg-faint" : tab.origin === "agent" ? "bg-accent" : "bg-success",
-          )}
-        />
+        <IconTerminal2 className="toolbar-icon shrink-0" size={18} stroke={1.7} />
         <span className="min-w-0 flex-1 truncate">{tabLabel(tab)}</span>
+        {tab.origin === "agent" ? (
+          <span className="shrink-0 rounded bg-accent-soft px-1 py-px font-medium text-2xs text-accent">
+            Agent
+          </span>
+        ) : null}
       </button>
       <button
         aria-label="Close terminal"
-        className="flex size-5 shrink-0 items-center justify-center rounded text-fg-faint opacity-0 transition-all hover:bg-hover hover:text-fg group-hover:opacity-100"
+        className="flex size-5 shrink-0 items-center justify-center rounded-md text-fg-muted opacity-0 transition-opacity hover:bg-hover hover:text-fg group-hover:opacity-100 focus-visible:opacity-100"
         onClick={onClose}
         type="button"
       >
-        <IconX size={13} stroke={1.8} />
+        <IconX size={14} stroke={1.8} />
       </button>
-    </m.div>
+    </div>
   );
 }
 
-function TermAction({
+function TerminalAction({
+  active = false,
   label,
   onClick,
   disabled,
   children,
 }: {
+  active?: boolean;
   label: string;
   onClick(): void;
   disabled?: boolean | undefined;
   children: ReactNode;
 }) {
   return (
-    <button
-      aria-label={label}
-      className="flex size-7 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-hover hover:text-fg-subtle disabled:opacity-40 disabled:hover:bg-transparent"
-      disabled={disabled}
-      onClick={onClick}
-      title={label}
-      type="button"
-    >
-      {children}
-    </button>
+    <Tooltip content={label} side="bottom">
+      <button
+        aria-label={label}
+        aria-pressed={active}
+        className={cn(
+          "toolbar-icon-button flex items-center justify-center rounded-md transition-colors hover:bg-hover disabled:opacity-35 disabled:hover:bg-transparent",
+          active && "bg-active",
+        )}
+        data-active={active}
+        disabled={disabled}
+        onClick={onClick}
+        type="button"
+      >
+        {children}
+      </button>
+    </Tooltip>
   );
 }

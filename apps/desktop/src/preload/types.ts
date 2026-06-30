@@ -164,7 +164,7 @@ export type ModusApi = {
   terminal: {
     create(input: {
       workspaceId: string;
-      cwd: string;
+      cwd?: string;
       cols?: number;
       rows?: number;
     }): Promise<TerminalInfo>;

@@ -90,7 +90,7 @@ export const agentCycleModelSchema = z.object({
 
 export const terminalCreateSchema = z.object({
   workspaceId: nonEmptyString,
-  cwd: nonEmptyString,
+  cwd: optionalNonEmptyString,
   cols: z.number().int().min(20).max(500).optional(),
   rows: z.number().int().min(5).max(200).optional(),
 });
