@@ -767,7 +767,7 @@ export type BrowserEvent =
       type: "browser.shortcut";
       workspaceId: string;
       tabId: string;
-      shortcut: "focus-address" | "find" | "toggle-design";
+      shortcut: "focus-address" | "toggle-design";
     }
   | {
       /** Design Mode toggled (from the toolbar, a shortcut, or page-side). */

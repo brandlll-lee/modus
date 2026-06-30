@@ -267,14 +267,6 @@ function wireTabEvents(tab: BrowserTab): void {
         tabId: tab.info.id,
         shortcut: "focus-address",
       });
-    } else if (key === "f") {
-      event.preventDefault();
-      emitBrowserEvent({
-        type: "browser.shortcut",
-        workspaceId: tab.workspaceId,
-        tabId: tab.info.id,
-        shortcut: "find",
-      });
     }
   });
   webContents.setWindowOpenHandler(({ url }) => {

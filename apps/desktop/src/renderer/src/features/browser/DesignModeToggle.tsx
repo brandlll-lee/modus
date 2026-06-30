@@ -20,13 +20,13 @@ export function DesignModeToggle({ active, disabled = false, onToggle }: DesignM
       <button
         aria-label="Exit Design Mode"
         aria-pressed
-        className="flex h-7 shrink-0 items-center gap-1 rounded-full border border-focus-ring/30 bg-focus-ring/12 pr-1 pl-2 text-focus-ring transition-colors hover:bg-focus-ring/20"
+        className="flex h-8 shrink-0 items-center gap-1 rounded-full border border-hairline bg-chip pr-1.5 pl-2.5 text-fg transition-colors hover:bg-chip-strong"
         onClick={onToggle}
         type="button"
       >
-        <IconPointer size={14} stroke={1.8} />
+        <IconPointer size={16} stroke={1.8} />
         <span className="text-xs font-medium">Design</span>
-        <IconX className="opacity-80" size={13} stroke={2} />
+        <IconX className="opacity-80" size={15} stroke={2} />
       </button>
     );
   }
@@ -46,15 +46,14 @@ export function DesignModeToggle({ active, disabled = false, onToggle }: DesignM
       <button
         aria-label="Design Mode"
         className={cn(
-          "flex size-7 shrink-0 items-center justify-center rounded-md text-fg-faint transition-colors",
-          "hover:bg-hover hover:text-fg-subtle",
-          disabled && "cursor-not-allowed opacity-35 hover:bg-transparent hover:text-fg-faint",
+          "toolbar-icon-button flex shrink-0 items-center justify-center rounded-md transition-colors hover:bg-hover",
+          disabled && "cursor-not-allowed opacity-35 hover:bg-transparent",
         )}
         disabled={disabled}
         onClick={onToggle}
         type="button"
       >
-        <IconPointer size={15} stroke={1.65} />
+        <IconPointer size={18} stroke={1.7} />
       </button>
     </Tooltip>
   );

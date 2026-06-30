@@ -1,21 +1,15 @@
 import {
   IconArrowLeft,
   IconArrowRight,
-  IconChevronDown,
-  IconChevronUp,
   IconDeviceDesktopCode,
   IconExternalLink,
-  IconLock,
-  IconLockOpen,
   IconPlus,
   IconRefresh,
-  IconSearch,
   IconWorld,
   IconX,
 } from "@tabler/icons-react";
 import {
   type FormEvent,
-  type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
   useCallback,
   useEffect,
@@ -25,7 +19,6 @@ import {
 } from "react";
 import type { BrowserBounds, BrowserEvent, BrowserTabInfo } from "../../../../shared/contracts";
 import { useNativeSurfaceSuppressed } from "../../components/ui/nativeSurface";
-import { ShinyText } from "../../components/ui/ShinyText";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
 import { computeBrowserViewBounds, sameBrowserBounds } from "./browserBounds";
@@ -36,23 +29,15 @@ type BrowserPanelProps = {
   workspaceId?: string | undefined;
 };
 
-type FindResult = {
-  matches: number;
-  ordinal: number;
-};
-
 export function BrowserPanel({ active, workspaceId }: BrowserPanelProps) {
   const [tabs, setTabs] = useState<BrowserTabInfo[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | undefined>();
   const [address, setAddress] = useState("");
-  const [findOpen, setFindOpen] = useState(false);
-  const [findQuery, setFindQuery] = useState("");
-  const [findResult, setFindResult] = useState<FindResult>({ matches: 0, ordinal: 0 });
+  const [pendingNavigation, setPendingNavigation] = useState(false);
   const [designTabs, setDesignTabs] = useState<Set<string>>(() => new Set());
 
   const rootRef = useRef<HTMLDivElement | null>(null);
   const addressInputRef = useRef<HTMLInputElement | null>(null);
-  const findInputRef = useRef<HTMLInputElement | null>(null);
   const syncInFlightRef = useRef(false);
   const activeTabIdRef = useRef<string | undefined>(undefined);
 
@@ -62,6 +47,9 @@ export function BrowserPanel({ active, workspaceId }: BrowserPanelProps) {
   );
   const activeId = activeTab?.id;
   const activeUrl = activeTab?.url ?? "";
+  const activePageTabId =
+    activeTab && activeUrl && activeUrl !== "about:blank" ? activeTab.id : undefined;
+  const isLoading = pendingNavigation || Boolean(activeTab?.loading);
   const designOn = Boolean(activeId && designTabs.has(activeId));
 
   const designOnRef = useRef(false);
@@ -102,12 +90,6 @@ export function BrowserPanel({ active, workspaceId }: BrowserPanelProps) {
     syncInFlightRef.current = true;
     try {
       const nextTabs = await window.modus.browser.listTabs({ workspaceId });
-      if (nextTabs.length === 0) {
-        const tab = await window.modus.browser.createTab({ workspaceId });
-        setTabs([tab]);
-        setActiveTabId(tab.id);
-        return;
-      }
       setTabs(nextTabs);
       setActiveTabId((current) =>
         current && nextTabs.some((tab: BrowserTabInfo) => tab.id === current)
@@ -119,8 +101,8 @@ export function BrowserPanel({ active, workspaceId }: BrowserPanelProps) {
     }
   }, [workspaceId]);
 
-  // Initial load + auto-recover an empty strip (e.g. after closing the last
-  // tab): the browser pane always offers a usable tab, like Cursor's.
+  // Load known tabs without creating a blank browser view; the empty state owns
+  // first-run until the user enters a URL or presses Ctrl+T.
   useEffect(() => {
     if (active && tabs.length === 0) {
       void syncTabs();
@@ -132,24 +114,6 @@ export function BrowserPanel({ active, workspaceId }: BrowserPanelProps) {
     if (input) {
       input.focus();
       input.select();
-    }
-  }, []);
-
-  const openFindBar = useCallback(() => {
-    setFindOpen(true);
-    window.requestAnimationFrame(() => {
-      findInputRef.current?.focus();
-      findInputRef.current?.select();
-    });
-  }, []);
-
-  const closeFindBar = useCallback(() => {
-    setFindOpen(false);
-    setFindQuery("");
-    setFindResult({ matches: 0, ordinal: 0 });
-    const tabId = activeTabIdRef.current;
-    if (tabId) {
-      void window.modus.browser.findStop({ tabId, action: "clearSelection" });
     }
   }, []);
 
@@ -167,6 +131,9 @@ export function BrowserPanel({ active, workspaceId }: BrowserPanelProps) {
 
       if (event.type === "browser.updated" && event.tab.workspaceId === workspaceId) {
         setTabs((current) => upsertTab(current, event.tab));
+        if (event.tab.id === activeTabIdRef.current && !event.tab.loading) {
+          setPendingNavigation(false);
+        }
         return;
       }
 
@@ -186,18 +153,9 @@ export function BrowserPanel({ active, workspaceId }: BrowserPanelProps) {
         return;
       }
 
-      if (event.type === "browser.find-result" && event.workspaceId === workspaceId) {
-        if (event.tabId === activeTabIdRef.current) {
-          setFindResult({ matches: event.matches, ordinal: event.activeMatchOrdinal });
-        }
-        return;
-      }
-
       if (event.type === "browser.shortcut" && event.workspaceId === workspaceId) {
         if (event.shortcut === "focus-address") {
           focusAddress();
-        } else if (event.shortcut === "find") {
-          openFindBar();
         } else if (event.shortcut === "toggle-design") {
           toggleDesign();
         }
@@ -215,7 +173,7 @@ export function BrowserPanel({ active, workspaceId }: BrowserPanelProps) {
         });
       }
     });
-  }, [workspaceId, focusAddress, openFindBar, toggleDesign]);
+  }, [workspaceId, focusAddress, toggleDesign]);
 
   // Address bar mirrors the active tab unless the user is editing it.
   useEffect(() => {
@@ -223,16 +181,6 @@ export function BrowserPanel({ active, workspaceId }: BrowserPanelProps) {
       setAddress(activeUrl === "about:blank" ? "" : activeUrl);
     }
   }, [activeUrl]);
-
-  // Find state is per-page; switching tabs resets it.
-  useEffect(() => {
-    if (!activeId) {
-      return;
-    }
-    setFindOpen(false);
-    setFindQuery("");
-    setFindResult({ matches: 0, ordinal: 0 });
-  }, [activeId]);
 
   const createTab = useCallback(async (): Promise<void> => {
     if (!workspaceId) {
@@ -244,11 +192,11 @@ export function BrowserPanel({ active, workspaceId }: BrowserPanelProps) {
     window.requestAnimationFrame(focusAddress);
   }, [workspaceId, focusAddress]);
 
-  async function selectTab(tabId: string): Promise<void> {
+  const selectTab = useCallback(async (tabId: string): Promise<void> => {
     const tab = await window.modus.browser.selectTab({ tabId });
     setTabs((current) => upsertTab(current, tab));
     setActiveTabId(tab.id);
-  }
+  }, []);
 
   const closeTab = useCallback(async (tabId: string): Promise<void> => {
     await window.modus.browser.closeTab({ tabId });
@@ -259,27 +207,35 @@ export function BrowserPanel({ active, workspaceId }: BrowserPanelProps) {
     if (!address.trim() || (!activeTab && !workspaceId)) {
       return;
     }
-    const tab = await window.modus.browser.navigate({
-      ...(activeTab ? { tabId: activeTab.id } : {}),
-      ...(workspaceId ? { workspaceId } : {}),
-      url: address,
-    });
-    setTabs((current) => upsertTab(current, tab));
-    setActiveTabId(tab.id);
-    addressInputRef.current?.blur();
+    setPendingNavigation(true);
+    try {
+      const tab = await window.modus.browser.navigate({
+        ...(activeTab ? { tabId: activeTab.id } : {}),
+        ...(workspaceId ? { workspaceId } : {}),
+        url: address,
+      });
+      setTabs((current) => upsertTab(current, tab));
+      setActiveTabId(tab.id);
+      addressInputRef.current?.blur();
+    } finally {
+      setPendingNavigation(false);
+    }
   }
 
-  function runFind(query: string, findNext: boolean, forward: boolean): void {
-    const tabId = activeTab?.id;
-    if (!tabId) {
+  function reloadActiveTab(): void {
+    if (!activeTab) {
       return;
     }
-    if (!query.trim()) {
-      setFindResult({ matches: 0, ordinal: 0 });
-      void window.modus.browser.findStop({ tabId, action: "clearSelection" });
-      return;
-    }
-    void window.modus.browser.find({ tabId, query, findNext, forward });
+    setPendingNavigation(true);
+    void window.modus.browser
+      .reload({ tabId: activeTab.id })
+      .then((tab: BrowserTabInfo) => {
+        setTabs((current) => upsertTab(current, tab));
+        if (!tab.loading) {
+          setPendingNavigation(false);
+        }
+      })
+      .catch(() => setPendingNavigation(false));
   }
 
   // Browser shortcuts while focus is in the panel chrome (the page itself is
@@ -300,15 +256,22 @@ export function BrowserPanel({ active, workspaceId }: BrowserPanelProps) {
       if (key === "f12" && tab) {
         void window.modus.browser.toggleDevtools({ tabId: tab.id });
       } else if ((key === "f5" || (chord && key === "r")) && tab) {
-        void window.modus.browser.reload({ tabId: tab.id });
+        setPendingNavigation(true);
+        void window.modus.browser
+          .reload({ tabId: tab.id })
+          .then((nextTab: BrowserTabInfo) => {
+            setTabs((current) => upsertTab(current, nextTab));
+            if (!nextTab.loading) {
+              setPendingNavigation(false);
+            }
+          })
+          .catch(() => setPendingNavigation(false));
       } else if (chord && key === "t") {
         void createTab();
       } else if (chord && key === "w" && tab) {
         void closeTab(tab.id);
       } else if (chord && key === "l") {
         focusAddress();
-      } else if (chord && key === "f") {
-        openFindBar();
       } else if (chord && event.shiftKey && key === "d") {
         toggleDesign();
       } else {
@@ -319,230 +282,147 @@ export function BrowserPanel({ active, workspaceId }: BrowserPanelProps) {
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [active, tabs, createTab, closeTab, focusAddress, openFindBar, toggleDesign]);
+  }, [active, tabs, createTab, closeTab, focusAddress, toggleDesign]);
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-panel" ref={rootRef}>
-      <BrowserTabStrip
+    <div className="flex h-full min-h-0 flex-col bg-canvas" ref={rootRef}>
+      <BrowserTabRail
         activeTabId={activeTab?.id}
-        onClose={(tabId) => void closeTab(tabId)}
-        onCreate={() => void createTab()}
-        onSelect={(tabId) => void selectTab(tabId)}
+        onCloseTab={(tabId) => void closeTab(tabId)}
+        onCreateTab={() => void createTab()}
+        onSelectTab={(tabId) => void selectTab(tabId)}
         tabs={tabs}
       />
-      <div className="flex h-9 shrink-0 items-center gap-0.5 border-hairline border-b px-1.5">
+      <div className="toolbar-row flex shrink-0 items-center gap-1 px-3">
         <BrowserIconButton
           disabled={!activeTab?.canGoBack}
           label="Back"
           onClick={() => activeTab && void window.modus.browser.back({ tabId: activeTab.id })}
         >
-          <IconArrowLeft size={15} stroke={1.65} />
+          <IconArrowLeft size={18} stroke={1.7} />
         </BrowserIconButton>
         <BrowserIconButton
           disabled={!activeTab?.canGoForward}
           label="Forward"
           onClick={() => activeTab && void window.modus.browser.forward({ tabId: activeTab.id })}
         >
-          <IconArrowRight size={15} stroke={1.65} />
+          <IconArrowRight size={18} stroke={1.7} />
         </BrowserIconButton>
-        <BrowserIconButton
-          disabled={!activeTab}
-          label="Reload (F5)"
-          onClick={() => activeTab && void window.modus.browser.reload({ tabId: activeTab.id })}
-        >
-          <IconRefresh size={15} stroke={1.65} />
+        <BrowserIconButton disabled={!activeTab} label="Reload (F5)" onClick={reloadActiveTab}>
+          <IconRefresh className={cn(isLoading && "animate-spin")} size={18} stroke={1.7} />
         </BrowserIconButton>
-        <form className="mx-1 min-w-0 flex-1" onSubmit={(event) => void submitAddress(event)}>
-          <div className="relative">
-            <span className="pointer-events-none absolute top-0 left-2.5 flex h-7 items-center text-fg-faint">
-              <AddressIcon tab={activeTab} />
-            </span>
-            <input
-              className="h-7 w-full rounded-md border border-transparent bg-input pr-3 pl-8 text-xs text-fg outline-none transition-colors placeholder:text-fg-faint focus:border-focus-ring/60"
-              onChange={(event) => setAddress(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Escape") {
-                  setAddress(activeUrl === "about:blank" ? "" : activeUrl);
-                  event.currentTarget.blur();
-                }
-              }}
-              placeholder="Search or enter URL (Ctrl+L)"
-              ref={addressInputRef}
-              spellCheck={false}
-              value={address}
-            />
-          </div>
+        <form className="mx-3 min-w-0 flex-1" onSubmit={(event) => void submitAddress(event)}>
+          <input
+            className="h-8 w-full rounded-md border border-transparent bg-transparent px-3 text-center text-fg text-sm outline-none transition-colors placeholder:text-fg-muted hover:bg-hover focus:border-hairline focus:bg-hover focus:text-left"
+            onChange={(event) => setAddress(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                setAddress(activeUrl === "about:blank" ? "" : activeUrl);
+                event.currentTarget.blur();
+              }
+            }}
+            placeholder="输入 URL"
+            ref={addressInputRef}
+            spellCheck={false}
+            value={address}
+          />
         </form>
-        <DesignModeToggle active={designOn} disabled={!activeTab} onToggle={toggleDesign} />
-        <BrowserIconButton
-          active={findOpen}
-          disabled={!activeTab}
-          label="Find in page (Ctrl+F)"
-          onClick={() => (findOpen ? closeFindBar() : openFindBar())}
-        >
-          <IconSearch size={15} stroke={1.65} />
-        </BrowserIconButton>
+        <DesignModeToggle active={designOn} disabled={!activePageTabId} onToggle={toggleDesign} />
         <BrowserIconButton
           active={Boolean(activeTab?.devtoolsOpen)}
-          disabled={!activeTab}
+          disabled={!activePageTabId}
           label="DevTools (F12)"
           onClick={() =>
             activeTab && void window.modus.browser.toggleDevtools({ tabId: activeTab.id })
           }
         >
-          <IconDeviceDesktopCode size={15} stroke={1.65} />
+          <IconDeviceDesktopCode size={18} stroke={1.7} />
         </BrowserIconButton>
         <BrowserIconButton
-          disabled={!activeTab || !/^https?:/i.test(activeUrl)}
+          disabled={!activePageTabId || !/^https?:/i.test(activeUrl)}
           label="Open in external browser"
           onClick={() =>
             activeTab && void window.modus.browser.openExternal({ tabId: activeTab.id })
           }
         >
-          <IconExternalLink size={15} stroke={1.65} />
+          <IconExternalLink size={18} stroke={1.7} />
         </BrowserIconButton>
       </div>
-      {findOpen && activeTab ? (
-        <div className="flex h-9 shrink-0 items-center gap-1 border-hairline border-b px-2">
-          <IconSearch className="shrink-0 text-fg-faint" size={14} stroke={1.65} />
-          <input
-            className="h-7 min-w-0 flex-1 rounded-md border border-transparent bg-input px-2 text-xs text-fg outline-none placeholder:text-fg-faint focus:border-focus-ring/60"
-            onChange={(event) => {
-              setFindQuery(event.target.value);
-              runFind(event.target.value, false, true);
-            }}
-            onKeyDown={(event: ReactKeyboardEvent<HTMLInputElement>) => {
-              if (event.key === "Enter") {
-                event.preventDefault();
-                runFind(findQuery, true, !event.shiftKey);
-              } else if (event.key === "Escape") {
-                event.preventDefault();
-                closeFindBar();
-              }
-            }}
-            placeholder="Find in page"
-            ref={findInputRef}
-            spellCheck={false}
-            value={findQuery}
-          />
-          <span className="shrink-0 px-1 text-2xs text-fg-faint tabular-nums">
-            {findQuery ? `${findResult.ordinal}/${findResult.matches}` : ""}
-          </span>
-          <BrowserIconButton
-            disabled={!findQuery}
-            label="Previous match"
-            onClick={() => runFind(findQuery, true, false)}
-          >
-            <IconChevronUp size={14} stroke={1.65} />
-          </BrowserIconButton>
-          <BrowserIconButton
-            disabled={!findQuery}
-            label="Next match"
-            onClick={() => runFind(findQuery, true, true)}
-          >
-            <IconChevronDown size={14} stroke={1.65} />
-          </BrowserIconButton>
-          <BrowserIconButton label="Close find bar" onClick={closeFindBar}>
-            <IconX size={14} stroke={1.65} />
-          </BrowserIconButton>
-        </div>
-      ) : null}
-      <BrowserViewport active={active} onCreateTab={() => void createTab()} tabId={activeTab?.id} />
+      <BrowserViewport active={active} tabId={activePageTabId} />
     </div>
   );
 }
 
-function AddressIcon({ tab }: { tab: BrowserTabInfo | undefined }) {
-  if (tab?.loading) {
-    return <IconWorld size={13} stroke={1.8} />;
-  }
-  const url = tab?.url ?? "";
-  if (/^https:/i.test(url)) {
-    return <IconLock size={13} stroke={1.8} />;
-  }
-  if (/^http:/i.test(url)) {
-    return <IconLockOpen className="text-danger" size={13} stroke={1.8} />;
-  }
-  return <IconWorld size={13} stroke={1.8} />;
-}
-
-function BrowserTabStrip({
+function BrowserTabRail({
   activeTabId,
+  onCloseTab,
+  onCreateTab,
+  onSelectTab,
   tabs,
-  onClose,
-  onCreate,
-  onSelect,
 }: {
   activeTabId?: string | undefined;
+  onCloseTab: (tabId: string) => void;
+  onCreateTab: () => void;
+  onSelectTab: (tabId: string) => void;
   tabs: BrowserTabInfo[];
-  onClose(tabId: string): void;
-  onCreate(): void;
-  onSelect(tabId: string): void;
 }) {
   return (
-    <div className="flex h-9 shrink-0 items-center gap-1 border-hairline border-b px-1.5">
+    <div className="flex h-10 shrink-0 items-center gap-1 px-3 pt-1">
       <div className="scroll-thin flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
-        {tabs.map((tab) => (
-          <div
-            className={cn(
-              "group flex h-7 min-w-[120px] max-w-[200px] items-center rounded-md pr-1 transition-colors",
-              activeTabId === tab.id ? "bg-active text-fg" : "text-fg-subtle hover:bg-hover",
-            )}
-            key={tab.id}
-            onAuxClick={(event) => {
-              // Middle-click closes, like every real browser.
-              if (event.button === 1) {
-                event.preventDefault();
-                onClose(tab.id);
-              }
-            }}
+        {tabs.length === 0 ? (
+          <button
+            className="flex h-8 max-w-52 shrink-0 cursor-default items-center gap-2 rounded-md bg-active px-3 text-fg text-sm"
+            disabled
+            type="button"
           >
-            <button
-              className="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-l-md pl-2 text-left outline-none"
-              onClick={() => onSelect(tab.id)}
-              title={tab.title || tab.url}
-              type="button"
-            >
-              {tab.favicon ? (
-                <img alt="" className="size-3.5 shrink-0 rounded-[3px]" src={tab.favicon} />
-              ) : (
-                <IconWorld className="shrink-0 text-fg-faint" size={13} stroke={1.65} />
-              )}
-              {tab.loading ? (
-                <ShinyText className="min-w-0 flex-1 truncate text-xs">
-                  {tab.title || "Loading…"}
-                </ShinyText>
-              ) : (
-                <span className="min-w-0 flex-1 truncate text-xs">{tab.title || "New tab"}</span>
-              )}
-            </button>
-            <button
-              aria-label="Close tab"
-              className="shrink-0 rounded-sm p-0.5 text-fg-faint opacity-60 transition-opacity hover:bg-chip-strong hover:text-fg group-hover:opacity-100"
-              onClick={() => onClose(tab.id)}
-              type="button"
-            >
-              <IconX size={12} stroke={1.8} />
-            </button>
-          </div>
-        ))}
+            <IconWorld className="toolbar-icon shrink-0" size={18} stroke={1.7} />
+            <span className="truncate">新页面</span>
+          </button>
+        ) : (
+          tabs.map((tab) => {
+            const active = tab.id === activeTabId;
+            const label = tab.title?.trim() || "新页面";
+            return (
+              <div
+                className={cn(
+                  "group flex h-8 max-w-52 shrink-0 items-center rounded-md pr-1 transition-colors",
+                  active ? "bg-active text-fg" : "text-fg-muted hover:bg-hover hover:text-fg",
+                )}
+                key={tab.id}
+              >
+                <button
+                  className="flex h-full min-w-0 flex-1 items-center gap-2 rounded-l-md px-3 text-left"
+                  onClick={() => onSelectTab(tab.id)}
+                  title={label}
+                  type="button"
+                >
+                  <IconWorld className="toolbar-icon shrink-0" size={18} stroke={1.7} />
+                  <span className="truncate">{label}</span>
+                </button>
+                <button
+                  aria-label="关闭页面"
+                  className="flex size-5 shrink-0 items-center justify-center rounded-full bg-fg text-canvas opacity-0 transition-opacity hover:opacity-100 group-hover:opacity-100 focus-visible:opacity-100"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onCloseTab(tab.id);
+                  }}
+                  type="button"
+                >
+                  <IconX size={12} stroke={2.2} />
+                </button>
+              </div>
+            );
+          })
+        )}
       </div>
-      <BrowserIconButton label="New tab (Ctrl+T)" onClick={onCreate}>
-        <IconPlus size={15} stroke={1.65} />
+      <BrowserIconButton label="新页面" onClick={onCreateTab}>
+        <IconPlus size={18} stroke={1.7} />
       </BrowserIconButton>
     </div>
   );
 }
 
-function BrowserViewport({
-  active,
-  tabId,
-  onCreateTab,
-}: {
-  active: boolean;
-  tabId?: string | undefined;
-  onCreateTab(): void;
-}) {
+function BrowserViewport({ active, tabId }: { active: boolean; tabId?: string | undefined }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   // A full-screen DOM overlay (e.g. the image lightbox) is on top: native views
   // paint above the DOM, so the embedded browser must hide until it closes.
@@ -608,19 +488,15 @@ function BrowserViewport({
   }, [active, tabId, suppressed]);
 
   return (
-    <div className="relative min-h-0 flex-1 bg-panel">
-      <div className="absolute inset-y-0 right-0 left-3" ref={hostRef} />
+    <div className="relative min-h-0 flex-1 bg-canvas">
+      <div className="absolute inset-0" ref={hostRef} />
       {!tabId ? (
-        <div className="flex h-full flex-col items-center justify-center gap-3 text-sm text-fg-faint">
-          <span>No browser tab</span>
-          <button
-            className="flex items-center gap-1.5 rounded-md bg-chip px-3 py-1.5 text-xs text-fg-subtle transition-colors hover:bg-chip-strong hover:text-fg"
-            onClick={onCreateTab}
-            type="button"
-          >
-            <IconPlus size={14} stroke={1.8} />
-            New tab
-          </button>
+        <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
+          <IconWorld className="toolbar-icon" size={70} stroke={1.35} />
+          <div className="space-y-1">
+            <div className="font-medium text-fg text-sm">开始浏览</div>
+            <div className="text-fg-muted text-xs">输入 URL 以打开页面</div>
+          </div>
         </div>
       ) : null}
     </div>
@@ -645,10 +521,11 @@ function BrowserIconButton({
       <button
         aria-label={label}
         className={cn(
-          "flex size-7 shrink-0 items-center justify-center rounded-md text-fg-faint transition-colors",
-          active ? "bg-active text-fg" : "hover:bg-hover hover:text-fg-subtle",
-          disabled && "cursor-not-allowed opacity-35 hover:bg-transparent hover:text-fg-faint",
+          "toolbar-icon-button flex shrink-0 items-center justify-center rounded-md transition-colors hover:bg-hover",
+          active && "bg-active",
+          disabled && "cursor-not-allowed opacity-35 hover:bg-transparent",
         )}
+        data-active={active}
         disabled={disabled}
         onClick={onClick}
         type="button"
