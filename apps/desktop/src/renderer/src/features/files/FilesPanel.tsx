@@ -1,18 +1,33 @@
+import { Menu } from "@base-ui/react/menu";
 import {
+  IconCheck,
   IconChevronRight,
+  IconCopy,
+  IconDots,
+  IconExternalLink,
   IconFile,
   IconFileText,
   IconFolder,
   IconFolderOpen,
   IconFolders,
+  IconSearch,
 } from "@tabler/icons-react";
 import { animate, m, useMotionValue } from "motion/react";
-import { type PointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type PointerEvent,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { FileEntry, FileReadResult } from "../../../../shared/contracts";
 import { CodeViewer } from "../../components/code/CodeViewer";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
 import { MarkdownMessage } from "../agent/MarkdownMessage";
+import { materialIconForEntry } from "./fileIcons";
 
 /**
  * VS-Code-style file panel: a lazy directory tree on the left, a read-only
@@ -48,6 +63,8 @@ export function FilesPanel({ cwd }: FilesPanelProps) {
   const [loading, setLoading] = useState<Set<string>>(new Set());
   const [selectedFile, setSelectedFile] = useState<FileReadResult | undefined>();
   const [fileError, setFileError] = useState<string | undefined>();
+  const [query, setQuery] = useState("");
+  const [wordWrap, setWordWrap] = useState(false);
 
   // Tree width as a motion value (live drag writes straight to the DOM, no React
   // re-render per frame) + the committed width that the open animation targets.
@@ -190,32 +207,41 @@ export function FilesPanel({ cwd }: FilesPanelProps) {
     return out;
   }, [rootEntries, expanded, childrenByPath]);
 
+  const visibleRows = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return rows;
+    return rows.filter(({ entry }) =>
+      `${entry.name} ${entry.relativePath}`.toLowerCase().includes(needle),
+    );
+  }, [rows, query]);
+
   const selectedPath = selectedFile?.path;
-  const viewerLabel = selectedFile?.relativePath;
   const viewerNote = selectedFile?.truncated ? "preview truncated" : undefined;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex h-8 shrink-0 items-center gap-2 border-hairline border-b pr-1.5 pl-3">
-        <span
-          className="min-w-0 flex-1 truncate font-mono text-fg-muted text-xs"
-          title={viewerLabel}
-        >
-          {viewerLabel ?? ""}
-        </span>
+      <div className="toolbar-row flex shrink-0 items-center gap-2 border-hairline border-b pr-1.5 pl-3">
+        <FileBreadcrumb cwd={cwd} file={selectedFile} />
         {viewerNote ? <span className="shrink-0 text-2xs text-fg-faint">{viewerNote}</span> : null}
+        <FileActions
+          cwd={cwd}
+          file={selectedFile}
+          onToggleWordWrap={() => setWordWrap((value) => !value)}
+          wordWrap={wordWrap}
+        />
         <Tooltip content={treeOpen ? "Hide file tree" : "Show file tree"} side="bottom">
           <button
             aria-label="Toggle file tree"
             aria-pressed={treeOpen}
             className={cn(
-              "flex size-7 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-hover",
-              treeOpen ? "text-fg-subtle" : "text-fg-faint hover:text-fg-subtle",
+              "toolbar-icon-button flex shrink-0 items-center justify-center rounded-md transition-colors hover:bg-hover",
+              treeOpen && "bg-active",
             )}
+            data-active={treeOpen}
             onClick={() => setTreeOpen((open) => !open)}
             type="button"
           >
-            <IconFolders size={15} stroke={1.65} />
+            <IconFolders size={18} stroke={1.7} />
           </button>
         </Tooltip>
       </div>
@@ -225,26 +251,47 @@ export function FilesPanel({ cwd }: FilesPanelProps) {
           className="shrink-0 overflow-hidden border-hairline border-r"
           style={{ width: treeW }}
         >
-          <div className="scroll-thin h-full overflow-y-auto overflow-x-hidden py-1">
-            {rows.length === 0 ? (
-              <div className="px-3 py-2 text-fg-faint text-xs">
-                {cwd ? "Empty" : "No workspace"}
-              </div>
-            ) : (
-              rows.map(({ entry, depth }) => (
-                <FileRow
-                  depth={depth}
-                  entry={entry}
-                  expanded={expanded.has(entry.path)}
-                  key={entry.path}
-                  loading={loading.has(entry.path)}
-                  onActivate={() =>
-                    entry.kind === "directory" ? toggleDir(entry) : openFile(entry)
-                  }
-                  selected={entry.path === selectedPath}
+          <div className="flex h-full min-h-0 flex-col">
+            <div className="shrink-0 px-2 pt-2 pb-1">
+              <label className="relative block">
+                <IconSearch
+                  className="-translate-y-1/2 pointer-events-none absolute top-1/2 left-2.5 toolbar-icon"
+                  size={16}
+                  stroke={1.7}
                 />
-              ))
-            )}
+                <input
+                  className="h-8 w-full rounded-lg border border-hairline bg-surface pr-2.5 pl-8 text-fg text-sm outline-none transition-colors placeholder:text-fg-faint focus:border-hairline-strong focus:bg-elevated"
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="Filter files..."
+                  spellCheck={false}
+                  type="search"
+                  value={query}
+                />
+              </label>
+            </div>
+            <div className="scroll-thin min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-1.5 py-1">
+              {rows.length === 0 ? (
+                <div className="px-3 py-2 text-fg-faint text-xs">
+                  {cwd ? "Empty" : "No workspace"}
+                </div>
+              ) : visibleRows.length === 0 ? (
+                <div className="px-3 py-2 text-fg-faint text-xs">No matches</div>
+              ) : (
+                visibleRows.map(({ entry, depth }) => (
+                  <FileRow
+                    depth={depth}
+                    entry={entry}
+                    expanded={expanded.has(entry.path)}
+                    key={entry.path}
+                    loading={loading.has(entry.path)}
+                    onActivate={() =>
+                      entry.kind === "directory" ? toggleDir(entry) : openFile(entry)
+                    }
+                    selected={entry.path === selectedPath}
+                  />
+                ))
+              )}
+            </div>
           </div>
         </m.div>
 
@@ -261,10 +308,156 @@ export function FilesPanel({ cwd }: FilesPanelProps) {
         ) : null}
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <FileViewer error={fileError} file={selectedFile} />
+          <FileViewer error={fileError} file={selectedFile} wordWrap={wordWrap} />
         </div>
       </div>
     </div>
+  );
+}
+
+function FileBreadcrumb({
+  cwd,
+  file,
+}: {
+  cwd: string | undefined;
+  file: FileReadResult | undefined;
+}) {
+  const root = cwd?.split(/[\\/]/).filter(Boolean).at(-1) ?? "workspace";
+  const parts = file?.relativePath.split("/").filter(Boolean) ?? [];
+  return (
+    <div
+      className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden text-sm"
+      title={file?.relativePath ?? root}
+    >
+      <span className="shrink-0 truncate text-fg-muted">{root}</span>
+      {parts.map((part, index) => {
+        const last = index === parts.length - 1;
+        const key = parts.slice(0, index + 1).join("/");
+        return (
+          <span className="flex min-w-0 items-center gap-1.5" key={key}>
+            <IconChevronRight className="toolbar-icon shrink-0" size={15} stroke={1.8} />
+            <span
+              className={cn("min-w-0 truncate", last ? "font-medium text-fg" : "text-fg-muted")}
+            >
+              {part}
+            </span>
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+function FileActions({
+  cwd,
+  file,
+  wordWrap,
+  onToggleWordWrap,
+}: {
+  cwd: string | undefined;
+  file: FileReadResult | undefined;
+  wordWrap: boolean;
+  onToggleWordWrap(): void;
+}) {
+  const disabled = !cwd || !file;
+  const openFile = (): void => {
+    if (!cwd || !file) return;
+    void window.modus.file.open({ cwd, path: file.path });
+  };
+  const openFolder = (): void => {
+    if (!cwd || !file) return;
+    void window.modus.file.open({ cwd, path: parentPath(file.path) });
+  };
+  return (
+    <div className="ml-auto flex shrink-0 items-center gap-1">
+      <Menu.Root>
+        <Menu.Trigger
+          aria-label="File options"
+          className="toolbar-icon-button flex items-center justify-center rounded-md outline-none transition-colors hover:bg-hover data-popup-open:bg-hover disabled:opacity-35"
+          disabled={disabled}
+        >
+          <IconDots size={18} stroke={1.8} />
+        </Menu.Trigger>
+        <Menu.Portal>
+          <Menu.Positioner align="end" side="bottom" sideOffset={6}>
+            <Menu.Popup className="origin-(--transform-origin) min-w-[190px] rounded-lg border border-hairline bg-elevated p-1 shadow-popup">
+              <MenuAction
+                icon={<IconCopy size={16} stroke={1.75} />}
+                onClick={() => file && void navigator.clipboard.writeText(file.path)}
+              >
+                Copy Path
+              </MenuAction>
+              <MenuAction
+                disabled={!file || file.binary}
+                icon={<IconFileText size={16} stroke={1.75} />}
+                onClick={() => file && void navigator.clipboard.writeText(file.content)}
+              >
+                Copy File Contents
+              </MenuAction>
+              <MenuAction
+                closeOnClick={false}
+                icon={wordWrap ? <IconCheck size={16} stroke={1.8} /> : <span className="size-4" />}
+                onClick={onToggleWordWrap}
+              >
+                Word Wrap
+              </MenuAction>
+              <div className="my-1 h-px bg-hairline" />
+              <MenuAction icon={<IconFolderOpen size={16} stroke={1.75} />} onClick={openFolder}>
+                Open Containing Folder
+              </MenuAction>
+            </Menu.Popup>
+          </Menu.Positioner>
+        </Menu.Portal>
+      </Menu.Root>
+      <button
+        className="flex h-8 items-center gap-1.5 rounded-lg border border-hairline bg-surface px-2.5 text-fg text-xs outline-none transition-colors hover:bg-hover disabled:opacity-35"
+        disabled={disabled}
+        onClick={openFile}
+        type="button"
+      >
+        <IconExternalLink size={16} stroke={1.75} />
+        Open
+      </button>
+      <Tooltip content="Open containing folder" side="bottom">
+        <button
+          aria-label="Open containing folder"
+          className="toolbar-icon-button flex items-center justify-center rounded-md transition-colors hover:bg-hover disabled:opacity-35"
+          disabled={disabled}
+          onClick={openFolder}
+          type="button"
+        >
+          <IconFolderOpen size={18} stroke={1.7} />
+        </button>
+      </Tooltip>
+    </div>
+  );
+}
+
+function MenuAction({
+  children,
+  closeOnClick,
+  disabled,
+  icon,
+  onClick,
+}: {
+  children: ReactNode;
+  closeOnClick?: boolean;
+  disabled?: boolean;
+  icon?: ReactNode;
+  onClick(): void;
+}) {
+  return (
+    <Menu.Item
+      className="flex cursor-default items-center gap-2.5 rounded-md px-2.5 py-1.5 text-fg text-sm outline-none select-none data-disabled:opacity-35 data-highlighted:bg-hover"
+      closeOnClick={closeOnClick}
+      disabled={disabled}
+      onClick={onClick}
+    >
+      {icon ? (
+        <span className="flex size-4 items-center justify-center text-fg-muted">{icon}</span>
+      ) : null}
+      <span className="flex-1">{children}</span>
+    </Menu.Item>
   );
 }
 
@@ -286,34 +479,37 @@ function FileRow({
   const isDir = entry.kind === "directory";
   const DirIcon = expanded ? IconFolderOpen : IconFolder;
   const FileIcon = isMarkdown(entry.path) ? IconFileText : IconFile;
+  const iconUrl = materialIconForEntry(entry, expanded);
   return (
     <button
       className={cn(
-        "flex h-[26px] w-full min-w-0 items-center gap-1 rounded-md pr-2 text-left text-[13px] transition-colors",
-        selected ? "bg-active text-fg" : "text-fg-subtle hover:bg-hover hover:text-fg-muted",
+        "flex h-8 w-full min-w-0 items-center gap-1.5 rounded-md pr-2 text-left text-sm transition-colors",
+        selected ? "bg-active text-fg" : "text-fg hover:bg-hover",
       )}
       onClick={onActivate}
-      style={{ paddingLeft: `${6 + depth * 12}px` }}
+      style={{ paddingLeft: `${7 + depth * 14}px` }}
       title={entry.relativePath}
       type="button"
     >
       {isDir ? (
         <IconChevronRight
           className={cn(
-            "shrink-0 text-fg-faint transition-transform duration-150",
+            "toolbar-icon shrink-0 transition-transform duration-150",
             expanded && "rotate-90",
             loading && "animate-pulse",
           )}
-          size={13}
+          size={15}
           stroke={2}
         />
       ) : (
-        <span className="w-[13px] shrink-0" />
+        <span className="w-[15px] shrink-0" />
       )}
-      {isDir ? (
-        <DirIcon className="shrink-0 text-fg-faint" size={14} stroke={1.7} />
+      {iconUrl ? (
+        <img alt="" className="size-[18px] shrink-0" draggable={false} src={iconUrl} />
+      ) : isDir ? (
+        <DirIcon className="toolbar-icon shrink-0" size={18} stroke={1.7} />
       ) : (
-        <FileIcon className="shrink-0 text-fg-faint" size={14} stroke={1.7} />
+        <FileIcon className="toolbar-icon shrink-0" size={18} stroke={1.7} />
       )}
       <span className="min-w-0 flex-1 truncate">{entry.name}</span>
     </button>
@@ -323,9 +519,11 @@ function FileRow({
 function FileViewer({
   file,
   error,
+  wordWrap,
 }: {
   file: FileReadResult | undefined;
   error: string | undefined;
+  wordWrap: boolean;
 }) {
   if (error) {
     return <Centered>{error}</Centered>;
@@ -347,14 +545,24 @@ function FileViewer({
       <MarkdownMessage content={file.content} />
     </div>
   ) : (
-    <CodeViewer className="h-full" content={file.content} path={file.relativePath} />
+    <CodeViewer
+      className="h-full"
+      content={file.content}
+      path={file.relativePath}
+      wordWrap={wordWrap}
+    />
   );
 }
 
-function Centered({ children }: { children: React.ReactNode }) {
+function Centered({ children }: { children: ReactNode }) {
   return (
     <div className="flex h-full items-center justify-center px-4 text-center text-fg-faint text-xs">
       {children}
     </div>
   );
+}
+
+function parentPath(path: string): string {
+  const index = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  return index > 0 ? path.slice(0, index) : ".";
 }

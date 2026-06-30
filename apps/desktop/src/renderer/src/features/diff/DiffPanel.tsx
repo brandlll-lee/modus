@@ -7,7 +7,7 @@ import {
   IconCopy,
   IconDots,
   IconFileDiff,
-  IconFolder,
+  IconFolderOpen,
   IconGitBranch,
   IconGitCommit,
   IconList,
@@ -29,6 +29,7 @@ import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
 import { EmptyState } from "../../components/ui/Panel";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
+import { materialIconForFile } from "../files/fileIcons";
 import { BranchSwitcher } from "../git/BranchSwitcher";
 import { CommitDialog } from "./CommitDialog";
 import {
@@ -41,7 +42,6 @@ import {
   splitPath,
 } from "./changeScopes";
 import { FileDiffPreview } from "./FileDiffPreview";
-import { iconForPath } from "./fileIcon";
 import { buildChangeTree, type ChangeTreeNode } from "./fileTree";
 
 type DiffPanelProps = {
@@ -146,7 +146,12 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
         log.map((commit: GitCommit) => commit.hash),
       ),
     );
-    setCommitFiles((prev) => pruneRecordKeys(prev, log.map((commit: GitCommit) => commit.hash)));
+    setCommitFiles((prev) =>
+      pruneRecordKeys(
+        prev,
+        log.map((commit: GitCommit) => commit.hash),
+      ),
+    );
     setChanges(list);
     setStatsByPath(
       new Map(
@@ -503,7 +508,7 @@ function ReviewToolbar({
   return (
     <div
       aria-label="Git review toolbar"
-      className="flex h-14 shrink-0 items-center gap-2 border-hairline-soft border-b px-3"
+      className="toolbar-row flex shrink-0 items-center gap-2 border-hairline-soft border-b px-3"
       role="toolbar"
     >
       <Menu.Root>
@@ -537,11 +542,11 @@ function ReviewToolbar({
         onAfterSwitch={onRefresh}
         onError={onError}
         onWorktreeBranch={onWorktreeBranch}
-        triggerClassName="ml-1 flex min-w-0 items-center gap-1.5 rounded-md px-1.5 py-0.5 text-sm outline-none transition-colors hover:bg-hover data-popup-open:bg-hover"
+        triggerClassName="ml-1 flex min-w-0 items-center gap-1.5 rounded-md px-2 py-1 text-sm outline-none transition-colors hover:bg-hover data-popup-open:bg-hover"
       >
-        <IconGitBranch className="shrink-0 text-fg-faint" size={13} stroke={1.7} />
-        <span className="max-w-[150px] truncate text-fg-subtle">{branch ?? "detached"}</span>
-        <IconChevronDown className="shrink-0 text-fg-faint" size={12} stroke={1.8} />
+        <IconGitBranch className="toolbar-icon shrink-0" size={16} stroke={1.7} />
+        <span className="max-w-[150px] truncate text-fg">{branch ?? "detached"}</span>
+        <IconChevronDown className="toolbar-icon shrink-0" size={14} stroke={1.8} />
       </BranchSwitcher>
       {linkedWorktree ? (
         <span className="flex min-w-0 items-center gap-1 rounded-full bg-chip px-2 py-1 text-fg-subtle text-xs">
@@ -560,14 +565,14 @@ function ReviewToolbar({
           <button
             aria-label={treeView ? "View as list" : "View as tree"}
             aria-pressed={treeView}
-            className="flex size-7 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-hover hover:text-fg-subtle"
+            className="toolbar-icon-button flex items-center justify-center rounded-md transition-colors hover:bg-hover"
             onClick={onToggleTree}
             type="button"
           >
             {treeView ? (
-              <IconListTree size={15} stroke={1.7} />
+              <IconListTree size={18} stroke={1.7} />
             ) : (
-              <IconList size={15} stroke={1.7} />
+              <IconList size={18} stroke={1.7} />
             )}
           </button>
         </Tooltip>
@@ -575,11 +580,11 @@ function ReviewToolbar({
         <Tooltip content="Refresh changes" side="bottom" sideOffset={6}>
           <button
             aria-label="Refresh changes"
-            className="flex size-7 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-hover hover:text-fg-subtle"
+            className="toolbar-icon-button flex items-center justify-center rounded-md transition-colors hover:bg-hover"
             onClick={onRefresh}
             type="button"
           >
-            <IconRefresh size={15} stroke={1.65} />
+            <IconRefresh size={18} stroke={1.7} />
           </button>
         </Tooltip>
         {children}
@@ -606,12 +611,12 @@ const CommitLauncher = memo(function CommitLauncher({
   return (
     <>
       <button
-        className="flex items-center gap-1.5 rounded-md border border-hairline bg-surface px-2.5 py-1 text-fg text-xs transition-colors hover:bg-hover disabled:opacity-40"
+        className="flex h-8 items-center gap-1.5 rounded-md border border-hairline bg-surface px-2.5 text-fg text-sm transition-colors hover:bg-hover disabled:opacity-40"
         disabled={!cwd}
         onClick={() => setOpen(true)}
         type="button"
       >
-        <IconGitCommit size={14} stroke={1.7} />
+        <IconGitCommit className="toolbar-icon" size={17} stroke={1.7} />
         Commit or push{ahead ? ` ${ahead}` : ""}
       </button>
       <CommitDialog
@@ -806,13 +811,6 @@ const ChangeRow = memo(function ChangeRow({
 }) {
   const { dir, name } = splitPath(change.path);
   const badge = changeBadge(change);
-  const [bodyReady, setBodyReady] = useState(false);
-  useEffect(() => {
-    setBodyReady(false);
-    if (!expanded) return;
-    const frame = requestAnimationFrame(() => setBodyReady(true));
-    return () => cancelAnimationFrame(frame);
-  }, [expanded]);
 
   return (
     <div className="border-hairline-soft border-b">
@@ -835,9 +833,7 @@ const ChangeRow = memo(function ChangeRow({
               <IconChevronRight size={13} stroke={1.7} />
             )}
           </span>
-          <span className="flex size-4 shrink-0 items-center justify-center text-fg-subtle">
-            {iconForPath(change.path)}
-          </span>
+          <ChangeFileIcon path={change.path} />
           <span className="min-w-0 flex-1 truncate">
             {display === "full" && dir ? <span className="text-fg-faint">{dir}</span> : null}
             <span>{name}</span>
@@ -871,31 +867,26 @@ const ChangeRow = memo(function ChangeRow({
           ) : null}
         </span>
       </div>
-      <CollapsibleMotion open={expanded} preset="default">
-        {bodyReady ? (
-          <FileDiffPreview
-            change={change}
-            commit={commit}
-            cwd={cwd}
-            ignoreWhitespace={ignoreWhitespace}
-            refreshToken={refreshToken}
-            sideBySide={sideBySide}
-          />
-        ) : (
-          <DiffBodyPlaceholder />
-        )}
-      </CollapsibleMotion>
+      {expanded ? (
+        <FileDiffPreview
+          change={change}
+          commit={commit}
+          cwd={cwd}
+          ignoreWhitespace={ignoreWhitespace}
+          refreshToken={refreshToken}
+          sideBySide={sideBySide}
+        />
+      ) : null}
     </div>
   );
 });
 
-/** Fixed-height placeholder shown while the row expands, before the (heavy)
- * Monaco diff is mounted — keeps the open animation cheap and smooth. */
-function DiffBodyPlaceholder() {
-  return (
-    <div className="mx-1 mb-1 flex h-[120px] items-center justify-center rounded-lg bg-code-bg text-fg-faint text-xs">
-      Loading diff…
-    </div>
+function ChangeFileIcon({ path }: { path: string }) {
+  const iconUrl = materialIconForFile(path);
+  return iconUrl ? (
+    <img alt="" className="size-[18px] shrink-0" draggable={false} src={iconUrl} />
+  ) : (
+    <IconFileDiff className="toolbar-icon shrink-0" size={18} stroke={1.7} />
   );
 }
 
@@ -1109,7 +1100,7 @@ function TreeFolder({
             <IconChevronRight size={13} stroke={1.7} />
           )}
         </span>
-        <IconFolder className="shrink-0 text-fg-subtle" size={15} stroke={1.6} />
+        <IconFolderOpen className="toolbar-icon shrink-0" size={18} stroke={1.7} />
         <span className="min-w-0 truncate">{node.name}</span>
       </button>
       <CollapsibleMotion open={open} preset="default">
@@ -1144,7 +1135,7 @@ function IconBtn({
   return (
     <button
       aria-label={label}
-      className="flex size-6 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-active hover:text-fg-subtle disabled:cursor-not-allowed disabled:opacity-30"
+      className="toolbar-icon-button flex size-6 items-center justify-center rounded-md transition-colors hover:bg-active disabled:cursor-not-allowed disabled:opacity-30"
       disabled={disabled}
       onClick={(event) => {
         event.stopPropagation();
