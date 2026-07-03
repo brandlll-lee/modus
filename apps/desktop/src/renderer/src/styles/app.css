@@ -18,6 +18,7 @@
   --color-panel: #161617; /* 侧栏 / 菜单栏（一丝提亮） */
   --color-surface: #1c1c1d; /* 输入框（在主区上轻浮起，对比克制） */
   --color-elevated: #232325; /* 下拉 / 弹层 */
+  --color-composer-tray: var(--color-panel);
 
   /* Code surfaces: editor-specific tokens stay out of app UI semantic colours. */
   --color-code-bg: #131314;
@@ -43,10 +44,8 @@
 
   /* Composer 专属描边：静息态保持克制（只比 hairline 略亮），靠 shadow-composer-edge
      的顶部内高光把输入框"浮起"，而不是用一圈深描边压住主区（图5 的轻盈观感）。 */
-  --color-composer-border: rgba(255, 255, 255, 0.08);
-  /* Composer border on hover/focus: lifts clearly above the resting edge — a
-     quiet "alive" cue, never a glow. Replaces the old purple focus ring. */
-  --color-composer-border-strong: rgba(255, 255, 255, 0.2);
+  --color-composer-border: rgba(255, 255, 255, 0.1);
+  --color-composer-border-strong: var(--color-composer-border);
   --color-composer-shine: rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0.16);
 
   /* 悬停 / 选中 半透明白叠层 */
@@ -223,9 +222,8 @@
   /* Composer border on white: a soft resting edge (图5) — the input is carried
      mainly by its shadow + white fill above the white canvas, not a heavy
      outline. Hover/focus is what supplies a readable darker edge. */
-  --color-composer-border: rgba(0, 0, 0, 0.09);
-  /* Hover/focus: a clearly darker edge — the deliberate cue, no glow. */
-  --color-composer-border-strong: rgba(0, 0, 0, 0.22);
+  --color-composer-border: rgba(0, 0, 0, 0.11);
+  --color-composer-border-strong: var(--color-composer-border);
   --color-composer-shine: rgba(0, 0, 0, 0.34), rgba(0, 0, 0, 0.1);
 
   /* Hover / active overlays — black-alpha */
@@ -302,6 +300,96 @@
     0 1px 3px rgba(0, 0, 0, 0.08), 0 0 0 1px var(--color-focus-ring),
     0 0 16px -4px rgba(133, 63, 244, 0.28);
   --shadow-popup: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+:root[data-theme="dark-plus"] {
+  color-scheme: dark;
+
+  --color-canvas: #1e1e1e;
+  --color-panel: #252526;
+  --color-surface: #242424;
+  --color-elevated: #262626;
+  --color-composer-tray: color-mix(in oklab, var(--color-canvas) 72%, var(--color-surface));
+
+  --color-code-bg: #1e1e1e;
+  --color-code-fg: #d4d4d4;
+  --color-code-line-number: #858585;
+  --color-code-line-number-active: #c6c6c6;
+  --color-code-active-line: rgba(255, 255, 255, 0);
+  --color-code-indent-guide: rgba(255, 255, 255, 0.12);
+  --color-code-comment: #6a9955;
+  --color-code-keyword: #c586c0;
+  --color-code-string: #ce9178;
+  --color-code-number: #b5cea8;
+  --color-code-type: #4fc1ff;
+
+  --color-hairline: rgba(255, 255, 255, 0.055);
+  --color-hairline-soft: rgba(255, 255, 255, 0.032);
+  --color-hairline-strong: rgba(255, 255, 255, 0.085);
+
+  --color-composer-border: rgba(255, 255, 255, 0.075);
+  --color-composer-border-strong: var(--color-composer-border);
+  --color-composer-shine: rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.06);
+
+  --color-hover: rgba(255, 255, 255, 0.06);
+  --color-active: rgba(255, 255, 255, 0.09);
+
+  --color-fg: #d4d4d4;
+  --color-fg-muted: #cccccc;
+  --color-fg-subtle: #969696;
+  --color-fg-faint: #6a6a6a;
+  --color-icon: #d4d4d4;
+  --color-icon-muted: #b8b8b8;
+
+  --color-accent: #f54e00;
+  --color-accent-hover: #ff5e12;
+  --color-accent-active: #d04200;
+  --color-on-accent: #ffffff;
+
+  --color-focus-ring: #853ff4;
+  --color-focus-ring-soft: #b388ff;
+  --color-selection: rgba(133, 63, 244, 0.36);
+  --color-link: #8cb4ff;
+  --color-link-hover: #b6d0ff;
+
+  --color-chip-faint: rgba(255, 255, 255, 0.04);
+  --color-chip: rgba(255, 255, 255, 0.06);
+  --color-chip-strong: rgba(255, 255, 255, 0.1);
+
+  --color-success: #3fae87;
+  --color-danger: #e5687a;
+  --color-diff-add-bg: #26362d;
+  --color-diff-add-gutter: #31483a;
+  --color-diff-del-bg: #3c2c29;
+  --color-diff-del-gutter: #513832;
+
+  --color-terminal-bg: #1e1e1e;
+  --color-terminal-fg: #cccccc;
+  --color-terminal-selection: rgba(255, 255, 255, 0.22);
+  --color-terminal-ansi-black: #000000;
+  --color-terminal-ansi-red: #cd3131;
+  --color-terminal-ansi-green: #0dbc79;
+  --color-terminal-ansi-yellow: #e5e510;
+  --color-terminal-ansi-blue: #2472c8;
+  --color-terminal-ansi-magenta: #bc3fbc;
+  --color-terminal-ansi-cyan: #11a8cd;
+  --color-terminal-ansi-white: #e5e5e5;
+  --color-terminal-ansi-bright-black: #666666;
+  --color-terminal-ansi-bright-red: #f14c4c;
+  --color-terminal-ansi-bright-green: #23d18b;
+  --color-terminal-ansi-bright-yellow: #f5f543;
+  --color-terminal-ansi-bright-blue: #3b8eea;
+  --color-terminal-ansi-bright-magenta: #d670d6;
+  --color-terminal-ansi-bright-cyan: #29b8db;
+  --color-terminal-ansi-bright-white: #e5e5e5;
+
+  --shadow-composer: 0 1px 8px -6px rgba(0, 0, 0, 0.45);
+  --shadow-composer-edge:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.025), 0 1px 8px -6px rgba(0, 0, 0, 0.45);
+  --shadow-composer-focus:
+    0 1px 10px -6px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--color-focus-ring),
+    0 0 16px -3px rgba(133, 63, 244, 0.36);
+  --shadow-popup: 0 2px 8px rgba(0, 0, 0, 0.26);
 }
 
 /*
@@ -850,10 +938,15 @@ input {
 .modus-markdown [data-streamdown="code-block-body"] code > span {
   display: block;
 }
-:root[data-theme="dark"] .modus-markdown [data-streamdown="code-block-body"] span {
+:root[data-theme="dark"] .modus-markdown [data-streamdown="code-block-body"] span,
+:root[data-theme="dark-plus"] .modus-markdown [data-streamdown="code-block-body"] span {
   color: var(--shiki-dark, var(--sdm-c, inherit));
 }
 :root[data-theme="dark"]
+  .modus-markdown
+  [data-streamdown="code-block-body"]
+  span[style*="--shiki-dark-bg"],
+:root[data-theme="dark-plus"]
   .modus-markdown
   [data-streamdown="code-block-body"]
   span[style*="--shiki-dark-bg"] {

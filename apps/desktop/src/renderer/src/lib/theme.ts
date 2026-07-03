@@ -1,15 +1,14 @@
 import { useSyncExternalStore } from "react";
 
 /**
- * App color theme. Dark is the original, hand-tuned palette; Light is a
- * deliberate second theme (off-white base, elevation via white + shadow,
- * black-alpha borders, WCAG-checked text tiers) derived from the dark tokens.
+ * App color theme. Dark is the original, hand-tuned palette; Light and
+ * Dark+ override the same semantic tokens without changing component code.
  *
  * The active theme is a single `data-theme` attribute on <html>; all visuals
- * come from CSS custom properties overridden under `:root[data-theme="light"]`
+ * come from CSS custom properties overridden under `:root[data-theme]`
  * in app.css, so switching is instant and component code never changes.
  */
-export type ThemeMode = "dark" | "light";
+export type ThemeMode = "dark" | "light" | "dark-plus";
 
 const STORAGE_KEY = "modus.theme";
 const DEFAULT_THEME: ThemeMode = "dark";
@@ -17,7 +16,7 @@ const DEFAULT_THEME: ThemeMode = "dark";
 function readStored(): ThemeMode {
   try {
     const value = localStorage.getItem(STORAGE_KEY);
-    return value === "light" || value === "dark" ? value : DEFAULT_THEME;
+    return value === "light" || value === "dark" || value === "dark-plus" ? value : DEFAULT_THEME;
   } catch {
     return DEFAULT_THEME;
   }

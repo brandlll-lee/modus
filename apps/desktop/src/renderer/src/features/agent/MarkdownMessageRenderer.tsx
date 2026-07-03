@@ -23,10 +23,13 @@ type MarkdownMessageRendererProps = {
  * Modus's bundle (we don't compile Streamdown's classes) AND its `dark:`
  * follows OS prefers-color-scheme, not our `data-theme`. So we ship ONE highlight
  * pass with both themes and switch the token colours ourselves in app.css,
- * keyed to `:root[data-theme]`. Stable module constant → memo-friendly, no
- * re-highlight on theme toggle. */
-const code = createCodePlugin({
+ * keyed to `:root[data-theme]`. Stable module constants → memo-friendly, and
+ * Dark+ can use VS Code's bundled dark-plus without changing the original Dark. */
+const codeDark = createCodePlugin({
   themes: ["github-light", "one-dark-pro"],
+});
+const codeDarkPlus = createCodePlugin({
+  themes: ["github-light", "dark-plus"],
 });
 
 /* Math/CJK plugins are theme-agnostic — kept as stable module constants.
@@ -40,12 +43,16 @@ const math = createMathPlugin({
   singleDollarTextMath: true,
 });
 
-/* ── Mermaid theme — literal hex values (mermaid cannot resolve CSS var()), so
- * we mirror the Modus dark/light tokens per mode. ─────────────────────────── */
+/* ── Mermaid theme — mermaid cannot resolve CSS var(), so we pass computed
+ * token values from the active Modus theme. ───────────────────────────────── */
 function buildMermaidConfig(theme: ThemeMode): MermaidConfig {
+  const rootStyle = getComputedStyle(document.documentElement);
   const fontFamily =
-    getComputedStyle(document.documentElement).getPropertyValue("--font-sans").trim() ||
+    rootStyle.getPropertyValue("--font-sans").trim() ||
     '"Inter Variable", "Inter", system-ui, sans-serif';
+  const token = (name: string, fallback: string): string =>
+    rootStyle.getPropertyValue(name).trim() || fallback;
+
   if (theme === "light") {
     return {
       fontFamily,
@@ -56,15 +63,15 @@ function buildMermaidConfig(theme: ThemeMode): MermaidConfig {
         background: "transparent",
         darkMode: false,
         fontFamily,
-        lineColor: "#9a9a9a",
-        mainBkg: "#ffffff",
-        nodeBorder: "rgba(0, 0, 0, 0.18)",
-        primaryBorderColor: "rgba(0, 0, 0, 0.18)",
-        primaryColor: "#f8f8f8",
-        primaryTextColor: "#242424",
-        secondaryColor: "#ffffff",
-        tertiaryColor: "#f8f8f8",
-        textColor: "#242424",
+        lineColor: token("--color-fg-faint", "#9a9a9a"),
+        mainBkg: token("--color-surface", "#ffffff"),
+        nodeBorder: token("--color-hairline-strong", "rgba(0, 0, 0, 0.18)"),
+        primaryBorderColor: token("--color-hairline-strong", "rgba(0, 0, 0, 0.18)"),
+        primaryColor: token("--color-panel", "#f8f8f8"),
+        primaryTextColor: token("--color-fg", "#242424"),
+        secondaryColor: token("--color-surface", "#ffffff"),
+        tertiaryColor: token("--color-panel", "#f8f8f8"),
+        textColor: token("--color-fg", "#242424"),
       },
     } satisfies MermaidConfig;
   }
@@ -77,15 +84,15 @@ function buildMermaidConfig(theme: ThemeMode): MermaidConfig {
       background: "transparent",
       darkMode: true,
       fontFamily,
-      lineColor: "#5a5a5d",
-      mainBkg: "#1c1c1d",
-      nodeBorder: "rgba(255, 255, 255, 0.065)",
-      primaryBorderColor: "rgba(255, 255, 255, 0.065)",
-      primaryColor: "#232325",
-      primaryTextColor: "#e4e4e3",
-      secondaryColor: "#1c1c1d",
-      tertiaryColor: "#161617",
-      textColor: "#e4e4e3",
+      lineColor: token("--color-fg-faint", "#5a5a5d"),
+      mainBkg: token("--color-surface", "#1c1c1d"),
+      nodeBorder: token("--color-hairline-strong", "rgba(255, 255, 255, 0.065)"),
+      primaryBorderColor: token("--color-hairline-strong", "rgba(255, 255, 255, 0.065)"),
+      primaryColor: token("--color-elevated", "#232325"),
+      primaryTextColor: token("--color-fg", "#e4e4e3"),
+      secondaryColor: token("--color-surface", "#1c1c1d"),
+      tertiaryColor: token("--color-panel", "#161617"),
+      textColor: token("--color-fg", "#e4e4e3"),
     },
   } satisfies MermaidConfig;
 }
@@ -177,15 +184,16 @@ export default function MarkdownMessageRenderer({
   // (rare, deliberate) — stable across streamed frames so Streamdown's memo
   // holds and the typewriter stays smooth.
   const mermaidConfig = useMemo(() => buildMermaidConfig(theme), [theme]);
+  const codePlugin = theme === "dark-plus" ? codeDarkPlus : codeDark;
   const plugins = useMemo(
     () =>
       ({
         cjk,
-        code,
+        code: codePlugin,
         math,
         mermaid: createMermaidPlugin({ config: mermaidConfig }),
       }) satisfies NonNullable<StreamdownProps["plugins"]>,
-    [mermaidConfig],
+    [codePlugin, mermaidConfig],
   );
   const mermaidProp = useMemo<NonNullable<StreamdownProps["mermaid"]>>(
     () => ({ config: mermaidConfig }),

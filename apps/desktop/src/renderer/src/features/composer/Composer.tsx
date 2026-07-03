@@ -16,6 +16,7 @@ import {
   type ClipboardEvent,
   type DragEvent,
   type KeyboardEvent,
+  type ReactNode,
   useCallback,
   useLayoutEffect,
   useRef,
@@ -75,6 +76,7 @@ type ComposerProps = {
   canSubmit: boolean;
   hasSession: boolean;
   isRunning?: boolean;
+  footer?: ReactNode;
   /** Agent session that owns this composer; scopes the running-process bar. */
   sessionId?: string;
   onModelChange(model: string): void;
@@ -121,6 +123,7 @@ export function Composer({
   workspaceId,
   cwd,
   canSubmit,
+  footer,
   hasSession,
   isRunning = false,
   sessionId,
@@ -418,16 +421,18 @@ export function Composer({
   }
 
   return (
-    <div className="flex flex-col items-stretch">
+    <div className={cn("relative flex flex-col items-stretch", footer ? "pb-12" : undefined)}>
       <RunningProcessBar sessionId={sessionId} workspaceId={workspaceId} />
+      {footer ? (
+        <div className="pointer-events-none absolute inset-x-0 top-12 bottom-0 z-0 rounded-[20px] bg-composer-tray shadow-composer" />
+      ) : null}
       {/* biome-ignore lint/a11y/noStaticElementInteractions: drag-drop is a pointer-only enhancement; keyboard users attach images via paste in the textarea. */}
       <div
         className={cn(
-          "relative rounded-[14px] border border-composer-border bg-surface shadow-composer-edge transition-[border-color] duration-150",
-          // No focus glow: hover/focus only nudge the border one notch brighter
-          // (subtle, theme-aware). While running, the Border Beam carries motion.
-          !isRunning &&
-            "hover:border-composer-border-strong focus-within:border-composer-border-strong",
+          "relative border border-composer-border bg-surface shadow-composer-edge transition-[border-color] duration-150",
+          footer ? "z-10 rounded-[20px]" : "rounded-[14px]",
+          // No focus glow: only text focus or drag nudges the border one notch brighter.
+          !isRunning && "focus-within:border-composer-border-strong",
           dragging && "border-composer-border-strong",
         )}
         onDragLeave={() => setDragging(false)}
@@ -638,6 +643,7 @@ export function Composer({
           </AnimatePresence>
         </div>
       </div>
+      {footer ? <div className="absolute inset-x-0 bottom-2 z-20 px-5">{footer}</div> : null}
     </div>
   );
 }

@@ -8,13 +8,14 @@ import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
  * Uses Shiki's pure-JS regex engine (no WASM) so it loads cleanly in the
  * Electron renderer and stays cheap to call repeatedly while a file streams in.
  * One lazily-created singleton serves every card; the two themes mirror the
- * Markdown renderer (`github-light` / `one-dark-pro`) so code reads the same
+ * Markdown renderer (`github-light` / dark themes) so code reads the same
  * across the app. Grammars are loaded on demand per language and cached.
  */
 
 const THEME_BY_MODE = {
   light: "github-light",
   dark: "one-dark-pro",
+  "dark-plus": "dark-plus",
 } as const;
 
 export type CodeThemeMode = keyof typeof THEME_BY_MODE;

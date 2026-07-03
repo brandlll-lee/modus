@@ -1,4 +1,4 @@
-import { Select } from "@base-ui/react/select";
+import { Menu } from "@base-ui/react/menu";
 import {
   IconAlertCircle,
   IconCheck,
@@ -23,10 +23,8 @@ const MODE_ICONS: Record<ApprovalMode, typeof IconHandStop> = {
 };
 
 /**
- * Composer control for the GLOBAL approval mode. Mirrors `ModelSelect` (Base UI
- * Select) for visual consistency. The value is app-wide and persisted in the
- * main process, so this loads the current mode on mount and writes changes back
- * — every session then reads it at tool-call time.
+ * Composer control for the GLOBAL approval mode. The value is app-wide and
+ * persisted in the main process, so every session reads it at tool-call time.
  */
 export function ApprovalModeSelect() {
   const [mode, setMode] = useState<ApprovalMode>(DEFAULT_APPROVAL_MODE);
@@ -53,8 +51,8 @@ export function ApprovalModeSelect() {
   const TriggerIcon = MODE_ICONS[current.id];
 
   return (
-    <Select.Root onValueChange={(next) => changeMode(next as ApprovalMode)} value={mode}>
-      <Select.Trigger
+    <Menu.Root>
+      <Menu.Trigger
         aria-label={`Approval mode: ${current.label}`}
         className="app-no-drag flex h-[26px] shrink-0 items-center gap-1.5 rounded-md px-1.5 text-sm transition-colors hover:bg-hover data-popup-open:bg-hover"
         title={current.label}
@@ -67,28 +65,25 @@ export function ApprovalModeSelect() {
         <span className={cn("max-w-[120px] truncate", danger ? "text-accent" : "text-fg-subtle")}>
           {current.label}
         </span>
-        <Select.Icon>
-          <IconChevronDown className="shrink-0 text-fg-faint" size={12} stroke={2} />
-        </Select.Icon>
-      </Select.Trigger>
-      <Select.Portal>
+        <IconChevronDown className="shrink-0 text-fg-faint" size={12} stroke={2} />
+      </Menu.Trigger>
+      <Menu.Portal>
         {/* Opens upward — the composer sits at the window's bottom edge. */}
-        <Select.Positioner
+        <Menu.Positioner
           align="start"
-          alignItemWithTrigger={false}
           collisionAvoidance={{ side: "flip", align: "shift", fallbackAxisSide: "none" }}
           side="top"
           sideOffset={6}
         >
-          <Select.Popup className="origin-(--transform-origin) w-[300px] max-w-[calc(100vw-24px)] rounded-lg border border-hairline bg-elevated p-1 shadow-popup transition-[transform,opacity] duration-100 data-[side=bottom]:data-ending-style:translate-y-[-4px] data-[side=bottom]:data-starting-style:translate-y-[-4px] data-[side=top]:data-ending-style:translate-y-[4px] data-[side=top]:data-starting-style:translate-y-[4px] data-ending-style:opacity-0 data-starting-style:opacity-0">
+          <Menu.Popup className="origin-(--transform-origin) w-[300px] max-w-[calc(100vw-24px)] rounded-lg border border-hairline bg-elevated p-1 shadow-popup">
             {APPROVAL_MODES.map((item) => {
               const ItemIcon = MODE_ICONS[item.id];
               const itemDanger = item.id === "full-access";
               return (
-                <Select.Item
+                <Menu.Item
                   className="group/mode flex cursor-default items-start gap-2 rounded-md px-2 py-1.5 outline-none select-none data-highlighted:bg-hover"
                   key={item.id}
-                  value={item.id}
+                  onClick={() => changeMode(item.id)}
                 >
                   <ItemIcon
                     className={cn("mt-0.5 shrink-0", itemDanger ? "text-accent" : "text-fg-subtle")}
@@ -96,24 +91,20 @@ export function ApprovalModeSelect() {
                     stroke={1.8}
                   />
                   <span className="min-w-0 flex-1">
-                    <Select.ItemText className="block text-sm text-fg">
-                      {item.label}
-                    </Select.ItemText>
+                    <span className="block text-sm text-fg">{item.label}</span>
                     <span className="mt-0.5 block text-xs leading-snug text-fg-faint">
                       {item.description}
                     </span>
                   </span>
                   <span className="mt-0.5 flex w-3.5 shrink-0 justify-center text-fg">
-                    <Select.ItemIndicator>
-                      <IconCheck size={13} stroke={2} />
-                    </Select.ItemIndicator>
+                    {item.id === mode ? <IconCheck size={13} stroke={2} /> : null}
                   </span>
-                </Select.Item>
+                </Menu.Item>
               );
             })}
-          </Select.Popup>
-        </Select.Positioner>
-      </Select.Portal>
-    </Select.Root>
+          </Menu.Popup>
+        </Menu.Positioner>
+      </Menu.Portal>
+    </Menu.Root>
   );
 }

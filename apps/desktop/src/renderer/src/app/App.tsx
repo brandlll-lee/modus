@@ -680,17 +680,6 @@ export function App() {
                               </m.div>
                             ) : null}
                           </AnimatePresence>
-                          {!hasSession ? (
-                            <ChatTopBar
-                              activeWorkspace={activeWorkspace}
-                              branch={branch}
-                              cwd={activeCwd}
-                              onError={setSessionCreateError}
-                              onOpenFolder={() => void openWorkspace()}
-                              onSelectWorkspace={openNewChat}
-                              workspaces={workspaces}
-                            />
-                          ) : null}
                         </div>
                         <div className="flex flex-1 items-center justify-end pr-2">
                           <HeaderActions
@@ -772,6 +761,17 @@ export function App() {
                                 canSubmit={canCreateSession}
                                 contextItems={heroContextItems}
                                 cwd={activeWorkspace?.rootPath}
+                                footer={
+                                  <HeroEnvironmentTray
+                                    activeWorkspace={activeWorkspace}
+                                    branch={branch}
+                                    cwd={activeCwd}
+                                    onError={setSessionCreateError}
+                                    onOpenFolder={() => void openWorkspace()}
+                                    onSelectWorkspace={openNewChat}
+                                    workspaces={workspaces}
+                                  />
+                                }
                                 hasSession={false}
                                 mode={heroMode}
                                 model={model}
@@ -794,17 +794,7 @@ export function App() {
                                 }
                                 workspaceId={activeWorkspace?.id}
                               />
-                              <div className="mt-4 flex items-center justify-center gap-2">
-                                <Pill onClick={() => setHeroMode("plan")} shortcut="⇧Tab">
-                                  Plan New Idea
-                                </Pill>
-                                <Pill onClick={() => setSettingsOpen(true)}>Use Your Model</Pill>
-                              </div>
                             </div>
-                            <p className="absolute bottom-5 text-xs font-normal text-fg-faint">
-                              Bring your own model to Modus for local, private, context-aware agent
-                              work.
-                            </p>
                           </m.div>
                         )}
                       </AnimatePresence>
@@ -984,18 +974,10 @@ function CaptionButton({
   );
 }
 
-/** Shared look for the two top-bar dropdown triggers (folder + branch). */
-const TOPBAR_TRIGGER_CLASS =
-  "flex h-8 items-center gap-1.5 rounded-md px-2 outline-none transition-colors text-fg-muted hover:bg-hover hover:text-fg data-popup-open:bg-hover data-popup-open:text-fg disabled:opacity-60 disabled:hover:bg-transparent";
+const HERO_ENVIRONMENT_TRIGGER_CLASS =
+  "flex h-7 min-w-0 items-center gap-1.5 rounded-md px-2 text-sm font-normal text-fg-muted outline-none transition-colors hover:bg-hover hover:text-fg data-popup-open:bg-hover data-popup-open:text-fg disabled:opacity-60 disabled:hover:bg-transparent";
 
-/**
- * New-chat hero top bar: the workspace folder and its git branch, both now
- * selectable. Picking a folder switches the workspace and drops back to a fresh
- * (lazy) chat; the branch list/checkout is driven off the active workspace's
- * cwd, so the two stay linked. The branch label tracks the workspace live via
- * `useGitBranch` (App) — switching folder repaints the branch without a refresh.
- */
-function ChatTopBar({
+function HeroEnvironmentTray({
   activeWorkspace,
   branch,
   cwd,
@@ -1013,14 +995,14 @@ function ChatTopBar({
   onError(message: string): void;
 }) {
   return (
-    <div className="app-no-drag flex items-center gap-3 text-sm font-normal text-fg-subtle">
+    <div className="app-no-drag flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
       <WorkspaceMenu
         activeWorkspace={activeWorkspace}
         onOpenFolder={onOpenFolder}
         onSelect={onSelectWorkspace}
         workspaces={workspaces}
       />
-      <BranchSwitcher cwd={cwd} onError={onError} triggerClassName={TOPBAR_TRIGGER_CLASS}>
+      <BranchSwitcher cwd={cwd} onError={onError} triggerClassName={HERO_ENVIRONMENT_TRIGGER_CLASS}>
         <span className="toolbar-icon">
           <IconGitBranch size={18} stroke={1.7} />
         </span>
@@ -1042,15 +1024,17 @@ function WorkspaceMenu({
   workspaces,
   onSelect,
   onOpenFolder,
+  triggerClassName = HERO_ENVIRONMENT_TRIGGER_CLASS,
 }: {
   activeWorkspace: WorkspaceInfo | null;
   workspaces: WorkspaceInfo[];
   onSelect(workspace: WorkspaceInfo): void;
   onOpenFolder(): void;
+  triggerClassName?: string;
 }) {
   return (
     <Menu.Root>
-      <Menu.Trigger className={TOPBAR_TRIGGER_CLASS}>
+      <Menu.Trigger className={triggerClassName}>
         <span className="toolbar-icon">
           <IconFolder size={18} stroke={1.7} />
         </span>
@@ -1244,31 +1228,5 @@ function getDiffTotals(diff: string): { added: number; removed: number } {
       return total;
     },
     { added: 0, removed: 0 },
-  );
-}
-
-function Pill({
-  children,
-  onClick,
-  shortcut,
-  disabled = false,
-}: {
-  children: string;
-  onClick(): void;
-  shortcut?: string;
-  disabled?: boolean;
-}) {
-  return (
-    <button
-      className="flex items-center gap-1.5 rounded-full border border-hairline bg-chip-faint px-3 py-[5px] text-xs font-normal text-fg-muted transition-colors hover:bg-chip hover:text-fg active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-chip-faint disabled:hover:text-fg-muted"
-      disabled={disabled}
-      onClick={onClick}
-      type="button"
-    >
-      <span>{children}</span>
-      {shortcut ? (
-        <kbd className="font-sans text-2xs font-normal text-fg-faint">{shortcut}</kbd>
-      ) : null}
-    </button>
   );
 }

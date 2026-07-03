@@ -15,6 +15,7 @@ import {
   IconGavel,
   IconKey,
   IconMoon,
+  IconMoonStars,
   IconPalette,
   IconPlugConnected,
   IconPlus,
@@ -33,6 +34,7 @@ import { AnimatePresence, m } from "motion/react";
 import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
 import { joinCommandLine, splitCommandLine } from "../../../../shared/command-line";
 import type {
+  ConfigScope,
   CustomProviderConfig,
   McpServerInfo,
   ModelProviderDetail,
@@ -44,7 +46,6 @@ import type {
   RuleMode,
   RuleSource,
   SkillInfo,
-  SkillScope,
   SubagentDetail,
   SubagentInfo,
   WorkspaceInfo,
@@ -250,7 +251,7 @@ export function SettingsPanel({
   }
 
   return (
-    <div className="flex min-h-0 flex-1 overflow-hidden bg-canvas">
+    <div className="flex min-h-0 flex-1 overflow-hidden bg-panel">
       <SettingsSidebar
         activeSection={activeSection}
         onBack={onClose}
@@ -259,7 +260,7 @@ export function SettingsPanel({
         query={settingsQuery}
       />
 
-      <main className="scroll-thin min-w-0 flex-1 overflow-y-auto">
+      <main className="scroll-thin min-w-0 flex-1 overflow-y-auto rounded-tl-xl border-hairline-strong border-t border-l bg-canvas">
         <div className="mx-auto flex w-full max-w-[1080px] flex-col gap-8 px-10 pt-16 pb-12">
           {activeSection === "general" ? <GeneralSettingsPanel /> : null}
           {activeSection === "appearance" ? <AppearanceSettingsPanel /> : null}
@@ -355,7 +356,7 @@ function SettingsSidebar({
   onSectionChange(section: SettingsSectionId): void;
 }) {
   return (
-    <aside className="flex w-[260px] shrink-0 flex-col border-hairline-strong border-r bg-panel px-2.5 py-3">
+    <aside className="flex w-[260px] shrink-0 flex-col bg-panel px-2.5 py-3">
       <button
         className="mb-4 flex h-8 items-center gap-2 rounded-md px-2 text-sm text-fg-muted transition-colors hover:bg-hover hover:text-fg"
         onClick={onBack}
@@ -905,7 +906,7 @@ function AppearanceSettingsPanel() {
         <SettingsList>
           <SettingsRow
             control={<ThemeToggle onChange={setTheme} value={theme} />}
-            description="Switch between the dark and light desktop palettes."
+            description="Switch between light, dark, and softer Dark+ palettes."
             title="Color scheme"
           />
           <SettingsRow
@@ -1867,6 +1868,7 @@ function McpKeyValueRows({
 const THEME_OPTIONS: ReadonlyArray<{ value: ThemeMode; label: string; icon: typeof IconSun }> = [
   { value: "light", label: "Light", icon: IconSun },
   { value: "dark", label: "Dark", icon: IconMoon },
+  { value: "dark-plus", label: "Eye-care Dark", icon: IconMoonStars },
 ];
 
 function ThemeToggle({
@@ -2115,6 +2117,9 @@ function SkillsSettingsPanel({ cwd }: { cwd: string | undefined }) {
   }
 
   function scopeBadge(skill: SkillInfo): string {
+    if (skill.scope === "builtin") {
+      return "builtin";
+    }
     return skill.scope === "user" ? `user · ${skill.source}` : `project · ${skill.source}`;
   }
 
@@ -2250,7 +2255,7 @@ function SkillsSettingsPanel({ cwd }: { cwd: string | undefined }) {
 
 type SubagentFormState = {
   path?: string;
-  scope: SkillScope;
+  scope: ConfigScope;
   projectCwd: string;
   name: string;
   description: string;
@@ -2263,7 +2268,7 @@ type SubagentFormState = {
   body: string;
 };
 
-function emptySubagentForm(scope: SkillScope = "workspace", projectCwd = ""): SubagentFormState {
+function emptySubagentForm(scope: ConfigScope = "workspace", projectCwd = ""): SubagentFormState {
   return {
     scope,
     projectCwd,
@@ -2316,7 +2321,7 @@ function SubagentsSettingsPanel({
   const [error, setError] = useState<string | undefined>();
   const [form, setForm] = useState<SubagentFormState | undefined>();
   const [saving, setSaving] = useState(false);
-  const [activeScope, setActiveScope] = useState<SkillScope>("user");
+  const [activeScope, setActiveScope] = useState<ConfigScope>("user");
   const [selectedProjectCwd, setSelectedProjectCwd] = useState(cwd ?? "");
   const projectTabs = useMemo(() => settingsProjectTabs(cwd, workspaces), [cwd, workspaces]);
   const selectedProject =
@@ -2436,7 +2441,7 @@ function SubagentsSettingsPanel({
     return subagent.scope === "user" ? `home · ${subagent.source}` : `project · ${subagent.source}`;
   }
 
-  function startCreate(scope: SkillScope): void {
+  function startCreate(scope: ConfigScope): void {
     setActiveScope(scope);
     setForm(emptySubagentForm(scope, effectiveProjectCwd));
   }

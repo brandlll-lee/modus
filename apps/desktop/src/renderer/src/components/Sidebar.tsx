@@ -252,7 +252,7 @@ export function Sidebar({
       {open ? (
         <button
           aria-label="Resize left panel"
-          className="app-no-drag absolute top-0 right-0 bottom-0 z-20 w-3 cursor-col-resize before:absolute before:top-0 before:right-0 before:bottom-0 before:w-px before:bg-transparent hover:before:bg-chip-strong"
+          className="app-no-drag absolute top-0 right-0 bottom-0 z-20 w-3 cursor-col-resize"
           onPointerCancel={stopResize}
           onPointerDown={startResize}
           onPointerMove={resize}
