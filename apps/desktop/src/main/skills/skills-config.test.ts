@@ -97,15 +97,18 @@ describe("normalizeSkillName", () => {
 describe("loadWorkspaceSkills", () => {
   let cwd: string;
   let home: string;
+  let builtin: string;
 
   beforeEach(() => {
     cwd = mkdtempSync(join(tmpdir(), "modus-skills-cwd-"));
     home = mkdtempSync(join(tmpdir(), "modus-skills-home-"));
+    builtin = mkdtempSync(join(tmpdir(), "modus-skills-builtin-"));
   });
 
   afterEach(() => {
     rmSync(cwd, { recursive: true, force: true });
     rmSync(home, { recursive: true, force: true });
+    rmSync(builtin, { recursive: true, force: true });
   });
 
   function writeSkill(root: string, name: string, text: string): void {
@@ -123,7 +126,7 @@ describe("loadWorkspaceSkills", () => {
       "utf8",
     );
 
-    const skills = loadWorkspaceSkills(cwd, home);
+    const skills = loadWorkspaceSkills(cwd, home, builtin);
     const names = skills.map((skill) => skill.name);
     expect(names).toContain("autoplan");
     expect(names).toContain("explain");
@@ -136,7 +139,7 @@ describe("loadWorkspaceSkills", () => {
       "---\ndescription: Nested review\n---\nbody",
     );
 
-    const skills = loadWorkspaceSkills(cwd, home);
+    const skills = loadWorkspaceSkills(cwd, home, builtin);
     const nested = skills.find((skill) => skill.name === "deep-scope");
     expect(nested?.description).toBe("Nested review");
     expect(nested?.path).toContain(join("engineering", "review", "deep-scope", "SKILL.md"));
@@ -146,7 +149,7 @@ describe("loadWorkspaceSkills", () => {
     writeSkill(join(cwd, ".cursor", "skills"), "review", "---\ndescription: from cursor\n---\na");
     writeSkill(join(cwd, ".modus", "skills"), "review", "---\ndescription: from modus\n---\nb");
 
-    const skills = loadWorkspaceSkills(cwd, home);
+    const skills = loadWorkspaceSkills(cwd, home, builtin);
     const review = skills.filter((skill) => skill.name === "review");
     expect(review).toHaveLength(2);
     expect(review.map((skill) => skill.path)).toEqual([
@@ -157,8 +160,44 @@ describe("loadWorkspaceSkills", () => {
 
   it("discovers user-scoped skills from the home directory", () => {
     writeSkill(join(home, ".modus", "skills"), "grill-me", "---\ndescription: Interview\n---\nx");
-    const skills = loadWorkspaceSkills(cwd, home);
+    const skills = loadWorkspaceSkills(cwd, home, builtin);
     const grill = skills.find((skill) => skill.name === "grill-me");
     expect(grill?.scope).toBe("user");
+  });
+
+  it("discovers bundled skills before user and workspace roots", () => {
+    writeSkill(builtin, "browser", "---\nname: browser\ndescription: Use browser\n---\nx");
+
+    const skills = loadWorkspaceSkills(cwd, home, builtin);
+    const browser = skills.find((skill) => skill.name === "browser");
+
+    expect(browser).toEqual(
+      expect.objectContaining({
+        scope: "builtin",
+        source: "builtin",
+        description: "Use browser",
+      }),
+    );
+  });
+
+  it("lets workspace skills override bundled skills by name", () => {
+    writeSkill(builtin, "browser", "---\nname: browser\ndescription: Builtin\n---\nBUILTIN");
+    writeSkill(
+      join(cwd, ".modus", "skills"),
+      "browser",
+      "---\nname: browser\ndescription: Workspace\n---\nWORKSPACE",
+    );
+
+    const skills = loadWorkspaceSkills(cwd, home, builtin);
+    const browser = skills.filter((skill) => skill.name === "browser");
+
+    expect(browser).toHaveLength(1);
+    expect(browser[0]).toEqual(
+      expect.objectContaining({
+        scope: "workspace",
+        source: ".modus",
+        description: "Workspace",
+      }),
+    );
   });
 });

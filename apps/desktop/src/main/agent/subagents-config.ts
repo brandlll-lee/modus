@@ -10,8 +10,8 @@ import {
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import type {
+  ConfigScope,
   CreateSubagentInput,
-  SkillScope,
   SubagentDetail,
   SubagentInfo,
   UpdateSubagentInput,
@@ -22,7 +22,7 @@ const USER_AGENT_FAMILIES = [".codex", ".claude", ".cursor", ".modus"] as const;
 const WORKSPACE_AGENT_FAMILIES = [".codex", ".claude", ".cursor", ".modus"] as const;
 const SUBAGENTS_MANIFEST_BUDGET = 8000;
 
-type AgentRoot = { dir: string; source: string; scope: SkillScope };
+type AgentRoot = { dir: string; source: string; scope: ConfigScope };
 type FrontmatterValue = string | string[];
 
 export type ParsedSubagent = {
@@ -208,13 +208,13 @@ export function resolveSubagentsPrompt(cwd: string): string {
 
 export function subagentsDir(
   cwd: string,
-  scope: SkillScope = "workspace",
+  scope: ConfigScope = "workspace",
   home: string = homedir(),
 ): string {
   return scope === "user" ? join(home, ".modus", "agents") : join(cwd, ".modus", "agents");
 }
 
-export function ensureSubagentsDir(cwd: string, scope: SkillScope = "workspace"): string {
+export function ensureSubagentsDir(cwd: string, scope: ConfigScope = "workspace"): string {
   const dir = subagentsDir(cwd, scope);
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });

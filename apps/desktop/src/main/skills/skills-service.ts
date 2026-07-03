@@ -26,8 +26,12 @@ export function getSkill(cwd: string, path: string): SkillDetail | undefined {
 
 const SKILLS_MANIFEST_BUDGET = 8000;
 
-export function resolveSkillsPrompt(cwd: string, selections: SkillSelection[]): string {
-  const skills = loadWorkspaceSkills(cwd);
+export function resolveSkillsPrompt(
+  cwd: string,
+  selections: SkillSelection[],
+  home?: string,
+): string {
+  const skills = loadWorkspaceSkills(cwd, home);
   const manifest = renderSkillsManifest(skills);
   const blocks: string[] = [];
   const selectedPaths = new Set(selections.map((selection) => selection.path));

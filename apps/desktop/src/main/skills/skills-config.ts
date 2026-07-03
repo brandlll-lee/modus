@@ -19,7 +19,9 @@ import type { SkillDetail, SkillInfo, SkillScope } from "../../shared/contracts"
  * file `<root>/<name>.md`. Roots are scanned per workspace and per user.
  *
  * Search order (later sources win on name conflicts → workspace beats user,
- * and `.modus` beats interop folders):
+ * and `.modus` beats interop folders). Built-in skills load first as Modus
+ * defaults, then disappear when a user/workspace skill has the same name:
+ *   builtin:   Modus bundled resources/skills
  *   user:      ~/.claude/skills, ~/.modus/skills
  *   workspace: .agents/skills, .opencode/skills, .claude/skills,
  *              .cursor/skills, .modus/skills
@@ -30,6 +32,7 @@ const USER_SKILL_FAMILIES = [".claude", ".modus"] as const;
 const WORKSPACE_SKILL_FAMILIES = [".agents", ".opencode", ".claude", ".cursor", ".modus"] as const;
 const MAX_SKILL_SCAN_DEPTH = 8;
 const MAX_SKILL_SCAN_DIRS = 2000;
+const BUILTIN_SKILL_SOURCE = "builtin";
 
 export type ParsedSkill = {
   name: string;
@@ -243,9 +246,23 @@ export function normalizeSkillName(name: string): string {
 
 type SkillRoot = { dir: string; source: string; scope: SkillScope };
 
+export function defaultBuiltinSkillsDir(): string {
+  const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+  const candidates = [
+    resourcesPath ? join(resourcesPath, "skills") : undefined,
+    join(process.cwd(), "resources", "skills"),
+    join(process.cwd(), "apps", "desktop", "resources", "skills"),
+  ].filter((dir): dir is string => Boolean(dir));
+  return candidates.find((dir) => existsSync(dir)) ?? join(process.cwd(), "resources", "skills");
+}
+
 /** Candidate skill roots for a workspace, lowest precedence first. */
-export function skillRoots(cwd: string, home: string = homedir()): SkillRoot[] {
-  const roots: SkillRoot[] = [];
+export function skillRoots(
+  cwd: string,
+  home: string = homedir(),
+  builtinDir: string = defaultBuiltinSkillsDir(),
+): SkillRoot[] {
+  const roots: SkillRoot[] = [{ dir: builtinDir, source: BUILTIN_SKILL_SOURCE, scope: "builtin" }];
   for (const family of USER_SKILL_FAMILIES) {
     roots.push({ dir: join(home, family, "skills"), source: family, scope: "user" });
   }
@@ -337,9 +354,13 @@ function loadSkillFromFile(
 }
 
 /** Discover + merge every skill visible from this workspace (and the user home). */
-export function loadWorkspaceSkills(cwd: string, home: string = homedir()): SkillDetail[] {
+export function loadWorkspaceSkills(
+  cwd: string,
+  home: string = homedir(),
+  builtinDir: string = defaultBuiltinSkillsDir(),
+): SkillDetail[] {
   const skills: SkillDetail[] = [];
-  for (const root of skillRoots(cwd, home)) {
+  for (const root of skillRoots(cwd, home, builtinDir)) {
     for (const file of skillFilesIn(root)) {
       const skill = loadSkillFromFile(file, root);
       if (skill) {
@@ -347,7 +368,12 @@ export function loadWorkspaceSkills(cwd: string, home: string = homedir()): Skil
       }
     }
   }
-  return skills.sort((a, b) => a.name.localeCompare(b.name) || a.path.localeCompare(b.path));
+  const overriddenBuiltinNames = new Set(
+    skills.filter((skill) => skill.scope !== "builtin").map((skill) => skill.name),
+  );
+  return skills
+    .filter((skill) => skill.scope !== "builtin" || !overriddenBuiltinNames.has(skill.name))
+    .sort((a, b) => a.name.localeCompare(b.name) || a.path.localeCompare(b.path));
 }
 
 export function toSkillInfo(skill: SkillDetail): SkillInfo {
