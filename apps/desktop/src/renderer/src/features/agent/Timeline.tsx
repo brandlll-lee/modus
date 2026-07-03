@@ -913,34 +913,26 @@ export function buildExploreSummary(tools: ToolBlockItem[]): string {
 
 /** Sealed digest for a browser-control run, e.g. "Browser used 2 pages, 3 clicks". */
 export function buildBrowserSummary(tools: ToolBlockItem[]): string {
-  let pages = 0;
-  let clicks = 0;
-  let shots = 0;
-  let inputs = 0;
-  let other = 0;
+  let commands = 0;
+  let captures = 0;
+  let events = 0;
+  let tabs = 0;
 
   for (const tool of tools) {
     switch (tool.name) {
-      case "browser_navigate":
-      case "browser_navigate_back":
-        pages += 1;
+      case "browser_cdp":
+        commands += 1;
         break;
-      case "browser_click":
-      case "browser_click_xy":
-        clicks += 1;
+      case "browser_screenshot":
+        captures += 1;
         break;
-      case "browser_take_screenshot":
-      case "browser_snapshot":
-        shots += 1;
+      case "browser_events":
+        events += 1;
         break;
-      case "browser_type":
-      case "browser_fill":
-      case "browser_fill_form":
-      case "browser_press_key":
-        inputs += 1;
+      case "browser_tabs":
+        tabs += 1;
         break;
       default:
-        other += 1;
         break;
     }
   }
@@ -948,11 +940,10 @@ export function buildBrowserSummary(tools: ToolBlockItem[]): string {
   const plural = (count: number, singular: string, pluralForm = `${singular}s`): string =>
     `${count} ${count === 1 ? singular : pluralForm}`;
   const parts: string[] = [];
-  if (pages > 0) parts.push(plural(pages, "page"));
-  if (clicks > 0) parts.push(plural(clicks, "click"));
-  if (shots > 0) parts.push(plural(shots, "capture"));
-  if (inputs > 0) parts.push(plural(inputs, "input"));
-  if (other > 0) parts.push(plural(other, "action"));
+  if (commands > 0) parts.push(plural(commands, "CDP command"));
+  if (captures > 0) parts.push(plural(captures, "capture"));
+  if (events > 0) parts.push(plural(events, "event drain"));
+  if (tabs > 0) parts.push(plural(tabs, "tab action"));
   return parts.length > 0
     ? `Browser used ${parts.join(", ")}`
     : `Browser used ${tools.length} steps`;
@@ -1116,11 +1107,10 @@ export function groupActivity(blocks: TimelineBlock[]): TimelineBlock[] {
     const tools = groupItems.filter((item): item is ToolBlockItem => item.type === "tool");
     const firstTool = tools[0];
     const allComplete = tools.every((tool) => tool.isComplete);
-    // Authoritative seal — never seal on trailing text alone (that caused the
-    // open/close flap). The fold stays open and listening until the chain BREAKS
-    // or the run is no longer active.
+    // Assistant narration is a hard phase boundary: close the previous fold
+    // immediately, even if the tool result is still catching up.
     const chainBroken = cursor < blocks.length;
-    const sealed = allComplete && (chainBroken || !hasActiveRun);
+    const sealed = assistantBreak !== undefined || (allComplete && (chainBroken || !hasActiveRun));
 
     if (firstTool) {
       result.push({

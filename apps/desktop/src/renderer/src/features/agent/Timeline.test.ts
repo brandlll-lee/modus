@@ -697,15 +697,15 @@ describe("groupActivity", () => {
 
   it("folds browser-control tools into a Browser group", () => {
     const result = groupActivity([
-      tool("1", "browser_navigate"),
-      tool("2", "browser_click"),
+      tool("1", "browser_tabs"),
+      tool("2", "browser_cdp"),
       msg("m"),
     ] as Blocks);
     expect(result[0]).toEqual(
       expect.objectContaining({
         type: "activity-group",
         kind: "browser",
-        summary: "Browser used 1 page, 1 click",
+        summary: "Browser used 1 CDP command, 1 tab action",
       }),
     );
   });
@@ -729,6 +729,25 @@ describe("groupActivity", () => {
       expect.objectContaining({ active: false }),
     );
     expect(result.at(-1)).toEqual(expect.objectContaining({ type: "message", id: "m" }));
+  });
+
+  it("seals an unfinished group when assistant text starts a new phase", () => {
+    const result = groupActivity([
+      runningRun("r"),
+      tool("1", "browser_cdp", false),
+      msg("m", "search submitted"),
+      tool("2", "browser_screenshot", false),
+    ] as Blocks);
+
+    expect(result.map((block) => block.type)).toEqual([
+      "run",
+      "activity-group",
+      "message",
+      "activity-group",
+    ]);
+    expect(result[1]).toEqual(expect.objectContaining({ kind: "browser", active: false }));
+    expect(result[2]).toEqual(expect.objectContaining({ type: "message", id: "m" }));
+    expect(result[3]).toEqual(expect.objectContaining({ kind: "browser", active: true }));
   });
 
   it("settles the trailing answer outside once the run ends", () => {
@@ -1084,7 +1103,7 @@ describe("runStatusLabel", () => {
       "Searching the codebase",
     );
     expect(
-      runStatusLabel(run("running", { activity: { kind: "tool", name: "browser_click" } })),
+      runStatusLabel(run("running", { activity: { kind: "tool", name: "browser_cdp" } })),
     ).toBe("Using the browser");
     expect(
       runStatusLabel(
@@ -1128,12 +1147,13 @@ describe("buildBrowserSummary", () => {
   it("summarizes browser actions by category", () => {
     expect(
       buildBrowserSummary([
-        tool("1", "browser_navigate"),
-        tool("2", "browser_click"),
-        tool("3", "browser_click_xy"),
-        tool("4", "browser_take_screenshot"),
+        tool("1", "browser_tabs"),
+        tool("2", "browser_cdp"),
+        tool("3", "browser_cdp"),
+        tool("4", "browser_screenshot"),
+        tool("5", "browser_events"),
       ] as Parameters<typeof buildBrowserSummary>[0]),
-    ).toBe("Browser used 1 page, 2 clicks, 1 capture");
+    ).toBe("Browser used 2 CDP commands, 1 capture, 1 event drain, 1 tab action");
   });
 });
 
