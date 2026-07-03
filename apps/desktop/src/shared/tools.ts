@@ -315,78 +315,31 @@ export const WEB_TOOL_UI: Record<WebToolName, ToolUiMeta> = {
   web_fetch: { iconName: "globe", verb: "Fetched", primaryArgKey: "url" },
 };
 
-/**
- * In-app browser tool names (custom tools registered at runtime). The set and
- * semantics align with the industry-standard agent browser surface
- * (playwright-mcp / chrome-devtools-mcp): accessibility-tree snapshots with
- * refs, trusted CDP input, CSS-pixel screenshots that the model can see.
- */
+/** In-app browser primitives: tab ownership, raw CDP, recent events, screenshots. */
 export const BROWSER_TOOL_NAMES = [
   "browser_tabs",
-  "browser_navigate",
-  "browser_navigate_back",
-  "browser_snapshot",
-  "browser_take_screenshot",
-  "browser_click",
-  "browser_click_xy",
-  "browser_hover",
-  "browser_drag",
-  "browser_fill",
-  "browser_type",
-  "browser_fill_form",
-  "browser_select_option",
-  "browser_scroll",
-  "browser_wait_for",
-  "browser_console_messages",
-  "browser_network_requests",
-  "browser_network_request",
-  "browser_resize",
-  "browser_press_key",
-  "browser_handle_dialog",
-  "browser_evaluate",
-  "browser_profile_start",
-  "browser_profile_stop",
+  "browser_cdp",
+  "browser_events",
+  "browser_screenshot",
 ] as const;
 
 export type BrowserToolName = (typeof BROWSER_TOOL_NAMES)[number];
 
 export const BROWSER_TOOL_UI: Record<BrowserToolName, ToolUiMeta> = {
-  browser_tabs: { iconName: "globe", verb: "Browser tabs", primaryArgKey: "action" },
-  browser_navigate: { iconName: "globe", verb: "Navigated", primaryArgKey: "url" },
-  browser_navigate_back: { iconName: "globe", verb: "Went back" },
-  browser_snapshot: { iconName: "globe", verb: "Snapshotted page" },
-  browser_take_screenshot: { iconName: "globe", verb: "Captured page" },
-  browser_click: { iconName: "globe", verb: "Clicked", primaryArgKey: "element" },
-  browser_click_xy: { iconName: "globe", verb: "Clicked coordinates" },
-  browser_hover: { iconName: "globe", verb: "Hovered", primaryArgKey: "element" },
-  browser_drag: { iconName: "globe", verb: "Dragged", primaryArgKey: "startElement" },
-  browser_fill: { iconName: "globe", verb: "Filled", primaryArgKey: "element" },
-  browser_type: { iconName: "globe", verb: "Typed", primaryArgKey: "element" },
-  browser_fill_form: { iconName: "globe", verb: "Filled form" },
-  browser_select_option: {
+  browser_tabs: {
     iconName: "globe",
-    verb: "Selected option",
-    primaryArgKey: "element",
+    verb: "Browser tabs",
+    primaryArgKey: "action",
+    activity: "browser",
   },
-  browser_scroll: { iconName: "globe", verb: "Scrolled" },
-  browser_wait_for: { iconName: "globe", verb: "Waited", primaryArgKey: "text" },
-  browser_console_messages: { iconName: "globe", verb: "Read console" },
-  browser_network_requests: { iconName: "globe", verb: "Read network" },
-  browser_network_request: {
+  browser_cdp: {
     iconName: "globe",
-    verb: "Inspected request",
-    primaryArgKey: "requestId",
+    verb: "Sent CDP",
+    primaryArgKey: "method",
+    activity: "browser",
   },
-  browser_resize: { iconName: "globe", verb: "Resized browser" },
-  browser_press_key: { iconName: "globe", verb: "Pressed key", primaryArgKey: "key" },
-  browser_handle_dialog: { iconName: "globe", verb: "Handled dialog" },
-  browser_evaluate: {
-    iconName: "globe",
-    verb: "Evaluated in page",
-    primaryArgKey: "expression",
-  },
-  browser_profile_start: { iconName: "globe", verb: "Started profile" },
-  browser_profile_stop: { iconName: "globe", verb: "Stopped profile" },
+  browser_events: { iconName: "globe", verb: "Read browser events", activity: "browser" },
+  browser_screenshot: { iconName: "globe", verb: "Captured page", activity: "browser" },
 };
 
 /** Tool names belonging to a profile, derived from a catalog. */

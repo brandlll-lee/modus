@@ -5,11 +5,9 @@ import type { CdpSession } from "./session";
  * Navigation settling and JavaScript dialog handling.
  *
  * Dialogs: a JS `alert()`/`confirm()`/`prompt()` blocks the renderer until it
- * is answered. The old `browser_handle_dialog` only "recorded a policy" that
- * nothing ever read, so any alert hung the page forever. Here
- * `Page.javascriptDialogOpening` is answered immediately using the tab's
- * armed policy (set via browser_handle_dialog), falling back to dismiss, so
- * the page can never deadlock; every dialog is recorded for the agent.
+ * is answered. `Page.javascriptDialogOpening` is answered immediately using
+ * the tab's armed policy, falling back to dismiss, so the page can never
+ * deadlock; every dialog is recorded for the browser context feed.
  *
  * Navigation: after a click or form submit the page may start loading; tools
  * wait for the load to settle before returning so the agent never reads the
@@ -44,7 +42,7 @@ export class DialogController {
     this.unsubscribe = undefined;
   }
 
-  /** Arm a one-shot policy for the next dialog (browser_handle_dialog). */
+  /** Arm a one-shot policy for the next dialog. */
   arm(policy: DialogPolicy): void {
     this.policy = policy;
   }
@@ -116,8 +114,8 @@ const ERR_ABORTED = -3;
 /**
  * Hard cap on a single navigation. `webContents.loadURL` only resolves on
  * `did-finish-load`, which heavy SPAs, stalled sub-resources, or redirect loops
- * may never fire — hanging `browser_navigate` forever (and freezing the viewport
- * mid-load). Env-overridable for unusually slow sites.
+ * may never fire, freezing the viewport mid-load. Env-overridable for unusually
+ * slow sites.
  */
 const NAV_TIMEOUT_MS = readPositiveEnv("MODUS_NAV_TIMEOUT_MS", 30_000);
 

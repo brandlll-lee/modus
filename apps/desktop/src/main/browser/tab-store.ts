@@ -131,7 +131,7 @@ export function resolveTab(target: TabTarget = {}): BrowserTab {
     const tab = activeId ? tabs.get(activeId) : undefined;
     if (!tab) {
       throw new Error(
-        "No active browser tab in this workspace. Use browser_tabs({action:'new'}) or browser_navigate first.",
+        "No active browser tab in this workspace. Use browser_tabs({action:'new'}) first.",
       );
     }
     return tab;

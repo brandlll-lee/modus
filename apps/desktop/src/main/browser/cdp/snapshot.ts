@@ -80,7 +80,7 @@ export class SnapshotStore {
     if (!target) {
       throw new Error(
         `Element ref "${ref}" is stale or unknown — the page changed or was re-snapshotted. ` +
-          `Take a fresh browser_snapshot and use a ref from that result.`,
+          `Capture a fresh DOM or accessibility snapshot through browser_cdp and use a current target.`,
       );
     }
     return target;

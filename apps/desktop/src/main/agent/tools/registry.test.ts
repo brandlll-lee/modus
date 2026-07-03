@@ -214,16 +214,17 @@ describe("detectDetachedLaunch", () => {
 });
 
 describe("Browser tool permissions", () => {
-  it("registers Cursor-compatible browser tools with read-only and control gating", () => {
+  it("registers low-level browser primitives with read-only and control gating", () => {
     registerBrowserTools();
 
     expect(toolRegistry.getEntry("browser_tabs")).toBeDefined();
-    expect(toolRegistry.getEntry("browser_click")).toBeDefined();
-    expect(toolRegistry.classify(toolEvent("browser_snapshot", {}))).toEqual({
+    expect(toolRegistry.getEntry("browser_cdp")).toBeDefined();
+    expect(toolRegistry.getEntry("browser_click")).toBeUndefined();
+    expect(toolRegistry.classify(toolEvent("browser_events", {}))).toEqual({
       action: "browser.control",
       dangerous: false,
     });
-    expect(toolRegistry.classify(toolEvent("browser_console_messages", {}))).toEqual({
+    expect(toolRegistry.classify(toolEvent("browser_screenshot", {}))).toEqual({
       action: "browser.control",
       dangerous: false,
     });
@@ -231,7 +232,7 @@ describe("Browser tool permissions", () => {
       action: "browser.control",
       dangerous: false,
     });
-    expect(toolRegistry.classify(toolEvent("browser_click", { ref: "ref-1" }))).toEqual({
+    expect(toolRegistry.classify(toolEvent("browser_cdp", { method: "Page.navigate" }))).toEqual({
       action: "browser.control",
       dangerous: true,
     });

@@ -1,34 +1,10 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { app, type BrowserWindow as BrowserWindowType, shell } from "electron";
-import type {
-  BrowserBounds,
-  BrowserConsoleMessage,
-  BrowserNetworkRequest,
-  BrowserTabInfo,
-} from "../../shared/contracts";
-import {
-  type ClickOptions,
-  clickAtPoint,
-  dragBetweenPoints,
-  fillRef,
-  hoverAtPoint,
-  type Point,
-  pressKeyCombo,
-  resolveActionPoint,
-  scrollAtPoint,
-  selectOptionRef,
-  typeText,
-} from "./cdp/input";
-import {
-  type DialogPolicy,
-  loadUrlBounded,
-  type ObservedDialog,
-  settleAfterAction,
-  waitForText,
-} from "./cdp/lifecycle";
+import type { BrowserBounds, BrowserTabInfo } from "../../shared/contracts";
+import type { RawCdpEvent } from "./cdp/session";
+import { loadUrlBounded } from "./cdp/lifecycle";
 import { captureScreenshot } from "./cdp/screenshot";
-import { type CaptureSnapshotOptions, captureSnapshot } from "./cdp/snapshot";
 import type { DesignThemeTokens } from "./design-overlay";
 import { normalizeBrowserUrl } from "./security";
 import {
@@ -41,7 +17,6 @@ import {
   resolveTab,
   selectTab,
   type TabTarget,
-  tabConsoleMessages,
   tabsForWorkspace,
   updateTabInfo,
   workspaceActiveTab,
@@ -58,7 +33,6 @@ export type { TabTarget as BrowserOpTarget };
 export { normalizeBrowserUrl };
 
 const SCREENSHOT_DIR = "browser-screenshots";
-const PROFILE_DIR = "browser-logs";
 
 /* ── Tab management (IPC layer) ───────────────────────────────────────── */
 
@@ -243,7 +217,13 @@ export function releaseAgentBrowserControl(workspaceId: string): void {
  */
 export function engageAgentBrowser(target: TabTarget = {}): void {
   try {
-    void resolveTab(target).visual.engage();
+    const tab = resolveTab(target);
+    void tab.visual.engage();
+    emitBrowserEvent({
+      type: "browser.agent-activity",
+      workspaceId: tab.workspaceId,
+      tabId: tab.info.id,
+    });
   } catch {
     // No resolvable tab yet — nothing to light up.
   }
@@ -270,198 +250,20 @@ export async function setBrowserDesignMode(
   return updateTabInfo(tab);
 }
 
-export type BrowserActionOutcome = {
-  tab: BrowserTabInfo;
-  /** True when the action triggered a navigation/load. */
-  pageChanged: boolean;
-  /** Dialogs auto-handled since the action started, if any. */
-  dialogs: ObservedDialog[];
-};
-
-function dialogsSince(tab: BrowserTab, sinceIso: string): ObservedDialog[] {
-  return tab.dialogs.recentDialogs().filter((dialog) => dialog.at >= sinceIso);
-}
-
-async function finishAction(tab: BrowserTab, startedAt: string): Promise<BrowserActionOutcome> {
-  const pageChanged = await settleAfterAction(tab.view.webContents);
-  return {
-    tab: updateTabInfo(tab),
-    pageChanged,
-    dialogs: dialogsSince(tab, startedAt),
-  };
-}
-
-export async function snapshotBrowser(
-  target: TabTarget = {},
-  options: CaptureSnapshotOptions = {},
-): Promise<{ text: string; refCount: number; truncated: boolean; tab: BrowserTabInfo }> {
-  const tab = resolveTab(target);
-  const info = updateTabInfo(tab);
-  const result = await captureSnapshot(
-    tab.cdp,
-    tab.snapshots,
-    { url: info.url, title: info.title },
-    options,
-  );
-  return { ...result, tab: info };
-}
-
-export async function clickBrowserRef(
+export async function sendBrowserCdp(
   target: TabTarget,
-  ref: string,
-  options: ClickOptions = {},
-): Promise<BrowserActionOutcome> {
+  method: string,
+  params: Record<string, unknown> = {},
+  sessionId?: string,
+  signal?: AbortSignal,
+): Promise<unknown> {
   const tab = resolveTab(target);
-  const startedAt = new Date().toISOString();
-  // Resolve first (actionability), let the AI cursor fly to the target, then
-  // fire the trusted click exactly where the cursor landed.
-  const point = await resolveActionPoint(tab.cdp, tab.snapshots.resolve(ref));
-  await tab.visual.actionCue(point, "click");
-  await clickAtPoint(tab.cdp, point, options);
-  return finishAction(tab, startedAt);
+  await tab.cdp.ensureAttached();
+  return tab.cdp.send(method, params, sessionId, signal);
 }
 
-export async function clickBrowserXY(
-  target: TabTarget,
-  x: number,
-  y: number,
-  options: ClickOptions = {},
-): Promise<BrowserActionOutcome> {
-  const tab = resolveTab(target);
-  const startedAt = new Date().toISOString();
-  await tab.visual.actionCue({ x, y }, "click");
-  await clickAtPoint(tab.cdp, { x, y }, options);
-  return finishAction(tab, startedAt);
-}
-
-export async function hoverBrowserRef(
-  target: TabTarget,
-  ref: string,
-): Promise<BrowserActionOutcome> {
-  const tab = resolveTab(target);
-  const startedAt = new Date().toISOString();
-  const point = await resolveActionPoint(tab.cdp, tab.snapshots.resolve(ref), {
-    skipHitTestCheck: true,
-  });
-  await tab.visual.actionCue(point, "hover");
-  await hoverAtPoint(tab.cdp, point);
-  return finishAction(tab, startedAt);
-}
-
-export async function dragBrowserRefs(
-  target: TabTarget,
-  startRef: string,
-  endRef: string,
-): Promise<BrowserActionOutcome> {
-  const tab = resolveTab(target);
-  const startedAt = new Date().toISOString();
-  const start = await resolveActionPoint(tab.cdp, tab.snapshots.resolve(startRef), {
-    skipHitTestCheck: true,
-  });
-  const end = await resolveActionPoint(tab.cdp, tab.snapshots.resolve(endRef), {
-    skipHitTestCheck: true,
-  });
-  await tab.visual.actionCue(start, "drag");
-  // The cursor glides to the drop point in step with the synthetic drag.
-  const glide = tab.visual.glideTo(end);
-  await dragBetweenPoints(tab.cdp, start, end);
-  await glide;
-  return finishAction(tab, startedAt);
-}
-
-export async function fillBrowserRef(
-  target: TabTarget,
-  ref: string,
-  value: string,
-): Promise<BrowserActionOutcome> {
-  const tab = resolveTab(target);
-  const startedAt = new Date().toISOString();
-  const refTarget = tab.snapshots.resolve(ref);
-  const point = await resolveActionPoint(tab.cdp, refTarget, { skipHitTestCheck: true });
-  await tab.visual.actionCue(point, "input");
-  await fillRef(tab.cdp, refTarget, value);
-  return finishAction(tab, startedAt);
-}
-
-export async function typeBrowserText(
-  target: TabTarget,
-  ref: string | undefined,
-  text: string,
-  options: { submit?: boolean } = {},
-): Promise<BrowserActionOutcome> {
-  const tab = resolveTab(target);
-  const startedAt = new Date().toISOString();
-  let sessionId: string | undefined;
-  if (ref) {
-    const refTarget = tab.snapshots.resolve(ref);
-    sessionId = refTarget.sessionId;
-    const point = await resolveActionPoint(tab.cdp, refTarget, { skipHitTestCheck: true });
-    await tab.visual.actionCue(point, "input");
-    await tab.cdp.send("DOM.focus", { backendNodeId: refTarget.backendNodeId }, sessionId);
-  } else {
-    await tab.visual.engage();
-  }
-  await typeText(tab.cdp, text, sessionId);
-  if (options.submit) {
-    await pressKeyCombo(tab.cdp, "Enter", sessionId);
-  }
-  return finishAction(tab, startedAt);
-}
-
-export async function selectBrowserOption(
-  target: TabTarget,
-  ref: string,
-  values: string[],
-): Promise<BrowserActionOutcome & { selected: string[] }> {
-  const tab = resolveTab(target);
-  const startedAt = new Date().toISOString();
-  const refTarget = tab.snapshots.resolve(ref);
-  const point = await resolveActionPoint(tab.cdp, refTarget, { skipHitTestCheck: true });
-  await tab.visual.actionCue(point, "click");
-  const selected = await selectOptionRef(tab.cdp, refTarget, values);
-  const outcome = await finishAction(tab, startedAt);
-  return { ...outcome, selected };
-}
-
-export async function pressBrowserKey(
-  target: TabTarget,
-  key: string,
-): Promise<BrowserActionOutcome> {
-  const tab = resolveTab(target);
-  const startedAt = new Date().toISOString();
-  await tab.visual.engage();
-  await pressKeyCombo(tab.cdp, key);
-  return finishAction(tab, startedAt);
-}
-
-export async function scrollBrowser(input: {
-  target?: TabTarget;
-  ref?: string;
-  deltaX?: number;
-  deltaY?: number;
-}): Promise<BrowserActionOutcome> {
-  const tab = resolveTab(input.target ?? {});
-  const startedAt = new Date().toISOString();
-  const deltaX = input.deltaX ?? 0;
-  const deltaY = input.deltaY ?? 600;
-
-  let point: Point;
-  if (input.ref) {
-    point = await resolveActionPoint(tab.cdp, tab.snapshots.resolve(input.ref), {
-      skipHitTestCheck: true,
-    });
-  } else {
-    const metrics = await tab.cdp.send<{
-      cssLayoutViewport?: { clientWidth?: number; clientHeight?: number };
-    }>("Page.getLayoutMetrics");
-    point = {
-      x: (metrics.cssLayoutViewport?.clientWidth ?? 800) / 2,
-      y: (metrics.cssLayoutViewport?.clientHeight ?? 600) / 2,
-    };
-  }
-  await tab.visual.actionCue(point, "scroll");
-  await scrollAtPoint(tab.cdp, point, deltaX, deltaY);
-  return finishAction(tab, startedAt);
+export function drainBrowserEvents(target: TabTarget = {}): RawCdpEvent[] {
+  return resolveTab(target).cdp.drainEvents();
 }
 
 export async function takeBrowserScreenshot(input: {
@@ -478,71 +280,6 @@ export async function takeBrowserScreenshot(input: {
   const filePath = join(dir, `${tab.info.id}-${Date.now()}.png`);
   writeFileSync(filePath, Buffer.from(shot.base64, "base64"));
   return { path: filePath, width: shot.width, height: shot.height, base64: shot.base64 };
-}
-
-export async function waitForBrowser(input: {
-  target?: TabTarget;
-  text?: string;
-  textGone?: string;
-  timeMs?: number;
-}): Promise<string> {
-  const tab = resolveTab(input.target ?? {});
-
-  if (input.text === undefined && input.textGone === undefined) {
-    const timeMs = Math.min(Math.max(input.timeMs ?? 1000, 50), 30_000);
-    await new Promise((resolve) => setTimeout(resolve, timeMs));
-    return `Waited ${timeMs}ms.`;
-  }
-
-  const result = await waitForText(tab.cdp, {
-    ...(input.text !== undefined ? { text: input.text } : {}),
-    ...(input.textGone !== undefined ? { textGone: input.textGone } : {}),
-    ...(input.timeMs !== undefined ? { timeoutMs: input.timeMs } : {}),
-  });
-  const label = input.text !== undefined ? `text "${input.text}"` : `text "${input.textGone}" gone`;
-  if (!result.matched) {
-    throw new Error(`Timed out after ${result.elapsedMs}ms waiting for ${label}.`);
-  }
-  return `Condition met after ${result.elapsedMs}ms: ${label}.`;
-}
-
-export function handleBrowserDialog(
-  target: TabTarget,
-  policy: DialogPolicy,
-): { lastDialog?: ObservedDialog } {
-  const tab = resolveTab(target);
-  tab.dialogs.arm(policy);
-  const lastDialog = tab.dialogs.lastDialog;
-  return lastDialog ? { lastDialog } : {};
-}
-
-export function browserConsoleMessages(
-  target: TabTarget = {},
-  filter: { level?: BrowserConsoleMessage["level"] } = {},
-): BrowserConsoleMessage[] {
-  const tab = resolveTab(target);
-  const messages = tabConsoleMessages(tab);
-  return filter.level ? messages.filter((message) => message.level === filter.level) : messages;
-}
-
-export function browserNetworkRequests(
-  target: TabTarget = {},
-  filter: { urlContains?: string; failedOnly?: boolean; limit?: number } = {},
-): BrowserNetworkRequest[] {
-  const tab = resolveTab(target);
-  return tab.network.list(filter);
-}
-
-export function browserNetworkRequestDetail(
-  target: TabTarget,
-  requestId: string,
-): BrowserNetworkRequest {
-  const tab = resolveTab(target);
-  const entry = tab.network.getById(requestId);
-  if (!entry) {
-    throw new Error(`Network request not found: ${requestId}. Use browser_network_requests first.`);
-  }
-  return entry;
 }
 
 export async function resizeBrowser(
@@ -563,93 +300,11 @@ export async function resizeBrowser(
   return updateTabInfo(tab);
 }
 
-const MAX_EVALUATE_OUTPUT = 8_000;
-
-export async function evaluateBrowser(target: TabTarget, expression: string): Promise<string> {
-  const tab = resolveTab(target);
-  await tab.cdp.ensureAttached();
-  const result = await tab.cdp.send<{
-    result?: { value?: unknown; description?: string; type?: string };
-    exceptionDetails?: { exception?: { description?: string }; text?: string };
-  }>("Runtime.evaluate", {
-    expression,
-    returnByValue: true,
-    awaitPromise: true,
-    userGesture: true,
-  });
-  if (result.exceptionDetails) {
-    throw new Error(
-      result.exceptionDetails.exception?.description ??
-        result.exceptionDetails.text ??
-        "Evaluation threw an exception.",
-    );
-  }
-  const value = result.result?.value;
-  let rendered: string;
-  if (value === undefined) {
-    rendered = result.result?.description ?? "undefined";
-  } else {
-    try {
-      rendered = typeof value === "string" ? value : JSON.stringify(value, null, 2);
-    } catch {
-      rendered = String(value);
-    }
-  }
-  if (rendered.length > MAX_EVALUATE_OUTPUT) {
-    rendered = `${rendered.slice(0, MAX_EVALUATE_OUTPUT)}\n… (truncated)`;
-  }
-  return rendered;
-}
-
 export function setBrowserLock(target: TabTarget, locked: boolean): BrowserTabInfo {
   const tab = resolveTab(target);
   tab.info = { ...tab.info, locked, updatedAt: new Date().toISOString() };
   emitBrowserEvent({ type: "browser.updated", tab: tab.info });
   return tab.info;
-}
-
-/* ── CPU profiling ────────────────────────────────────────────────────── */
-
-export async function startBrowserProfile(target: TabTarget = {}): Promise<void> {
-  const tab = resolveTab(target);
-  if (tab.profiling) {
-    return;
-  }
-  await tab.cdp.ensureAttached();
-  await tab.cdp.send("Profiler.enable");
-  await tab.cdp.send("Profiler.start");
-  tab.profiling = true;
-}
-
-export async function stopBrowserProfile(
-  target: TabTarget = {},
-): Promise<{ rawPath: string; summaryPath: string }> {
-  const tab = resolveTab(target);
-  if (!tab.profiling) {
-    throw new Error("Browser profile is not running.");
-  }
-  const result = await tab.cdp.send<{ profile?: unknown }>("Profiler.stop");
-  tab.profiling = false;
-  const dir = join(app.getPath("userData"), PROFILE_DIR);
-  mkdirSync(dir, { recursive: true });
-  const stamp = Date.now();
-  const rawPath = join(dir, `${tab.info.id}-${stamp}.cpuprofile`);
-  const summaryPath = join(dir, `${tab.info.id}-${stamp}-summary.json`);
-  writeFileSync(rawPath, JSON.stringify(result.profile ?? result, null, 2));
-  writeFileSync(
-    summaryPath,
-    JSON.stringify(
-      {
-        tabId: tab.info.id,
-        url: tab.info.url,
-        title: tab.info.title,
-        createdAt: new Date().toISOString(),
-      },
-      null,
-      2,
-    ),
-  );
-  return { rawPath, summaryPath };
 }
 
 /* ── Agent context feed ───────────────────────────────────────────────── */

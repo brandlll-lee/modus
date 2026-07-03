@@ -15,6 +15,42 @@ function neverAnsweringWebContents(): WebContents {
   return { debugger: dbg } as unknown as WebContents;
 }
 
+function eventingWebContents(): {
+  webContents: WebContents;
+  emitMessage: (method: string, params?: Record<string, unknown>, sessionId?: string) => void;
+} {
+  let attached = false;
+  const listeners: Array<(
+    event: unknown,
+    method: string,
+    params: Record<string, unknown>,
+    sessionId?: string,
+  ) => void> = [];
+  const dbg = {
+    isAttached: () => attached,
+    attach: () => {
+      attached = true;
+    },
+    detach: () => {
+      attached = false;
+    },
+    on: (event: string, listener: unknown) => {
+      if (event === "message") {
+        listeners.push(listener as (typeof listeners)[number]);
+      }
+    },
+    sendCommand: vi.fn(async () => ({})),
+  };
+  return {
+    webContents: { debugger: dbg } as unknown as WebContents,
+    emitMessage: (method, params = {}, sessionId) => {
+      for (const listener of listeners) {
+        listener({}, method, params, sessionId);
+      }
+    },
+  };
+}
+
 describe("CdpSession.send bounding", () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -46,5 +82,27 @@ describe("CdpSession.send bounding", () => {
     controller.abort();
 
     await expect(pending).rejects.toThrow(/abort/i);
+  });
+
+  it("drains raw CDP events exactly once", async () => {
+    const { webContents, emitMessage } = eventingWebContents();
+    const session = new CdpSession(webContents);
+
+    await session.attach();
+    emitMessage("Network.requestWillBeSent", { requestId: "1" });
+    emitMessage("Page.loadEventFired", {}, "child-session");
+
+    expect(session.drainEvents()).toEqual([
+      expect.objectContaining({
+        method: "Network.requestWillBeSent",
+        params: { requestId: "1" },
+      }),
+      expect.objectContaining({
+        method: "Page.loadEventFired",
+        params: {},
+        sessionId: "child-session",
+      }),
+    ]);
+    expect(session.drainEvents()).toEqual([]);
   });
 });

@@ -23,6 +23,10 @@ const config: Configuration = {
       to: "icon.png",
     },
     {
+      from: "resources/skills",
+      to: "skills",
+    },
+    {
       from: "../../target/release/modus-pty-host.exe",
       to: "bin/modus-pty-host.exe",
     },

@@ -13,7 +13,7 @@ import { OverlayInjector } from "./overlay-injector";
  * - Styles go through `webContents.insertCSS` (browser-privileged, immune to
  *   the page's CSP); the overlay nodes carry `role="presentation"` +
  *   `aria-hidden`, which keeps them out of the accessibility tree and
- *   therefore out of browser_snapshot results.
+ *   therefore out of raw CDP accessibility snapshots.
  * - All motion is Web Animations API on `transform`/`opacity` only —
  *   compositor-thread animation, no layout, no paint storms.
  * - Coordinates are root-viewport CSS pixels, the same space used by CDP

@@ -204,9 +204,7 @@ async function resolveObjectId(
   );
   const objectId = result.object?.objectId;
   if (!objectId) {
-    throw new Error(
-      "Element is no longer attached to the document — take a fresh browser_snapshot.",
-    );
+    throw new Error("Element is no longer attached to the document — query the DOM again.");
   }
   return objectId;
 }
@@ -262,7 +260,7 @@ export async function resolveActionPoint(
     await session.send("DOM.scrollIntoViewIfNeeded", { backendNodeId }, sessionId);
   } catch {
     throw new Error(
-      `Element "${target.role}${target.name ? ` ${JSON.stringify(target.name)}` : ""}" is no longer in the document — take a fresh browser_snapshot.`,
+      `Element "${target.role}${target.name ? ` ${JSON.stringify(target.name)}` : ""}" is no longer in the document — query the DOM again.`,
     );
   }
 
@@ -356,7 +354,7 @@ async function assertReceivesEvents(
   const blocker = await describeForError(session, hitBackendNodeId, undefined);
   throw new Error(
     `Element "${target.role}${target.name ? ` ${JSON.stringify(target.name)}` : ""}" is obscured by ${blocker} at its click point — it would not receive the click. ` +
-      `Close or dismiss the covering element first (take a browser_snapshot to see it).`,
+      `Close or dismiss the covering element first, then verify with browser_screenshot or DOM queries.`,
   );
 }
 

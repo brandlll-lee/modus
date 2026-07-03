@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  BROWSER_TOOL_NAMES,
   FAST_CODEBASE_TOOL_NAME,
   getMcpToolUiMeta,
   getToolUiMeta,
@@ -25,11 +26,20 @@ describe("MCP tool UI metadata", () => {
     expect(getToolUiMeta("mcp_github_search")?.verb).toBe("github");
     expect(getToolUiMeta("bash")?.verb).toBe("Ran");
     expect(getToolUiMeta("terminal_run")?.verb).toBe("Terminal");
-    expect(getToolUiMeta("browser_navigate")?.verb).toBe("Navigated");
+    expect(getToolUiMeta("browser_cdp")?.verb).toBe("Sent CDP");
   });
 });
 
 describe("tool render descriptor (single source of truth)", () => {
+  it("keeps browser tools at the low-level primitive surface", () => {
+    expect([...BROWSER_TOOL_NAMES]).toEqual([
+      "browser_tabs",
+      "browser_cdp",
+      "browser_events",
+      "browser_screenshot",
+    ]);
+  });
+
   it("declares each render kind on the catalog, not in consumers", () => {
     // Diff tools carry a diffSource so the diff strategy is data, not a name check.
     expect(getToolUiMeta("edit")?.render).toBe("diff");

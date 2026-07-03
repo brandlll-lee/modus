@@ -219,8 +219,8 @@ describe("SnapshotStore", () => {
     store.beginGeneration();
     store.addRef("e1", { backendNodeId: 42, role: "button", name: "OK" });
     store.invalidate();
-    expect(() => store.resolve("e1")).toThrow(/stale|browser_snapshot/);
-    expect(() => store.resolve("e99")).toThrow(/browser_snapshot/);
+    expect(() => store.resolve("e1")).toThrow(/stale|browser_cdp/);
+    expect(() => store.resolve("e99")).toThrow(/browser_cdp/);
   });
 
   it("clears previous refs when a new generation begins", () => {

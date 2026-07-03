@@ -864,7 +864,7 @@ describe("PiSdkRuntime", () => {
       const activeTools = setActiveToolsByName.mock.calls[0]?.[0] as string[];
       expect(activeTools).toEqual(expect.arrayContaining(["read", "grep", "find", "ls"]));
       expect(activeTools).not.toEqual(
-        expect.arrayContaining(["bash", "edit", "write", "terminal_run", "browser_click", "task"]),
+        expect.arrayContaining(["bash", "edit", "write", "terminal_run", "browser_cdp", "task"]),
       );
       expect(activeTools).not.toContain("synthetic_mutator");
 

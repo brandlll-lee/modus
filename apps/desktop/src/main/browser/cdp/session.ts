@@ -20,8 +20,15 @@ import { browserDebugLog } from "../debug";
 type CdpParams = Record<string, unknown>;
 
 export type CdpEventHandler = (params: CdpParams, sessionId: string | undefined) => void;
+export type RawCdpEvent = {
+  method: string;
+  params: CdpParams;
+  sessionId?: string;
+  at: string;
+};
 
 const ROOT_DOMAINS = ["Page", "DOM", "Runtime", "Network"] as const;
+const MAX_RAW_EVENTS = 500;
 
 const IFRAME_AUTO_ATTACH: CdpParams = {
   autoAttach: true,
@@ -57,6 +64,7 @@ export class CdpSession {
   private attached = false;
   private listenersBound = false;
   private readonly handlers = new Map<string, Set<CdpEventHandler>>();
+  private readonly rawEvents: RawCdpEvent[] = [];
   /** Child iframe sessionId → its CDP frameId (== targetId for OOPIFs). */
   private readonly childFrames = new Map<string, string>();
   /** Reject callbacks for in-flight commands, so a detach can fail them fast. */
@@ -122,6 +130,16 @@ export class CdpSession {
   }
 
   private dispatch(method: string, params: CdpParams, sessionId: string | undefined): void {
+    this.rawEvents.push({
+      method,
+      params,
+      ...(sessionId ? { sessionId } : {}),
+      at: new Date().toISOString(),
+    });
+    if (this.rawEvents.length > MAX_RAW_EVENTS) {
+      this.rawEvents.splice(0, this.rawEvents.length - MAX_RAW_EVENTS);
+    }
+
     if (method === "Target.attachedToTarget") {
       this.onChildAttached(params);
     } else if (method === "Target.detachedFromTarget") {
@@ -293,6 +311,10 @@ export class CdpSession {
   /** Active child iframe session ids (for per-frame snapshots). */
   childSessionIds(): string[] {
     return [...this.childFrames.keys()];
+  }
+
+  drainEvents(): RawCdpEvent[] {
+    return this.rawEvents.splice(0, this.rawEvents.length);
   }
 
   /** CDP frameId for a child session, used to locate the owning iframe element. */

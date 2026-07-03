@@ -1209,7 +1209,8 @@ export type PlanRef = {
 
 /* ── Skills (Agent Skills, 2026 SKILL.md standard) ─────────────────────── */
 
-export type SkillScope = "workspace" | "user";
+export type ConfigScope = "workspace" | "user";
+export type SkillScope = ConfigScope | "builtin";
 
 export type SkillSelection = {
   name: string;
@@ -1253,7 +1254,7 @@ export type CreateSkillInput = {
 export type SubagentInfo = {
   name: string;
   description: string;
-  scope: SkillScope;
+  scope: ConfigScope;
   source: string;
   path: string;
   model: string;
@@ -1271,7 +1272,7 @@ export type SubagentDetail = SubagentInfo & { body: string };
 export type CreateSubagentInput = {
   cwd: string;
   /** New subagents are written to the selected agents folder. */
-  scope?: SkillScope | undefined;
+  scope?: ConfigScope | undefined;
   name: string;
   description: string;
   model?: string;
