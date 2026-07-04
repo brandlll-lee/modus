@@ -31,25 +31,25 @@ const OVERLAY_CSS = `
 .modus-agent-overlay__glow { position: absolute; inset: 0; opacity: 0; transition: opacity 300ms ease; }
 .modus-agent-overlay--active .modus-agent-overlay__glow { opacity: 1; animation: modus-agent-overlay-breathe 1.6s ease-in-out infinite; }
 @keyframes modus-agent-overlay-breathe {
-  0%, 100% { box-shadow: inset 0 0 0 2px rgba(133, 63, 244, 0.95), inset 0 0 18px 4px rgba(133, 63, 244, 0.3); }
-  50% { box-shadow: inset 0 0 0 4px rgba(179, 136, 255, 0.95), inset 0 0 46px 10px rgba(133, 63, 244, 0.55); }
+  0%, 100% { box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.78), inset 0 0 18px 4px rgba(255, 255, 255, 0.12); }
+  50% { box-shadow: inset 0 0 0 4px rgba(255, 255, 255, 0.9), inset 0 0 46px 10px rgba(255, 255, 255, 0.22); }
 }
 .modus-agent-overlay__cursor, .modus-agent-overlay__trail { position: absolute; left: 0; top: 0; width: 22px; height: 22px; opacity: 0; will-change: transform; transition: opacity 200ms ease; }
-.modus-agent-overlay__cursor { filter: drop-shadow(0 2px 5px rgba(10, 6, 24, 0.4)); }
+.modus-agent-overlay__cursor { filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.45)); }
 .modus-agent-overlay--active .modus-agent-overlay__cursor { opacity: 1; animation: modus-agent-overlay-cursor-flicker 1.6s ease-in-out infinite; }
 @keyframes modus-agent-overlay-cursor-flicker {
-  0%, 100% { opacity: 0.96; filter: drop-shadow(0 2px 5px rgba(10, 6, 24, 0.4)) drop-shadow(0 0 2px rgba(133, 63, 244, 0.35)); }
-  50% { opacity: 0.7; filter: drop-shadow(0 2px 5px rgba(10, 6, 24, 0.4)) drop-shadow(0 0 8px rgba(179, 136, 255, 0.95)); }
+  0%, 100% { opacity: 0.96; filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.45)) drop-shadow(0 0 2px rgba(255, 255, 255, 0.28)); }
+  50% { opacity: 0.7; filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.45)) drop-shadow(0 0 8px rgba(255, 255, 255, 0.72)); }
 }
 .modus-agent-overlay--active .modus-agent-overlay__trail[data-trail="0"] { opacity: 0.38; }
 .modus-agent-overlay--active .modus-agent-overlay__trail[data-trail="1"] { opacity: 0.2; }
 .modus-agent-overlay--active .modus-agent-overlay__trail[data-trail="2"] { opacity: 0.09; }
-.modus-agent-overlay__ripple { position: absolute; left: -16px; top: -16px; width: 32px; height: 32px; border-radius: 50%; border: 2px solid rgba(179, 136, 255, 0.9); background: rgba(133, 63, 244, 0.18); }
+.modus-agent-overlay__ripple { position: absolute; left: -16px; top: -16px; width: 32px; height: 32px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, 0.78); background: rgba(255, 255, 255, 0.16); }
 `;
 
 /**
  * Compact rounded pointer: white head with a dark seat line over two layered
- * indigo echoes. Round joins come from stroke-linejoin (the standard SVG
+ * neutral echoes. Round joins come from stroke-linejoin (the standard SVG
  * rounded-polygon trick), keeping the silhouette soft like the reference
  * design. Tip hotspot is at (4, 4) inside the 22px viewbox.
  */
@@ -63,24 +63,24 @@ const CURSOR_PATH = "M4.5 3.5 L17 10.9 L11.7 12.6 L9.3 17.8 Z";
  */
 const CURSOR_LAYERS: Array<Record<string, string>> = [
   {
-    fill: "#6d4df2",
-    opacity: "0.5",
-    stroke: "#6d4df2",
+    fill: "#ffffff",
+    opacity: "0.36",
+    stroke: "#ffffff",
     "stroke-width": "3",
     "stroke-linejoin": "round",
     transform: "translate(2.6,2.6)",
   },
   {
-    fill: "#8f6bff",
-    opacity: "0.72",
-    stroke: "#8f6bff",
+    fill: "#f2f2f2",
+    opacity: "0.54",
+    stroke: "#f2f2f2",
     "stroke-width": "3",
     "stroke-linejoin": "round",
     transform: "translate(1.3,1.3)",
   },
   {
     fill: "none",
-    stroke: "rgba(44,24,98,0.45)",
+    stroke: "rgba(0,0,0,0.48)",
     "stroke-width": "4.4",
     "stroke-linejoin": "round",
   },

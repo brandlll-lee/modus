@@ -4,6 +4,7 @@ import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
 import { ShinyText } from "../../components/ui/ShinyText";
 import { cn } from "../../lib/cn";
+import { useSmoothStreamingText } from "../../lib/useSmoothStreamingText";
 import type { ActivityItem } from "./Timeline";
 import { ToolCard } from "./ToolCard";
 
@@ -30,7 +31,8 @@ export function ThoughtRow({ text, streaming = false }: { text: string; streamin
   }, [streaming]);
 
   const showBody = open;
-  const textLength = text.length;
+  const displayText = useSmoothStreamingText(text, streaming);
+  const textLength = displayText.length;
 
   useLayoutEffect(() => {
     if (!streaming || !showBody || !preRef.current || textLength === 0) {
@@ -70,7 +72,7 @@ export function ThoughtRow({ text, streaming = false }: { text: string; streamin
           className="scroll-thin mt-1 max-h-44 max-w-full overflow-x-auto overflow-y-auto whitespace-pre-wrap text-2xs text-fg-faint leading-relaxed"
           ref={preRef}
         >
-          {text}
+          {displayText}
         </pre>
       </CollapsibleMotion>
     </div>
