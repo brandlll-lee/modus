@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   agentPromptSchema,
+  browserRecentSchema,
   diffCommitOrPushSchema,
   parseIpcInput,
   permissionDecideSchema,
@@ -77,6 +78,15 @@ describe("IPC schemas", () => {
     expect(parsed.model).toBe("openai/gpt-5.5");
     expect(parsed.thinkingLevel).toBe("xhigh");
     expect(parsed.thinkingVariant).toBe("max");
+  });
+
+  it("validates browser recent deletion payloads", () => {
+    expect(parseIpcInput(browserRecentSchema, { id: "recent-1" }, "browser:delete-recent")).toEqual(
+      { id: "recent-1" },
+    );
+    expect(() =>
+      parseIpcInput(browserRecentSchema, { id: "" }, "browser:delete-recent"),
+    ).toThrow("Invalid IPC payload");
   });
 
   it("leaves per-turn params undefined when omitted (keeps session defaults)", () => {

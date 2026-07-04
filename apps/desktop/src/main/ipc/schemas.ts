@@ -171,6 +171,10 @@ export const browserFindStopSchema = z.object({
   action: z.enum(["clearSelection", "keepSelection", "activateSelection"]).optional(),
 });
 
+export const browserRecentSchema = z.object({
+  id: nonEmptyString,
+});
+
 const hexColor = z.string().trim().min(1).max(64);
 
 export const browserDesignModeSchema = z.object({

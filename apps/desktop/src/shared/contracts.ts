@@ -743,6 +743,16 @@ export type BrowserTabInfo = {
   favicon?: string;
 };
 
+export type BrowserRecentInfo = {
+  id: string;
+  workspaceId: string;
+  url: string;
+  title: string;
+  lastOpenedAt: string;
+  createdAt: string;
+  favicon?: string;
+};
+
 export type BrowserEvent =
   | { type: "browser.created"; tab: BrowserTabInfo }
   | { type: "browser.updated"; tab: BrowserTabInfo }

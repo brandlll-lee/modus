@@ -52,6 +52,8 @@ export const IPC_CHANNELS = {
   browserDesignMode: "browser:design-mode",
   browserFind: "browser:find",
   browserFindStop: "browser:find-stop",
+  browserListRecents: "browser:list-recents",
+  browserDeleteRecent: "browser:delete-recent",
   browserEvent: "browser:event",
   diffList: "diff:list",
   diffRead: "diff:read",

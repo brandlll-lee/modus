@@ -3,8 +3,10 @@ import {
   IconArrowRight,
   IconDeviceDesktopCode,
   IconExternalLink,
+  IconHistory,
   IconPlus,
   IconRefresh,
+  IconTrash,
   IconWorld,
   IconX,
 } from "@tabler/icons-react";
@@ -13,11 +15,17 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
-import type { BrowserBounds, BrowserEvent, BrowserTabInfo } from "../../../../shared/contracts";
+import type {
+  BrowserBounds,
+  BrowserEvent,
+  BrowserRecentInfo,
+  BrowserTabInfo,
+} from "../../../../shared/contracts";
 import { useNativeSurfaceSuppressed } from "../../components/ui/nativeSurface";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
@@ -29,12 +37,17 @@ type BrowserPanelProps = {
   workspaceId?: string | undefined;
 };
 
+const RECENTS_DRAWER_WIDTH = 260;
+
 export function BrowserPanel({ active, workspaceId }: BrowserPanelProps) {
   const [tabs, setTabs] = useState<BrowserTabInfo[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | undefined>();
   const [address, setAddress] = useState("");
   const [pendingNavigation, setPendingNavigation] = useState(false);
   const [designTabs, setDesignTabs] = useState<Set<string>>(() => new Set());
+  const [recentsOpen, setRecentsOpen] = useState(false);
+  const [recents, setRecents] = useState<BrowserRecentInfo[]>([]);
+  const [recentQuery, setRecentQuery] = useState("");
 
   const rootRef = useRef<HTMLDivElement | null>(null);
   const addressInputRef = useRef<HTMLInputElement | null>(null);
@@ -77,6 +90,14 @@ export function BrowserPanel({ active, workspaceId }: BrowserPanelProps) {
     });
     void window.modus.browser.setDesignMode({ tabId, enabled: next, theme: resolveDesignTheme() });
   }, []);
+
+  const refreshRecents = useCallback(async (): Promise<void> => {
+    if (!workspaceId) {
+      setRecents([]);
+      return;
+    }
+    setRecents(await window.modus.browser.listRecents({ workspaceId }));
+  }, [workspaceId]);
 
   const syncTabs = useCallback(async () => {
     if (!workspaceId) {
@@ -134,6 +155,9 @@ export function BrowserPanel({ active, workspaceId }: BrowserPanelProps) {
         if (event.tab.id === activeTabIdRef.current && !event.tab.loading) {
           setPendingNavigation(false);
         }
+        if (recentsOpen && /^https?:/i.test(event.tab.url)) {
+          void refreshRecents();
+        }
         return;
       }
 
@@ -173,7 +197,13 @@ export function BrowserPanel({ active, workspaceId }: BrowserPanelProps) {
         });
       }
     });
-  }, [workspaceId, focusAddress, toggleDesign]);
+  }, [workspaceId, focusAddress, recentsOpen, refreshRecents, toggleDesign]);
+
+  useEffect(() => {
+    if (active && recentsOpen) {
+      void refreshRecents();
+    }
+  }, [active, recentsOpen, refreshRecents]);
 
   // Address bar mirrors the active tab unless the user is editing it.
   useEffect(() => {
@@ -201,6 +231,35 @@ export function BrowserPanel({ active, workspaceId }: BrowserPanelProps) {
   const closeTab = useCallback(async (tabId: string): Promise<void> => {
     await window.modus.browser.closeTab({ tabId });
   }, []);
+
+  const openRecent = useCallback(
+    async (recent: BrowserRecentInfo): Promise<void> => {
+      if (!workspaceId) {
+        return;
+      }
+      setPendingNavigation(true);
+      try {
+        const tab = await window.modus.browser.navigate({
+          ...(activeTab ? { tabId: activeTab.id } : { workspaceId }),
+          url: recent.url,
+        });
+        setTabs((current) => upsertTab(current, tab));
+        setActiveTabId(tab.id);
+        setRecentsOpen(false);
+      } finally {
+        setPendingNavigation(false);
+      }
+    },
+    [activeTab, workspaceId],
+  );
+
+  const deleteRecent = useCallback(
+    async (recent: BrowserRecentInfo): Promise<void> => {
+      await window.modus.browser.deleteRecent({ id: recent.id });
+      await refreshRecents();
+    },
+    [refreshRecents],
+  );
 
   async function submitAddress(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -249,6 +308,12 @@ export function BrowserPanel({ active, workspaceId }: BrowserPanelProps) {
       if (!root || !(event.target instanceof Node) || !root.contains(event.target)) {
         return;
       }
+      if (event.key === "Escape" && recentsOpen) {
+        setRecentsOpen(false);
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
       const chord = event.ctrlKey || event.metaKey;
       const key = event.key.toLowerCase();
       const tab = tabs.find((entry) => entry.id === activeTabIdRef.current) ?? tabs.at(0);
@@ -282,7 +347,7 @@ export function BrowserPanel({ active, workspaceId }: BrowserPanelProps) {
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [active, tabs, createTab, closeTab, focusAddress, toggleDesign]);
+  }, [active, tabs, createTab, closeTab, focusAddress, recentsOpen, toggleDesign]);
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-canvas" ref={rootRef}>
@@ -294,6 +359,14 @@ export function BrowserPanel({ active, workspaceId }: BrowserPanelProps) {
         tabs={tabs}
       />
       <div className="toolbar-row flex shrink-0 items-center gap-1 px-3">
+        <BrowserIconButton
+          active={recentsOpen}
+          disabled={!workspaceId}
+          label="Recents"
+          onClick={() => setRecentsOpen((open) => !open)}
+        >
+          <IconHistory size={18} stroke={1.7} />
+        </BrowserIconButton>
         <BrowserIconButton
           disabled={!activeTab?.canGoBack}
           label="Back"
@@ -348,7 +421,21 @@ export function BrowserPanel({ active, workspaceId }: BrowserPanelProps) {
           <IconExternalLink size={18} stroke={1.7} />
         </BrowserIconButton>
       </div>
-      <BrowserViewport active={active} tabId={activePageTabId} />
+      <BrowserViewport
+        active={active}
+        leftInset={recentsOpen ? RECENTS_DRAWER_WIDTH : 0}
+        tabId={activePageTabId}
+      >
+        {recentsOpen ? (
+          <BrowserRecentsDrawer
+            onDelete={(recent) => void deleteRecent(recent)}
+            onOpen={(recent) => void openRecent(recent)}
+            onQueryChange={setRecentQuery}
+            query={recentQuery}
+            recents={recents}
+          />
+        ) : null}
+      </BrowserViewport>
     </div>
   );
 }
@@ -422,8 +509,21 @@ function BrowserTabRail({
   );
 }
 
-function BrowserViewport({ active, tabId }: { active: boolean; tabId?: string | undefined }) {
+function BrowserViewport({
+  active,
+  children,
+  leftInset = 0,
+  tabId,
+}: {
+  active: boolean;
+  children?: ReactNode;
+  leftInset?: number;
+  tabId?: string | undefined;
+}) {
   const hostRef = useRef<HTMLDivElement | null>(null);
+  const leftInsetRef = useRef(leftInset);
+  const syncBoundsRef = useRef<(() => void) | null>(null);
+  leftInsetRef.current = leftInset;
   // A full-screen DOM overlay (e.g. the image lightbox) is on top: native views
   // paint above the DOM, so the embedded browser must hide until it closes.
   const suppressed = useNativeSurfaceSuppressed();
@@ -431,10 +531,12 @@ function BrowserViewport({ active, tabId }: { active: boolean; tabId?: string | 
   useEffect(() => {
     const host = hostRef.current;
     if (!active || !tabId || !host) {
+      syncBoundsRef.current = null;
       return undefined;
     }
 
     if (suppressed) {
+      syncBoundsRef.current = null;
       // Hide now; when suppression lifts this effect re-runs and re-shows the
       // view at freshly measured bounds. No observer while hidden.
       void window.modus.browser.hide({ tabId });
@@ -443,10 +545,20 @@ function BrowserViewport({ active, tabId }: { active: boolean; tabId?: string | 
 
     let disposed = false;
     let lastBounds: BrowserBounds | null = null;
+    const boundsForHost = (): BrowserBounds => {
+      const rect = host.getBoundingClientRect();
+      const inset = leftInsetRef.current;
+      return computeBrowserViewBounds({
+        left: rect.left + inset,
+        top: rect.top,
+        width: Math.max(0, rect.width - inset),
+        height: rect.height,
+      });
+    };
 
     // Initial show: attach + make visible + force bounds, unconditionally.
     // (Stale cached bounds were one root cause of the black-border bug.)
-    const initialBounds = computeBrowserViewBounds(host.getBoundingClientRect());
+    const initialBounds = boundsForHost();
     if (initialBounds.width > 0 && initialBounds.height > 0) {
       lastBounds = initialBounds;
       void window.modus.browser.show({ tabId, bounds: initialBounds });
@@ -456,7 +568,7 @@ function BrowserViewport({ active, tabId }: { active: boolean; tabId?: string | 
       if (disposed) {
         return;
       }
-      const bounds = computeBrowserViewBounds(host.getBoundingClientRect());
+      const bounds = boundsForHost();
       if (bounds.width === 0 || bounds.height === 0) {
         return;
       }
@@ -478,14 +590,20 @@ function BrowserViewport({ active, tabId }: { active: boolean; tabId?: string | 
     const observer = new ResizeObserver(syncBounds);
     observer.observe(host);
     window.addEventListener("resize", syncBounds);
+    syncBoundsRef.current = syncBounds;
 
     return () => {
       disposed = true;
+      syncBoundsRef.current = null;
       observer.disconnect();
       window.removeEventListener("resize", syncBounds);
       void window.modus.browser.hide({ tabId });
     };
   }, [active, tabId, suppressed]);
+
+  useLayoutEffect(() => {
+    syncBoundsRef.current?.();
+  }, [leftInset]);
 
   return (
     <div className="relative min-h-0 flex-1 bg-canvas">
@@ -499,8 +617,135 @@ function BrowserViewport({ active, tabId }: { active: boolean; tabId?: string | 
           </div>
         </div>
       ) : null}
+      {children}
     </div>
   );
+}
+
+function BrowserRecentsDrawer({
+  onDelete,
+  onOpen,
+  onQueryChange,
+  query,
+  recents,
+}: {
+  onDelete: (recent: BrowserRecentInfo) => void;
+  onOpen: (recent: BrowserRecentInfo) => void;
+  onQueryChange: (query: string) => void;
+  query: string;
+  recents: BrowserRecentInfo[];
+}) {
+  const filtered = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) {
+      return recents;
+    }
+    return recents.filter((recent) =>
+      `${recent.title} ${recent.url}`.toLowerCase().includes(needle),
+    );
+  }, [query, recents]);
+  const today = new Date().toDateString();
+  const todayItems = filtered.filter(
+    (recent) => new Date(recent.lastOpenedAt).toDateString() === today,
+  );
+  const earlierItems = filtered.filter(
+    (recent) => new Date(recent.lastOpenedAt).toDateString() !== today,
+  );
+
+  return (
+    <div
+      className="absolute inset-y-0 left-0 z-10 flex flex-col border-hairline border-r bg-canvas/95 p-3 shadow-xl backdrop-blur"
+      style={{ width: RECENTS_DRAWER_WIDTH }}
+    >
+      <input
+        className="h-8 w-full rounded-md border border-hairline bg-transparent px-2 text-fg text-sm outline-none placeholder:text-fg-muted focus:border-hairline-strong"
+        onChange={(event) => onQueryChange(event.target.value)}
+        placeholder="Search"
+        value={query}
+      />
+      <div className="scroll-thin mt-4 min-h-0 flex-1 overflow-y-auto">
+        <RecentSection items={todayItems} label="Today" onDelete={onDelete} onOpen={onOpen} />
+        <RecentSection items={earlierItems} label="Earlier" onDelete={onDelete} onOpen={onOpen} />
+        {filtered.length === 0 ? (
+          <div className="px-1 py-6 text-fg-muted text-sm">No recent pages</div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function RecentSection({
+  items,
+  label,
+  onDelete,
+  onOpen,
+}: {
+  items: BrowserRecentInfo[];
+  label: string;
+  onDelete: (recent: BrowserRecentInfo) => void;
+  onOpen: (recent: BrowserRecentInfo) => void;
+}) {
+  if (items.length === 0) {
+    return null;
+  }
+  return (
+    <section className="mb-4">
+      <div className="mb-2 px-1 font-medium text-fg-muted text-xs">{label}</div>
+      <div className="space-y-1">
+        {items.map((recent) => (
+          <RecentItem key={recent.id} onDelete={onDelete} onOpen={onOpen} recent={recent} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function RecentItem({
+  onDelete,
+  onOpen,
+  recent,
+}: {
+  onDelete: (recent: BrowserRecentInfo) => void;
+  onOpen: (recent: BrowserRecentInfo) => void;
+  recent: BrowserRecentInfo;
+}) {
+  return (
+    <div className="group flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-fg-muted hover:bg-hover hover:text-fg">
+      <button
+        className="flex min-w-0 flex-1 items-center gap-2 text-left"
+        onClick={() => onOpen(recent)}
+        title={recent.url}
+        type="button"
+      >
+        {recent.favicon ? (
+          <img alt="" className="size-4 shrink-0 rounded-sm" src={recent.favicon} />
+        ) : (
+          <IconWorld className="toolbar-icon shrink-0" size={16} stroke={1.7} />
+        )}
+        <span className="min-w-0 flex-1 truncate text-sm">{recent.title || recent.url}</span>
+        <span className="shrink-0 text-fg-faint text-xs">{formatRecentTime(recent.lastOpenedAt)}</span>
+      </button>
+      <button
+        aria-label="Remove recent page"
+        className="flex size-5 shrink-0 items-center justify-center rounded text-fg-muted opacity-0 hover:bg-active hover:text-fg group-hover:opacity-100 focus-visible:opacity-100"
+        onClick={(event) => {
+          event.stopPropagation();
+          onDelete(recent);
+        }}
+        type="button"
+      >
+        <IconTrash size={13} stroke={1.8} />
+      </button>
+    </div>
+  );
+}
+
+function formatRecentTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+  return new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(date);
 }
 
 function BrowserIconButton({

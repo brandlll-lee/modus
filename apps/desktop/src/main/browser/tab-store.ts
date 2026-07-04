@@ -14,6 +14,7 @@ import { captureElementClip } from "./cdp/screenshot";
 import { CdpSession } from "./cdp/session";
 import { SnapshotStore } from "./cdp/snapshot";
 import { DesignModeController } from "./design-mode";
+import { upsertBrowserRecent } from "./browser-recents-store";
 import {
   applySessionSecurity,
   DEFAULT_URL,
@@ -170,6 +171,15 @@ export function tabsForWorkspace(workspaceId: string): BrowserTab[] {
 
 function wireTabEvents(tab: BrowserTab): void {
   const webContents = tab.view.webContents;
+  const saveRecent = (touch = true): void => {
+    upsertBrowserRecent({
+      workspaceId: tab.workspaceId,
+      url: webContents.getURL(),
+      title: webContents.getTitle(),
+      ...(tab.info.favicon ? { favicon: tab.info.favicon } : {}),
+      touch,
+    });
+  };
 
   webContents.on("console-message", (event) => {
     pushCapped(tab.consoleMessages, {
@@ -189,15 +199,23 @@ function wireTabEvents(tab: BrowserTab): void {
     // New document: every outstanding snapshot ref now points at dead nodes.
     tab.snapshots.invalidate();
     updateTabInfo(tab);
+    saveRecent();
   });
-  webContents.on("did-navigate-in-page", () => updateTabInfo(tab));
-  webContents.on("page-title-updated", () => updateTabInfo(tab));
+  webContents.on("did-navigate-in-page", () => {
+    updateTabInfo(tab);
+    saveRecent();
+  });
+  webContents.on("page-title-updated", () => {
+    updateTabInfo(tab);
+    saveRecent(false);
+  });
   webContents.on("devtools-opened", () => updateTabInfo(tab));
   webContents.on("devtools-closed", () => updateTabInfo(tab));
   webContents.on("page-favicon-updated", (_event, favicons) => {
     const favicon = favicons.at(0);
     tab.info = { ...tab.info, ...(favicon ? { favicon } : {}) };
     updateTabInfo(tab);
+    saveRecent(false);
   });
   webContents.on("found-in-page", (_event, result) => {
     emitBrowserEvent({

@@ -61,6 +61,7 @@ import {
   stopFindInBrowserPage,
   toggleBrowserDevtools,
 } from "../browser/browser-service";
+import { deleteBrowserRecent, listBrowserRecents } from "../browser/browser-recents-store";
 import { resolveContext, searchContext } from "../context/context-service";
 import { addDocSource, listDocSources, searchDocs } from "../docs/docs-service";
 import { listDirectory, readWorkspaceFile } from "../files/files-service";
@@ -148,6 +149,7 @@ import {
   browserFindSchema,
   browserFindStopSchema,
   browserNavigateSchema,
+  browserRecentSchema,
   browserTabSchema,
   browserWorkspaceSchema,
   checkpointRestoreSchema,
@@ -668,6 +670,18 @@ export function registerAppIpc(): void {
     assertTrustedSender(event);
     const parsed = parseIpcInput(browserFindStopSchema, input, IPC_CHANNELS.browserFindStop);
     stopFindInBrowserPage(parsed.tabId, parsed.action ?? "clearSelection");
+  });
+
+  ipcMain.handle(IPC_CHANNELS.browserListRecents, (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(browserWorkspaceSchema, input, IPC_CHANNELS.browserListRecents);
+    return listBrowserRecents(parsed.workspaceId);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.browserDeleteRecent, (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(browserRecentSchema, input, IPC_CHANNELS.browserDeleteRecent);
+    deleteBrowserRecent(parsed.id);
   });
 
   ipcMain.handle(IPC_CHANNELS.diffList, async (event, cwd: string) => {

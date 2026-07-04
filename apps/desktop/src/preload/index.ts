@@ -1,6 +1,11 @@
 import type { IpcRendererEvent } from "electron";
 import { contextBridge, ipcRenderer } from "electron";
-import type { AgentEvent, BrowserEvent, GitChangeEvent, TerminalEvent } from "../shared/contracts";
+import type {
+  AgentEvent,
+  BrowserEvent,
+  GitChangeEvent,
+  TerminalEvent,
+} from "../shared/contracts";
 import type { ModusApi, SecurityState } from "./types";
 
 const api: ModusApi = {
@@ -90,6 +95,8 @@ const api: ModusApi = {
     setDesignMode: (input) => ipcRenderer.invoke("browser:design-mode", input),
     find: (input) => ipcRenderer.invoke("browser:find", input),
     findStop: (input) => ipcRenderer.invoke("browser:find-stop", input),
+    listRecents: (input) => ipcRenderer.invoke("browser:list-recents", input),
+    deleteRecent: (input) => ipcRenderer.invoke("browser:delete-recent", input),
     onEvent: (callback) => {
       const listener = (_event: IpcRendererEvent, payload: unknown) =>
         callback(payload as BrowserEvent);

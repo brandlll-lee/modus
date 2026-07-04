@@ -151,6 +151,21 @@ function migrate(db: DatabaseSync): void {
 
     create index if not exists idx_agent_checkpoints_session
       on agent_checkpoints(session_id);
+
+    create table if not exists browser_recents (
+      id text primary key,
+      workspace_id text not null references workspaces(id) on delete cascade,
+      url_key text not null,
+      url text not null,
+      title text not null,
+      favicon text,
+      last_opened_at text not null,
+      created_at text not null,
+      unique(workspace_id, url_key)
+    );
+
+    create index if not exists idx_browser_recents_workspace_recent
+      on browser_recents(workspace_id, last_opened_at desc);
   `);
 
   addColumn(db, "agent_sessions", "runtime", "text not null default 'pi-sdk'");

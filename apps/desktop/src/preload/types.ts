@@ -10,6 +10,7 @@ import type {
   ApprovalMode,
   BrowserBounds,
   BrowserEvent,
+  BrowserRecentInfo,
   BrowserTabInfo,
   CheckpointInfo,
   ConfigureProviderInput,
@@ -220,6 +221,8 @@ export type ModusApi = {
       tabId: string;
       action?: "clearSelection" | "keepSelection" | "activateSelection";
     }): Promise<void>;
+    listRecents(input: { workspaceId: string }): Promise<BrowserRecentInfo[]>;
+    deleteRecent(input: { id: string }): Promise<void>;
     onEvent(callback: (event: BrowserEvent) => void): () => void;
   };
   diff: {
