@@ -67,19 +67,15 @@ function renderSkillsManifest(skills: SkillDetail[]): string {
     "## Skills",
     "A skill is a local `SKILL.md` workflow. Below are the skills available this turn.",
     "If a task matches a skill, read its file path with the existing file tools before following it.",
+    "Prefer built-in skills when they cover the task; use external skills for workflows not covered by built-ins.",
     "",
-    "### Available skills",
   ];
-  const fullLines = available.map((skill) =>
-    skill.description
-      ? `- ${skill.name}: ${skill.description} (file: ${skill.path})`
-      : `- ${skill.name}: (file: ${skill.path})`,
-  );
+  const fullLines = renderSkillLinesByScope(available, true);
   const full = [...intro, ...fullLines].join("\n");
   if (full.length <= SKILLS_MANIFEST_BUDGET) {
     return full;
   }
-  const minimalLines = available.map((skill) => `- ${skill.name}: (file: ${skill.path})`);
+  const minimalLines = renderSkillLinesByScope(available, false);
   const lines = [...intro, ...minimalLines];
   const kept: string[] = [];
   let used = 0;
@@ -92,6 +88,27 @@ function renderSkillsManifest(skills: SkillDetail[]): string {
     used = next;
   }
   return kept.join("\n");
+}
+
+function renderSkillLinesByScope(skills: SkillDetail[], includeDescription: boolean): string[] {
+  const groups = [
+    ["### Built-in skills", skills.filter((skill) => skill.scope === "builtin")],
+    ["### External skills", skills.filter((skill) => skill.scope !== "builtin")],
+  ] as const;
+  return groups.flatMap(([heading, items]) => {
+    if (items.length === 0) {
+      return [];
+    }
+    return [
+      "",
+      heading,
+      ...items.map((skill) =>
+        includeDescription && skill.description
+          ? `- ${skill.name}: ${skill.description} (file: ${skill.path})`
+          : `- ${skill.name}: (file: ${skill.path})`,
+      ),
+    ];
+  });
 }
 
 function frontmatterScalar(value: string): string {

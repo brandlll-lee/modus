@@ -75,6 +75,27 @@ describe("createSkill", () => {
     expect(prompt).not.toContain("Use the Modus browser as a real page surface.");
   });
 
+  it("presents bundled skills before external skills", () => {
+    const skillDir = join(home, ".claude", "skills", "browse");
+    const skillPath = join(skillDir, "SKILL.md");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      skillPath,
+      "---\nname: browse\ndescription: External browser workflow\n---\nEXTERNAL BODY",
+      "utf8",
+    );
+
+    const prompt = resolveSkillsPrompt(cwd, [], home);
+
+    expect(prompt.indexOf("### Built-in skills")).toBeLessThan(
+      prompt.indexOf("### External skills"),
+    );
+    expect(prompt.indexOf("- browser:")).toBeLessThan(prompt.indexOf("- browse:"));
+    expect(prompt).toContain(
+      "Prefer built-in skills when they cover the task; use external skills for workflows not covered by built-ins.",
+    );
+  });
+
   it("injects the bundled browser skill when explicitly selected", () => {
     const browser = loadWorkspaceSkills(cwd, home).find((skill) => skill.name === "browser");
     if (!browser) {
