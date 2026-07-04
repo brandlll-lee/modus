@@ -315,11 +315,12 @@ export const WEB_TOOL_UI: Record<WebToolName, ToolUiMeta> = {
   web_fetch: { iconName: "globe", verb: "Fetched", primaryArgKey: "url" },
 };
 
-/** In-app browser primitives: tab ownership, raw CDP, recent events, screenshots. */
+/** In-app browser primitives: tab ownership, raw CDP, recent events, snapshots, screenshots. */
 export const BROWSER_TOOL_NAMES = [
   "browser_tabs",
   "browser_cdp",
   "browser_events",
+  "browser_snapshot",
   "browser_screenshot",
 ] as const;
 
@@ -339,6 +340,7 @@ export const BROWSER_TOOL_UI: Record<BrowserToolName, ToolUiMeta> = {
     activity: "browser",
   },
   browser_events: { iconName: "globe", verb: "Read browser events", activity: "browser" },
+  browser_snapshot: { iconName: "globe", verb: "Captured snapshot", activity: "browser" },
   browser_screenshot: { iconName: "globe", verb: "Captured page", activity: "browser" },
 };
 

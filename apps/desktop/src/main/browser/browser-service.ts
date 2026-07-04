@@ -2,13 +2,13 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { app, type BrowserWindow as BrowserWindowType, shell } from "electron";
 import type { BrowserBounds, BrowserTabInfo } from "../../shared/contracts";
-import type { RawCdpEvent } from "./cdp/session";
 import { loadUrlBounded } from "./cdp/lifecycle";
 import { captureScreenshot } from "./cdp/screenshot";
+import type { RawCdpEvent } from "./cdp/session";
+import { captureSnapshot } from "./cdp/snapshot";
 import type { DesignThemeTokens } from "./design-overlay";
 import { normalizeBrowserUrl } from "./security";
 import {
-  type BrowserTab,
   closeTab,
   createTab,
   emitBrowserEvent,
@@ -269,7 +269,15 @@ export function drainBrowserEvents(target: TabTarget = {}): RawCdpEvent[] {
 export async function takeBrowserScreenshot(input: {
   target?: TabTarget;
   fullPage?: boolean;
-}): Promise<{ path: string; width: number; height: number; base64: string }> {
+}): Promise<{
+  path: string;
+  width: number;
+  height: number;
+  imageWidth?: number;
+  imageHeight?: number;
+  deviceScaleFactor?: number;
+  base64: string;
+}> {
   const tab = resolveTab(input.target ?? {});
   // The AI cursor must never appear in what the model sees as "the page".
   const shot = await tab.visual.hideDuring(() =>
@@ -279,7 +287,35 @@ export async function takeBrowserScreenshot(input: {
   mkdirSync(dir, { recursive: true });
   const filePath = join(dir, `${tab.info.id}-${Date.now()}.png`);
   writeFileSync(filePath, Buffer.from(shot.base64, "base64"));
-  return { path: filePath, width: shot.width, height: shot.height, base64: shot.base64 };
+  return {
+    path: filePath,
+    width: shot.width,
+    height: shot.height,
+    ...(shot.imageWidth !== undefined ? { imageWidth: shot.imageWidth } : {}),
+    ...(shot.imageHeight !== undefined ? { imageHeight: shot.imageHeight } : {}),
+    ...(shot.deviceScaleFactor !== undefined ? { deviceScaleFactor: shot.deviceScaleFactor } : {}),
+    base64: shot.base64,
+  };
+}
+
+export async function takeBrowserSnapshot(input: {
+  target?: TabTarget;
+  maxLines?: number;
+  maxDepth?: number;
+}): Promise<{
+  text: string;
+  refCount: number;
+  truncated: boolean;
+}> {
+  const tab = resolveTab(input.target ?? {});
+  const page = {
+    url: tab.view.webContents.getURL(),
+    title: tab.view.webContents.getTitle(),
+  };
+  return captureSnapshot(tab.cdp, tab.snapshots, page, {
+    ...(input.maxLines !== undefined ? { maxLines: input.maxLines } : {}),
+    ...(input.maxDepth !== undefined ? { maxDepth: input.maxDepth } : {}),
+  });
 }
 
 export async function resizeBrowser(

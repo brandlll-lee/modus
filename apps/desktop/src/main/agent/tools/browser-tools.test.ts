@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   selectBrowserTab: vi.fn(),
   sendBrowserCdp: vi.fn(),
   takeBrowserScreenshot: vi.fn(),
+  takeBrowserSnapshot: vi.fn(),
 }));
 
 vi.mock("../../browser/browser-service", () => mocks);
@@ -120,6 +121,9 @@ describe("browser agent tools", () => {
       path: "C:/tmp/shot.png",
       width: 800,
       height: 600,
+      imageWidth: 1000,
+      imageHeight: 750,
+      deviceScaleFactor: 1.25,
       base64: "abc",
     });
     const tool = loadTool("browser_screenshot");
@@ -133,8 +137,47 @@ describe("browser agent tools", () => {
     );
 
     expect(result?.content).toEqual([
-      { type: "text", text: "Screenshot 800x600 (CSS px) saved to C:/tmp/shot.png." },
+      {
+        type: "text",
+        text: "Screenshot 800x600 CSS px; image 1000x750 px; devicePixelRatio 1.25 saved to C:/tmp/shot.png. CDP input coordinates use CSS px.",
+      },
       { type: "image", data: "abc", mimeType: "image/png" },
+    ]);
+    expect(result?.details).toEqual({
+      path: "C:/tmp/shot.png",
+      width: 800,
+      height: 600,
+      imageWidth: 1000,
+      imageHeight: 750,
+      deviceScaleFactor: 1.25,
+    });
+  });
+
+  it("returns accessibility snapshots as text", async () => {
+    mocks.takeBrowserSnapshot.mockResolvedValueOnce({
+      text: 'Page URL: https://example.test\nPage title: Example\n\n- button "Save" [ref=e1]',
+      refCount: 1,
+      truncated: false,
+    });
+    const tool = loadTool("browser_snapshot");
+
+    const result = await tool.execute?.(
+      "call-1",
+      { viewId: "tab-1", maxLines: 200 },
+      undefined,
+      undefined,
+      toolCtx(),
+    );
+
+    expect(mocks.takeBrowserSnapshot).toHaveBeenCalledWith({
+      target: { workspaceId: "workspace-1", tabId: "tab-1" },
+      maxLines: 200,
+    });
+    expect(result?.content).toEqual([
+      {
+        type: "text",
+        text: 'Snapshot (1 refs)\n\nPage URL: https://example.test\nPage title: Example\n\n- button "Save" [ref=e1]',
+      },
     ]);
   });
 });

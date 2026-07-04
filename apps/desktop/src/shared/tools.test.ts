@@ -36,6 +36,7 @@ describe("tool render descriptor (single source of truth)", () => {
       "browser_tabs",
       "browser_cdp",
       "browser_events",
+      "browser_snapshot",
       "browser_screenshot",
     ]);
   });

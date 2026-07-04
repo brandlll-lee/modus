@@ -224,6 +224,10 @@ describe("Browser tool permissions", () => {
       action: "browser.control",
       dangerous: false,
     });
+    expect(toolRegistry.classify(toolEvent("browser_snapshot", {}))).toEqual({
+      action: "browser.control",
+      dangerous: false,
+    });
     expect(toolRegistry.classify(toolEvent("browser_screenshot", {}))).toEqual({
       action: "browser.control",
       dangerous: false,

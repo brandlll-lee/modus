@@ -6,6 +6,7 @@ import {
 import { type Static, Type } from "typebox";
 import { BROWSER_TOOL_NAMES, BROWSER_TOOL_UI, type BrowserToolName } from "../../../shared/tools";
 import {
+  type BrowserOpTarget,
   closeBrowserTab,
   createBrowserTab,
   drainBrowserEvents,
@@ -14,7 +15,7 @@ import {
   selectBrowserTab,
   sendBrowserCdp,
   takeBrowserScreenshot,
-  type BrowserOpTarget,
+  takeBrowserSnapshot,
 } from "../../browser/browser-service";
 import { type ToolClassification, type ToolClassifier, toolRegistry } from "./registry";
 import { resolveAgentToolContext } from "./tool-context";
@@ -66,6 +67,7 @@ const tabsTool = defineTool({
   promptGuidelines: [
     "Call browser_tabs({ action: 'list' }) before browser_cdp so you know the active viewId.",
     "Use browser_tabs({ action: 'new', url }) for a new page, or browser_cdp('Page.navigate', { url }) on an existing tab.",
+    "A new tab with url already starts loading that url; inspect or wait next instead of navigating again.",
   ],
   parameters: tabsParams,
   execute: async (_toolCallId, params: Static<typeof tabsParams>, _signal, _onUpdate, ctx) => {
@@ -115,7 +117,11 @@ const cdpTool = defineTool({
   promptSnippet: "browser_cdp(method, params?, viewId?, sessionId?) — send raw CDP.",
   promptGuidelines: [
     "Use raw CDP strings and params; do not look for Modus-specific click/fill/scroll wrappers.",
+    "After navigation, inspect title, URL, readyState, visible text, accessibility tree, or DOM with CDP before relying on screenshots.",
+    "Use Runtime.evaluate to batch page extraction/filtering instead of many small reads or screenshots.",
+    "Wait with CDP facts or browser_events; do not use shell sleep for browser loading.",
     "For visible actions, browser_screenshot verifies pixels; browser_events drains recent CDP events.",
+    "Input.dispatchMouseEvent x/y are CSS pixels; if measuring from a screenshot image, use the screenshot's CSS size, image size, and DPR to convert before clicking.",
     "Use Page.navigate for navigation and Input.dispatchMouseEvent/Input.dispatchKeyEvent/Input.insertText for interaction.",
   ],
   parameters: cdpParams,
@@ -137,7 +143,7 @@ const eventsTool = defineTool({
   name: "browser_events",
   label: "Browser events",
   description:
-    "Drain recent raw CDP events for the target tab. Use after browser_cdp commands to inspect navigation, network, target, page, and runtime events.",
+    "Drain recent raw CDP events for the target tab. Use after browser_cdp commands to inspect navigation, network, target, page, and runtime events; event names are observed here, not sent as browser_cdp commands.",
   promptSnippet: "browser_events(viewId?) — drain recent CDP events.",
   parameters: Type.Object(browserTargetParams),
   execute: async (_toolCallId, params: { viewId?: string }, _signal, _onUpdate, ctx) => {
@@ -150,11 +156,53 @@ const eventsTool = defineTool({
   },
 });
 
+const snapshotTool = defineTool({
+  name: "browser_snapshot",
+  label: "Browser snapshot",
+  description:
+    "Capture a text accessibility snapshot of the target tab. Use it to inspect visible structure, controls, labels, and state without relying on image vision.",
+  promptSnippet: "browser_snapshot(viewId?, maxLines?, maxDepth?) — capture an accessibility snapshot.",
+  promptGuidelines: [
+    "Prefer browser_snapshot for text-model verification after visible actions.",
+    "Use fresh snapshots after page mutations; old element refs can go stale after navigation or re-render.",
+    "Pair snapshots with Runtime.evaluate facts or browser_events when declaring a task complete.",
+  ],
+  parameters: Type.Object({
+    ...browserTargetParams,
+    maxLines: Type.Optional(
+      Type.Number({ minimum: 1, description: "Maximum snapshot lines to return." }),
+    ),
+    maxDepth: Type.Optional(
+      Type.Number({ minimum: 1, description: "Maximum accessibility tree depth." }),
+    ),
+  }),
+  execute: async (
+    _toolCallId,
+    params: { viewId?: string; maxLines?: number; maxDepth?: number },
+    _signal,
+    _onUpdate,
+    ctx,
+  ) => {
+    const target = targetFor(ctx.cwd, params.viewId);
+    engageAgentBrowser(target);
+    const snapshot = await takeBrowserSnapshot({
+      target,
+      ...(params.maxLines !== undefined ? { maxLines: params.maxLines } : {}),
+      ...(params.maxDepth !== undefined ? { maxDepth: params.maxDepth } : {}),
+    });
+    const truncated = snapshot.truncated ? " truncated" : "";
+    return toResult(`Snapshot (${snapshot.refCount} refs${truncated})\n\n${snapshot.text}`, {
+      refCount: snapshot.refCount,
+      truncated: snapshot.truncated,
+    });
+  },
+});
+
 const screenshotTool = defineTool({
   name: "browser_screenshot",
   label: "Browser screenshot",
   description:
-    "Capture the target tab as an image the model can inspect. Pixels are CSS pixels, suitable for coordinate clicks through browser_cdp Input.dispatchMouseEvent.",
+    "Capture the target tab as an image for visual confirmation or coordinate calibration. For text, DOM, lists, and page state, prefer browser_cdp.",
   promptSnippet: "browser_screenshot(viewId?, fullPage?)",
   parameters: Type.Object({
     ...browserTargetParams,
@@ -173,15 +221,28 @@ const screenshotTool = defineTool({
       target,
       ...(params.fullPage !== undefined ? { fullPage: params.fullPage } : {}),
     });
+    const imageSize =
+      shot.imageWidth !== undefined && shot.imageHeight !== undefined
+        ? `; image ${shot.imageWidth}x${shot.imageHeight} px`
+        : "";
+    const dpr =
+      shot.deviceScaleFactor !== undefined ? `; devicePixelRatio ${shot.deviceScaleFactor}` : "";
     return {
       content: [
         {
           type: "text",
-          text: `Screenshot ${shot.width}x${shot.height} (CSS px) saved to ${shot.path}.`,
+          text: `Screenshot ${shot.width}x${shot.height} CSS px${imageSize}${dpr} saved to ${shot.path}. CDP input coordinates use CSS px.`,
         },
         { type: "image", data: shot.base64, mimeType: "image/png" },
       ],
-      details: { path: shot.path, width: shot.width, height: shot.height },
+      details: {
+        path: shot.path,
+        width: shot.width,
+        height: shot.height,
+        imageWidth: shot.imageWidth,
+        imageHeight: shot.imageHeight,
+        deviceScaleFactor: shot.deviceScaleFactor,
+      },
     };
   },
 });
@@ -190,6 +251,7 @@ const TOOL_DEFINITIONS: Record<BrowserToolName, ToolDefinition> = {
   browser_tabs: tabsTool,
   browser_cdp: cdpTool,
   browser_events: eventsTool,
+  browser_snapshot: snapshotTool,
   browser_screenshot: screenshotTool,
 };
 

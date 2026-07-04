@@ -1,16 +1,12 @@
 import type { CdpSession } from "./session";
 
 /**
- * CSS-pixel screenshots via CDP `Page.captureScreenshot`.
+ * Screenshots via CDP `Page.captureScreenshot`.
  *
- * The old `webContents.capturePage().toPNG()` path emitted *physical* pixels:
- * on the 125%/150% display scaling common on Windows, the image the model saw
- * was 1.25–1.5× larger than the CSS coordinate space that mouse input uses, so
- * coordinates read off the screenshot missed their target by 25–50%. Capturing
- * through CDP with an explicit CSS-pixel clip at scale 1 makes
- * image pixels == CSS pixels == input coordinates, eliminating the DPR
- * mismatch by construction. `captureBeyondViewport` provides real full-page
- * capture (the Puppeteer implementation strategy).
+ * CDP clip values and input coordinates are CSS pixels. Some platforms still
+ * emit PNGs in device pixels, so callers get both CSS and actual image size.
+ * `captureBeyondViewport` provides real full-page capture (the Puppeteer
+ * implementation strategy).
  */
 
 interface LayoutMetrics {
@@ -21,14 +17,37 @@ interface LayoutMetrics {
 }
 
 export interface ScreenshotResult {
-  /** Base64 PNG/JPEG data, sized in CSS pixels. */
+  /** Base64 PNG/JPEG data. `width`/`height` are CSS pixels for CDP input. */
   base64: string;
   width: number;
   height: number;
+  imageWidth?: number;
+  imageHeight?: number;
+  deviceScaleFactor?: number;
   fullPage: boolean;
 }
 
 const MAX_FULL_PAGE_HEIGHT = 16384;
+
+function pngSize(base64: string): { width: number; height: number } | undefined {
+  const bytes = Buffer.from(base64, "base64");
+  if (bytes.length < 24 || bytes.toString("ascii", 1, 4) !== "PNG") {
+    return undefined;
+  }
+  return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
+}
+
+async function deviceScaleFactor(session: CdpSession): Promise<number | undefined> {
+  try {
+    const result = await session.send<{ result?: { value?: unknown } }>("Runtime.evaluate", {
+      expression: "window.devicePixelRatio",
+      returnByValue: true,
+    });
+    return typeof result.result?.value === "number" ? result.result.value : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export async function captureScreenshot(
   session: CdpSession,
@@ -61,7 +80,16 @@ export async function captureScreenshot(
   if (!result.data) {
     throw new Error("Screenshot capture returned no data.");
   }
-  return { base64: result.data, width, height, fullPage };
+  const imageSize = pngSize(result.data);
+  const scaleFactor = await deviceScaleFactor(session);
+  return {
+    base64: result.data,
+    width,
+    height,
+    ...(imageSize ? { imageWidth: imageSize.width, imageHeight: imageSize.height } : {}),
+    ...(scaleFactor !== undefined ? { deviceScaleFactor: scaleFactor } : {}),
+    fullPage,
+  };
 }
 
 /** Upper bound on an element clip so a giant element can't produce a huge PNG. */
