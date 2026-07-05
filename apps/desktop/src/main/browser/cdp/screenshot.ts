@@ -11,8 +11,10 @@ import type { CdpSession } from "./session";
 
 interface LayoutMetrics {
   cssLayoutViewport?: { clientWidth?: number; clientHeight?: number };
+  cssVisualViewport?: { pageX?: number; pageY?: number };
   cssContentSize?: { width?: number; height?: number };
   layoutViewport?: { clientWidth?: number; clientHeight?: number };
+  visualViewport?: { pageX?: number; pageY?: number };
   contentSize?: { width?: number; height?: number };
 }
 
@@ -117,6 +119,48 @@ const MIN_CAPTURE_EDGE = 360;
  */
 const ELEMENT_HIDPI_THRESHOLD = 720;
 
+export function elementClipForRect(
+  rect: { x: number; y: number; width: number; height: number },
+  page: { width: number; height: number },
+  viewport: { pageX: number; pageY: number } = { pageX: 0, pageY: 0 },
+): { x: number; y: number; width: number; height: number; scale: number } {
+  const pageWidth = Math.floor(page.width) || Number.POSITIVE_INFINITY;
+  const pageHeight = Math.floor(page.height) || Number.POSITIVE_INFINITY;
+  const elementWidth = Math.max(1, rect.width);
+  const elementHeight = Math.max(1, rect.height);
+  const context = Math.min(
+    MAX_ELEMENT_CONTEXT,
+    Math.max(
+      MIN_ELEMENT_CONTEXT,
+      Math.round(Math.max(elementWidth, elementHeight) * ELEMENT_CONTEXT_RATIO),
+    ),
+  );
+  let width = Math.min(
+    MAX_CLIP_EDGE,
+    pageWidth,
+    Math.max(elementWidth + context * 2, MIN_CAPTURE_EDGE),
+  );
+  let height = Math.min(
+    MAX_CLIP_EDGE,
+    pageHeight,
+    Math.max(elementHeight + context * 2, MIN_CAPTURE_EDGE),
+  );
+  const centerX = viewport.pageX + rect.x + elementWidth / 2;
+  const centerY = viewport.pageY + rect.y + elementHeight / 2;
+  let x = centerX - width / 2;
+  let y = centerY - height / 2;
+  const maxX = pageWidth === Number.POSITIVE_INFINITY ? x : Math.max(0, pageWidth - width);
+  const maxY = pageHeight === Number.POSITIVE_INFINITY ? y : Math.max(0, pageHeight - height);
+  x = Math.max(0, Math.min(x, maxX));
+  y = Math.max(0, Math.min(y, maxY));
+  x = Math.floor(x);
+  y = Math.floor(y);
+  width = Math.max(1, Math.floor(width));
+  height = Math.max(1, Math.floor(height));
+  const scale = Math.max(width, height) <= ELEMENT_HIDPI_THRESHOLD ? 2 : 1;
+  return { x, y, width, height, scale };
+}
+
 /**
  * Capture a selected element with surrounding page context, centered in the
  * clip (root-viewport CSS pixels). Used by Design Mode to attach an element
@@ -141,61 +185,21 @@ export async function captureElementClip(
   // clamp (Infinity), preserving capture for pages that don't report metrics.
   const metrics = await session.send<LayoutMetrics>("Page.getLayoutMetrics");
   const content = metrics.cssContentSize ?? metrics.contentSize;
-  const pageWidth = Math.floor(content?.width ?? 0) || Number.POSITIVE_INFINITY;
-  const pageHeight = Math.floor(content?.height ?? 0) || Number.POSITIVE_INFINITY;
-
-  const elementWidth = Math.max(1, rect.width);
-  const elementHeight = Math.max(1, rect.height);
-
-  const context = Math.min(
-    MAX_ELEMENT_CONTEXT,
-    Math.max(
-      MIN_ELEMENT_CONTEXT,
-      Math.round(Math.max(elementWidth, elementHeight) * ELEMENT_CONTEXT_RATIO),
-    ),
+  const visualViewport = metrics.cssVisualViewport ?? metrics.visualViewport;
+  const clip = elementClipForRect(
+    rect,
+    { width: content?.width ?? 0, height: content?.height ?? 0 },
+    { pageX: visualViewport?.pageX ?? 0, pageY: visualViewport?.pageY ?? 0 },
   );
-
-  // Desired region: element + context on every side, floored so small elements
-  // still capture a meaningful slice of page, capped so it can't blow up.
-  let width = Math.min(
-    MAX_CLIP_EDGE,
-    pageWidth,
-    Math.max(elementWidth + context * 2, MIN_CAPTURE_EDGE),
-  );
-  let height = Math.min(
-    MAX_CLIP_EDGE,
-    pageHeight,
-    Math.max(elementHeight + context * 2, MIN_CAPTURE_EDGE),
-  );
-
-  // Center on the element, then slide the region fully inside the page box
-  // (preferred over shrinking it, so the element keeps its surrounding context).
-  const centerX = rect.x + elementWidth / 2;
-  const centerY = rect.y + elementHeight / 2;
-  let x = centerX - width / 2;
-  let y = centerY - height / 2;
-  const maxX = pageWidth === Number.POSITIVE_INFINITY ? x : Math.max(0, pageWidth - width);
-  const maxY = pageHeight === Number.POSITIVE_INFINITY ? y : Math.max(0, pageHeight - height);
-  x = Math.max(0, Math.min(x, maxX));
-  y = Math.max(0, Math.min(y, maxY));
-
-  x = Math.floor(x);
-  y = Math.floor(y);
-  width = Math.max(1, Math.floor(width));
-  height = Math.max(1, Math.floor(height));
-
-  // Upscale only small clips, so a logo isn't blurry but a full hero section
-  // doesn't produce a multi-megabyte PNG.
-  const scale = Math.max(width, height) <= ELEMENT_HIDPI_THRESHOLD ? 2 : 1;
 
   const result = await session.send<{ data?: string }>("Page.captureScreenshot", {
     format,
     ...(format === "jpeg" ? { quality: 90 } : {}),
     captureBeyondViewport: true,
-    clip: { x, y, width, height, scale },
+    clip,
   });
   if (!result.data) {
     throw new Error("Element screenshot capture returned no data.");
   }
-  return { base64: result.data, width, height, fullPage: false };
+  return { base64: result.data, width: clip.width, height: clip.height, fullPage: false };
 }
