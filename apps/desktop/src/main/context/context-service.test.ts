@@ -76,4 +76,47 @@ describe("context-service", () => {
     expect(content).toContain("<span>");
     expect(content).toContain("A screenshot of this element is attached");
   });
+
+  it("formats multi-selected design elements for the model", async () => {
+    const resolved = await resolveContext(repo, [
+      {
+        type: "design-element",
+        element: {
+          id: "group-1",
+          tabId: "tab-1",
+          url: "https://example.com/pricing",
+          label: "2 selected elements",
+          tagName: "selection",
+          domPath: "h1 + button",
+          rect: { x: 10, y: 20, width: 500, height: 140 },
+          elements: [
+            {
+              label: "h1",
+              tagName: "h1",
+              domPath: "main > h1",
+              text: "Pricing",
+              styleSummary: { fontSize: "56px" },
+              rect: { x: 10, y: 20, width: 240, height: 70 },
+            },
+            {
+              label: "button",
+              tagName: "button",
+              domPath: "nav > button",
+              text: "Contact sales",
+              styleSummary: { borderRadius: "8px" },
+              rect: { x: 320, y: 30, width: 190, height: 44 },
+            },
+          ],
+          screenshotDataUrl: "data:image/png;base64,AAAA",
+        },
+      },
+    ]);
+
+    const content = resolved[0]?.content ?? "";
+    expect(content).toContain("Selected elements:");
+    expect(content).toContain("1. h1");
+    expect(content).toContain("Text: \"Pricing\"");
+    expect(content).toContain("2. button");
+    expect(content).toContain("DOM path: nav > button");
+  });
 });

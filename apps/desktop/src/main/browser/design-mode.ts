@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type { WebContents } from "electron";
-import type { DesignElementPayload } from "../../shared/contracts";
+import type {
+  DesignElementContentPart,
+  DesignElementPart,
+  DesignElementPayload,
+} from "../../shared/contracts";
 import { browserDebugLog } from "./debug";
 import {
   DESIGN_OVERLAY_BOOTSTRAP,
@@ -21,7 +25,7 @@ export type DesignModeDeps = {
   /** Capture an element-clipped screenshot; returns a PNG data URL (or undefined). */
   capture: (rect: ElementRect) => Promise<string | undefined>;
   /** Emit a finished selection to the renderer (→ chat composer). */
-  onSelect: (element: DesignElementPayload) => void;
+  onSelect: (element: DesignElementPayload, seedText?: string) => void;
 };
 
 /** Shape pushed by the page overlay's event queue (see design-overlay.ts). */
@@ -38,6 +42,8 @@ type PageSelection = {
   ancestors?: Array<{ tag: string; id?: string; classes?: string; role?: string; text?: string }>;
   props?: Record<string, string>;
   rect: ElementRect;
+  elements?: DesignElementPart[];
+  contentParts?: DesignElementContentPart[];
   seedText?: string;
 };
 
@@ -150,6 +156,7 @@ export class DesignModeController extends OverlayInjector {
       browserDebugLog("design", "element capture failed", String(error));
       return undefined;
     });
+    await this.call(`__modusDesignOverlay.clearSelection()`).catch(() => undefined);
     const element: DesignElementPayload = {
       id: randomUUID(),
       tabId: this.deps.tabId,
@@ -165,9 +172,11 @@ export class DesignModeController extends OverlayInjector {
       ...(sel.ancestors && sel.ancestors.length > 0 ? { ancestors: sel.ancestors } : {}),
       ...(sel.props ? { props: sel.props } : {}),
       rect: sel.rect,
+      ...(sel.elements && sel.elements.length > 0 ? { elements: sel.elements } : {}),
+      ...(sel.contentParts && sel.contentParts.length > 0 ? { contentParts: sel.contentParts } : {}),
       ...(screenshotDataUrl ? { screenshotDataUrl } : {}),
     };
-    this.deps.onSelect(element);
+    this.deps.onSelect(element, sel.seedText);
   }
 
   override dispose(): void {

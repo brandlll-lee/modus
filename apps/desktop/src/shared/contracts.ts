@@ -654,13 +654,7 @@ export type ContextItem =
  * with a DOM-path fallback) + main process (element-clipped screenshot), then
  * carried verbatim into the chat composer as a removable chip + thumbnail.
  */
-export type DesignElementPayload = {
-  /** Stable id for de-dup / removal in the composer. */
-  id: string;
-  /** Browser tab the element was captured from. */
-  tabId: string;
-  /** Page URL at capture time. */
-  url: string;
+export type DesignElementPart = {
   /** Chip label, e.g. `MDXContent · span "Kimi K2.7 Co…"`. */
   label: string;
   /** Lowercased tag name, e.g. "span". */
@@ -695,6 +689,23 @@ export type DesignElementPayload = {
   props?: Record<string, string>;
   /** Element bounding box in CSS pixels (root viewport). */
   rect: { x: number; y: number; width: number; height: number };
+};
+
+export type DesignElementContentPart =
+  | { type: "text"; text: string }
+  | { type: "element"; index: number };
+
+export type DesignElementPayload = DesignElementPart & {
+  /** Stable id for de-dup / removal in the composer. */
+  id: string;
+  /** Browser tab the element was captured from. */
+  tabId: string;
+  /** Page URL at capture time. */
+  url: string;
+  /** Multi-select members, when the user Shift-clicked multiple elements. */
+  elements?: DesignElementPart[];
+  /** Inline order from the Design Mode prompt: text and selected element chips. */
+  contentParts?: DesignElementContentPart[];
   /** Element-clipped screenshot as a data URL (PNG). Shown as a thumbnail. */
   screenshotDataUrl?: string;
 };
@@ -792,6 +803,7 @@ export type BrowserEvent =
       workspaceId: string;
       tabId: string;
       element: DesignElementPayload;
+      seedText?: string;
     };
 
 export type BrowserBounds = {

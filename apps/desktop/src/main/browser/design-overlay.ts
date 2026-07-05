@@ -48,10 +48,10 @@ const SHADOW_CSS = `
 :host { all: initial; position: fixed !important; inset: 0 !important; pointer-events: none !important;
   z-index: 2147483646 !important; display: block !important;
   font-family: var(--mdo-font-family);
-  --mdo-accent: #853ff4; --mdo-accent-soft: #b388ff; --mdo-accent-contrast: #ffffff;
+  --mdo-accent: #2f8edb; --mdo-accent-soft: #6bbcff; --mdo-accent-contrast: #ffffff;
   --mdo-surface: #1c1c1d; --mdo-elevated: #232325; --mdo-fg: #e4e4e3; --mdo-fg-subtle: #8a8a87;
   --mdo-font-family: "Inter Variable", "Inter", system-ui, sans-serif;
-  --mdo-border: rgba(255,255,255,0.10); --mdo-shadow: rgba(0,0,0,0.55); --mdo-fill: rgba(133,63,244,0.14); }
+  --mdo-border: rgba(255,255,255,0.10); --mdo-shadow: rgba(0,0,0,0.55); --mdo-fill: rgba(47,142,219,0.14); }
 * { box-sizing: border-box; }
 
 .box { position: absolute; left: 0; top: 0; pointer-events: none; border-radius: 5px;
@@ -60,6 +60,8 @@ const SHADOW_CSS = `
     height 90ms cubic-bezier(0.22,1,0.36,1), opacity 100ms; }
 .box.is-shown { opacity: 1; }
 .box.is-selected { box-shadow: 0 0 0 2px var(--mdo-accent); }
+.multi-box { position: absolute; left: 0; top: 0; pointer-events: none; border-radius: 5px;
+  box-shadow: 0 0 0 2px var(--mdo-color); background: color-mix(in srgb, var(--mdo-color) 14%, transparent); }
 
 .chip { position: absolute; left: 0; top: 0; pointer-events: none; display: inline-flex; align-items: center;
   gap: 6px; height: 23px; padding: 0 10px; border-radius: 6px; background: var(--mdo-accent);
@@ -69,7 +71,7 @@ const SHADOW_CSS = `
 .chip.is-shown { opacity: 1; transition: opacity 100ms, left 90ms cubic-bezier(0.22,1,0.36,1), top 90ms cubic-bezier(0.22,1,0.36,1); }
 .chip-tag { opacity: 0.68; font-weight: 500; }
 
-.popover { position: absolute; left: 0; top: 0; pointer-events: auto; width: 332px; max-width: 92vw;
+.popover { position: absolute; left: 0; top: 0; pointer-events: auto; width: 416px; max-width: 92vw;
   background: var(--mdo-surface); border: 1px solid var(--mdo-border); border-radius: 16px;
   box-shadow: 0 18px 48px -12px var(--mdo-shadow); padding: 14px; opacity: 0; transform: scale(0.97);
   transform-origin: top left; transition: opacity 120ms, transform 120ms cubic-bezier(0.22,1,0.36,1);
@@ -77,15 +79,20 @@ const SHADOW_CSS = `
 .popover.is-open { opacity: 1; transform: none; visibility: visible;
   transition: opacity 120ms, transform 120ms cubic-bezier(0.22,1,0.36,1),
     left 150ms cubic-bezier(0.22,1,0.36,1), top 150ms cubic-bezier(0.22,1,0.36,1); }
-.pophead { display: flex; align-items: center; gap: 6px; max-width: 100%; margin: 0 0 10px;
-  color: var(--mdo-accent); font-size: 13px; font-weight: 600; white-space: nowrap; }
-.pophead svg { width: 15px; height: 15px; flex: none; }
-.pophead-label { overflow: hidden; text-overflow: ellipsis; }
 .porow { display: flex; align-items: center; gap: 8px; }
-.input { flex: 1; min-width: 0; min-height: 24px; max-height: 132px; resize: none; border: none; outline: none;
+.input { flex: 1; min-width: 0; min-height: 30px; max-height: 132px; border: none; outline: none;
   background: transparent; color: var(--mdo-fg); font-family: inherit; font-size: 14px; line-height: 1.45;
-  padding: 2px 0; margin: 0; }
-.input::placeholder { color: var(--mdo-fg-subtle); }
+  padding: 3px 0; margin: 0; overflow-y: auto; white-space: pre-wrap; word-break: break-word; }
+.input:empty::before { content: attr(data-placeholder); color: var(--mdo-fg-subtle); pointer-events: none; }
+.input::-webkit-scrollbar { display: none; }
+.token { display: inline-flex; align-items: center; gap: 3px; max-width: 120px; height: 24px; border-radius: 999px;
+  background: color-mix(in srgb, var(--mdo-color) 15%, white 85%); color: var(--mdo-color);
+  padding: 0 6px; font-size: 13px; font-weight: 600; line-height: 1; vertical-align: -0.22em; white-space: nowrap; }
+.token svg { width: 13px; height: 13px; flex: none; }
+.token-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.token-x { display: inline-flex; align-items: center; justify-content: center; width: 0; overflow: hidden; opacity: 0;
+  color: var(--mdo-color); transition: width 100ms, opacity 100ms; }
+.token:hover .token-x { width: 12px; opacity: 0.75; }
 .send { flex: none; width: 30px; height: 30px; padding: 0; border: none; cursor: pointer; border-radius: 999px;
   background: var(--mdo-fill); color: var(--mdo-accent); display: inline-flex; align-items: center;
   justify-content: center; transition: background 120ms, color 120ms, transform 80ms; }
@@ -154,19 +161,17 @@ export const DESIGN_OVERLAY_BOOTSTRAP = `
 
   // Built with real DOM nodes (no innerHTML) so Trusted Types can't abort us.
   var popover = document.createElement("div"); popover.className = "popover";
-  var pophead = document.createElement("div"); pophead.className = "pophead";
-  pophead.appendChild(makeIcon(${JSON.stringify(INSPECT_PATHS)}, "2"));
-  var popLabel = document.createElement("span"); popLabel.className = "pophead-label";
-  pophead.appendChild(popLabel);
   var porow = document.createElement("div"); porow.className = "porow";
-  var popInput = document.createElement("textarea");
-  popInput.className = "input"; popInput.setAttribute("rows", "1");
-  popInput.setAttribute("placeholder", "Describe the change or Ctrl+L to add to chat");
+  var popInput = document.createElement("div");
+  popInput.className = "input"; popInput.contentEditable = "true";
+  popInput.setAttribute("role", "textbox");
+  popInput.setAttribute("aria-label", "Describe the change");
+  popInput.setAttribute("data-placeholder", "Describe the change or Ctrl+L to add to chat");
   var popSend = document.createElement("button");
   popSend.className = "send"; popSend.setAttribute("type", "button"); popSend.setAttribute("aria-label", "Add to chat");
   popSend.appendChild(makeIcon(${JSON.stringify(ARROW_PATHS)}, "2.4"));
   porow.appendChild(popInput); porow.appendChild(popSend);
-  popover.appendChild(pophead); popover.appendChild(porow);
+  popover.appendChild(porow);
 
   shadow.appendChild(box); shadow.appendChild(chip); shadow.appendChild(popover);
 
@@ -179,7 +184,10 @@ export const DESIGN_OVERLAY_BOOTSTRAP = `
     .observe(document.documentElement, { childList: true, subtree: true });
 
   var state = { on: false, hovered: null, selected: null };
+  var selectedItems = [];
+  var multiBoxes = [];
   var events = [];
+  var SELECT_COLORS = ["var(--mdo-accent)", "#35c878", "#f15bb5"];
 
   function targetAt(x, y) {
     // Our host is pointer-events:none so elementFromPoint already skips it; the
@@ -303,6 +311,17 @@ export const DESIGN_OVERLAY_BOOTSTRAP = `
     return id;
   }
 
+  function unionRect(items) {
+    var first = items[0].payload.rect;
+    var left = first.x, top = first.y, right = first.x + first.width, bottom = first.y + first.height;
+    for (var i = 1; i < items.length; i++) {
+      var r = items[i].payload.rect;
+      left = Math.min(left, r.x); top = Math.min(top, r.y);
+      right = Math.max(right, r.x + r.width); bottom = Math.max(bottom, r.y + r.height);
+    }
+    return { x: left, y: top, width: right - left, height: bottom - top };
+  }
+
   function placeBox(r, selected) {
     box.style.transform = "translate(" + r.left + "px," + r.top + "px)";
     box.style.width = Math.max(0, r.width) + "px"; box.style.height = Math.max(0, r.height) + "px";
@@ -322,15 +341,86 @@ export const DESIGN_OVERLAY_BOOTSTRAP = `
   // would outrank the class rule and keep the box hidden on the next enable.
   function clearHover() { box.classList.remove("is-shown"); chip.classList.remove("is-shown"); }
 
+  function clearMulti() {
+    for (var i = 0; i < multiBoxes.length; i++) { multiBoxes[i].remove(); }
+    multiBoxes = []; selectedItems = [];
+  }
+
+  function tokenFor(index, item) {
+    item = item || (selectedItems[index] && selectedItems[index].payload);
+    if (!item) { return null; }
+    var token = document.createElement("span");
+    token.className = "token";
+    token.contentEditable = "false";
+    token.setAttribute("data-token-index", String(index));
+    token.style.setProperty("--mdo-color", SELECT_COLORS[index % SELECT_COLORS.length]);
+    token.appendChild(makeIcon(${JSON.stringify(INSPECT_PATHS)}, "2"));
+    var label = document.createElement("span");
+    label.className = "token-label";
+    label.textContent = item.componentName || item.tagName;
+    token.appendChild(label);
+    var x = document.createElement("span");
+    x.className = "token-x";
+    x.setAttribute("data-token-remove", "true");
+    x.textContent = "×";
+    token.appendChild(x);
+    return token;
+  }
+
+  function seedInput() {
+    popInput.replaceChildren();
+    var items = selectedItems.length > 0 ? selectedItems : (state.selected ? [{ el: state.selected, payload: payloadOf(state.selected) }] : []);
+    for (var i = 0; i < items.length; i++) {
+      var token = tokenFor(i, items[i].payload);
+      if (token) { popInput.appendChild(token, document.createTextNode("\\u00a0")); }
+    }
+    placeCaretAtEnd();
+  }
+
+  function placeCaretAtEnd() {
+    var range = document.createRange();
+    range.selectNodeContents(popInput);
+    range.collapse(false);
+    var sel = window.getSelection();
+    if (sel) { sel.removeAllRanges(); sel.addRange(range); }
+  }
+
+  function drawMulti() {
+    for (var i = 0; i < multiBoxes.length; i++) { multiBoxes[i].remove(); }
+    multiBoxes = [];
+    for (var j = 0; j < selectedItems.length; j++) {
+      var r = selectedItems[j].payload.rect;
+      var marker = document.createElement("div");
+      marker.className = "multi-box";
+      marker.style.setProperty("--mdo-color", SELECT_COLORS[j % SELECT_COLORS.length]);
+      marker.style.transform = "translate(" + r.x + "px," + r.y + "px)";
+      marker.style.width = Math.max(0, r.width) + "px";
+      marker.style.height = Math.max(0, r.height) + "px";
+      shadow.insertBefore(marker, popover);
+      multiBoxes.push(marker);
+    }
+  }
+
+  function toggleMulti(el) {
+    for (var i = 0; i < selectedItems.length; i++) {
+      if (selectedItems[i].el === el) {
+        selectedItems.splice(i, 1);
+        drawMulti();
+        return;
+      }
+    }
+    selectedItems.push({ el: el, payload: payloadOf(el) });
+    drawMulti();
+  }
+
   function openPopover(r, id) {
-    popLabel.textContent = id.componentName || id.tagName;
-    var width = 332, height = 132;
+    var width = 416, height = 74;
     var left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8));
     var top = r.bottom + 10;
     if (top + height > window.innerHeight) { top = Math.max(8, r.top - height - 10); }
     popover.style.left = left + "px"; popover.style.top = top + "px";
     popover.classList.add("is-open");
-    popInput.value = "";
+    seedInput();
     setTimeout(function () { try { popInput.focus(); } catch (e) {} }, 30);
   }
   function closePopover() { popover.classList.remove("is-open"); }
@@ -342,6 +432,11 @@ export const DESIGN_OVERLAY_BOOTSTRAP = `
     closePopover();
     state.selected = null;
     box.classList.remove("is-selected");
+    clearMulti();
+    try { popInput.blur(); } catch (e) {}
+  }
+  function handOffSelection() {
+    closePopover();
     try { popInput.blur(); } catch (e) {}
   }
 
@@ -353,9 +448,71 @@ export const DESIGN_OVERLAY_BOOTSTRAP = `
     return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
   }
 
-  function emit(kind, el, seedText) {
+  function inputParts() {
+    var parts = [];
+    var pushText = function (text) {
+      var normalized = String(text || "").replace(/\\u00a0/g, " ");
+      if (!normalized) { return; }
+      var last = parts[parts.length - 1];
+      if (last && last.type === "text") { last.text += normalized; }
+      else { parts.push({ type: "text", text: normalized }); }
+    };
+    var walk = function (node) {
+      var children = Array.prototype.slice.call(node.childNodes || []);
+      for (var i = 0; i < children.length; i++) {
+        var child = children[i];
+        if (child.nodeType === Node.TEXT_NODE) { pushText(child.textContent || ""); }
+        else if (child.nodeType === Node.ELEMENT_NODE) {
+          var el = child;
+          var index = el.getAttribute("data-token-index");
+          if (index !== null) { parts.push({ type: "element", index: Number(index) }); }
+          else if (el.tagName === "BR") { pushText("\\n"); }
+          else { walk(el); }
+        }
+      }
+    };
+    walk(popInput);
+    return parts;
+  }
+
+  function plainInputText(parts) {
+    return parts.filter(function (part) { return part.type === "text"; })
+      .map(function (part) { return part.text; }).join("").trim();
+  }
+
+  function emit(kind, el, contentParts) {
     if (!el || !el.isConnected) { return; }
-    var p = payloadOf(el); p.kind = kind; if (seedText) { p.seedText = seedText; }
+    var p = payloadOf(el); p.kind = kind;
+    var text = plainInputText(contentParts || []);
+    if (text) { p.seedText = text; }
+    if (contentParts && contentParts.length > 0) { p.contentParts = contentParts; }
+    events.push(p);
+  }
+
+  function emitMulti(kind, contentParts) {
+    var indices = (contentParts || []).filter(function (part) { return part.type === "element"; })
+      .map(function (part) { return part.index; });
+    if (indices.length === 0) { return; }
+    var live = [];
+    for (var i = 0; i < indices.length; i++) {
+      var item = selectedItems[indices[i]];
+      if (item && item.el.isConnected) { live.push({ el: item.el, payload: payloadOf(item.el) }); }
+    }
+    if (live.length === 0) { return; }
+    selectedItems = live;
+    drawMulti();
+    var p = {
+      kind: kind,
+      label: live.length + " selected elements",
+      tagName: "selection",
+      domPath: live.map(function (item) { return item.payload.domPath; }).join(" + "),
+      text: live.map(function (item) { return item.payload.text; }).filter(Boolean).join(" | ") || undefined,
+      rect: unionRect(live),
+      elements: live.map(function (item) { return item.payload; }),
+    };
+    var text = plainInputText(contentParts || []);
+    if (text) { p.seedText = text; }
+    if (contentParts && contentParts.length > 0) { p.contentParts = contentParts; }
     events.push(p);
   }
 
@@ -378,6 +535,18 @@ export const DESIGN_OVERLAY_BOOTSTRAP = `
     var el = targetAt(e.clientX, e.clientY);
     if (!el) { return; }
     e.preventDefault(); e.stopPropagation();
+    if (e.shiftKey) {
+      toggleMulti(el);
+      state.selected = selectedItems[0] ? selectedItems[0].el : null;
+      state.hovered = el;
+      if (selectedItems.length > 0) {
+        var groupRect = unionRect(selectedItems);
+        clearHover();
+        openPopover({ left: groupRect.x, top: groupRect.y, right: groupRect.x + groupRect.width, bottom: groupRect.y + groupRect.height }, { label: selectedItems.length + " elements" });
+      } else { closePopover(); }
+      return;
+    }
+    clearMulti();
     state.selected = el; state.hovered = el;
     var r = el.getBoundingClientRect(); var id = identify(el);
     // Box + chip + popover all snap (and CSS-glide) to the newly clicked target.
@@ -387,11 +556,19 @@ export const DESIGN_OVERLAY_BOOTSTRAP = `
     if (!state.on) { return; }
     if ((e.ctrlKey || e.metaKey) && (e.key === "l" || e.key === "L")) {
       var el = state.selected || state.hovered;
-      if (el) { e.preventDefault(); e.stopPropagation(); emit("add", el, popInput.value.trim() || undefined); deselect(); }
+      if (selectedItems.length > 0 || el) {
+        e.preventDefault(); e.stopPropagation();
+        var parts = inputParts();
+        if (selectedItems.length > 0) { emitMulti("add", parts); }
+        else { emit("add", el, parts); }
+        handOffSelection();
+      }
     } else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); deselect(); }
   }
   function submitPopover() {
-    if (state.selected) { emit("submit", state.selected, popInput.value.trim() || undefined); deselect(); }
+    var parts = inputParts();
+    if (selectedItems.length > 0) { emitMulti("submit", parts); handOffSelection(); }
+    else if (state.selected) { emit("submit", state.selected, parts); handOffSelection(); }
   }
   popSend.addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); submitPopover(); });
   popInput.addEventListener("keydown", function (e) {
@@ -399,11 +576,20 @@ export const DESIGN_OVERLAY_BOOTSTRAP = `
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submitPopover(); }
     else if (e.key === "Escape") { e.preventDefault(); deselect(); }
     else if ((e.ctrlKey || e.metaKey) && (e.key === "l" || e.key === "L")) {
-      e.preventDefault(); if (state.selected) { emit("add", state.selected, popInput.value.trim() || undefined); deselect(); }
+      e.preventDefault();
+      var parts = inputParts();
+      if (selectedItems.length > 0) { emitMulti("add", parts); handOffSelection(); }
+      else if (state.selected) { emit("add", state.selected, parts); handOffSelection(); }
     }
   });
-  popInput.addEventListener("input", function () {
-    popInput.style.height = "auto"; popInput.style.height = Math.min(132, popInput.scrollHeight) + "px";
+  popInput.addEventListener("mousedown", function (e) {
+    var target = e.target && e.target.nodeType === Node.ELEMENT_NODE ? e.target : null;
+    var remove = target && target.closest("[data-token-remove]");
+    var token = remove && remove.closest("[data-token-index]");
+    if (token) {
+      e.preventDefault();
+      token.remove();
+    }
   });
 
   // ── Scroll lock ────────────────────────────────────────────────────────
@@ -454,7 +640,7 @@ export const DESIGN_OVERLAY_BOOTSTRAP = `
       attach(); state.on = !!on;
       if (state.on) { bind(); lockScroll(); }
       else {
-        unbind(); unlockScroll(); clearHover(); closePopover();
+        unbind(); unlockScroll(); clearHover(); closePopover(); clearMulti();
         box.classList.remove("is-selected"); state.hovered = null; state.selected = null;
       }
       return true;
@@ -476,6 +662,7 @@ export const DESIGN_OVERLAY_BOOTSTRAP = `
       return true;
     },
     takeEvents: function () { var out = events.slice(); events.length = 0; return JSON.stringify(out); },
+    clearSelection: function () { deselect(); return true; },
     isEnabled: function () { return state.on; },
   };
   return true;

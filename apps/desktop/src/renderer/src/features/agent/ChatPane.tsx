@@ -33,9 +33,11 @@ import {
   type ComposerDraftUpdate,
   createEmptyComposerDraft,
 } from "../composer/Composer";
+import type { MentionEditorPart } from "../composer/MentionEditor";
 import { buildPlanMessage, effectiveBuildStatus, normalizePlan } from "../plan/planState";
 import { QuestionsCard } from "../plan/QuestionsCard";
 import { ReviewPlanCard } from "../plan/ReviewPlanCard";
+import { RunningProcessBar } from "../process/RunningProcessBar";
 import { ApprovalPanel } from "./ApprovalPanel";
 import {
   type AgentEventHub,
@@ -84,6 +86,8 @@ type ChatPaneProps = {
   /** A plan was (re)written in Plan Mode: open it in the file panel. */
   onPlanUpdated(plan: PlanRef): void;
 };
+
+type DesignContextItem = Extract<ContextItem, { type: "design-element" }>;
 
 export type ChatPaneHandle = { buildActivePlan(): void };
 
@@ -172,9 +176,125 @@ export const ChatPane = forwardRef<ChatPaneHandle, ChatPaneProps>(function ChatP
         ...resolveDraftUpdate(update, {
           value: draft.value,
           images: draft.images,
+          parts: draft.parts,
           selectedSkills: draft.selectedSkills,
         }),
       }));
+    },
+    [setComposerDraft],
+  );
+  const addDesignElement = useCallback(
+    (event: Extract<BrowserEvent, { type: "browser.design-select" }>): void => {
+      setComposerDraft((draft) => {
+        const sourceElements = event.element.elements ?? [event.element];
+        const referencedIndices = event.element.contentParts
+          ? Array.from(
+              new Set(
+                event.element.contentParts
+                  .filter((part) => part.type === "element")
+                  .map((part) => part.index),
+              ),
+            ).filter((index) => sourceElements[index])
+          : sourceElements.map((_, index) => index);
+        const designItems: DesignContextItem[] =
+          event.element.elements && event.element.elements.length > 0
+            ? referencedIndices.flatMap((sourceIndex, index): DesignContextItem[] => {
+                const part = sourceElements[sourceIndex];
+                if (!part) {
+                  return [];
+                }
+                return [
+                  {
+                    type: "design-element",
+                    element: {
+                      ...part,
+                      id: `${event.element.id}:${sourceIndex}`,
+                      tabId: event.element.tabId,
+                      url: event.element.url,
+                      ...(index === 0 && referencedIndices.length > 1
+                        ? {
+                            elements: referencedIndices.flatMap((itemIndex) => {
+                              const item = sourceElements[itemIndex];
+                              return item ? [item] : [];
+                            }),
+                          }
+                        : {}),
+                      ...(index === 0 && event.element.screenshotDataUrl
+                        ? { screenshotDataUrl: event.element.screenshotDataUrl }
+                        : {}),
+                    },
+                  },
+                ];
+              })
+            : referencedIndices.length > 0
+              ? [{ type: "design-element", element: event.element }]
+              : [];
+        const existingIds = new Set(
+          draft.contextItems
+            .filter((item) => item.type === "design-element")
+            .map((item) => item.element.id),
+        );
+        const nextContextItems = [
+          ...draft.contextItems,
+          ...designItems.filter((item) => !existingIds.has(item.element.id)),
+        ];
+        const nextImages =
+          event.element.screenshotDataUrl &&
+          !draft.images.some((image) => image.id === event.element.id)
+            ? [
+                ...draft.images,
+                {
+                  id: event.element.id,
+                  name: `${event.element.label}.png`,
+                  mimeType: "image/png",
+                  dataUrl: event.element.screenshotDataUrl,
+                },
+              ]
+            : draft.images;
+        const text = event.seedText?.trim();
+        const insertedItems = designItems.filter((item) => !existingIds.has(item.element.id));
+        const nextValue = text
+          ? draft.value.trim()
+            ? `${draft.value.trimEnd()}\n${text}`
+            : text
+          : draft.value;
+        const designParts: MentionEditorPart[] | undefined = event.element.contentParts?.flatMap(
+          (part): MentionEditorPart[] => {
+          if (part.type === "text") {
+            return part.text ? [{ type: "text" as const, text: part.text }] : [];
+          }
+          const singleId = part.index === 0 ? event.element.id : undefined;
+          const multiId = `${event.element.id}:${part.index}`;
+          const item =
+            insertedItems.find(
+              (candidate) => candidate.element.id === multiId || candidate.element.id === singleId,
+            ) ??
+            designItems.find(
+              (candidate) => candidate.element.id === multiId || candidate.element.id === singleId,
+            ) ??
+            (part.index === 0 ? (insertedItems[0] ?? designItems[0]) : undefined);
+          return item ? [{ type: "context" as const, item }] : [];
+          },
+        );
+        const nextParts =
+          designParts && designParts.length > 0
+            ? [
+                ...(draft.parts ??
+                  [
+                    ...draft.contextItems.map((item) => ({ type: "context" as const, item })),
+                    ...(draft.value ? [{ type: "text" as const, text: `${draft.value}\n` }] : []),
+                  ]),
+                ...designParts,
+              ]
+            : draft.parts;
+        return {
+          ...draft,
+          contextItems: nextContextItems,
+          images: nextImages,
+          parts: nextParts,
+          value: nextValue,
+        };
+      });
     },
     [setComposerDraft],
   );
@@ -296,16 +416,10 @@ export const ChatPane = forwardRef<ChatPaneHandle, ChatPaneProps>(function ChatP
     }
     return window.modus.browser.onEvent((event: BrowserEvent) => {
       if (event.type === "browser.design-select" && event.workspaceId === wsId) {
-        setContextItems((items) =>
-          items.some(
-            (item) => item.type === "design-element" && item.element.id === event.element.id,
-          )
-            ? items
-            : [...items, { type: "design-element", element: event.element }],
-        );
+        addDesignElement(event);
       }
     });
-  }, [workspace?.id, setContextItems]);
+  }, [addDesignElement, workspace?.id]);
 
   const flushQueued = useCallback((): void => {
     flushTimerRef.current = undefined;
@@ -435,27 +549,7 @@ export const ChatPane = forwardRef<ChatPaneHandle, ChatPaneProps>(function ChatP
     autoScroll.resume();
     setPromptError(undefined);
     setPendingPrompt(true);
-    // Design-element context carries an element screenshot. Send it to the model
-    // as an image attachment (so it can see the element), and strip the heavy
-    // base64 out of the text context payload so it only travels once.
-    const designAttachments: PromptImageAttachment[] = [];
-    for (const item of context) {
-      if (item.type !== "design-element" || !item.element.screenshotDataUrl) {
-        continue;
-      }
-      const match = /^data:(.+?);base64,(.*)$/.exec(item.element.screenshotDataUrl);
-      const mimeType = match?.[1];
-      const data = match?.[2];
-      if (mimeType && data) {
-        designAttachments.push({
-          type: "image",
-          data,
-          mimeType,
-          name: `${item.element.label}.png`,
-        });
-      }
-    }
-    const mergedAttachments = [...(attachments ?? []), ...designAttachments];
+    const mergedAttachments = attachments ?? [];
     const leanContext = context.map((item) =>
       item.type === "design-element"
         ? { ...item, element: { ...item.element, screenshotDataUrl: undefined } }
@@ -660,6 +754,7 @@ export const ChatPane = forwardRef<ChatPaneHandle, ChatPaneProps>(function ChatP
                 composerReplacement
               ) : (
                 <>
+                  <RunningProcessBar sessionId={sessionId} workspaceId={workspace?.id} />
                   {workingStats && workingStats.fileCount > 0 ? (
                     <ChangesStrip
                       onOpenFile={(path) =>
@@ -676,6 +771,7 @@ export const ChatPane = forwardRef<ChatPaneHandle, ChatPaneProps>(function ChatP
                     cwd={activeCwd}
                     draft={{
                       images: activeComposerDraft.images,
+                      parts: activeComposerDraft.parts,
                       selectedSkills: activeComposerDraft.selectedSkills,
                       value: activeComposerDraft.value,
                     }}
@@ -694,7 +790,6 @@ export const ChatPane = forwardRef<ChatPaneHandle, ChatPaneProps>(function ChatP
                     onSubmit={(message, context, delivery, attachments, skills, mode) =>
                       submitPrompt(message, context, delivery, attachments, skills, mode)
                     }
-                    sessionId={sessionId}
                     workspaceId={workspace?.id}
                   />
                 </>

@@ -340,8 +340,34 @@ export async function resolveContext(
               .reverse()
               .join(" > ")
           : undefined;
+      const selectedElements =
+        el.elements && el.elements.length > 0
+          ? el.elements
+              .map((part, index) => {
+                const source = part.source
+                  ? `${part.source.file}:${part.source.line}${part.source.column ? `:${part.source.column}` : ""}`
+                  : undefined;
+                const styles = part.styleSummary
+                  ? Object.entries(part.styleSummary)
+                      .map(([key, value]) => `${key}: ${value}`)
+                      .join("; ")
+                  : undefined;
+                return [
+                  `${index + 1}. ${part.label}`,
+                  `   Tag: <${part.tagName}>`,
+                  source ? `   Source: ${source}` : "",
+                  `   DOM path: ${part.domPath}`,
+                  part.text ? `   Text: "${part.text}"` : "",
+                  styles ? `   Key styles: ${styles}` : "",
+                ]
+                  .filter(Boolean)
+                  .join("\n");
+              })
+              .join("\n")
+          : undefined;
       const lines = [
         `Selected UI element from the in-app browser (Design Mode): ${el.label}`,
+        selectedElements ? `Selected elements:\n${selectedElements}` : "",
         el.componentName ? `Component: ${el.componentName}` : "",
         sourceLine ? `Source: ${sourceLine}` : "",
         `Tag: <${el.tagName}>`,

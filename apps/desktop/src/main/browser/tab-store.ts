@@ -354,12 +354,13 @@ export function createTab(
       const shot = await captureElementClip(tab.cdp, rect);
       return `data:image/png;base64,${shot.base64}`;
     },
-    onSelect: (element) =>
+    onSelect: (element, seedText) =>
       emitBrowserEvent({
         type: "browser.design-select",
         workspaceId: input.workspaceId,
         tabId: id,
         element,
+        ...(seedText ? { seedText } : {}),
       }),
   });
 

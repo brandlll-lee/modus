@@ -791,8 +791,8 @@ function resolveDesignTheme() {
   const token = (name: string, fallback: string): string =>
     styles.getPropertyValue(name).trim() || fallback;
   return {
-    accent: token("--color-focus-ring", "#853ff4"),
-    accentSoft: token("--color-focus-ring-soft", "#b388ff"),
+    accent: "#2f8edb",
+    accentSoft: "#6bbcff",
     accentContrast: "#ffffff",
     surface: token("--color-surface", "#1c1c1d"),
     elevated: token("--color-elevated", "#232325"),
@@ -801,7 +801,7 @@ function resolveDesignTheme() {
     fontFamily: token("--font-sans", '"Inter Variable", "Inter", system-ui, sans-serif'),
     border: token("--color-hairline-strong", "rgba(255,255,255,0.08)"),
     shadow: "rgba(0,0,0,0.5)",
-    fill: "rgba(133, 63, 244, 0.12)",
+    fill: "rgba(47, 142, 219, 0.12)",
   };
 }
 
