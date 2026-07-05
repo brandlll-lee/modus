@@ -1,6 +1,5 @@
 import {
   IconBook2,
-  IconCube,
   IconFile,
   IconFolder,
   IconGitBranch,
@@ -12,7 +11,7 @@ import {
   IconWorld,
 } from "@tabler/icons-react";
 import { m } from "motion/react";
-import { type KeyboardEvent, memo, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type KeyboardEvent, memo, useRef, useState } from "react";
 import type {
   ContextItem,
   MessageContextChip,
@@ -27,8 +26,13 @@ import { cn } from "../../lib/cn";
 import { formatClock } from "../../lib/formatClock";
 import { useSmoothStreamingText } from "../../lib/useSmoothStreamingText";
 import { ContextMentionMenu } from "../composer/ContextMentionMenu";
-import { ContextToken } from "../composer/ContextToken";
+import {
+  MentionEditor,
+  type MentionEditorHandle,
+  type MentionEditorPart,
+} from "../composer/MentionEditor";
 import { SlashMenu } from "../composer/SlashMenu";
+import { contextItemKey, SkillTokenContent } from "../composer/composerTokens";
 import { type MentionRow, useComposerMentions } from "../composer/useComposerMentions";
 import { type SlashItem, useComposerSlash } from "../composer/useComposerSlash";
 import { CheckpointRestoreButton } from "./CheckpointRestoreButton";
@@ -211,9 +215,10 @@ function UserMessageEditor({
   const [draft, setDraft] = useState(initialText);
   const [contextItems, setContextItems] = useState<ContextItem[]>(initialContextItems);
   const [selectedSkills, setSelectedSkills] = useState<SkillSelection[]>(initialSkills);
+  const [textBeforeCaret, setTextBeforeCaret] = useState(initialText);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | undefined>();
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const editorRef = useRef<MentionEditorHandle>(null);
   const {
     activeIndex,
     isOpen,
@@ -225,31 +230,10 @@ function UserMessageEditor({
     backToRoot,
     atCategoryRoot,
     expandMore,
-  } = useComposerMentions({ cwd, value: draft, workspaceId });
-  const slash = useComposerSlash({ cwd, value: draft });
+  } = useComposerMentions({ cwd, value: textBeforeCaret, workspaceId });
+  const slash = useComposerSlash({ cwd, value: textBeforeCaret });
   const hasText = draft.trim().length > 0;
   const hasSelectedSkills = selectedSkills.length > 0;
-  const hasInlineTokens = contextItems.length > 0 || hasSelectedSkills;
-
-  // Composer-style autosize: grow with content up to a cap, then scroll.
-  useLayoutEffect(() => {
-    const textarea = textareaRef.current;
-    if (!textarea) {
-      return;
-    }
-    textarea.style.height = "auto";
-    textarea.style.height = `${textarea.scrollHeight}px`;
-  });
-
-  // Focus with the caret at the end, like Cursor's message editor.
-  useEffect(() => {
-    const textarea = textareaRef.current;
-    if (!textarea) {
-      return;
-    }
-    textarea.focus();
-    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
-  }, []);
 
   const canSend = (hasText || hasSelectedSkills) && !sending;
 
@@ -271,26 +255,27 @@ function UserMessageEditor({
 
   function selectSlashItem(item: SlashItem): void {
     if (item.kind === "skill") {
-      setSelectedSkills((current) =>
-        current.some((skill) => skill.path === item.skill.path)
-          ? current
-          : [...current, { name: item.skill.name, path: item.skill.path }],
+      if (selectedSkills.some((skill) => skill.path === item.skill.path)) {
+        editorRef.current?.deleteBeforeCaret((slash.query?.length ?? 0) + 1);
+        return;
+      }
+      editorRef.current?.insertSkillToken(
+        { name: item.skill.name, path: item.skill.path },
+        (slash.query?.length ?? 0) + 1,
       );
-      setDraft("");
       return;
     }
-    setDraft(item.command.prefix);
+    editorRef.current?.insertText(item.command.prefix, (slash.query?.length ?? 0) + 1);
   }
 
   function addContextItem(item: ContextItem): void {
     const key = contextItemKey(item);
-    setContextItems((current) =>
-      current.some((existing) => contextItemKey(existing) === key) ? current : [...current, item],
-    );
+    if (!contextItems.some((existing) => contextItemKey(existing) === key)) {
+      editorRef.current?.insertContextToken(item, mention ? mention.query.length + 1 : 0);
+      return;
+    }
     if (mention) {
-      setDraft(
-        `${draft.slice(0, mention.start)}${draft.slice(mention.start).replace(/@[^\s]*$/, "")}`,
-      );
+      editorRef.current?.deleteBeforeCaret(mention.query.length + 1);
     }
   }
 
@@ -304,7 +289,7 @@ function UserMessageEditor({
     }
   }
 
-  function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
+  function handleKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
     if (slash.isOpen && event.key === "ArrowDown") {
       event.preventDefault();
       slash.setActiveIndex((index) => (index + 1) % slash.items.length);
@@ -317,7 +302,7 @@ function UserMessageEditor({
     }
     if (slash.isOpen && event.key === "Escape") {
       event.preventDefault();
-      setDraft("");
+      editorRef.current?.deleteBeforeCaret((slash.query?.length ?? 0) + 1);
       return;
     }
     if (slash.isOpen && (event.key === "Enter" || event.key === "Tab")) {
@@ -361,7 +346,7 @@ function UserMessageEditor({
     }
     if (isOpen && event.key === "Escape") {
       event.preventDefault();
-      setDraft((current) => (mention ? current.slice(0, mention.start) : current));
+      editorRef.current?.deleteBeforeCaret(mention ? mention.query.length + 1 : 0);
       return;
     }
     if (isOpen && (event.key === "Enter" || event.key === "Tab")) {
@@ -382,6 +367,19 @@ function UserMessageEditor({
       event.preventDefault();
       void send();
     }
+  }
+
+  function handleEditorChange(
+    text: string,
+    items: ContextItem[],
+    skills: SkillSelection[],
+    nextTextBeforeCaret: string,
+    _parts: MentionEditorPart[],
+  ): void {
+    setDraft(text);
+    setContextItems(items);
+    setSelectedSkills(skills);
+    setTextBeforeCaret(nextTextBeforeCaret);
   }
 
   return (
@@ -408,44 +406,19 @@ function UserMessageEditor({
         </div>
       ) : null}
       <div className="relative">
-        <div
+        <MentionEditor
           className={cn(
-            "flex flex-wrap items-start gap-x-1 gap-y-1",
-            hasInlineTokens ? "min-h-7" : "",
+            "min-h-7 text-sm text-fg leading-relaxed",
+            sending && "pointer-events-none opacity-60",
           )}
-        >
-          {contextItems.map((item) => (
-            <ContextToken
-              item={item}
-              key={contextItemKey(item)}
-              onRemove={() => {
-                const key = contextItemKey(item);
-                setContextItems((current) =>
-                  current.filter((other) => contextItemKey(other) !== key),
-                );
-              }}
-            />
-          ))}
-          {selectedSkills.map((skill) => (
-            <span
-              className="inline-flex h-6 items-center gap-1.5 font-medium text-focus-ring text-sm"
-              key={skill.path}
-            >
-              <IconCube size={15} stroke={1.8} />
-              <span>{skill.name}</span>
-            </span>
-          ))}
-          <textarea
-            aria-label="Edit message"
-            className="scroll-thin block min-h-7 min-w-[180px] flex-1 resize-none overflow-y-auto bg-transparent text-sm text-fg leading-relaxed outline-none disabled:opacity-60"
-            disabled={sending}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={handleKeyDown}
-            ref={textareaRef}
-            rows={1}
-            value={draft}
-          />
-        </div>
+          contextItems={contextItems}
+          onChange={handleEditorChange}
+          onKeyDown={handleKeyDown}
+          onPaste={() => undefined}
+          ref={editorRef}
+          skills={selectedSkills}
+          value={draft}
+        />
         <ContextMentionMenu
           activeIndex={activeIndex}
           onHover={setActiveIndex}
@@ -495,31 +468,6 @@ function UserMessageEditor({
   );
 }
 
-function contextItemKey(item: ContextItem): string {
-  if (item.type === "file" || item.type === "folder") {
-    return `${item.type}:${item.path}`;
-  }
-  if (item.type === "doc") {
-    return `doc:${item.docId}`;
-  }
-  if (item.type === "terminal") {
-    return `terminal:${item.terminalId}:${item.range?.fromLine ?? ""}:${item.range?.toLine ?? ""}`;
-  }
-  if (item.type === "git-diff") {
-    return `git-diff:${item.mode}:${item.base ?? ""}`;
-  }
-  if (item.type === "recent-changes") {
-    return `recent-changes:${item.limit ?? ""}`;
-  }
-  if (item.type === "search") {
-    return `search:${item.query}`;
-  }
-  if (item.type === "design-element") {
-    return `design-element:${item.element.id}`;
-  }
-  return item.type;
-}
-
 function contextItemsFromChips(
   chips: MessageContextChip[],
   workspaceId: string | undefined,
@@ -550,7 +498,7 @@ function contextItemsFromChips(
 function InlineContextToken({ chip }: { chip: MessageContextChip }) {
   return (
     <span
-      className="mr-1 inline-flex max-w-[220px] items-center gap-1 align-[-0.15em] font-medium text-focus-ring text-sm"
+      className="mr-1 inline-flex max-w-[220px] items-center gap-1 rounded-full bg-[#dcebfa] px-1.5 align-[-0.15em] font-medium text-[#2f8edb] text-sm"
       title={chip.detail ? `${chip.label} — ${chip.detail}` : chip.label}
     >
       {chip.kind === "design-element" ? <InspectGlyph /> : <ContextKindIcon kind={chip.kind} />}
@@ -562,11 +510,10 @@ function InlineContextToken({ chip }: { chip: MessageContextChip }) {
 function InlineSkillToken({ name }: { name: string }) {
   return (
     <span
-      className="mr-1 inline-flex max-w-[220px] items-center gap-1 align-[-0.15em] font-medium text-focus-ring text-sm"
+      className="mr-1 inline-flex rounded-full bg-[#dcebfa] px-1.5 font-medium text-sm"
       title={name}
     >
-      <IconCube className="size-3.5 shrink-0" stroke={1.8} />
-      <span className="truncate">{name}</span>
+      <SkillTokenContent skill={{ name, path: name }} />
     </span>
   );
 }

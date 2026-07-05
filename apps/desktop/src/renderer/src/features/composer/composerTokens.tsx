@@ -1,18 +1,20 @@
 import {
   IconBook2,
+  IconCube,
   IconFileText,
   IconFolder,
   IconGitBranch,
   IconListSearch,
   IconMessage2,
   IconNotebook,
+  IconPointer,
   IconReportSearch,
   IconSearch,
   IconTerminal2,
   IconWorld,
 } from "@tabler/icons-react";
 import type { ReactNode } from "react";
-import type { ContextItem } from "../../../../shared/contracts";
+import type { ContextItem, SkillSelection } from "../../../../shared/contracts";
 import { materialIconForFile } from "../files/fileIcons";
 
 function basename(path: string): string {
@@ -61,6 +63,11 @@ export function tokenMeta(item: ContextItem): { icon: ReactNode; label: string }
       return { icon: <IconNotebook {...props} />, label: "Project rules" };
     case "search":
       return { icon: <IconSearch {...props} />, label: `search:${item.query}` };
+    case "design-element":
+      return {
+        icon: <IconPointer {...props} />,
+        label: item.element.componentName || item.element.tagName || item.element.label,
+      };
     default:
       return { icon: <IconFileText {...props} />, label: "context" };
   }
@@ -74,9 +81,52 @@ export function tokenMeta(item: ContextItem): { icon: ReactNode; label: string }
 export function TokenContent({ item }: { item: ContextItem }) {
   const meta = tokenMeta(item);
   return (
-    <span className="inline-flex max-w-[220px] items-center gap-1 align-[-0.15em] text-focus-ring">
+    <span className="inline-flex max-w-[220px] items-center gap-1 align-[-0.15em] text-[#2f8edb]">
       <span className="inline-flex">{meta.icon}</span>
       <span className="truncate">{meta.label}</span>
     </span>
   );
+}
+
+export function SkillTokenContent({ skill }: { skill: SkillSelection }) {
+  return (
+    <span className="inline-flex max-w-[220px] items-center gap-1 align-[-0.15em] text-[#2f8edb]">
+      <span className="inline-flex">
+        <IconCube size={13} stroke={1.7} />
+      </span>
+      <span className="truncate">{skill.name}</span>
+    </span>
+  );
+}
+
+export function contextItemKey(item: ContextItem): string {
+  if (item.type === "file" || item.type === "folder") {
+    return `${item.type}:${item.path}`;
+  }
+
+  if (item.type === "doc") {
+    return `doc:${item.docId}`;
+  }
+
+  if (item.type === "terminal") {
+    return `terminal:${item.terminalId}:${item.range?.fromLine ?? ""}:${item.range?.toLine ?? ""}`;
+  }
+
+  if (item.type === "git-diff") {
+    return `git-diff:${item.mode}:${item.base ?? ""}`;
+  }
+
+  if (item.type === "recent-changes") {
+    return `recent-changes:${item.limit ?? ""}`;
+  }
+
+  if (item.type === "search") {
+    return `search:${item.query}`;
+  }
+
+  if (item.type === "design-element") {
+    return `design-element:${item.element.id}`;
+  }
+
+  return item.type;
 }

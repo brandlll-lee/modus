@@ -47,10 +47,13 @@ export type SlashItem =
   | { kind: "skill"; key: string; name: string; description: string; skill: SkillInfo }
   | { kind: "command"; key: string; name: string; description: string; command: SlashCommand };
 
-/** Active when the whole input is a single `/token` (no spaces yet). */
-function getSlashQuery(value: string): { query: string } | undefined {
-  const match = /^\/([A-Za-z0-9/_-]*)$/.exec(value);
-  return match ? { query: match[1] ?? "" } : undefined;
+/** Active when the text immediately before the caret ends in `/token`. */
+export function getSlashQuery(value: string): { start: number; query: string } | undefined {
+  const match = /(?:^|\s)\/([A-Za-z0-9/_-]*)$/.exec(value);
+  if (!match || match.index === undefined) {
+    return undefined;
+  }
+  return { start: match.index + match[0].indexOf("/"), query: match[1] ?? "" };
 }
 
 export function useComposerSlash({ value, cwd }: UseComposerSlashInput) {
@@ -142,6 +145,7 @@ export function useComposerSlash({ value, cwd }: UseComposerSlashInput) {
 
   return {
     isOpen,
+    query: slash?.query,
     items,
     activeIndex: Math.min(activeIndex, Math.max(0, items.length - 1)),
     setActiveIndex,

@@ -5,7 +5,6 @@ import {
   IconCheck,
   IconChevronDown,
   IconChevronRight,
-  IconCube,
   IconListCheck,
   IconPlayerStopFilled,
   IconPlus,
@@ -18,7 +17,6 @@ import {
   type KeyboardEvent,
   type ReactNode,
   useCallback,
-  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -40,13 +38,12 @@ import {
   selectedThinkingLabel,
   selectedThinkingOption,
 } from "../../lib/modelThinking";
-import { RunningProcessBar } from "../process/RunningProcessBar";
 import { ProviderLogo } from "../settings/ProviderLogo";
 import { ApprovalModeSelect } from "./ApprovalModeSelect";
 import { ContextMentionMenu } from "./ContextMentionMenu";
-import { ContextToken } from "./ContextToken";
-import { DesignElementToken } from "./DesignElementToken";
+import { MentionEditor, type MentionEditorHandle, type MentionEditorPart } from "./MentionEditor";
 import { SlashMenu } from "./SlashMenu";
+import { contextItemKey } from "./composerTokens";
 import {
   type ComposerImage,
   type ComposerImageUpdate,
@@ -77,8 +74,6 @@ type ComposerProps = {
   hasSession: boolean;
   isRunning?: boolean;
   footer?: ReactNode;
-  /** Agent session that owns this composer; scopes the running-process bar. */
-  sessionId?: string;
   onModelChange(model: string): void;
   onModelConfigChange?(model: string, thinkingVariant: string): Promise<void> | void;
   onContextChange(items: ContextItem[]): void;
@@ -103,12 +98,37 @@ export type ComposerDraft = {
   value: string;
   images: ComposerImage[];
   selectedSkills: SkillSelection[];
+  parts?: MentionEditorPart[] | undefined;
 };
 
 export type ComposerDraftUpdate = ComposerDraft | ((current: ComposerDraft) => ComposerDraft);
 
 export function createEmptyComposerDraft(): ComposerDraft {
   return { value: "", images: [], selectedSkills: [] };
+}
+
+function inlinePartLabel(part: MentionEditorPart): string | undefined {
+  if (part.type === "context") {
+    if (part.item.type === "design-element") {
+      return part.item.element.componentName || part.item.element.tagName || part.item.element.label;
+    }
+    return undefined;
+  }
+  if (part.type === "skill") {
+    return `skill:${part.skill.name}`;
+  }
+  return undefined;
+}
+
+function messageFromParts(parts: MentionEditorPart[] | undefined, fallback: string): string {
+  if (!parts || parts.length === 0) {
+    return fallback;
+  }
+  return parts
+    .map((part) => (part.type === "text" ? part.text : `[${inlinePartLabel(part) ?? "context"}]`))
+    .join("")
+    .replace(/\u00a0/g, " ")
+    .trim();
 }
 
 function resolveUpdate<T>(update: T | ((current: T) => T), current: T): T {
@@ -126,7 +146,6 @@ export function Composer({
   footer,
   hasSession,
   isRunning = false,
-  sessionId,
   onAbort,
   onModelChange,
   onModelConfigChange,
@@ -180,7 +199,7 @@ export function Composer({
       setInternalMode(next);
     }
   };
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const editorRef = useRef<MentionEditorHandle>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { addFiles, clearImages, images, removeImage, toAttachments } = useComposerImages({
     images: activeDraft.images,
@@ -188,12 +207,12 @@ export function Composer({
   });
   const value = activeDraft.value;
   const selectedSkills = activeDraft.selectedSkills;
+  const [textBeforeCaret, setTextBeforeCaret] = useState(value);
   const hasText = value.trim().length > 0;
   const hasImages = images.length > 0;
   const hasSelectedSkills = selectedSkills.length > 0;
-  const inlineContextItems = contextItems.filter((item) => item.type !== "design-element");
-  const hasInlineTokens = inlineContextItems.length > 0 || hasSelectedSkills;
-  const hasContent = hasText || hasImages || hasSelectedSkills;
+  const hasInlineTokens = contextItems.length > 0 || hasSelectedSkills;
+  const hasContent = hasText || hasImages || contextItems.length > 0 || hasSelectedSkills;
   const currentModel = models.find((item) => item.id === model) ?? models[0];
   const {
     activeIndex,
@@ -208,19 +227,10 @@ export function Composer({
     expandMore,
   } = useComposerMentions({
     cwd,
-    value,
+    value: textBeforeCaret,
     workspaceId,
   });
-  const slash = useComposerSlash({ cwd, value });
-
-  useLayoutEffect(() => {
-    const textarea = textareaRef.current;
-    if (!textarea) {
-      return;
-    }
-    textarea.style.height = "auto";
-    textarea.style.height = `${textarea.scrollHeight}px`;
-  });
+  const slash = useComposerSlash({ cwd, value: textBeforeCaret });
 
   function send(delivery: PromptDelivery = isRunning ? "follow-up" : "normal"): void {
     if (!hasContent || !canSubmit || models.length === 0 || !model) {
@@ -228,10 +238,12 @@ export function Composer({
     }
     // Providers reject empty text blocks, so image-only sends get a stub line.
     const message = hasText
-      ? value.trim()
+      ? messageFromParts(activeDraft.parts, value.trim())
       : hasSelectedSkills
         ? "Use the selected skill(s)."
-        : "See the attached image(s).";
+        : hasImages
+          ? "See the attached image(s)."
+          : "Use the selected context.";
     const attachments = toAttachments();
     onSubmit(
       message,
@@ -245,23 +257,26 @@ export function Composer({
     clearImages();
     setSelectedSkills([]);
     onContextChange([]);
+    editorRef.current?.clear();
   }
 
   function selectSlashItem(item: SlashItem): void {
     if (item.kind === "skill") {
-      setSelectedSkills((current) =>
-        current.some((skill) => skill.path === item.skill.path)
-          ? current
-          : [...current, { name: item.skill.name, path: item.skill.path }],
+      if (selectedSkills.some((skill) => skill.path === item.skill.path)) {
+        editorRef.current?.deleteBeforeCaret((slash.query?.length ?? 0) + 1);
+        return;
+      }
+      editorRef.current?.insertSkillToken(
+        { name: item.skill.name, path: item.skill.path },
+        (slash.query?.length ?? 0) + 1,
       );
-      setValue("");
       return;
     }
     // Commands seed the composer with their instruction prefix to keep typing.
-    setValue(item.command.prefix);
+    editorRef.current?.insertText(item.command.prefix, (slash.query?.length ?? 0) + 1);
   }
 
-  function handlePaste(event: ClipboardEvent<HTMLTextAreaElement>): void {
+  function handlePaste(event: ClipboardEvent<HTMLDivElement>): void {
     const files = [...event.clipboardData.items]
       .filter((item) => item.kind === "file")
       .map((item) => item.getAsFile())
@@ -290,12 +305,11 @@ export function Composer({
   function addContextItem(item: ContextItem): void {
     const key = contextItemKey(item);
     if (!contextItems.some((existing) => contextItemKey(existing) === key)) {
-      onContextChange([...contextItems, item]);
+      editorRef.current?.insertContextToken(item, mention ? mention.query.length + 1 : 0);
+      return;
     }
     if (mention) {
-      setValue(
-        `${value.slice(0, mention.start)}${value.slice(mention.start).replace(/@[^\s]*$/, "")}`,
-      );
+      editorRef.current?.deleteBeforeCaret(mention.query.length + 1);
     }
   }
 
@@ -310,7 +324,7 @@ export function Composer({
     }
   }
 
-  function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
+  function handleKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
     // Shift+Tab rotates the composer mode (build ⇄ plan), mirroring Cursor.
     if (event.key === "Tab" && event.shiftKey && !slash.isOpen && !isOpen) {
       event.preventDefault();
@@ -330,7 +344,7 @@ export function Composer({
         setSelectedSkills((current) => current.slice(0, -1));
         return;
       }
-      const lastContextItem = inlineContextItems.at(-1);
+      const lastContextItem = contextItems.at(-1);
       if (lastContextItem) {
         event.preventDefault();
         const key = contextItemKey(lastContextItem);
@@ -347,7 +361,7 @@ export function Composer({
 
     if (slash.isOpen && event.key === "Escape") {
       event.preventDefault();
-      setValue("");
+      editorRef.current?.deleteBeforeCaret((slash.query?.length ?? 0) + 1);
       return;
     }
 
@@ -381,7 +395,7 @@ export function Composer({
 
     if (isOpen && event.key === "Escape") {
       event.preventDefault();
-      setValue((current) => (mention ? current.slice(0, mention.start) : current));
+      editorRef.current?.deleteBeforeCaret(mention ? mention.query.length + 1 : 0);
       return;
     }
 
@@ -420,13 +434,24 @@ export function Composer({
     }
   }
 
+  function handleEditorChange(
+    text: string,
+    items: ContextItem[],
+    skills: SkillSelection[],
+    nextTextBeforeCaret: string,
+    parts: MentionEditorPart[],
+  ): void {
+    setDraft((current) => ({ ...current, value: text, selectedSkills: skills, parts }));
+    onContextChange(items);
+    setTextBeforeCaret(nextTextBeforeCaret);
+  }
+
   return (
     <div className={cn("relative flex flex-col items-stretch", footer ? "pb-12" : undefined)}>
-      <RunningProcessBar sessionId={sessionId} workspaceId={workspaceId} />
       {footer ? (
         <div className="pointer-events-none absolute inset-x-0 top-12 bottom-0 z-0 rounded-[20px] bg-composer-tray shadow-composer" />
       ) : null}
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: drag-drop is a pointer-only enhancement; keyboard users attach images via paste in the textarea. */}
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: drag-drop is a pointer-only enhancement; keyboard users attach images via paste in the editor. */}
       <div
         className={cn(
           "relative border border-composer-border bg-surface shadow-composer-edge transition-[border-color] duration-150",
@@ -463,49 +488,17 @@ export function Composer({
               )}
             </div>
           ) : null}
-          <div
-            className={cn(
-              hasInlineTokens
-                ? "flex min-h-[68px] flex-wrap items-start gap-x-1 gap-y-1 px-4 pt-4"
-                : "",
-            )}
-          >
-            {inlineContextItems.map((item) => (
-              <ContextToken
-                item={item}
-                key={contextItemKey(item)}
-                onRemove={() =>
-                  onContextChange(
-                    contextItems.filter((other) => contextItemKey(other) !== contextItemKey(item)),
-                  )
-                }
-              />
-            ))}
-            {hasSelectedSkills
-              ? selectedSkills.map((skill) => (
-                  <span
-                    className="inline-flex h-6 items-center gap-1.5 text-focus-ring text-sm font-medium"
-                    key={skill.path}
-                  >
-                    <IconCube size={15} stroke={1.8} />
-                    <span>{skill.name}</span>
-                  </span>
-                ))
-              : null}
-            <textarea
-              className={cn(
-                "scroll-thin block max-h-[260px] resize-none overflow-y-auto bg-transparent text-md font-normal text-fg leading-[1.5] outline-none",
-                hasInlineTokens
-                  ? "min-h-[28px] min-w-[180px] flex-1 pt-px"
-                  : "min-h-[68px] w-full px-4 pt-4",
-              )}
-              onChange={(event) => setValue(event.target.value)}
-              onKeyDown={handleKeyDown}
-              onPaste={handlePaste}
-              ref={textareaRef}
-              value={value}
-            />
-          </div>
+          <MentionEditor
+            className="min-h-[68px] px-4 pt-4 text-md font-normal text-fg leading-[1.5]"
+            contextItems={contextItems}
+            onChange={handleEditorChange}
+            onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
+            parts={activeDraft.parts}
+            ref={editorRef}
+            skills={selectedSkills}
+            value={value}
+          />
           <ContextMentionMenu
             activeIndex={activeIndex}
             onHover={setActiveIndex}
@@ -527,7 +520,7 @@ export function Composer({
               <div className="group/image relative" key={image.id}>
                 <ImageThumb
                   alt={image.name}
-                  className="size-14 rounded-lg border border-hairline object-cover"
+                  className="size-14 rounded-lg border border-hairline bg-canvas object-contain"
                   src={image.dataUrl}
                   title={image.name}
                 />
@@ -541,26 +534,6 @@ export function Composer({
                 </button>
               </div>
             ))}
-          </div>
-        ) : null}
-
-        {contextItems.some((item) => item.type === "design-element") ? (
-          <div className="flex flex-wrap gap-2 px-3 pt-1.5">
-            {contextItems
-              .filter((item) => item.type === "design-element")
-              .map((item) => (
-                <DesignElementToken
-                  element={item.element}
-                  key={contextItemKey(item)}
-                  onRemove={() =>
-                    onContextChange(
-                      contextItems.filter(
-                        (other) => contextItemKey(other) !== contextItemKey(item),
-                      ),
-                    )
-                  }
-                />
-              ))}
           </div>
         ) : null}
 
@@ -929,38 +902,6 @@ function ContextUsageRow({
       <span className={strong ? "font-semibold text-fg" : "text-fg"}>{value}</span>
     </div>
   );
-}
-
-function contextItemKey(item: ContextItem): string {
-  if (item.type === "file" || item.type === "folder") {
-    return `${item.type}:${item.path}`;
-  }
-
-  if (item.type === "doc") {
-    return `doc:${item.docId}`;
-  }
-
-  if (item.type === "terminal") {
-    return `terminal:${item.terminalId}:${item.range?.fromLine ?? ""}:${item.range?.toLine ?? ""}`;
-  }
-
-  if (item.type === "git-diff") {
-    return `git-diff:${item.mode}:${item.base ?? ""}`;
-  }
-
-  if (item.type === "recent-changes") {
-    return `recent-changes:${item.limit ?? ""}`;
-  }
-
-  if (item.type === "search") {
-    return `search:${item.query}`;
-  }
-
-  if (item.type === "design-element") {
-    return `design-element:${item.element.id}`;
-  }
-
-  return item.type;
 }
 
 function clampPercent(value: number | null | undefined): number {
