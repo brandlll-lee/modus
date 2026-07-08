@@ -41,9 +41,9 @@ import {
 import { ProviderLogo } from "../settings/ProviderLogo";
 import { ApprovalModeSelect } from "./ApprovalModeSelect";
 import { ContextMentionMenu } from "./ContextMentionMenu";
+import { contextItemKey } from "./composerTokens";
 import { MentionEditor, type MentionEditorHandle, type MentionEditorPart } from "./MentionEditor";
 import { SlashMenu } from "./SlashMenu";
-import { contextItemKey } from "./composerTokens";
 import {
   type ComposerImage,
   type ComposerImageUpdate,
@@ -110,7 +110,9 @@ export function createEmptyComposerDraft(): ComposerDraft {
 function inlinePartLabel(part: MentionEditorPart): string | undefined {
   if (part.type === "context") {
     if (part.item.type === "design-element") {
-      return part.item.element.componentName || part.item.element.tagName || part.item.element.label;
+      return (
+        part.item.element.componentName || part.item.element.tagName || part.item.element.label
+      );
     }
     return undefined;
   }
@@ -201,10 +203,11 @@ export function Composer({
   };
   const editorRef = useRef<MentionEditorHandle>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const { addFiles, clearImages, images, removeImage, toAttachments } = useComposerImages({
-    images: activeDraft.images,
-    onImagesChange: setImages,
-  });
+  const { addFiles, clearImages, images, removeImage, toAttachments, updateImage } =
+    useComposerImages({
+      images: activeDraft.images,
+      onImagesChange: setImages,
+    });
   const value = activeDraft.value;
   const selectedSkills = activeDraft.selectedSkills;
   const [textBeforeCaret, setTextBeforeCaret] = useState(value);
@@ -521,6 +524,7 @@ export function Composer({
                 <ImageThumb
                   alt={image.name}
                   className="size-14 rounded-lg border border-hairline bg-canvas object-contain"
+                  onSaveEdited={(dataUrl) => updateImage(image.id, dataUrl)}
                   src={image.dataUrl}
                   title={image.name}
                 />

@@ -71,6 +71,26 @@ export function useComposerImages(options?: {
     [setImages],
   );
 
+  const updateImage = useCallback(
+    (id: string, dataUrl: string, mimeType = "image/png") => {
+      setImages((current) =>
+        current.map((image) =>
+          image.id === id
+            ? {
+                ...image,
+                dataUrl,
+                mimeType,
+                name: /\.[a-z0-9]+$/i.test(image.name)
+                  ? image.name.replace(/\.[a-z0-9]+$/i, ".png")
+                  : `${image.name}.png`,
+              }
+            : image,
+        ),
+      );
+    },
+    [setImages],
+  );
+
   const clearImages = useCallback(() => setImages([]), [setImages]);
 
   const toAttachments = useCallback(
@@ -84,5 +104,5 @@ export function useComposerImages(options?: {
     [images],
   );
 
-  return { addFiles, clearImages, images, removeImage, toAttachments };
+  return { addFiles, clearImages, images, removeImage, toAttachments, updateImage };
 }
