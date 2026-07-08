@@ -1,6 +1,12 @@
-import { IconChevronRight } from "@tabler/icons-react";
+import {
+  IconBrain,
+  IconChevronRight,
+  IconFileSearch,
+  IconTerminal2,
+  IconWorld,
+} from "@tabler/icons-react";
 import { m } from "motion/react";
-import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
 import { ShinyText } from "../../components/ui/ShinyText";
 import { cn } from "../../lib/cn";
@@ -11,6 +17,51 @@ import { ToolCard } from "./ToolCard";
 /** Rough reading-time estimate for a thinking transcript (1–9s), Cursor-style. */
 function estimateThinkingSeconds(text: string): number {
   return Math.max(1, Math.min(9, Math.round(text.length / 240)));
+}
+
+type ActivityKind = "explore" | "browser" | "shell";
+
+const ACTIVITY_ICONS: Record<ActivityKind, ReactNode> = {
+  explore: <IconFileSearch size={14} stroke={1.7} />,
+  browser: <IconWorld size={14} stroke={1.7} />,
+  shell: <IconTerminal2 size={14} stroke={1.7} />,
+};
+
+function ActivityHeader({
+  active = false,
+  icon,
+  label,
+  onToggle,
+  open,
+}: {
+  active?: boolean;
+  icon: ReactNode;
+  label: string;
+  onToggle(): void;
+  open: boolean;
+}) {
+  return (
+    <button
+      aria-expanded={open}
+      className="group/activity flex w-fit min-w-0 max-w-full items-center gap-1.5 rounded-md py-0.5 text-left text-sm text-fg-subtle transition-colors hover:text-fg-muted"
+      onClick={onToggle}
+      type="button"
+    >
+      <span className="flex size-4 shrink-0 items-center justify-center text-fg-faint">{icon}</span>
+      {active ? (
+        <ShinyText>{label}</ShinyText>
+      ) : (
+        <span className="min-w-0 truncate transition-colors">{label}</span>
+      )}
+      <m.span
+        animate={{ rotate: open ? 90 : 0 }}
+        className="flex size-4 shrink-0 items-center justify-center text-fg-faint opacity-0 transition-opacity group-focus-visible/activity:opacity-100 group-hover/activity:opacity-100"
+        transition={{ duration: 0.16, ease: "easeOut" }}
+      >
+        <IconChevronRight size={12} stroke={1.8} />
+      </m.span>
+    </button>
+  );
 }
 
 /**
@@ -49,24 +100,16 @@ export function ThoughtRow({ text, streaming = false }: { text: string; streamin
 
   return (
     <div className="min-w-0">
-      <button
-        aria-expanded={open}
-        className="flex items-center gap-1 text-sm text-fg-subtle transition-colors hover:text-fg-muted"
-        onClick={() => {
+      <ActivityHeader
+        active={streaming}
+        icon={<IconBrain size={14} stroke={1.7} />}
+        label={label}
+        onToggle={() => {
           interactedRef.current = true;
           setOpen((value) => !value);
         }}
-        type="button"
-      >
-        <m.span
-          animate={{ rotate: open ? 90 : 0 }}
-          className="flex size-3 items-center justify-center"
-          transition={{ duration: 0.16, ease: "easeOut" }}
-        >
-          <IconChevronRight size={12} stroke={1.8} />
-        </m.span>
-        {streaming ? <ShinyText>{label}</ShinyText> : <span>{label}</span>}
-      </button>
+        open={open}
+      />
       <CollapsibleMotion open={showBody} preset="timeline">
         <pre
           className="scroll-thin mt-1 max-h-44 max-w-full overflow-x-auto overflow-y-auto whitespace-pre-wrap text-2xs text-fg-faint leading-relaxed"
@@ -124,7 +167,7 @@ export const ActivityGroup = memo(function ActivityGroup({
   summary,
   items,
 }: {
-  kind: "explore" | "browser" | "shell";
+  kind: ActivityKind;
   active: boolean;
   summary: string;
   items: ActivityItem[];
@@ -154,36 +197,16 @@ export const ActivityGroup = memo(function ActivityGroup({
 
   return (
     <div className="min-w-0 text-sm">
-      <button
-        aria-expanded={open}
-        className="group/activity flex w-fit min-w-0 max-w-full items-center gap-1.5 rounded-md py-0.5 text-left transition-colors"
-        onClick={() => {
+      <ActivityHeader
+        active={active}
+        icon={ACTIVITY_ICONS[kind]}
+        label={label}
+        onToggle={() => {
           interactedRef.current = true;
           setOpen((value) => !value);
         }}
-        type="button"
-      >
-        {/* Dropdown caret leads the row (图3), rotating down as it opens. */}
-        <m.span
-          animate={{ rotate: open ? 90 : 0 }}
-          className="flex size-3 shrink-0 items-center justify-center text-fg-faint"
-          transition={{ duration: 0.16, ease: "easeOut" }}
-        >
-          <IconChevronRight size={12} stroke={1.8} />
-        </m.span>
-        {active ? (
-          <ShinyText>{label}</ShinyText>
-        ) : (
-          <span
-            className={cn(
-              "min-w-0 truncate transition-colors",
-              "text-fg-subtle group-hover/activity:text-fg-muted",
-            )}
-          >
-            {label}
-          </span>
-        )}
-      </button>
+        open={open}
+      />
       <CollapsibleMotion open={open} preset="timeline">
         {/* Guide line in the caret gutter: its height tracks the rendered content
             (it wraps the viewport), so the rail reads as "this much was folded". */}
