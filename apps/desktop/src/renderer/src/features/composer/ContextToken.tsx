@@ -15,11 +15,11 @@ export function ContextToken({ item, onRemove }: ContextTokenProps) {
   const meta = tokenMeta(item);
 
   return (
-    <span className="group/token inline-flex h-6 max-w-[220px] items-center rounded-full bg-[#dcebfa] px-1.5 text-sm font-medium">
+    <span className="group/token inline-flex h-6 max-w-[220px] items-center text-sm font-medium">
       <TokenContent item={item} />
       <button
         aria-label={`Remove ${meta.label}`}
-        className="flex h-3.5 w-0 shrink-0 items-center justify-center overflow-hidden rounded-full text-[#2f8edb]/70 opacity-0 transition-[width,opacity] hover:bg-[#2f8edb]/15 hover:text-[#2f8edb] group-hover/token:ml-0.5 group-hover/token:w-3.5 group-hover/token:opacity-100"
+        className="flex h-3.5 w-0 shrink-0 items-center justify-center overflow-hidden rounded-sm text-link/70 opacity-0 transition-[width,opacity] hover:bg-chip hover:text-link group-hover/token:ml-0.5 group-hover/token:w-3.5 group-hover/token:opacity-100"
         onClick={onRemove}
         title={`Remove ${meta.label}`}
         type="button"

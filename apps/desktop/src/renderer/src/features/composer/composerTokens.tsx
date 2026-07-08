@@ -81,7 +81,7 @@ export function tokenMeta(item: ContextItem): { icon: ReactNode; label: string }
 export function TokenContent({ item }: { item: ContextItem }) {
   const meta = tokenMeta(item);
   return (
-    <span className="inline-flex max-w-[220px] items-center gap-1 align-[-0.15em] text-[#2f8edb]">
+    <span className="inline-flex max-w-[220px] items-center gap-1 align-[-0.15em] text-link">
       <span className="inline-flex">{meta.icon}</span>
       <span className="truncate">{meta.label}</span>
     </span>
@@ -90,7 +90,7 @@ export function TokenContent({ item }: { item: ContextItem }) {
 
 export function SkillTokenContent({ skill }: { skill: SkillSelection }) {
   return (
-    <span className="inline-flex max-w-[220px] items-center gap-1 align-[-0.15em] text-[#2f8edb]">
+    <span className="inline-flex max-w-[220px] items-center gap-1 align-[-0.15em] text-link">
       <span className="inline-flex">
         <IconCube size={13} stroke={1.7} />
       </span>

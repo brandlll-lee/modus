@@ -64,6 +64,38 @@ function snapshot(text: string, items: ContextItem[], skills: SkillSelection[]):
   });
 }
 
+function snapshotParts(parts: MentionEditorPart[]): string {
+  return JSON.stringify(
+    parts.map((part) =>
+      part.type === "context"
+        ? { type: part.type, key: contextItemKey(part.item) }
+        : part.type === "skill"
+          ? { type: part.type, key: skillKey(part.skill) }
+          : part,
+    ),
+  );
+}
+
+function textPositionAt(root: HTMLElement, target: number): { node: Text; offset: number } | undefined {
+  let seen = 0;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      const parent = node.parentElement;
+      return parent?.closest("[data-token-id]") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
+    },
+  });
+  let node = walker.nextNode() as Text | null;
+  while (node) {
+    const length = (node.textContent ?? "").length;
+    if (target <= seen + length) {
+      return { node, offset: Math.max(0, target - seen) };
+    }
+    seen += length;
+    node = walker.nextNode() as Text | null;
+  }
+  return undefined;
+}
+
 /**
  * A contenteditable composer input where @-mentions are inline, atomic
  * (`contenteditable=false`) tokens — so a reference reads as part of the line,
@@ -82,6 +114,7 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
     const tokensRef = useRef<Map<string, InlineToken>>(new Map());
     const composingRef = useRef(false);
     const lastSnapshotRef = useRef("");
+    const lastPartsSnapshotRef = useRef("");
 
     const textFromNode = useCallback((node: Node): string => {
       let text = "";
@@ -195,6 +228,7 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
         }
       }
       lastSnapshotRef.current = snapshot(text, items, skills);
+      lastPartsSnapshotRef.current = snapshotParts(parts);
       onChange(text, items, skills, textBeforeCaret(), parts);
     }, [read, onChange, textBeforeCaret]);
 
@@ -208,7 +242,7 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
       span.dataset.tokenId = id;
       span.contentEditable = "false";
       span.className =
-        "group/token mr-0.5 inline-flex select-none items-center rounded-full bg-[#dcebfa] px-1.5 align-baseline";
+        "group/token mr-0.5 inline-flex select-none items-center align-baseline";
       span.innerHTML = renderToStaticMarkup(
         <>
           {token.kind === "context" ? (
@@ -216,13 +250,14 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
           ) : (
             <SkillTokenContent skill={token.skill} />
           )}
-          <span
-            aria-hidden="true"
-            className="inline-flex w-0 items-center justify-center overflow-hidden rounded-full text-[#2f8edb]/70 opacity-0 transition-[width,opacity] group-hover/token:ml-0.5 group-hover/token:w-3.5 group-hover/token:opacity-100"
+          <button
+            aria-label="Remove token"
+            className="inline-flex w-0 items-center justify-center overflow-hidden rounded-sm text-link/70 opacity-0 transition-[width,opacity] hover:bg-chip group-hover/token:ml-0.5 group-hover/token:w-3.5 group-hover/token:opacity-100"
             data-token-remove="true"
+            type="button"
           >
             <IconX size={10} stroke={2.1} />
-          </span>
+          </button>
         </>,
       );
       return span;
@@ -233,12 +268,27 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
         const root = elementRef.current;
         const sel = window.getSelection();
         if (!root || !sel || sel.rangeCount === 0) return;
-        const range = sel.getRangeAt(0);
+        let range = sel.getRangeAt(0);
         if (!root.contains(range.startContainer)) return;
-        if (replaceLen > 0 && range.startContainer.nodeType === Node.TEXT_NODE) {
-          const offset = range.startOffset;
-          range.setStart(range.startContainer, Math.max(0, offset - replaceLen));
-          range.deleteContents();
+        if (replaceLen > 0) {
+          const before = document.createRange();
+          before.selectNodeContents(root);
+          before.setEnd(range.startContainer, range.startOffset);
+          const start = textPositionAt(
+            root,
+            Math.max(0, textFromNode(before.cloneContents()).length - replaceLen),
+          );
+          if (start) {
+            const deleteRange = document.createRange();
+            deleteRange.setStart(start.node, start.offset);
+            deleteRange.setEnd(range.startContainer, range.startOffset);
+            deleteRange.deleteContents();
+            range = deleteRange;
+          } else if (range.startContainer.nodeType === Node.TEXT_NODE) {
+            const offset = range.startOffset;
+            range.setStart(range.startContainer, Math.max(0, offset - replaceLen));
+            range.deleteContents();
+          }
         }
         const last = nodes.at(-1);
         if (nodes.length > 0) {
@@ -268,21 +318,14 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
       [buildToken, replaceBeforeCaret],
     );
 
-    const partsSnapshot = parts
-      ? JSON.stringify(
-          parts.map((part) =>
-            part.type === "context"
-              ? { type: part.type, key: contextItemKey(part.item) }
-              : part.type === "skill"
-                ? { type: part.type, key: skillKey(part.skill) }
-                : part,
-          ),
-        )
-      : undefined;
+    const partsSnapshot = parts ? snapshotParts(parts) : undefined;
 
     useLayoutEffect(() => {
       const nextSnapshot = partsSnapshot ?? snapshot(value, contextItems, skills);
-      if (nextSnapshot === lastSnapshotRef.current) {
+      if (
+        nextSnapshot === lastSnapshotRef.current ||
+        nextSnapshot === lastPartsSnapshotRef.current
+      ) {
         return;
       }
       const root = elementRef.current;
@@ -321,6 +364,7 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
       sel?.removeAllRanges();
       sel?.addRange(range);
       lastSnapshotRef.current = nextSnapshot;
+      lastPartsSnapshotRef.current = nextSnapshot;
     }, [buildToken, contextItems, parts, partsSnapshot, skills, value]);
 
     useImperativeHandle(
@@ -333,6 +377,7 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
           }
           tokensRef.current.clear();
           lastSnapshotRef.current = snapshot("", [], []);
+          lastPartsSnapshotRef.current = snapshotParts([]);
           onChange("", [], [], "", []);
         },
         setText: (text: string) => {
@@ -383,6 +428,13 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
         }}
         onKeyDown={onKeyDown}
         onMouseDown={(event) => {
+          const target = event.target instanceof Element ? event.target : null;
+          const remove = target?.closest("[data-token-remove]");
+          if (remove) {
+            event.preventDefault();
+          }
+        }}
+        onClick={(event) => {
           const target = event.target instanceof Element ? event.target : null;
           const remove = target?.closest("[data-token-remove]");
           const token = remove?.closest("[data-token-id]");

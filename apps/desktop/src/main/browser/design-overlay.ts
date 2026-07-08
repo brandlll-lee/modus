@@ -85,13 +85,14 @@ const SHADOW_CSS = `
   padding: 3px 0; margin: 0; overflow-y: auto; white-space: pre-wrap; word-break: break-word; }
 .input:empty::before { content: attr(data-placeholder); color: var(--mdo-fg-subtle); pointer-events: none; }
 .input::-webkit-scrollbar { display: none; }
-.token { display: inline-flex; align-items: center; gap: 3px; max-width: 120px; height: 24px; border-radius: 999px;
-  background: color-mix(in srgb, var(--mdo-color) 15%, white 85%); color: var(--mdo-color);
-  padding: 0 6px; font-size: 13px; font-weight: 600; line-height: 1; vertical-align: -0.22em; white-space: nowrap; }
+.token { display: inline-flex; align-items: center; gap: 3px; max-width: 120px; height: 24px;
+  color: var(--mdo-color); font-size: 13px; font-weight: 600; line-height: 1; vertical-align: -0.22em;
+  white-space: nowrap; }
 .token svg { width: 13px; height: 13px; flex: none; }
 .token-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .token-x { display: inline-flex; align-items: center; justify-content: center; width: 0; overflow: hidden; opacity: 0;
-  color: var(--mdo-color); transition: width 100ms, opacity 100ms; }
+  border-radius: 3px; color: var(--mdo-color); transition: width 100ms, opacity 100ms; }
+.token-x:hover { background: var(--mdo-fill); }
 .token:hover .token-x { width: 12px; opacity: 0.75; }
 .send { flex: none; width: 30px; height: 30px; padding: 0; border: none; cursor: pointer; border-radius: 999px;
   background: var(--mdo-fill); color: var(--mdo-accent); display: inline-flex; align-items: center;

@@ -498,7 +498,7 @@ function contextItemsFromChips(
 function InlineContextToken({ chip }: { chip: MessageContextChip }) {
   return (
     <span
-      className="mr-1 inline-flex max-w-[220px] items-center gap-1 rounded-full bg-[#dcebfa] px-1.5 align-[-0.15em] font-medium text-[#2f8edb] text-sm"
+      className="mr-1 inline-flex max-w-[220px] items-center gap-1 align-[-0.15em] font-medium text-link text-sm"
       title={chip.detail ? `${chip.label} — ${chip.detail}` : chip.label}
     >
       {chip.kind === "design-element" ? <InspectGlyph /> : <ContextKindIcon kind={chip.kind} />}
@@ -510,7 +510,7 @@ function InlineContextToken({ chip }: { chip: MessageContextChip }) {
 function InlineSkillToken({ name }: { name: string }) {
   return (
     <span
-      className="mr-1 inline-flex rounded-full bg-[#dcebfa] px-1.5 font-medium text-sm"
+      className="mr-1 inline-flex font-medium text-sm"
       title={name}
     >
       <SkillTokenContent skill={{ name, path: name }} />
