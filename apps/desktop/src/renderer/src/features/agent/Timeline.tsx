@@ -220,6 +220,7 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
   const subagentToolCallIds = new Set<string>();
   const subagentsByChild = new Map<string, SubagentBlockItem>();
   const questionToolByRequest = new Map<string, string>();
+  const visualToolById = new Map<string, ToolBlockItem>();
   let activeQuestionToolId: string | undefined;
   let latestTodosBlock: TodosBlockItem | undefined;
   let todoLifecycleOpen = false;
@@ -303,6 +304,40 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
     if (runBlock?.type === "run" && runBlock.status === "running") {
       runBlock.activity = activity;
     }
+  }
+
+  function upsertToolBlock(toolCallId: string, toolName: string, args: unknown): ToolBlockItem {
+    const visualId = toolRenderKind(toolName) === "visual" ? visualIdFromArgs(args) : undefined;
+    const existing = blockById.get(toolCallId);
+    if (existing?.type === "tool") {
+      existing.args = args;
+      if (visualId) {
+        visualToolById.set(visualId, existing);
+      }
+      return existing;
+    }
+    const visualBlock = visualId ? visualToolById.get(visualId) : undefined;
+    if (visualBlock) {
+      visualBlock.args = args;
+      visualBlock.output = "";
+      visualBlock.isComplete = false;
+      visualBlock.isError = false;
+      blockById.set(toolCallId, visualBlock);
+      return visualBlock;
+    }
+    const block: ToolBlockItem = {
+      id: toolCallId,
+      type: "tool",
+      name: toolName,
+      args,
+      output: "",
+    };
+    blocks.push(block);
+    blockById.set(toolCallId, block);
+    if (visualId) {
+      visualToolById.set(visualId, block);
+    }
+    return block;
   }
 
   for (const item of agentEvents) {
@@ -548,20 +583,7 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
       if (toolRenderKind(event.toolName) === "question") {
         activeQuestionToolId = event.toolCallId;
       }
-      const existing = blockById.get(event.toolCallId);
-      if (existing?.type === "tool") {
-        existing.args = event.args;
-      } else {
-        const block: ToolBlockItem = {
-          id: event.toolCallId,
-          type: "tool",
-          name: event.toolName,
-          args: event.args,
-          output: "",
-        };
-        blocks.push(block);
-        blockById.set(event.toolCallId, block);
-      }
+      upsertToolBlock(event.toolCallId, event.toolName, event.args);
       continue;
     }
 
@@ -585,20 +607,7 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
       // Idempotent: a live `tool.delta` may have already created the block.
       // Refresh its args with the authoritative ones rather than forking a
       // duplicate card.
-      const existing = blockById.get(event.toolCallId);
-      if (existing?.type === "tool") {
-        existing.args = event.args;
-        continue;
-      }
-      const block: ToolBlockItem = {
-        id: event.toolCallId,
-        type: "tool",
-        name: event.toolName,
-        args: event.args,
-        output: "",
-      };
-      blocks.push(block);
-      blockById.set(event.toolCallId, block);
+      upsertToolBlock(event.toolCallId, event.toolName, event.args);
       continue;
     }
 
@@ -1593,6 +1602,13 @@ function SubagentCard({
       </div>
     </button>
   );
+}
+
+function visualIdFromArgs(args: unknown): string | undefined {
+  if (!args || typeof args !== "object") return undefined;
+  const value = (args as Record<string, unknown>).visualId;
+  const visualId = typeof value === "string" ? value.trim() : "";
+  return visualId || undefined;
 }
 
 function eventTime(createdAt: string | undefined, fallbackOrder: number): number {

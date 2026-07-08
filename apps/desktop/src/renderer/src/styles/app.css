@@ -564,6 +564,15 @@ input {
   }
 }
 
+@keyframes visual-glare {
+  from {
+    background-position: -120% -120%;
+  }
+  to {
+    background-position: 120% 120%;
+  }
+}
+
 @layer utilities {
   .modus-shine-border {
     padding: var(--shine-border-width, 1px);
@@ -579,10 +588,18 @@ input {
     will-change: background-position;
     animation: modus-shine-border var(--shine-duration, 11s) linear infinite;
   }
+
+  .visual-glare-loading::before {
+    animation: visual-glare 1.45s ease-in-out infinite;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .modus-shine-border {
+    animation: none;
+  }
+
+  .visual-glare-loading::before {
     animation: none;
   }
 }

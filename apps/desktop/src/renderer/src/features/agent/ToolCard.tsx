@@ -10,6 +10,7 @@ import { DiffToolCard } from "./diff/DiffToolCard";
 import { QuestionToolCard } from "./QuestionToolCard";
 import { TerminalToolCard, type TerminalToolVariant } from "./terminal/TerminalToolCard";
 import { toolIcon } from "./toolIcons";
+import { VisualToolCard } from "./VisualToolCard";
 
 type ToolCardProps = {
   name: string;
@@ -94,6 +95,10 @@ export const ToolCard = memo(
           {...(questionSkipped !== undefined ? { skipped: questionSkipped } : {})}
         />
       );
+    }
+
+    if (render === "visual") {
+      return <VisualToolCard args={args} isComplete={isComplete} isError={isError} />;
     }
 
     return (

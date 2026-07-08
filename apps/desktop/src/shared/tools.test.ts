@@ -6,6 +6,7 @@ import {
   getToolUiMeta,
   isMcpToolName,
   toolRenderKind,
+  VISUAL_TOOL_NAME,
 } from "./tools";
 
 describe("MCP tool UI metadata", () => {
@@ -57,6 +58,7 @@ describe("tool render descriptor (single source of truth)", () => {
     expect(getToolUiMeta("todo_write")?.render).toBe("todo");
     expect(getToolUiMeta(FAST_CODEBASE_TOOL_NAME)?.render).toBe("live");
     expect(getToolUiMeta(FAST_CODEBASE_TOOL_NAME)?.activity).toBeUndefined();
+    expect(getToolUiMeta(VISUAL_TOOL_NAME)?.render).toBe("visual");
     expect(getToolUiMeta("plan_write")?.render).toBe("diff");
     expect(getToolUiMeta("plan_write")?.diffSource).toBe("newFile");
   });
@@ -77,6 +79,7 @@ describe("tool render descriptor (single source of truth)", () => {
     expect(toolRenderKind("terminal_run")).toBe("terminal");
     expect(toolRenderKind("todo_write")).toBe("todo");
     expect(toolRenderKind(FAST_CODEBASE_TOOL_NAME)).toBe("live");
+    expect(toolRenderKind(VISUAL_TOOL_NAME)).toBe("visual");
     expect(toolRenderKind("plan_write")).toBe("diff");
   });
 

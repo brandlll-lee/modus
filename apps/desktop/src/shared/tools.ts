@@ -60,7 +60,8 @@ export type ToolRenderKind =
   | "live"
   | "todo"
   | "question"
-  | "subagent";
+  | "subagent"
+  | "visual";
 
 /**
  * How a `render: "diff"` tool's diff is derived from its call arguments.
@@ -249,6 +250,16 @@ export const FAST_CODEBASE_TOOL_UI: ToolUiMeta = {
   render: "live",
 };
 
+/** Agent-facing inline custom visual tool. */
+export const VISUAL_TOOL_NAME = "visual_write";
+/** UI metadata for inline custom visuals (Claude-style temporary widgets). */
+export const VISUAL_TOOL_UI: ToolUiMeta = {
+  iconName: "tool",
+  verb: "Visual",
+  primaryArgKey: "title",
+  render: "visual",
+};
+
 /** Agent-facing to-do tool (custom tool registered at runtime). */
 export const TODO_TOOL_NAME = "todo_write";
 /** UI metadata for the to-do tool (its calls render as the live TodosCard). */
@@ -394,6 +405,7 @@ export function getToolUiMeta(name: string): ToolUiMeta | undefined {
     TERMINAL_TOOL_UI[name as TerminalToolName] ??
     APP_TOOL_UI[name as AppToolName] ??
     (name === FAST_CODEBASE_TOOL_NAME ? FAST_CODEBASE_TOOL_UI : undefined) ??
+    (name === VISUAL_TOOL_NAME ? VISUAL_TOOL_UI : undefined) ??
     SUBAGENT_TOOL_UI[name as SubagentToolName] ??
     WEB_TOOL_UI[name as WebToolName] ??
     BROWSER_TOOL_UI[name as BrowserToolName]

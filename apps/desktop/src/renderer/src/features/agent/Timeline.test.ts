@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentEvent } from "../../../../shared/contracts";
-import { FAST_CODEBASE_TOOL_NAME } from "../../../../shared/tools";
+import { FAST_CODEBASE_TOOL_NAME, VISUAL_TOOL_NAME } from "../../../../shared/tools";
 import { optimisticUserPromptEvents } from "./agentEventHub";
 import { subagentColor } from "./subagentUi";
 import {
@@ -113,6 +113,58 @@ describe("buildBlocks", () => {
     expect(blocks[0]).toEqual(
       expect.objectContaining({ type: "tool", output: "hello", isError: false }),
     );
+  });
+
+  it("updates the first visual block when a later visual reuses its visualId", () => {
+    const blocks = buildBlocks([
+      item("1", {
+        type: "tool.started",
+        sessionId: "s",
+        toolCallId: "v1",
+        toolName: VISUAL_TOOL_NAME,
+        args: { visualId: "chart", title: "Chart", kind: "svg", content: "<svg>one</svg>" },
+      }),
+      item("2", { type: "tool.ended", sessionId: "s", toolCallId: "v1", isError: false }),
+      item("3", {
+        type: "tool.started",
+        sessionId: "s",
+        toolCallId: "v2",
+        toolName: VISUAL_TOOL_NAME,
+        args: { visualId: " chart ", title: "Chart", kind: "svg", content: "<svg>two</svg>" },
+      }),
+    ]);
+
+    expect(blocks.filter((block) => block.type === "tool")).toHaveLength(1);
+    expect(blocks[0]).toEqual(
+      expect.objectContaining({
+        type: "tool",
+        id: "v1",
+        args: expect.objectContaining({ content: "<svg>two</svg>" }),
+        isComplete: false,
+        isError: false,
+      }),
+    );
+  });
+
+  it("does not merge visuals without the same visualId", () => {
+    const blocks = buildBlocks([
+      item("1", {
+        type: "tool.started",
+        sessionId: "s",
+        toolCallId: "v1",
+        toolName: VISUAL_TOOL_NAME,
+        args: { title: "One", kind: "svg", content: "<svg />" },
+      }),
+      item("2", {
+        type: "tool.started",
+        sessionId: "s",
+        toolCallId: "v2",
+        toolName: VISUAL_TOOL_NAME,
+        args: { visualId: "other", title: "Two", kind: "svg", content: "<svg />" },
+      }),
+    ]);
+
+    expect(blocks.filter((block) => block.type === "tool")).toHaveLength(2);
   });
 
   it("attaches resolved ask_user answers to the question tool block", () => {

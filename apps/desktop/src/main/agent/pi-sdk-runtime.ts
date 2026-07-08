@@ -94,6 +94,7 @@ import {
   runWithAgentToolContext,
   setAgentToolContext,
 } from "./tools/tool-context";
+import { registerVisualTools } from "./tools/visual-tools";
 import { registerWebTools } from "./tools/web-tools";
 
 /**
@@ -216,6 +217,7 @@ export class PiSdkRuntime implements AgentRuntime {
     registerBrowserTools();
     registerAppTools();
     registerFastCodebaseTools();
+    registerVisualTools();
     registerTodoTools();
     registerPlanTools();
     registerQuestionTools();
