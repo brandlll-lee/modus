@@ -12,6 +12,8 @@ import { listAgentRuns } from "../agent/agent-run-store";
 import {
   getAgentSession,
   listAgentSessions,
+  listArchivedAgentSessions,
+  setAgentSessionPinned,
   updateAgentSessionWorktree,
 } from "../agent/agent-store";
 import {
@@ -34,7 +36,7 @@ import {
 import { listAgentReviews, startAgentReview } from "../agent/review-service";
 import { rollbackToUserMessage } from "../agent/rollback-service";
 import { getAgentRuntime } from "../agent/runtime-registry";
-import { archiveAgentSession } from "../agent/session-lifecycle";
+import { deleteAgentSessionTree, setAgentSessionArchivedTree } from "../agent/session-lifecycle";
 import {
   createSubagent,
   deleteSubagent,
@@ -43,6 +45,7 @@ import {
   listSubagents,
   updateSubagent,
 } from "../agent/subagents-config";
+import { deleteBrowserRecent, listBrowserRecents } from "../browser/browser-recents-store";
 import {
   closeBrowserTab,
   createBrowserTab,
@@ -61,7 +64,6 @@ import {
   stopFindInBrowserPage,
   toggleBrowserDevtools,
 } from "../browser/browser-service";
-import { deleteBrowserRecent, listBrowserRecents } from "../browser/browser-recents-store";
 import { resolveContext, searchContext } from "../context/context-service";
 import { addDocSource, listDocSources, searchDocs } from "../docs/docs-service";
 import { listDirectory, readWorkspaceFile } from "../files/files-service";
@@ -127,6 +129,7 @@ import {
 } from "../terminal/terminal-service";
 import {
   archiveProjectChats,
+  deleteProjectChats,
   getRecentWorkspaces,
   openWorkspace,
   removeProject,
@@ -139,6 +142,7 @@ import { IPC_CHANNELS } from "./channels";
 import {
   agentCreateSchema,
   agentCycleModelSchema,
+  agentListSchema,
   agentPromptSchema,
   agentRollbackSchema,
   agentSetModelSchema,
@@ -181,6 +185,7 @@ import {
   questionRespondSchema,
   reviewStartSchema,
   sessionIdSchema,
+  sessionPinSchema,
   skillsCreateSchema,
   skillsGetSchema,
   subagentsCreateSchema,
@@ -286,6 +291,12 @@ export function registerAppIpc(): void {
     return await archiveProjectChats(parsed.id);
   });
 
+  ipcMain.handle(IPC_CHANNELS.workspaceDeleteChats, async (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(workspaceIdSchema, input, IPC_CHANNELS.workspaceDeleteChats);
+    return await deleteProjectChats(parsed.id);
+  });
+
   ipcMain.handle(IPC_CHANNELS.workspaceRemove, async (event, input) => {
     assertTrustedSender(event);
     const parsed = parseIpcInput(workspaceIdSchema, input, IPC_CHANNELS.workspaceRemove);
@@ -326,9 +337,18 @@ export function registerAppIpc(): void {
     });
   });
 
-  ipcMain.handle(IPC_CHANNELS.agentList, (event) => {
+  ipcMain.handle(IPC_CHANNELS.agentList, (event, input) => {
     assertTrustedSender(event);
-    return listAgentSessions();
+    const parsed = parseIpcInput(agentListSchema, input, IPC_CHANNELS.agentList);
+    return listAgentSessions(
+      parsed?.includeSessionId ? { includeSessionId: parsed.includeSessionId } : {},
+    );
+  });
+
+  ipcMain.handle(IPC_CHANNELS.agentListArchived, (event, workspaceId: string) => {
+    assertTrustedSender(event);
+    const id = parseIpcInput(sessionIdSchema, workspaceId, IPC_CHANNELS.agentListArchived);
+    return listArchivedAgentSessions(id);
   });
 
   ipcMain.handle(IPC_CHANNELS.agentListEvents, (event, sessionId: string) => {
@@ -384,10 +404,28 @@ export function registerAppIpc(): void {
     return await rollbackToUserMessage(getAgentRuntime(), parsed);
   });
 
+  ipcMain.handle(IPC_CHANNELS.agentPin, (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(sessionPinSchema, input, IPC_CHANNELS.agentPin);
+    return setAgentSessionPinned(parsed.id, parsed.pinned);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.agentArchive, async (event, sessionId: string) => {
+    assertTrustedSender(event);
+    const id = parseIpcInput(sessionIdSchema, sessionId, IPC_CHANNELS.agentArchive);
+    await setAgentSessionArchivedTree(id, true);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.agentRestore, async (event, sessionId: string) => {
+    assertTrustedSender(event);
+    const id = parseIpcInput(sessionIdSchema, sessionId, IPC_CHANNELS.agentRestore);
+    await setAgentSessionArchivedTree(id, false);
+  });
+
   ipcMain.handle(IPC_CHANNELS.agentDelete, async (event, sessionId: string) => {
     assertTrustedSender(event);
     const id = parseIpcInput(sessionIdSchema, sessionId, IPC_CHANNELS.agentDelete);
-    await archiveAgentSession(id);
+    await deleteAgentSessionTree(id);
   });
 
   ipcMain.handle(IPC_CHANNELS.agentApplySubagentWorktree, async (event, sessionId: string) => {

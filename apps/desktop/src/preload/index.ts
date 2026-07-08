@@ -1,11 +1,6 @@
 import type { IpcRendererEvent } from "electron";
 import { contextBridge, ipcRenderer } from "electron";
-import type {
-  AgentEvent,
-  BrowserEvent,
-  GitChangeEvent,
-  TerminalEvent,
-} from "../shared/contracts";
+import type { AgentEvent, BrowserEvent, GitChangeEvent, TerminalEvent } from "../shared/contracts";
 import type { ModusApi, SecurityState } from "./types";
 
 const api: ModusApi = {
@@ -19,6 +14,7 @@ const api: ModusApi = {
     pin: (input) => ipcRenderer.invoke("workspace:pin", input),
     rename: (input) => ipcRenderer.invoke("workspace:rename", input),
     archiveChats: (id) => ipcRenderer.invoke("workspace:archive-chats", { id }),
+    deleteChats: (id) => ipcRenderer.invoke("workspace:delete-chats", { id }),
     remove: (id) => ipcRenderer.invoke("workspace:remove", { id }),
     reveal: (id) => ipcRenderer.invoke("workspace:reveal", { id }),
   },
@@ -27,13 +23,17 @@ const api: ModusApi = {
   },
   agent: {
     create: (input) => ipcRenderer.invoke("agent:create", input),
-    list: () => ipcRenderer.invoke("agent:list"),
+    list: (input) => ipcRenderer.invoke("agent:list", input),
+    listArchived: (workspaceId) => ipcRenderer.invoke("agent:list-archived", workspaceId),
     listEvents: (sessionId) => ipcRenderer.invoke("agent:list-events", sessionId),
     listRuns: (sessionId) => ipcRenderer.invoke("agent:list-runs", sessionId),
     ensure: (sessionId) => ipcRenderer.invoke("agent:ensure", sessionId),
     prompt: (input) => ipcRenderer.invoke("agent:prompt", input),
     abort: (sessionId) => ipcRenderer.invoke("agent:abort", sessionId),
     rollback: (input) => ipcRenderer.invoke("agent:rollback", input),
+    pin: (input) => ipcRenderer.invoke("agent:pin", input),
+    archive: (sessionId) => ipcRenderer.invoke("agent:archive", sessionId),
+    restore: (sessionId) => ipcRenderer.invoke("agent:restore", sessionId),
     delete: (sessionId) => ipcRenderer.invoke("agent:delete", sessionId),
     applySubagentWorktree: (sessionId) =>
       ipcRenderer.invoke("agent:apply-subagent-worktree", sessionId),

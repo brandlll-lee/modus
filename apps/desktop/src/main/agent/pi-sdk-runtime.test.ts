@@ -134,7 +134,7 @@ vi.mock("./model-service", () => ({
 const { getDatabase } = await import("../db/database");
 const { PiSdkRuntime } = await import("./pi-sdk-runtime");
 const { toolRegistry } = await import("./tools/registry");
-const { archiveAgentSession } = await import("./session-lifecycle");
+const { deleteAgentSessionTree } = await import("./session-lifecycle");
 const { recordAgentEvent } = await import("./agent-event-store");
 const { writePlan, readPlanById } = await import("../plan/plan-store");
 const { setAgentToolContext } = await import("./tools/tool-context");
@@ -1131,7 +1131,7 @@ describe("PiSdkRuntime", () => {
       },
     ]);
 
-    await archiveAgentSession(parentSessionId);
+    await deleteAgentSessionTree(parentSessionId);
 
     expect(mocks.killManagedProcess).toHaveBeenCalledWith("terminal-archive-child");
     expect(

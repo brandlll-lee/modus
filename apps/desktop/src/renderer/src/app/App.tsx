@@ -170,7 +170,9 @@ export function App() {
   }, []);
 
   const refreshSessions = useCallback(async (): Promise<void> => {
-    setAgentSessions(await window.modus.agent.list());
+    setAgentSessions(
+      await window.modus.agent.list({ includeSessionId: activeSessionIdRef.current }),
+    );
   }, []);
 
   function publishLocalAgentEvent(event: AgentEvent): void {
@@ -272,9 +274,11 @@ export function App() {
     });
   }, [activeSessionId]);
 
-  // Drop the active session if it was archived elsewhere.
   useEffect(() => {
-    if (activeSessionId && !agentSessions.some((session) => session.id === activeSessionId)) {
+    if (!activeSessionId) {
+      return;
+    }
+    if (!agentSessions.some((session) => session.id === activeSessionId)) {
       setActiveSessionId(undefined);
     }
   }, [activeSessionId, agentSessions]);
@@ -284,7 +288,7 @@ export function App() {
     [activeSessionId, agentSessions],
   );
   const rootSessions = useMemo(
-    () => agentSessions.filter((session) => !session.parentSessionId),
+    () => agentSessions.filter((session) => !session.parentSessionId && !session.archivedAt),
     [agentSessions],
   );
 
@@ -339,6 +343,12 @@ export function App() {
     setActiveWorkspace(
       workspaces.find((workspace) => workspace.id === session.workspaceId) ?? activeWorkspace,
     );
+    setAgentSessions((current) => {
+      const exists = current.some((item) => item.id === session.id);
+      return exists
+        ? current.map((item) => (item.id === session.id ? session : item))
+        : [session, ...current];
+    });
     setActiveSessionId(session.id);
   }
 
@@ -392,12 +402,50 @@ export function App() {
     setActiveSessionId(undefined);
   }
 
+  async function pinSession(session: AgentSessionInfo, pinned: boolean): Promise<void> {
+    try {
+      const updated = await window.modus.agent.pin({ id: session.id, pinned });
+      if (updated) {
+        setAgentSessions((current) =>
+          current.map((item) => (item.id === updated.id ? updated : item)),
+        );
+      }
+    } catch (error) {
+      setSessionCreateError(error instanceof Error ? error.message : String(error));
+      return;
+    }
+    await refreshSessions();
+  }
+
   async function archiveSession(session: AgentSessionInfo): Promise<void> {
+    try {
+      await window.modus.agent.archive(session.id);
+    } catch (error) {
+      setSessionCreateError(error instanceof Error ? error.message : String(error));
+      return;
+    }
+    await refreshSessions();
+  }
+
+  async function restoreSession(session: AgentSessionInfo): Promise<void> {
+    try {
+      await window.modus.agent.restore(session.id);
+    } catch (error) {
+      setSessionCreateError(error instanceof Error ? error.message : String(error));
+      return;
+    }
+    await refreshSessions();
+  }
+
+  async function deleteSession(session: AgentSessionInfo): Promise<void> {
     try {
       await window.modus.agent.delete(session.id);
     } catch (error) {
       setSessionCreateError(error instanceof Error ? error.message : String(error));
       return;
+    }
+    if (activeSessionIdRef.current === session.id) {
+      setActiveSessionId(undefined);
     }
     await refreshSessions();
   }
@@ -417,6 +465,11 @@ export function App() {
 
   async function archiveProjectChats(id: string): Promise<void> {
     await window.modus.workspace.archiveChats(id);
+    await refreshSessions();
+  }
+
+  async function deleteProjectChats(id: string): Promise<void> {
+    await window.modus.workspace.deleteChats(id);
     if (activeWorkspaceRef.current?.id === id) {
       setActiveSessionId(undefined);
     }
@@ -637,10 +690,17 @@ export function App() {
                       agentSessions={rootSessions}
                       canCreateSession={canCreateSession}
                       onArchiveSession={(session) => void archiveSession(session)}
+                      onDeleteSession={(session) => void deleteSession(session)}
+                      onListArchivedSessions={(workspaceId) =>
+                        window.modus.agent.listArchived(workspaceId)
+                      }
                       onPinProject={(id, pinned) => void pinProject(id, pinned)}
+                      onPinSession={(session, pinned) => void pinSession(session, pinned)}
                       onRenameProject={(id, displayName) => void renameProject(id, displayName)}
                       onArchiveProjectChats={(id) => void archiveProjectChats(id)}
+                      onDeleteProjectChats={(id) => void deleteProjectChats(id)}
                       onRemoveProject={(id) => void removeProject(id)}
+                      onRestoreSession={(session) => void restoreSession(session)}
                       onRevealProject={(id) => void revealProject(id)}
                       onNewSession={() => openNewChat()}
                       onNewWorkspaceSession={(workspace) => openNewChat(workspace)}

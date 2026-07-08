@@ -23,6 +23,8 @@ export type AgentSessionInfo = {
   subagentType?: string;
   subagentReadOnly?: boolean;
   subagentWorktree?: SubagentWorktreeInfo;
+  pinnedAt?: string;
+  archivedAt?: string;
   createdAt: string;
   updatedAt: string;
 };

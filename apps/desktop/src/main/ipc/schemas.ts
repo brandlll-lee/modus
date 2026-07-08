@@ -36,6 +36,11 @@ export const workspaceIdSchema = z.object({
   id: nonEmptyString,
 });
 
+export const sessionPinSchema = z.object({
+  id: nonEmptyString,
+  pinned: z.boolean(),
+});
+
 /** ~10 MB of raw image bytes once base64-decoded. */
 const MAX_ATTACHMENT_BASE64_CHARS = 14_000_000;
 
@@ -70,6 +75,12 @@ export const agentPromptSchema = z.object({
 });
 
 export const sessionIdSchema = nonEmptyString;
+
+export const agentListSchema = z
+  .object({
+    includeSessionId: optionalNonEmptyString,
+  })
+  .optional();
 
 export const agentRollbackSchema = z.object({
   sessionId: nonEmptyString,

@@ -22,9 +22,17 @@ type AgentSessionRow = {
   subagent_integration_status: string | null;
   subagent_changed_files_json: string | null;
   subagent_conflict_files_json: string | null;
+  pinned_at: string | null;
+  archived_at: string | null;
   created_at: string;
   updated_at: string;
 };
+
+const SESSION_COLUMNS = `id, workspace_id, title, cwd, status, runtime, model, pi_session_id,
+  pi_session_file, parent_session_id, subagent_task, subagent_type, subagent_readonly,
+  subagent_worktree_path, subagent_worktree_branch, subagent_worktree_base_sha,
+  subagent_integration_status, subagent_changed_files_json, subagent_conflict_files_json,
+  pinned_at, archived_at, created_at, updated_at`;
 
 function parseJsonArray(text: string | null): string[] | undefined {
   if (!text) return undefined;
@@ -61,6 +69,12 @@ function toSession(row: AgentSessionRow): AgentSessionInfo {
   }
   if (row.parent_session_id !== null) {
     session.parentSessionId = row.parent_session_id;
+  }
+  if (row.pinned_at !== null) {
+    session.pinnedAt = row.pinned_at;
+  }
+  if (row.archived_at !== null) {
+    session.archivedAt = row.archived_at;
   }
   if (row.subagent_task !== null) {
     session.subagentTask = row.subagent_task;
@@ -278,11 +292,7 @@ export function updateAgentSessionTitle(
 export function getAgentSession(sessionId: string): AgentSessionInfo | undefined {
   const row = getDatabase()
     .prepare(
-      `select id, workspace_id, title, cwd, status, runtime, model, pi_session_id,
-        pi_session_file, parent_session_id, subagent_task, subagent_type, subagent_readonly,
-        subagent_worktree_path, subagent_worktree_branch, subagent_worktree_base_sha,
-        subagent_integration_status, subagent_changed_files_json, subagent_conflict_files_json,
-        created_at, updated_at
+      `select ${SESSION_COLUMNS}
        from agent_sessions
        where id = ?`,
     )
@@ -291,18 +301,38 @@ export function getAgentSession(sessionId: string): AgentSessionInfo | undefined
   return row ? toSession(row) : undefined;
 }
 
-export function listAgentSessions(): AgentSessionInfo[] {
+export function listAgentSessions(options: { includeSessionId?: string } = {}): AgentSessionInfo[] {
   const rows = getDatabase()
     .prepare(
-      `select id, workspace_id, title, cwd, status, runtime, model, pi_session_id,
-        pi_session_file, parent_session_id, subagent_task, subagent_type, subagent_readonly,
-        subagent_worktree_path, subagent_worktree_branch, subagent_worktree_base_sha,
-        subagent_integration_status, subagent_changed_files_json, subagent_conflict_files_json,
-        created_at, updated_at
+      `select ${SESSION_COLUMNS}
        from agent_sessions
-       order by updated_at desc`,
+       where archived_at is null
+       order by pinned_at is null, pinned_at desc, updated_at desc`,
     )
     .all() as AgentSessionRow[];
+
+  const sessions = rows.map(toSession);
+  if (
+    options.includeSessionId &&
+    !sessions.some((session) => session.id === options.includeSessionId)
+  ) {
+    const included = getAgentSession(options.includeSessionId);
+    if (included) {
+      sessions.push(included);
+    }
+  }
+  return sessions;
+}
+
+export function listArchivedAgentSessions(workspaceId: string): AgentSessionInfo[] {
+  const rows = getDatabase()
+    .prepare(
+      `select ${SESSION_COLUMNS}
+       from agent_sessions
+       where workspace_id = ? and parent_session_id is null and archived_at is not null
+       order by archived_at desc`,
+    )
+    .all(workspaceId) as AgentSessionRow[];
 
   return rows.map(toSession);
 }
@@ -310,11 +340,7 @@ export function listAgentSessions(): AgentSessionInfo[] {
 export function listSubagentSessions(parentSessionId: string): AgentSessionInfo[] {
   const rows = getDatabase()
     .prepare(
-      `select id, workspace_id, title, cwd, status, runtime, model, pi_session_id,
-        pi_session_file, parent_session_id, subagent_task, subagent_type, subagent_readonly,
-        subagent_worktree_path, subagent_worktree_branch, subagent_worktree_base_sha,
-        subagent_integration_status, subagent_changed_files_json, subagent_conflict_files_json,
-        created_at, updated_at
+      `select ${SESSION_COLUMNS}
        from agent_sessions
        where parent_session_id = ?
        order by created_at asc, rowid asc`,
@@ -324,10 +350,31 @@ export function listSubagentSessions(parentSessionId: string): AgentSessionInfo[
   return rows.map(toSession);
 }
 
+export function setAgentSessionPinned(
+  sessionId: string,
+  pinned: boolean,
+): AgentSessionInfo | undefined {
+  const now = new Date().toISOString();
+  getDatabase()
+    .prepare("update agent_sessions set pinned_at = ?, updated_at = ? where id = ?")
+    .run(pinned ? now : null, now, sessionId);
+  return getAgentSession(sessionId);
+}
+
+export function setAgentSessionArchived(
+  sessionId: string,
+  archived: boolean,
+): AgentSessionInfo | undefined {
+  const now = new Date().toISOString();
+  getDatabase()
+    .prepare("update agent_sessions set archived_at = ?, updated_at = ? where id = ?")
+    .run(archived ? now : null, now, sessionId);
+  return getAgentSession(sessionId);
+}
+
 /**
  * Permanently removes a session and (via `on delete cascade`) its recorded
- * events and runs. Used by the sidebar "Archive" action, which clears the
- * conversation from the list.
+ * events and runs. Used by the explicit delete action.
  */
 export function deleteAgentSession(sessionId: string): void {
   getDatabase().prepare("delete from agent_sessions where id = ?").run(sessionId);

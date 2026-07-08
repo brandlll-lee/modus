@@ -1,6 +1,7 @@
 import { Menu } from "@base-ui/react/menu";
 import {
   IconArchive,
+  IconArchiveOff,
   IconChevronRight,
   IconClock,
   IconDots,
@@ -15,6 +16,7 @@ import {
   IconPinnedOff,
   IconSearch,
   IconSettings,
+  IconTrash,
   IconX,
 } from "@tabler/icons-react";
 import { animate, m, useMotionValue } from "motion/react";
@@ -51,10 +53,15 @@ type SidebarProps = {
   onSelectSession(session: AgentSessionInfo): void;
   onNewSession(): void;
   onNewWorkspaceSession(workspace: WorkspaceInfo): void;
+  onPinSession(session: AgentSessionInfo, pinned: boolean): void;
   onArchiveSession(session: AgentSessionInfo): void;
+  onRestoreSession(session: AgentSessionInfo): void;
+  onDeleteSession(session: AgentSessionInfo): void;
+  onListArchivedSessions(workspaceId: string): Promise<AgentSessionInfo[]>;
   onPinProject(id: string, pinned: boolean): void;
   onRenameProject(id: string, displayName: string): void;
   onArchiveProjectChats(id: string): void;
+  onDeleteProjectChats(id: string): void;
   onRemoveProject(id: string): void;
   onRevealProject(id: string): void;
   onOpenSettings(): void;
@@ -75,10 +82,15 @@ export function Sidebar({
   onSelectSession,
   onNewSession,
   onNewWorkspaceSession,
+  onPinSession,
   onArchiveSession,
+  onRestoreSession,
+  onDeleteSession,
+  onListArchivedSessions,
   onPinProject,
   onRenameProject,
   onArchiveProjectChats,
+  onDeleteProjectChats,
   onRemoveProject,
   onRevealProject,
   onOpenSettings,
@@ -201,7 +213,11 @@ export function Sidebar({
                   activityBySession={activityBySession}
                   key={workspace.id}
                   onArchiveSession={onArchiveSession}
+                  onDeleteSession={onDeleteSession}
+                  onListArchivedSessions={onListArchivedSessions}
                   onNewSession={() => onNewWorkspaceSession(workspace)}
+                  onPinSession={onPinSession}
+                  onRestoreSession={onRestoreSession}
                   onSelectSession={onSelectSession}
                   activeSessionId={activeSessionId}
                   sessions={sessionsByWorkspace.get(workspace.id) ?? []}
@@ -219,6 +235,7 @@ export function Sidebar({
                   onPin={() => onPinProject(workspace.id, !workspace.pinned)}
                   onReveal={() => onRevealProject(workspace.id)}
                   onArchiveChats={() => onArchiveProjectChats(workspace.id)}
+                  onDeleteChats={() => onDeleteProjectChats(workspace.id)}
                   onRemove={() => onRemoveProject(workspace.id)}
                 />
               ))
@@ -271,7 +288,11 @@ function WorkspaceItem({
   sessions,
   onSelectSession,
   onNewSession,
+  onPinSession,
   onArchiveSession,
+  onRestoreSession,
+  onDeleteSession,
+  onListArchivedSessions,
   renaming,
   onStartRename,
   onCommitRename,
@@ -279,6 +300,7 @@ function WorkspaceItem({
   onPin,
   onReveal,
   onArchiveChats,
+  onDeleteChats,
   onRemove,
 }: {
   workspace: WorkspaceInfo;
@@ -287,7 +309,11 @@ function WorkspaceItem({
   sessions: AgentSessionInfo[];
   onSelectSession(session: AgentSessionInfo): void;
   onNewSession(): void;
+  onPinSession(session: AgentSessionInfo, pinned: boolean): void;
   onArchiveSession(session: AgentSessionInfo): void;
+  onRestoreSession(session: AgentSessionInfo): void;
+  onDeleteSession(session: AgentSessionInfo): void;
+  onListArchivedSessions(workspaceId: string): Promise<AgentSessionInfo[]>;
   renaming: boolean;
   onStartRename(): void;
   onCommitRename(name: string): void;
@@ -295,9 +321,22 @@ function WorkspaceItem({
   onPin(): void;
   onReveal(): void;
   onArchiveChats(): void;
+  onDeleteChats(): void;
   onRemove(): void;
 }) {
   const [expanded, setExpanded] = useState(true);
+  const [archivedOpen, setArchivedOpen] = useState(false);
+  const [archivedSessions, setArchivedSessions] = useState<AgentSessionInfo[] | undefined>();
+
+  const toggleArchived = (): void => {
+    const nextOpen = !archivedOpen;
+    setArchivedOpen(nextOpen);
+    setExpanded(true);
+    if (nextOpen && !archivedSessions) {
+      void onListArchivedSessions(workspace.id).then(setArchivedSessions);
+    }
+  };
+
   return (
     <>
       <ProjectRow
@@ -316,7 +355,9 @@ function WorkspaceItem({
         onCancelRename={onCancelRename}
         onPin={onPin}
         onReveal={onReveal}
+        onShowArchived={toggleArchived}
         onArchiveChats={onArchiveChats}
+        onDeleteChats={onDeleteChats}
         onRemove={onRemove}
         title={workspace.rootPath}
       >
@@ -332,11 +373,43 @@ function WorkspaceItem({
               event.stopPropagation();
               onArchiveSession(session);
             }}
+            onDelete={(event) => {
+              event.stopPropagation();
+              onDeleteSession(session);
+            }}
+            onPin={(event) => {
+              event.stopPropagation();
+              onPinSession(session, !session.pinnedAt);
+            }}
             onSelect={() => onSelectSession(session)}
+            pinned={Boolean(session.pinnedAt)}
             title={session.title}
             updatedAt={session.updatedAt}
           />
         ))}
+        <CollapsibleMotion open={archivedOpen} preset="default">
+          <div className="mt-1 space-y-0.5 pl-[30px]">
+            {archivedSessions === undefined ? (
+              <div className="px-3 py-1 text-2xs text-fg-faint">Loading archived chats…</div>
+            ) : archivedSessions.length === 0 ? (
+              <div className="px-3 py-1 text-2xs text-fg-faint">No archived chats</div>
+            ) : (
+              archivedSessions.map((session) => (
+                <ArchivedSessionRow
+                  key={session.id}
+                  onOpen={() => onSelectSession(session)}
+                  onRestore={() => {
+                    setArchivedSessions((current) =>
+                      current?.filter((item) => item.id !== session.id),
+                    );
+                    onRestoreSession(session);
+                  }}
+                  session={session}
+                />
+              ))
+            )}
+          </div>
+        </CollapsibleMotion>
       </CollapsibleMotion>
     </>
   );
@@ -346,20 +419,35 @@ function SessionRow({
   title,
   updatedAt,
   isActive,
+  pinned,
   activity,
   onSelect,
+  onPin,
   onArchive,
+  onDelete,
 }: {
   title: string;
   updatedAt: string;
   isActive: boolean;
+  pinned: boolean;
   activity: SessionActivity | undefined;
   onSelect(): void;
+  onPin(event: MouseEvent<HTMLButtonElement>): void;
   onArchive(event: MouseEvent<HTMLButtonElement>): void;
+  onDelete(event: MouseEvent<HTMLButtonElement>): void;
 }) {
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const hasStatus = Boolean(
     activity && (activity.running || activity.needsInput || activity.unread || activity.failed),
   );
+  useEffect(() => {
+    if (!confirmDelete) {
+      return;
+    }
+    const timeout = window.setTimeout(() => setConfirmDelete(false), 2500);
+    return () => window.clearTimeout(timeout);
+  }, [confirmDelete]);
+
   return (
     <m.div
       className={cn(
@@ -367,6 +455,12 @@ function SessionRow({
         isActive ? "bg-active text-fg" : "text-fg-muted hover:text-fg",
       )}
       layout
+      onBlurCapture={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) {
+          setConfirmDelete(false);
+        }
+      }}
+      onMouseLeave={() => setConfirmDelete(false)}
       transition={{ duration: 0.14, ease: "easeOut" }}
     >
       <button
@@ -376,7 +470,6 @@ function SessionRow({
         type="button"
       >
         <span className="min-w-0 flex-1 truncate">{title}</span>
-        {hasStatus ? <SessionStatusDot activity={activity} className="ml-1" /> : null}
         <span
           className={cn(
             "shrink-0 text-xs font-normal text-fg-faint group-hover:hidden",
@@ -385,13 +478,69 @@ function SessionRow({
         >
           {formatRelativeTime(updatedAt)}
         </span>
+        {hasStatus ? (
+          <SessionStatusDot activity={activity} className="ml-1 group-hover:hidden" />
+        ) : null}
       </button>
       <span className="ml-1 hidden shrink-0 items-center group-hover:flex group-focus-within:flex">
+        <IconButton label={pinned ? "Unpin chat" : "Pin chat"} onClick={onPin}>
+          {pinned ? <IconPinnedOff size={14} stroke={1.8} /> : <IconPin size={14} stroke={1.8} />}
+        </IconButton>
         <IconButton label="Archive" onClick={onArchive}>
           <IconArchive size={14} stroke={1.8} />
         </IconButton>
+        {confirmDelete ? (
+          <button
+            className="ml-0.5 h-6 rounded-md px-1.5 text-2xs text-danger transition-colors hover:bg-active"
+            onClick={onDelete}
+            type="button"
+          >
+            Confirm
+          </button>
+        ) : (
+          <IconButton
+            label="Delete"
+            onClick={(event) => {
+              event.stopPropagation();
+              setConfirmDelete(true);
+            }}
+          >
+            <IconTrash size={14} stroke={1.8} />
+          </IconButton>
+        )}
       </span>
     </m.div>
+  );
+}
+
+function ArchivedSessionRow({
+  session,
+  onOpen,
+  onRestore,
+}: {
+  session: AgentSessionInfo;
+  onOpen(): void;
+  onRestore(): void;
+}) {
+  return (
+    <div className="group flex h-[30px] items-center rounded-lg pr-1 text-sm text-fg-faint transition-colors hover:bg-hover hover:text-fg-muted">
+      <button
+        className="min-w-0 flex-1 truncate py-1.5 pr-1 pl-3 text-left"
+        onClick={onOpen}
+        title="Open archived chat"
+        type="button"
+      >
+        {session.title}
+      </button>
+      <span className="mr-1 text-2xs text-fg-faint group-hover:hidden">
+        {formatRelativeTime(session.archivedAt ?? session.updatedAt)}
+      </span>
+      <span className="hidden shrink-0 group-hover:flex group-focus-within:flex">
+        <IconButton label="Restore" onClick={onRestore}>
+          <IconArchiveOff size={14} stroke={1.8} />
+        </IconButton>
+      </span>
+    </div>
   );
 }
 
@@ -407,7 +556,9 @@ function ProjectRow({
   onCancelRename,
   onPin,
   onReveal,
+  onShowArchived,
   onArchiveChats,
+  onDeleteChats,
   onRemove,
   title,
 }: {
@@ -422,7 +573,9 @@ function ProjectRow({
   onCancelRename(): void;
   onPin(): void;
   onReveal(): void;
+  onShowArchived(): void;
   onArchiveChats(): void;
+  onDeleteChats(): void;
   onRemove(): void;
   title?: string;
 }) {
@@ -443,10 +596,12 @@ function ProjectRow({
   return (
     <ProjectActions
       onArchiveChats={onArchiveChats}
+      onDeleteChats={onDeleteChats}
       onPin={onPin}
       onRemove={onRemove}
       onRename={onStartRename}
       onReveal={onReveal}
+      onShowArchived={onShowArchived}
       pinned={pinned}
     >
       {(menuOpen, trigger) => (
@@ -616,7 +771,9 @@ function ProjectActions({
   onPin,
   onReveal,
   onRename,
+  onShowArchived,
   onArchiveChats,
+  onDeleteChats,
   onRemove,
   children,
 }: {
@@ -624,11 +781,14 @@ function ProjectActions({
   onPin(): void;
   onReveal(): void;
   onRename(): void;
+  onShowArchived(): void;
   onArchiveChats(): void;
+  onDeleteChats(): void;
   onRemove(): void;
   children(open: boolean, trigger: ReactNode): ReactNode;
 }) {
   const [open, setOpen] = useState(false);
+  const [confirmDeleteChats, setConfirmDeleteChats] = useState(false);
   const trigger = (
     <Menu.Trigger
       aria-label="Project actions"
@@ -639,7 +799,15 @@ function ProjectActions({
     </Menu.Trigger>
   );
   return (
-    <Menu.Root onOpenChange={setOpen} open={open}>
+    <Menu.Root
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen);
+        if (!nextOpen) {
+          setConfirmDeleteChats(false);
+        }
+      }}
+      open={open}
+    >
       {children(open, trigger)}
       <Menu.Portal>
         <Menu.Positioner align="start" side="bottom" sideOffset={4}>
@@ -662,10 +830,30 @@ function ProjectActions({
             <ProjectMenuItem icon={<IconPencil size={15} stroke={1.7} />} onClick={onRename}>
               Rename project
             </ProjectMenuItem>
+            <ProjectMenuItem
+              icon={<IconArchiveOff size={15} stroke={1.7} />}
+              onClick={onShowArchived}
+            >
+              Archived chats
+            </ProjectMenuItem>
             <ProjectMenuItem icon={<IconArchive size={15} stroke={1.7} />} onClick={onArchiveChats}>
               Archive chats
             </ProjectMenuItem>
             <div className="my-1 h-px bg-hairline" />
+            <ProjectMenuItem
+              danger
+              icon={<IconTrash size={15} stroke={1.7} />}
+              onClick={() => {
+                if (!confirmDeleteChats) {
+                  setConfirmDeleteChats(true);
+                  return;
+                }
+                setConfirmDeleteChats(false);
+                onDeleteChats();
+              }}
+            >
+              {confirmDeleteChats ? "Confirm delete chats" : "Delete chats"}
+            </ProjectMenuItem>
             <ProjectMenuItem danger icon={<IconX size={15} stroke={1.7} />} onClick={onRemove}>
               Remove
             </ProjectMenuItem>

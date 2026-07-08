@@ -98,8 +98,10 @@ export type ModusApi = {
     pin(input: { id: string; pinned: boolean }): Promise<WorkspaceInfo[]>;
     /** Rename a project's sidebar label; returns the updated recents. */
     rename(input: { id: string; displayName: string }): Promise<WorkspaceInfo[]>;
-    /** Archive all of a project's chats; returns the number removed. */
+    /** Soft-archive all of a project's visible chats; returns the number archived. */
     archiveChats(id: string): Promise<number>;
+    /** Permanently delete all of a project's chats; returns the number deleted. */
+    deleteChats(id: string): Promise<number>;
     /** Remove a project from Modus (files kept); returns the updated recents. */
     remove(id: string): Promise<WorkspaceInfo[]>;
     /** Reveal a project's root folder in the OS file manager. */
@@ -116,7 +118,8 @@ export type ModusApi = {
       title: string;
       model?: string;
     }): Promise<AgentSessionInfo>;
-    list(): Promise<AgentSessionInfo[]>;
+    list(input?: { includeSessionId?: string }): Promise<AgentSessionInfo[]>;
+    listArchived(workspaceId: string): Promise<AgentSessionInfo[]>;
     listEvents(
       sessionId: string,
     ): Promise<Array<{ id: string; event: AgentEvent; createdAt?: string }>>;
@@ -144,6 +147,9 @@ export type ModusApi = {
      * from that message onward. Used by the timeline's "edit & resend".
      */
     rollback(input: { sessionId: string; userMessageId: string }): Promise<AgentRollbackResult>;
+    pin(input: { id: string; pinned: boolean }): Promise<AgentSessionInfo | undefined>;
+    archive(sessionId: string): Promise<void>;
+    restore(sessionId: string): Promise<void>;
     delete(sessionId: string): Promise<void>;
     applySubagentWorktree(sessionId: string): Promise<AgentSessionInfo>;
     abortSubagentWorktreeApply(sessionId: string): Promise<AgentSessionInfo>;

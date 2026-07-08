@@ -187,6 +187,8 @@ function migrate(db: DatabaseSync): void {
   addColumn(db, "agent_sessions", "subagent_integration_status", "text");
   addColumn(db, "agent_sessions", "subagent_changed_files_json", "text");
   addColumn(db, "agent_sessions", "subagent_conflict_files_json", "text");
+  addColumn(db, "agent_sessions", "pinned_at", "text");
+  addColumn(db, "agent_sessions", "archived_at", "text");
   db.exec(`
     create index if not exists idx_agent_sessions_parent
       on agent_sessions(parent_session_id);
