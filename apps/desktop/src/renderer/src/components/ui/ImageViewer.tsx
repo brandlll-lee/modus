@@ -13,36 +13,29 @@ import {
 import { cn } from "../../lib/cn";
 import { useSuppressNativeSurface } from "./nativeSurface";
 
-/** A rect in viewport (CSS px) coordinates — the thumbnail the viewer grows from. */
-type OriginRect = { x: number; y: number; width: number; height: number };
-type ViewportSize = { width: number; height: number };
+type Size = { width: number; height: number };
 type DrawPoint = { x: number; y: number };
 type DrawStroke = DrawPoint[];
 
 type ViewerState = {
   src: string;
   alt: string;
-  origin: OriginRect;
   onSaveEdited?(dataUrl: string): void;
   /** Intrinsic image size, so the centered target keeps the true aspect ratio. */
-  natural: { width: number; height: number };
+  natural: Size;
 };
 
 type ImageViewerContextValue = {
-  /**
-   * Open the full-size viewer for one image, growing from the clicked
-   * thumbnail's rect. Pass `event.currentTarget.getBoundingClientRect()`.
-   */
   open(
     src: string,
     alt: string | undefined,
-    originRect: DOMRect | OriginRect,
+    natural: Size,
     onSaveEdited?: (dataUrl: string) => void,
   ): void;
 };
 
 const ImageViewerContext = createContext<ImageViewerContextValue | null>(null);
-const getViewportSize = (): ViewportSize => ({
+const getViewportSize = (): Size => ({
   width: window.innerWidth,
   height: window.innerHeight,
 });
@@ -51,44 +44,20 @@ const getViewportSize = (): ViewportSize => ({
  * App-level image lightbox. Any thumbnail in the app (composer attachments, the
  * Design Mode element token, sent-message images) calls `useImageViewer().open`
  * to pop the full image to the center of the window over a dark backdrop, with
- * a FLIP transform animation that grows from — and on dismiss returns to — the
- * thumbnail. Click the backdrop or press Esc to close. One viewer instance, so
- * the behavior and polish are identical everywhere (Cursor parity).
+ * a centered lightbox. Click the backdrop or press Esc to close. One viewer
+ * instance keeps the behavior identical everywhere.
  */
 export function ImageViewerProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<ViewerState | null>(null);
 
   const open = useCallback<ImageViewerContextValue["open"]>(
-    (src, alt, originRect, onSaveEdited) => {
-      const origin: OriginRect = {
-        x: originRect.x,
-        y: originRect.y,
-        width: originRect.width,
-        height: originRect.height,
-      };
-      const show = (natural: ViewerState["natural"]) => {
-        setState({
-          src,
-          alt: alt ?? "image",
-          origin,
-          ...(onSaveEdited ? { onSaveEdited } : {}),
-          natural,
-        });
-      };
-      // Preload to learn the intrinsic size before showing, so the grow target is
-      // exact (no aspect jump). The thumbnail already decoded the data URL, so
-      // this resolves immediately from cache in practice.
-      const probe = new Image();
-      probe.onload = () => {
-        show({
-          width: probe.naturalWidth || origin.width,
-          height: probe.naturalHeight || origin.height,
-        });
-      };
-      probe.onerror = () => {
-        show(origin);
-      };
-      probe.src = src;
+    (src, alt, natural, onSaveEdited) => {
+      setState({
+        src,
+        alt: alt ?? "image",
+        ...(onSaveEdited ? { onSaveEdited } : {}),
+        natural,
+      });
     },
     [],
   );
@@ -134,12 +103,8 @@ export function useImageViewer(): ImageViewerContextValue {
 /**
  * A previewable image thumbnail. Renders the same `<img>` it always did (styled
  * by `className`) and, on click, pops it into the app-level {@link ImageViewer}
- * lightbox growing from this thumbnail's on-screen rect. The wrapping button
- * uses `display: contents` so it adds no box of its own — the image's layout is
- * byte-for-byte what a bare `<img className=...>` would produce — while keeping
- * the thumbnail keyboard-focusable and click-to-zoom. Use this everywhere a
- * previewable thumbnail appears (composer attachments, the Design Mode element
- * token, sent-message images) so the zoom behavior is identical app-wide.
+ * lightbox. The wrapping button uses `display: contents` so it adds no box of
+ * its own while keeping the thumbnail keyboard-focusable and click-to-zoom.
  */
 export function ImageThumb({
   src,
@@ -164,9 +129,17 @@ export function ImageThumb({
         // Don't let the click reach a parent (e.g. a context token that removes
         // itself on click) — opening the viewer is the thumbnail's own action.
         event.stopPropagation();
-        const rect = imgRef.current?.getBoundingClientRect();
-        if (rect) {
-          open(src, alt, rect, onSaveEdited);
+        const image = imgRef.current;
+        if (image) {
+          open(
+            src,
+            alt,
+            {
+              width: Math.max(1, image.naturalWidth, image.clientWidth),
+              height: Math.max(1, image.naturalHeight, image.clientHeight),
+            },
+            onSaveEdited,
+          );
         }
       }}
       type="button"
@@ -187,7 +160,7 @@ export function ImageThumb({
 const EASE_BEZIER = [0.16, 1, 0.3, 1] as const;
 
 function ImageViewerOverlay({ state, onClose }: { state: ViewerState; onClose(): void }) {
-  const { src, alt, origin, natural, onSaveEdited } = state;
+  const { src, alt, natural, onSaveEdited } = state;
   const [viewport, setViewport] = useState(getViewportSize);
   const [drawing, setDrawing] = useState(false);
   const [strokes, setStrokes] = useState<DrawStroke[]>([]);
@@ -225,17 +198,6 @@ function ImageViewerOverlay({ state, onClose }: { state: ViewerState; onClose():
       imageHeight,
     };
   }, [viewport, natural]);
-
-  // FLIP: animate a transform from the thumbnail rect to the centered target
-  // (transform is GPU-cheap and smooth, unlike animating top/left/width/height).
-  const centeredLeft = (viewport.width - stage.width) / 2;
-  const centeredTop = (viewport.height - stage.height) / 2;
-  const fromTransform = {
-    x: origin.x - centeredLeft,
-    y: origin.y - centeredTop,
-    scaleX: origin.width / stage.width,
-    scaleY: origin.height / stage.height,
-  };
 
   const redraw = useCallback(() => {
     const canvas = canvasRef.current;
@@ -318,20 +280,19 @@ function ImageViewerOverlay({ state, onClose }: { state: ViewerState; onClose():
         exit={{ opacity: 0 }}
         initial={{ opacity: 0 }}
         onClick={drawing ? undefined : onClose}
-        transition={{ duration: 0.28, ease: "easeOut" }}
+        transition={{ duration: 0.18, ease: "easeOut" }}
       />
       <m.div
-        animate={{ x: 0, y: 0, scaleX: 1, scaleY: 1, opacity: 1 }}
+        animate={{ opacity: 1, scale: 1 }}
         className="relative z-10 flex items-center justify-center overflow-hidden rounded-xl border border-hairline bg-elevated shadow-popup"
-        exit={{ ...fromTransform, opacity: 0 }}
-        initial={{ ...fromTransform, opacity: 0.4 }}
+        exit={{ opacity: 0, scale: 0.98 }}
+        initial={{ opacity: 0, scale: 0.98 }}
         style={{
           width: stage.width,
           height: stage.height,
           padding: stage.padding,
-          transformOrigin: "top left",
         }}
-        transition={{ duration: 0.34, ease: EASE_BEZIER }}
+        transition={{ duration: 0.18, ease: EASE_BEZIER }}
       >
         <div className="relative" style={{ width: stage.imageWidth, height: stage.imageHeight }}>
           <img
@@ -374,10 +335,10 @@ function ImageViewerOverlay({ state, onClose }: { state: ViewerState; onClose():
         </div>
         <m.div
           animate={{ opacity: 1, y: 0 }}
-          className="app-no-drag absolute top-3 right-3 flex items-center gap-1.5 rounded-lg border border-hairline bg-elevated/95 p-1 shadow-popup backdrop-blur"
+          className="app-no-drag absolute top-3 right-3 flex items-center gap-1.5 rounded-lg border border-hairline bg-elevated/95 p-1 shadow-popup"
           exit={{ opacity: 0 }}
           initial={{ opacity: 0, y: -4 }}
-          transition={{ duration: 0.2, ease: "easeOut", delay: 0.12 }}
+          transition={{ duration: 0.16, ease: "easeOut", delay: 0.04 }}
         >
           {drawing ? (
             <>

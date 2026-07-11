@@ -524,12 +524,11 @@ function BrowserViewport({
   const hostRef = useRef<HTMLDivElement | null>(null);
   const leftInsetRef = useRef(leftInset);
   const syncBoundsRef = useRef<(() => void) | null>(null);
-  leftInsetRef.current = leftInset;
   // A full-screen DOM overlay (e.g. the image lightbox) is on top: native views
   // paint above the DOM, so the embedded browser must hide until it closes.
   const suppressed = useNativeSurfaceSuppressed();
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const host = hostRef.current;
     if (!active || !tabId || !host) {
       syncBoundsRef.current = null;
@@ -603,6 +602,7 @@ function BrowserViewport({
   }, [active, tabId, suppressed]);
 
   useLayoutEffect(() => {
+    leftInsetRef.current = leftInset;
     syncBoundsRef.current?.();
   }, [leftInset]);
 

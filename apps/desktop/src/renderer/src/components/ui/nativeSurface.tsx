@@ -1,4 +1,4 @@
-import { createContext, type ReactNode, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, type ReactNode, useContext, useLayoutEffect, useMemo, useState } from "react";
 
 /**
  * Coordinates native-view occlusion for full-screen DOM overlays.
@@ -66,5 +66,5 @@ export function useNativeSurfaceSuppressed(): boolean {
  */
 export function useSuppressNativeSurface(): void {
   const control = useContext(NativeSurfaceControlContext);
-  useEffect(() => control?.acquire(), [control]);
+  useLayoutEffect(() => control?.acquire(), [control]);
 }
