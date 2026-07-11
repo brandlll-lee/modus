@@ -1,3 +1,5 @@
+import "katex/dist/katex.min.css";
+import "streamdown/styles.css";
 import { cjk } from "@streamdown/cjk";
 import { createCodePlugin } from "@streamdown/code";
 import { createMathPlugin } from "@streamdown/math";
@@ -105,18 +107,12 @@ function buildMermaidConfig(theme: ThemeMode): MermaidConfig {
  * (b) saturates the main thread → text + tool loading stutter.
  * Hoisting these to module-level constants keeps the references stable so only
  * the last streaming block re-renders incrementally.
- * Refs: https://streamdown.ai/docs/memoization, vercel/streamdown#435
- *
- * Per-word reveal: `blurIn` fades each streamed word in. Paired with the
- * client-side typewriter (useSmoothStreamingText) this is what makes streaming
- * read as smooth real-time output rather than batches popping in. stagger stays
- * 0 (Streamdown 2.5's stagger has no inter-block coordination → out-of-order
- * reveal, vercel/streamdown#482/#437); pacing comes from the typewriter. */
+ * Refs: https://streamdown.ai/docs/memoization, vercel/streamdown#435 */
 const STREAMING_ANIMATION: NonNullable<StreamdownProps["animated"]> = {
-  animation: "blurIn",
-  duration: 220,
+  animation: "fadeIn",
+  duration: 120,
   easing: "ease-out",
-  sep: "word",
+  sep: "char",
   stagger: 0,
 };
 
@@ -202,7 +198,7 @@ export default function MarkdownMessageRenderer({
 
   return (
     <Streamdown
-      animated={streaming ? STREAMING_ANIMATION : false}
+      animated={STREAMING_ANIMATION}
       className={cn("modus-markdown text-fg", className)}
       components={components}
       controls={controls}

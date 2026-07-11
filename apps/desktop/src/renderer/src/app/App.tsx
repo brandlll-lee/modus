@@ -944,7 +944,6 @@ export function App() {
                                     workspaces={workspaces}
                                   />
                                 }
-                                hasSession={false}
                                 mode={heroMode}
                                 model={model}
                                 models={models}

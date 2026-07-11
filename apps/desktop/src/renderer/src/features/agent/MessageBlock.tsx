@@ -89,8 +89,6 @@ export const MessageBlock = memo(function MessageBlock({
   skills,
 }: MessageBlockProps) {
   const [editing, setEditing] = useState(false);
-  // Smoothly reveal assistant text like a typewriter, decoupled from bursty
-  // provider chunks. User messages are already complete, so this is a no-op.
   const displayContent = useSmoothStreamingText(content, streaming);
 
   if (messageRole === "user") {

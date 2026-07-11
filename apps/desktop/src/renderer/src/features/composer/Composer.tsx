@@ -31,7 +31,6 @@ import type {
 } from "../../../../shared/contracts";
 import { ImageThumb } from "../../components/ui/ImageViewer";
 import { ShineBorder } from "../../components/ui/ShineBorder";
-import { TypingAnimation } from "../../components/ui/TypingAnimation";
 import { cn } from "../../lib/cn";
 import {
   modelThinkingOptions,
@@ -52,16 +51,7 @@ import {
 import { type MentionRow, useComposerMentions } from "./useComposerMentions";
 import { type SlashItem, useComposerSlash } from "./useComposerSlash";
 
-const HERO_PLACEHOLDER_WORDS = [
-  "Plan, build, / for skills, @ for context",
-  "Refactor safely, / for skills, @ for context",
-  "Debug with context, / for skills, @ for context",
-];
-
-const SESSION_PLACEHOLDER_WORDS = [
-  "Reply to the agent…  / for skills, @ for context",
-  "Ask a follow-up…  / for skills, @ for context",
-];
+const COMPOSER_PLACEHOLDER = "What will you build with Modus?";
 
 type ComposerProps = {
   model: string;
@@ -71,7 +61,6 @@ type ComposerProps = {
   workspaceId: string | undefined;
   cwd: string | undefined;
   canSubmit: boolean;
-  hasSession: boolean;
   isRunning?: boolean;
   footer?: ReactNode;
   onModelChange(model: string): void;
@@ -149,7 +138,6 @@ export function Composer({
   cwd,
   canSubmit,
   footer,
-  hasSession,
   isRunning = false,
   onAbort,
   onModelChange,
@@ -477,21 +465,7 @@ export function Composer({
               aria-hidden
               className="pointer-events-none absolute inset-x-0 top-0 px-4 pt-4 text-md font-normal text-fg-subtle"
             >
-              {hasSession ? (
-                SESSION_PLACEHOLDER_WORDS[0]
-              ) : (
-                <TypingAnimation
-                  blinkCursor
-                  cursorStyle="line"
-                  deleteSpeed={28}
-                  loop
-                  pauseDelay={2200}
-                  showCursor
-                  startOnView={false}
-                  typeSpeed={42}
-                  words={HERO_PLACEHOLDER_WORDS}
-                />
-              )}
+              {COMPOSER_PLACEHOLDER}
             </div>
           ) : null}
           <MentionEditor

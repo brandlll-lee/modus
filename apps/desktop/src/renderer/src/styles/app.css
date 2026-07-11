@@ -522,23 +522,7 @@ input {
   background-color: rgba(0, 0, 0, 0.22);
 }
 
-/* Magic UI TypingAnimation — cursor blink */
-@keyframes blink-cursor {
-  0%,
-  49% {
-    opacity: 1;
-  }
-  50%,
-  100% {
-    opacity: 0;
-  }
-}
-
 @layer utilities {
-  .animate-blink-cursor {
-    animation: blink-cursor 1s step-end infinite;
-  }
-
   /* Off-screen timeline blocks skip layout/paint/compositing (browser-native),
      so a long transcript of heavy markdown (shiki code, mermaid) only pays the
      render cost for what's on screen — cuts scroll jank + render/layer memory.

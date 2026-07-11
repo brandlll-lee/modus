@@ -1,5 +1,5 @@
 import { IconChevronRight, IconCopy } from "@tabler/icons-react";
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { getToolUiMeta, type ToolUiMeta } from "../../../../../shared/tools";
 import { CollapsibleMotion } from "../../../components/ui/CollapsibleMotion";
 import { NumberTicker } from "../../../components/ui/NumberTicker";
@@ -9,14 +9,6 @@ import { cn } from "../../../lib/cn";
 import { toolIcon } from "../toolIcons";
 import { type InlineDiff, inlineDiffFromToolArgs, toolTargetPath } from "./computeInlineDiff";
 import { InlineDiffView } from "./InlineDiff";
-
-/**
- * How many trailing diff lines the live (streaming) viewport renders. Bounds the
- * per-update cost (DOM rows + Shiki highlighting) to the window the user is
- * actually watching, keeping the follow smooth on large files. ~3x the visible
- * rows so there's scroll buffer above the newest line.
- */
-const STREAM_TAIL_LINES = 60;
 
 type DiffToolCardProps = {
   name: string;
@@ -60,6 +52,10 @@ function fileTypeGlyph(label: string): string | undefined {
   return `${name.slice(dot + 1, dot + 2).toUpperCase()}+`;
 }
 
+function operationLabel(meta: ToolUiMeta | undefined): string {
+  return meta?.diffSource === "newFile" ? "Created" : (meta?.verb ?? "Edited");
+}
+
 /** Reconstruct a unified-ish text blob for the clipboard from the diff lines. */
 function diffToClipboardText(diff: InlineDiff): string {
   return diff.lines
@@ -73,9 +69,8 @@ function diffToClipboardText(diff: InlineDiff): string {
 }
 
 /**
- * Diff card for the `edit` / `write` tools (Cursor-style). The header reads
- * `[file icon] filename  +N -N` with a copy control; clicking the body toggles
- * a lightweight inline diff (red/green washes, line numbers, 3-line context).
+ * Diff card for file-writing tools. The collapsed row is the source of truth;
+ * expanding reuses the same lightweight inline diff view.
  *
  * The diff is computed entirely from the tool's arguments (zero IPC), so it
  * renders the instant `tool.started` fires — even while the write is still
@@ -91,8 +86,6 @@ export const DiffToolCard = memo(
   }: DiffToolCardProps) {
     const [open, setOpen] = useState(false);
     const [copied, setCopied] = useState(false);
-    const scrollRef = useRef<HTMLDivElement>(null);
-    const sawRunningRef = useRef(false);
 
     const diff = useMemo(() => inlineDiffFromToolArgs(name, args), [name, args]);
     const path = toolTargetPath(args);
@@ -103,58 +96,7 @@ export const DiffToolCard = memo(
     const glyph = fileTypeGlyph(fileName);
     const isNewFileDiff = meta?.diffSource === "newFile";
     const running = !isComplete && !isError;
-    // Keep live cards open after completion; old history cards never observe
-    // `running`, so they stay collapsed until the user expands them.
-    useEffect(() => {
-      if (running) {
-        sawRunningRef.current = true;
-        setOpen(true);
-      } else if (sawRunningRef.current && isComplete) {
-        setOpen(true);
-      }
-    }, [running, isComplete]);
-
-    const bodyOpen = running || isError || open;
-
-    // Live performance: while streaming we only render the TAIL of the diff (the
-    // window the user is actually watching at the bottom). This caps the work
-    // per token — DOM rows + Shiki highlighting — at O(window) instead of
-    // O(file), so following a 1000-line write stays smooth. The header keeps the
-    // full +/- counts; once settled the full diff renders in the collapsible.
-    const liveDiff = useMemo(() => {
-      if (!running || !diff || diff.lines.length <= STREAM_TAIL_LINES) {
-        return diff;
-      }
-      return {
-        ...diff,
-        lines: diff.lines.slice(-STREAM_TAIL_LINES),
-        truncated: false,
-        hiddenLineCount: 0,
-      };
-    }, [running, diff]);
-
-    // Buttery follow: a single rAF loop eases scrollTop toward the bottom every
-    // frame while streaming, instead of hard-jumping on each batch (which read
-    // as stutter). Stops following only if the user scrolls well up to read.
-    useEffect(() => {
-      if (!running) {
-        return;
-      }
-      let raf = 0;
-      const tick = (): void => {
-        const el = scrollRef.current;
-        if (el) {
-          const target = el.scrollHeight - el.clientHeight;
-          if (target - el.scrollTop < 240) {
-            const next = el.scrollTop + (target - el.scrollTop) * 0.22;
-            el.scrollTop = target - next < 0.5 ? target : next;
-          }
-        }
-        raf = requestAnimationFrame(tick);
-      };
-      raf = requestAnimationFrame(tick);
-      return () => cancelAnimationFrame(raf);
-    }, [running]);
+    const bodyOpen = open && Boolean(diff);
 
     function openFile(): void {
       if (cwd && path) {
@@ -174,30 +116,47 @@ export const DiffToolCard = memo(
     }
 
     return (
-      <div className="group/diff min-w-0 overflow-hidden rounded-[10px] border border-hairline bg-surface shadow-composer">
-        {/* Header row: file type · file name · optional controls · delta/status */}
-        <div className="flex h-10 min-w-0 items-center gap-2 px-3">
-          <span className="flex w-4 shrink-0 items-center justify-center text-link">
-            {glyph ? (
-              <span className="font-semibold font-mono text-[10px] leading-none tabular-nums">
-                {glyph}
-              </span>
-            ) : (
-              toolIcon(meta?.iconName ?? "file-plus")
-            )}
-          </span>
-
+      <div className="group/diff min-w-0 text-sm">
+        <div className="flex min-w-0 items-center gap-1">
           <button
-            className={cn(
-              "min-w-0 flex-1 truncate text-left text-sm transition-colors",
-              cwd && path ? "text-fg-muted hover:text-fg hover:underline" : "text-fg-muted",
-            )}
-            disabled={!(cwd && path)}
-            onClick={openFile}
-            title={cwd && path ? `Open ${fileTitle}` : fileTitle}
+            aria-expanded={bodyOpen}
+            className="flex min-w-0 flex-1 items-center gap-2 rounded-md py-0.5 text-left transition-colors hover:text-fg disabled:cursor-default"
+            disabled={!diff}
+            onDoubleClick={openFile}
+            onClick={() => setOpen((value) => !value)}
             type="button"
           >
-            {running ? <ShinyText>{fileName}</ShinyText> : fileName}
+            <span className="flex w-4 shrink-0 items-center justify-center text-link">
+              {glyph ? (
+                <span className="font-semibold font-mono text-[10px] leading-none tabular-nums">
+                  {glyph}
+                </span>
+              ) : (
+                toolIcon(meta?.iconName ?? "file-plus")
+              )}
+            </span>
+
+            {running ? (
+              <ShinyText className="shrink-0">{operationLabel(meta)}</ShinyText>
+            ) : (
+              <span className={cn("shrink-0", isError ? "text-danger" : "text-fg-subtle")}>
+                {operationLabel(meta)}
+              </span>
+            )}
+
+            <span className="min-w-0 truncate text-fg-muted text-sm" title={fileTitle}>
+              {fileName}
+            </span>
+
+            {diff ? (
+              isError ? (
+                <span className="shrink-0 rounded-[4px] bg-danger/15 px-1.5 py-0.5 text-danger text-xs">
+                  failed
+                </span>
+              ) : (
+                <DiffDelta added={diff.added} removed={diff.removed} />
+              )
+            ) : null}
           </button>
 
           {diff ? (
@@ -206,7 +165,10 @@ export const DiffToolCard = memo(
                 <button
                   aria-label="Copy diff"
                   className="flex size-6 shrink-0 items-center justify-center rounded text-fg-faint opacity-0 transition-all hover:bg-hover hover:text-fg-subtle group-hover/diff:opacity-100"
-                  onClick={() => void copyDiff()}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void copyDiff();
+                  }}
                   type="button"
                 >
                   <IconCopy size={13} stroke={1.7} />
@@ -217,8 +179,10 @@ export const DiffToolCard = memo(
                 aria-expanded={bodyOpen}
                 aria-label={bodyOpen ? "Collapse diff" : "Expand diff"}
                 className="flex size-6 shrink-0 items-center justify-center rounded text-fg-faint opacity-0 transition-all hover:bg-hover hover:text-fg-subtle disabled:opacity-40 group-hover/diff:opacity-100"
-                disabled={running || isError}
-                onClick={() => setOpen((value) => !value)}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setOpen((value) => !value);
+                }}
                 type="button"
               >
                 <IconChevronRight
@@ -227,43 +191,20 @@ export const DiffToolCard = memo(
                   stroke={1.7}
                 />
               </button>
-
-              {isError ? (
-                <span className="shrink-0 rounded-[4px] bg-danger/15 px-1.5 py-0.5 text-danger text-xs">
-                  failed
-                </span>
-              ) : (
-                <DiffDelta added={diff.added} removed={diff.removed} />
-              )}
             </>
           ) : null}
         </div>
 
-        {/* Body: while streaming, a fixed-height live viewport that auto-follows
-            the newest written code (Cursor-style); once settled, a collapsible
-            full diff toggled from the header. Syntax-highlighted + red/green. */}
-        {running && liveDiff ? (
+        <CollapsibleMotion open={bodyOpen} preset="timeline">
           <div
             className={cn(
-              "scroll-thin h-[168px] overflow-auto border-hairline-soft border-t",
-              isNewFileDiff ? "bg-diff-add-bg" : "bg-code-bg",
+              "scroll-thin mt-1 max-h-96 overflow-auto rounded-md border border-hairline bg-code-bg",
+              isNewFileDiff && "bg-diff-add-bg",
             )}
-            ref={scrollRef}
           >
-            <InlineDiffView diff={liveDiff} path={path} />
+            {diff ? <InlineDiffView diff={diff} path={path} /> : null}
           </div>
-        ) : (
-          <CollapsibleMotion open={bodyOpen && Boolean(diff)} preset="timeline">
-            <div
-              className={cn(
-                "scroll-thin max-h-96 overflow-auto border-hairline-soft border-t",
-                isNewFileDiff ? "bg-diff-add-bg" : "bg-code-bg",
-              )}
-            >
-              {diff ? <InlineDiffView diff={diff} path={path} /> : null}
-            </div>
-          </CollapsibleMotion>
-        )}
+        </CollapsibleMotion>
       </div>
     );
   },

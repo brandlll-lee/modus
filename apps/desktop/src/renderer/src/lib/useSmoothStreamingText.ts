@@ -14,21 +14,7 @@ import { useEffect, useRef, useState } from "react";
  * 2024 and fully supported in Electron's Chromium.
  */
 
-/*
- * Pacing knobs. Tuned for a slow, silky reveal that never bursts.
- *
- * The earlier values (90-480 cps, 64-grapheme frame cap) revealed large chunks
- * per frame during catch-up; with Streamdown's per-word blurIn fade that reads
- * as a brief "flash" when many words mount in one frame. We slow the steady
- * pace and, most importantly, drop the frame cap so a single frame can only
- * ever reveal a handful of graphemes, turning catch-up into a smooth ramp
- * instead of a jump. Smaller per-frame slices also mean smaller Streamdown
- * re-parse deltas, so this is cheaper per frame, not more expensive.
- *
- * Calibrated against the 2026 references this hook is modelled on:
- * coder/coder#22503 (72-420 cps, 48 frame cap), onyx#10093 (~120 cps,
- * 2 chars/frame), AI SDK v5 / Upstash (~200 cps "readable, not too slow").
- */
+// Generic smoothing for streamed text and live tool output.
 const MIN_CPS = 48; // chars/sec when nearly caught up, unhurried, readable
 const MAX_CPS = 300; // chars/sec ceiling when far behind, drains bursts calmly
 const PRESSURE_SCALE = 420; // backlog (chars) that maps to full speed, gentle ramp

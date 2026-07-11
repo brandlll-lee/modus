@@ -898,7 +898,6 @@ export const ChatPane = forwardRef<ChatPaneHandle, ChatPaneProps>(function ChatP
                       selectedSkills: activeComposerDraft.selectedSkills,
                       value: activeComposerDraft.value,
                     }}
-                    hasSession
                     isRunning={isRunning}
                     mode={composerMode}
                     model={paneModel}
