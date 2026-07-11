@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta
@@ -9,22 +9,108 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/png" href="/favicon.png" />
     <title>Modus</title>
+    <script>
+      try {
+        document.documentElement.dataset.theme = localStorage.getItem("modus.theme") ?? "dark";
+      } catch {}
+    </script>
+    <style>
+      :root {
+        color-scheme: dark;
+        --startup-canvas: #131314;
+        --startup-mark: #e4e4e3;
+        --startup-sheen: #ffffff;
+      }
+
+      :root[data-theme="dark-plus"] {
+        --startup-canvas: #1e1e1e;
+      }
+
+      :root[data-theme="light"] {
+        color-scheme: light;
+        --startup-canvas: #ffffff;
+        --startup-mark: #242424;
+        --startup-sheen: #000000;
+      }
+
+      html,
+      body,
+      #root {
+        min-block-size: 100%;
+      }
+
+      body {
+        margin: 0;
+        background: var(--startup-canvas);
+      }
+
+      .startup-shell {
+        display: grid;
+        min-block-size: 100dvh;
+        place-items: center;
+        background: var(--startup-canvas);
+      }
+
+      /* Kept after React mounts so lazy boundaries reuse the initial mark. */
+      .modus-loading-mark {
+        position: relative;
+        inline-size: var(--modus-loading-mark-size, 72px);
+        block-size: var(--modus-loading-mark-size, 72px);
+        overflow: hidden;
+        background: var(--startup-mark);
+        -webkit-mask: url("/favicon.png") center / contain no-repeat;
+        mask: url("/favicon.png") center / contain no-repeat;
+      }
+
+      .modus-loading-mark::after {
+        position: absolute;
+        inset: -25% auto -25% -65%;
+        inline-size: 55%;
+        content: "";
+        background: linear-gradient(90deg, transparent, var(--startup-sheen), transparent);
+        opacity: 0;
+        transform: translateX(-40%) skewX(-18deg);
+        animation: startup-scan 3.2s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+        will-change: transform, opacity;
+      }
+
+      .modus-loading-fallback {
+        --modus-loading-mark-size: 40px;
+      }
+
+      @keyframes startup-scan {
+        0%,
+        64% {
+          opacity: 0;
+          transform: translateX(-40%) skewX(-18deg);
+        }
+
+        69% {
+          opacity: 0.42;
+        }
+
+        92% {
+          opacity: 0.42;
+          transform: translateX(360%) skewX(-18deg);
+        }
+
+        100% {
+          opacity: 0;
+          transform: translateX(360%) skewX(-18deg);
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .modus-loading-mark::after {
+          animation: none;
+        }
+      }
+    </style>
   </head>
   <body>
     <div id="root">
-      <div
-        style="
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          height: 100vh;
-          color: #6d6d70;
-          background: #131314;
-          font-family: 'Inter Variable', 'Inter', system-ui, sans-serif;
-          font-size: 13px;
-        "
-      >
-        Loading Modus…
+      <div aria-label="Loading Modus" class="startup-shell" role="img">
+        <div aria-hidden="true" class="modus-loading-mark"></div>
       </div>
     </div>
     <script type="module" src="/src/main.tsx"></script>

@@ -166,13 +166,7 @@ export function Sidebar({
     document.body.style.cursor = "";
     document.body.style.userSelect = "";
     const finalWidth = latestWidthRef.current;
-    // Drag-to-collapse: releasing at (or near) the floor closes the panel and
-    // keeps the last good width, so reopening never lands on a sliver.
-    if (finalWidth < SIDEBAR_MIN_WIDTH + 24) {
-      onOpenChange(false);
-    } else {
-      onWidthChange(finalWidth);
-    }
+    onWidthChange(finalWidth);
   };
 
   return (

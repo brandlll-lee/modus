@@ -1,6 +1,7 @@
 export const IPC_CHANNELS = {
   appVersion: "app:version",
   securityState: "app:security-state",
+  appStartupMetric: "app:startup-metric",
   workspaceOpen: "workspace:open",
   workspaceList: "workspace:list",
   workspacePin: "workspace:pin",

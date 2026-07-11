@@ -1,9 +1,8 @@
 import "@fontsource-variable/inter";
-import "katex/dist/katex.min.css";
-import "streamdown/styles.css";
-import { StrictMode } from "react";
+import { StrictMode, useLayoutEffect, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./app/App";
+import { reportRendererStartup } from "./app/startup-report";
 import { initTheme } from "./lib/theme";
 import "./styles/app.css";
 
@@ -11,6 +10,20 @@ const rootElement = document.getElementById("root");
 
 if (!rootElement) {
   throw new Error("Missing root element.");
+}
+
+function StartupCommitReporter() {
+  const reported = useRef(false);
+
+  useLayoutEffect(() => {
+    if (reported.current) {
+      return;
+    }
+    reported.current = true;
+    reportRendererStartup("renderer.first-commit");
+  }, []);
+
+  return null;
 }
 
 // Paint the stored palette before first render (no theme flash).
@@ -33,6 +46,7 @@ if (import.meta.env.DEV) {
 
 createRoot(rootElement).render(
   <StrictMode>
+    <StartupCommitReporter />
     <App />
   </StrictMode>,
 );

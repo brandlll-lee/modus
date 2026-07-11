@@ -12,7 +12,15 @@ import {
   IconWorld,
 } from "@tabler/icons-react";
 import { animate, m, useMotionValue } from "motion/react";
-import { type PointerEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import {
+  lazy,
+  type PointerEvent,
+  type ReactNode,
+  Suspense,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import type { SecurityState } from "../../../../preload/types";
 import type {
   AgentSessionInfo,
@@ -22,14 +30,14 @@ import type {
   WorkspaceInfo,
 } from "../../../../shared/contracts";
 import { PanelHeader } from "../../components/ui/Panel";
+import { ModusLoadingFallback } from "../../components/ui/ModusLoadingMark";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
 import type { AgentEventHub } from "../agent/agentEventHub";
-import { BrowserPanel } from "../browser/BrowserPanel";
 import { DiffPanel } from "../diff/DiffPanel";
 import { FilesPanel } from "../files/FilesPanel";
 import { PlanPanel } from "../plan/PlanPanel";
-import { TerminalPanel } from "../terminal/TerminalPanel";
+import { INSPECTOR_MIN_WIDTH } from "./inspector-layout";
 import { SubagentsPanel } from "./SubagentsPanel";
 
 type InspectorProps = {
@@ -67,11 +75,20 @@ type InspectorProps = {
   onWidthChange(width: number): void;
 };
 
-export const INSPECTOR_MIN_WIDTH = 320;
 const INSPECTOR_MAX_WIDTH = 1040;
 const INSPECTOR_BROWSER_PREFERRED_WIDTH = 760;
 const INSPECTOR_COLLAPSED_WIDTH = 0;
 const INSPECTOR_TRANSITION = { duration: 0.18, ease: [0.22, 1, 0.36, 1] } as const;
+const loadBrowserPanel = () => import("../browser/BrowserPanel");
+const loadTerminalPanel = () => import("../terminal/TerminalPanel");
+const BrowserPanel = lazy(() =>
+  loadBrowserPanel().then(({ BrowserPanel: Component }) => ({ default: Component })),
+);
+const TerminalPanel = lazy(() =>
+  loadTerminalPanel().then(({ TerminalPanel: Component }) => ({
+    default: Component,
+  })),
+);
 
 const TABS = [
   { value: "changes", label: "Changes", icon: <IconGitBranch size={18} stroke={1.7} /> },
@@ -117,6 +134,10 @@ export function Inspector({
   const [contentVisible, setContentVisible] = useState(open);
   const [internalTab, setInternalTab] = useState("changes");
   const tab = controlledTab ?? internalTab;
+  const [browserVisited, setBrowserVisited] = useState(tab === "browser");
+  const [terminalVisited, setTerminalVisited] = useState(tab === "terminal");
+  const shouldRenderBrowser = browserVisited || tab === "browser";
+  const shouldRenderTerminal = terminalVisited || tab === "terminal";
   const setTab = (value: string): void => {
     onTabChange?.(value);
     if (controlledTab === undefined) {
@@ -130,10 +151,26 @@ export function Inspector({
   const panelWidth = useMotionValue(open ? width : INSPECTOR_COLLAPSED_WIDTH);
 
   useEffect(() => {
+    const idleCallback = window.requestIdleCallback(() => {
+      void Promise.allSettled([loadBrowserPanel(), loadTerminalPanel()]);
+    });
+    return () => window.cancelIdleCallback(idleCallback);
+  }, []);
+
+  useEffect(() => {
     if (open && tab === "browser" && width < INSPECTOR_BROWSER_PREFERRED_WIDTH) {
       onWidthChange(Math.min(INSPECTOR_MAX_WIDTH, maxWidth, INSPECTOR_BROWSER_PREFERRED_WIDTH));
     }
   }, [open, onWidthChange, tab, width, maxWidth]);
+
+  useEffect(() => {
+    if (tab === "browser") {
+      setBrowserVisited(true);
+    }
+    if (tab === "terminal") {
+      setTerminalVisited(true);
+    }
+  }, [tab]);
 
   // Drive the open/close animation and keep the motion value in sync when `width`
   // changes from a committed drag or an external update. We never re-animate while
@@ -295,16 +332,24 @@ export function Inspector({
                   />
                 </Tabs.Panel>
                 <Tabs.Panel className="min-h-0 flex-1 outline-none" keepMounted value="browser">
-                  <BrowserPanel active={tab === "browser"} workspaceId={activeWorkspace?.id} />
+                  {shouldRenderBrowser ? (
+                    <Suspense fallback={<ModusLoadingFallback />}>
+                      <BrowserPanel active={tab === "browser"} workspaceId={activeWorkspace?.id} />
+                    </Suspense>
+                  ) : null}
                 </Tabs.Panel>
                 <Tabs.Panel className="min-h-0 flex-1 outline-none" keepMounted value="terminal">
-                  <TerminalPanel
-                    active={tab === "terminal"}
-                    cwd={cwd}
-                    key={activeWorkspace?.id ?? "none"}
-                    sessionId={sessionId}
-                    workspaceId={activeWorkspace?.id}
-                  />
+                  {shouldRenderTerminal ? (
+                    <Suspense fallback={<ModusLoadingFallback />}>
+                      <TerminalPanel
+                        active={tab === "terminal"}
+                        cwd={cwd}
+                        key={activeWorkspace?.id ?? "none"}
+                        sessionId={sessionId}
+                        workspaceId={activeWorkspace?.id}
+                      />
+                    </Suspense>
+                  ) : null}
                 </Tabs.Panel>
                 <Tabs.Panel
                   className="scroll-thin min-h-0 flex-1 overflow-y-auto outline-none"

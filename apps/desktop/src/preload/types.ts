@@ -63,6 +63,7 @@ import type {
   WorkingChangeStats,
   WorkspaceInfo,
 } from "../shared/contracts";
+import type { StartupMetricInput } from "../shared/startup";
 
 export type SecurityState = {
   contextIsolation: boolean;
@@ -90,6 +91,7 @@ export type ModusApi = {
   app: {
     version(): Promise<string>;
     securityState(): Promise<SecurityState>;
+    startupMetric(input: StartupMetricInput): Promise<void>;
   };
   workspace: {
     open(): Promise<WorkspaceInfo | undefined>;

@@ -7,6 +7,7 @@ const api: ModusApi = {
   app: {
     version: () => ipcRenderer.invoke("app:version") as Promise<string>,
     securityState: () => ipcRenderer.invoke("app:security-state") as Promise<SecurityState>,
+    startupMetric: (input) => ipcRenderer.invoke("app:startup-metric", input),
   },
   workspace: {
     open: () => ipcRenderer.invoke("workspace:open"),

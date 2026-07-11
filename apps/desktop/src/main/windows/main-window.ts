@@ -1,7 +1,8 @@
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { app, BrowserWindow, shell, type BrowserWindow as BrowserWindowType } from "electron";
+import { app, BrowserWindow, screen, type BrowserWindow as BrowserWindowType, shell } from "electron";
 import { IPC_CHANNELS } from "../ipc/channels";
+import type { StartupTimeline } from "../startup/startup-timeline";
 
 const currentDir = fileURLToPath(new URL(".", import.meta.url));
 const EXTERNAL_PROTOCOLS = new Set(["https:", "http:"]);
@@ -17,18 +18,27 @@ function isExternalUrlAllowed(rawUrl: string): boolean {
   }
 }
 
-export function createMainWindow(): BrowserWindowType {
+export function createMainWindow({
+  startupTimeline,
+}: {
+  startupTimeline: StartupTimeline;
+}): BrowserWindowType {
   const preloadPath = fileURLToPath(new URL("../preload/index.cjs", import.meta.url));
+  const { workArea } = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  const width = Math.min(1180, workArea.width);
+  const height = Math.min(760, workArea.height);
 
   const window = new BrowserWindow({
-    width: 1440,
-    height: 960,
-    minWidth: 1120,
-    minHeight: 720,
+    x: workArea.x + Math.round((workArea.width - width) / 2),
+    y: workArea.y + Math.round((workArea.height - height) / 2),
+    width,
+    height,
+    minWidth: Math.min(1120, width),
+    minHeight: Math.min(720, height),
     title: "Modus",
     icon: appIconPath,
     backgroundColor: "#131314",
-    show: false,
+    show: true,
     // 彻底放弃 Windows native window controls overlay —— 它的 caption buttons 绘制 + hover 命中区
     // 由系统决定，不严格遵循 titleBarOverlay.height，会"伸出" menubar。
     // 改用 frame: false 完全自绘 titlebar：renderer 内 MenuBar + WindowControls，通过 IPC 调
@@ -43,6 +53,7 @@ export function createMainWindow(): BrowserWindowType {
       webSecurity: true,
     },
   });
+  startupTimeline.mark("main.window-created");
 
   // 把 maximize/unmaximize 状态推送给 renderer，用于切换 max/restore 按钮图标
   const sendState = (): void => {
@@ -56,8 +67,12 @@ export function createMainWindow(): BrowserWindowType {
   window.on("maximize", sendState);
   window.on("unmaximize", sendState);
 
+  window.webContents.once("dom-ready", () => {
+    startupTimeline.mark("main.dom-ready");
+  });
+
   window.once("ready-to-show", () => {
-    window.show();
+    startupTimeline.mark("main.ready-to-show");
     sendState();
   });
 

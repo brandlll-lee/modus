@@ -17,7 +17,16 @@ import {
   IconVersions,
 } from "@tabler/icons-react";
 import { AnimatePresence, domAnimation, LazyMotion, m } from "motion/react";
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  lazy,
+  type ReactNode,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { SecurityState } from "../../../preload/types";
 import type {
   AgentEvent,
@@ -39,6 +48,7 @@ import modusLogo from "../assets/modus-logo.png";
 import { SIDEBAR_MIN_WIDTH, Sidebar } from "../components/Sidebar";
 import { ImageViewerProvider } from "../components/ui/ImageViewer";
 import { ModusBot } from "../components/ui/ModusBot";
+import { ModusLoadingFallback } from "../components/ui/ModusLoadingMark";
 import { NativeSurfaceProvider } from "../components/ui/nativeSurface";
 import { ToolbarButton } from "../components/ui/ToolbarButton";
 import { TooltipProvider } from "../components/ui/Tooltip";
@@ -50,19 +60,18 @@ import {
   reduceActivity,
   type SessionActivity,
 } from "../features/agent/agentEventHub";
-import {
-  type ChatComposerDraft,
-  type ChatComposerDraftUpdate,
-  ChatPane,
-  type ChatPaneHandle,
-  createEmptyChatComposerDraft,
+import type {
+  ChatComposerDraft,
+  ChatComposerDraftUpdate,
+  ChatPaneHandle,
 } from "../features/agent/ChatPane";
-import { Composer } from "../features/composer/Composer";
+import { Composer, createEmptyComposerDraft } from "../features/composer/Composer";
 import { BranchSwitcher } from "../features/git/BranchSwitcher";
-import { INSPECTOR_MIN_WIDTH, Inspector } from "../features/inspector/Inspector";
-import { SettingsPanel } from "../features/settings/SettingsPanel";
+import { INSPECTOR_MIN_WIDTH } from "../features/inspector/inspector-layout";
 import { cn } from "../lib/cn";
 import { useGitBranch } from "../lib/useGitBranch";
+import { beginInitialAppHydration, type InitialAppHydration } from "./initial-hydration";
+import { reportRendererStartup } from "./startup-report";
 
 /**
  * Floor the main column keeps no matter how wide the side panels get. The
@@ -70,6 +79,26 @@ import { useGitBranch } from "../lib/useGitBranch";
  * this is always reserved — the chat can't be crushed to an unreadable sliver.
  */
 const MAIN_MIN_WIDTH = 480;
+const loadChatPane = () => import("../features/agent/ChatPane");
+const loadInspector = () => import("../features/inspector/Inspector");
+const loadSettingsPanel = () => import("../features/settings/SettingsPanel");
+const ChatPane = lazy(() =>
+  loadChatPane().then(({ ChatPane: Component }) => ({ default: Component })),
+);
+const Inspector = lazy(() =>
+  loadInspector().then(({ Inspector: Component }) => ({
+    default: Component,
+  })),
+);
+const SettingsPanel = lazy(() =>
+  loadSettingsPanel().then(({ SettingsPanel: Component }) => ({
+    default: Component,
+  })),
+);
+
+function logInitialHydrationError(resource: string, error: unknown): void {
+  console.error(`Unable to load initial ${resource}.`, error);
+}
 
 export function App() {
   const [securityState, setSecurityState] = useState<SecurityState | null>(null);
@@ -123,6 +152,7 @@ export function App() {
     workspaceId: string | undefined;
   }>({ sessionId: undefined, workspaceId: undefined });
   const layoutRowRef = useRef<HTMLDivElement>(null);
+  const initialHydrationRef = useRef<InitialAppHydration | null>(null);
 
   // Track the panel row's live width so side-panel widths can be clamped to keep
   // the main column at least MAIN_MIN_WIDTH (responsive to window + panel state).
@@ -183,8 +213,7 @@ export function App() {
     });
   }
 
-  const refreshModelSettings = useCallback(async (): Promise<void> => {
-    const settings = await window.modus.model.settings();
+  const applyModelSettings = useCallback((settings: ModelSettingsState): void => {
     setModelSettings(settings);
     setModels(settings.models);
     setModel((current) => {
@@ -195,18 +224,91 @@ export function App() {
     });
   }, []);
 
+  const refreshModelSettings = useCallback(async (): Promise<void> => {
+    const settings = await window.modus.model.settings();
+    applyModelSettings(settings);
+  }, [applyModelSettings]);
+
+  useEffect(() => {
+    const idleCallback = window.requestIdleCallback(() => {
+      void Promise.allSettled([loadChatPane(), loadInspector(), loadSettingsPanel()]);
+    });
+    return () => window.cancelIdleCallback(idleCallback);
+  }, []);
+
+  useEffect(() => {
+    if (!window.modus) {
+      return;
+    }
+
+    let active = true;
+    let hydration = initialHydrationRef.current;
+    if (!hydration) {
+      hydration = beginInitialAppHydration(window.modus);
+      initialHydrationRef.current = hydration;
+    }
+
+    void hydration.securityState
+      .then((state) => {
+        if (active) {
+          setSecurityState(state);
+        }
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          logInitialHydrationError("security state", error);
+        }
+      });
+    void hydration.workspaces
+      .then((items) => {
+        if (active) {
+          setWorkspaces(items);
+          setActiveWorkspace(items[0] ?? null);
+        }
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          logInitialHydrationError("workspaces", error);
+        }
+      });
+    void hydration.sessions
+      .then((sessions) => {
+        if (active) {
+          setAgentSessions(sessions);
+        }
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          logInitialHydrationError("agent sessions", error);
+        }
+      });
+    void hydration.modelSettings
+      .then((settings) => {
+        if (active) {
+          applyModelSettings(settings);
+        }
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          logInitialHydrationError("model settings", error);
+        }
+      });
+    void hydration.settled.then(() => {
+      if (active) {
+        reportRendererStartup("renderer.initial-hydration-settled");
+      }
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [applyModelSettings]);
+
   /* ── Global event intake: one IPC listener feeds the active chat + sidebar ── */
   useEffect(() => {
     if (!window.modus) {
       return;
     }
-    void window.modus.app.securityState().then(setSecurityState);
-    void window.modus.workspace.list().then((items: WorkspaceInfo[]) => {
-      setWorkspaces(items);
-      setActiveWorkspace(items[0] ?? null);
-    });
-    void refreshSessions();
-    void refreshModelSettings();
 
     const unsubscribe = window.modus.agent.onEvent((event: AgentEvent) => {
       if (event.type === "context.updated") {
@@ -258,7 +360,7 @@ export function App() {
       unsubscribe();
       unsubscribeFocus();
     };
-  }, [refreshModelSettings, refreshSessions]);
+  }, [refreshSessions]);
 
   // The open session is "watched": its unread flag clears.
   useEffect(() => {
@@ -607,6 +709,11 @@ export function App() {
   // accounted for. Until the row is measured, allow the panels' own caps.
   const sidebarSpace = sidebarOpen ? sidebarWidth : 0;
   const inspectorSpace = hasSession && inspectorOpen ? inspectorWidth : 0;
+  const inspectorFits =
+    layoutWidth === 0 || layoutWidth >= sidebarSpace + inspectorWidth + MAIN_MIN_WIDTH;
+  const sidebarFits = layoutWidth === 0 || layoutWidth >= sidebarWidth + MAIN_MIN_WIDTH;
+  const responsiveInspectorOpen = hasSession && inspectorOpen && inspectorFits;
+  const responsiveSidebarOpen = sidebarOpen && sidebarFits;
   const sidebarMaxWidth =
     layoutWidth > 0
       ? Math.max(SIDEBAR_MIN_WIDTH, layoutWidth - inspectorSpace - MAIN_MIN_WIDTH)
@@ -658,7 +765,11 @@ export function App() {
   const updateSessionComposerDraft = useCallback(
     (sessionId: string, update: ChatComposerDraftUpdate): void => {
       setComposerDraftBySession((current) => {
-        const draft = current[sessionId] ?? createEmptyChatComposerDraft();
+        const draft = current[sessionId] ?? {
+          ...createEmptyComposerDraft(),
+          contextItems: [],
+          mode: "build" as const,
+        };
         const next = typeof update === "function" ? update(draft) : update;
         return { ...current, [sessionId]: next };
       });
@@ -674,15 +785,17 @@ export function App() {
             <div className="app-root flex h-screen flex-col bg-canvas text-fg">
               <MenuBar />
 
-              <div className="flex min-h-0 flex-1 bg-panel" ref={layoutRowRef}>
+              <div className="flex min-h-0 min-w-0 flex-1 bg-panel" ref={layoutRowRef}>
                 {settingsOpen ? (
-                  <SettingsPanel
-                    onClose={() => setSettingsOpen(false)}
-                    onRefresh={() => void refreshModelSettings()}
-                    state={modelSettings}
-                    workspaces={workspaces}
-                    workspaceCwd={activeWorkspace?.rootPath}
-                  />
+                  <Suspense fallback={<ModusLoadingFallback />}>
+                    <SettingsPanel
+                      onClose={() => setSettingsOpen(false)}
+                      onRefresh={refreshModelSettings}
+                      state={modelSettings}
+                      workspaces={workspaces}
+                      workspaceCwd={activeWorkspace?.rootPath}
+                    />
+                  </Suspense>
                 ) : (
                   <>
                     <Sidebar
@@ -711,19 +824,16 @@ export function App() {
                       onWidthChange={setSidebarWidth}
                       activeSessionId={activeSessionId}
                       maxWidth={sidebarMaxWidth}
-                      open={sidebarOpen}
+                      open={responsiveSidebarOpen}
                       width={sidebarWidth}
                       workspaces={workspaces}
                     />
 
-                    <main
-                      className="relative flex flex-1 flex-col overflow-hidden rounded-tl-xl border-hairline-strong border-t border-l bg-canvas"
-                      style={{ minWidth: MAIN_MIN_WIDTH }}
-                    >
+                    <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-tl-xl border-hairline-strong border-t border-l bg-canvas">
                       <header className="toolbar-row relative flex shrink-0 items-center px-3">
                         <div className="app-no-drag flex flex-1 items-center gap-1.5">
                           <AnimatePresence initial={false}>
-                            {!sidebarOpen ? (
+                            {!responsiveSidebarOpen ? (
                               <m.div
                                 animate={{ opacity: 1, width: "auto" }}
                                 className="overflow-hidden"
@@ -746,7 +856,7 @@ export function App() {
                             activeWorkspace={activeWorkspace}
                             branch={branch}
                             environmentStats={environmentStats}
-                            inspectorOpen={inspectorOpen}
+                            inspectorOpen={responsiveInspectorOpen}
                             onToggleInspector={() => setInspectorOpen((open) => !open)}
                           />
                         </div>
@@ -762,47 +872,49 @@ export function App() {
                         {activeSession ? (
                           <m.div
                             animate={{ opacity: 1 }}
-                            className="flex min-h-0 flex-1"
+                            className="flex min-h-0 min-w-0 flex-1"
                             exit={{ opacity: 0 }}
                             initial={{ opacity: 0 }}
                             key="conversation"
                             transition={{ duration: 0.12, ease: "easeOut" }}
                           >
-                            <ChatPane
-                              composerDraft={composerDraftBySession[activeSession.id]}
-                              contextUsage={contextUsageBySession[activeSession.id]}
-                              defaultModel={model}
-                              hub={hubRef.current}
-                              initialEvents={initialEventsBySession[activeSession.id]}
-                              key={activeSession.id}
-                              models={models}
-                              onModelChange={setModel}
-                              onModelConfigChange={(next, thinkingVariant) =>
-                                void updateModelThinking(next, thinkingVariant)
-                              }
-                              onOpenReview={openReview}
-                              onOpenSubagent={openSubagent}
-                              onComposerDraftChange={(update) =>
-                                updateSessionComposerDraft(activeSession.id, update)
-                              }
-                              onInitialEventsConsumed={(sessionId) => {
-                                setInitialEventsBySession((current) => {
-                                  if (!current[sessionId]) {
-                                    return current;
-                                  }
-                                  const next = { ...current };
-                                  delete next[sessionId];
-                                  return next;
-                                });
-                              }}
-                              onPlanUpdated={handleChatPlanUpdated}
-                              ref={chatPaneRef}
-                              onSessionsChanged={() => void refreshSessions()}
-                              session={activeSession}
-                              workspace={
-                                workspaceById.get(activeSession.workspaceId) ?? activeWorkspace
-                              }
-                            />
+                            <Suspense fallback={<ModusLoadingFallback />}>
+                              <ChatPane
+                                composerDraft={composerDraftBySession[activeSession.id]}
+                                contextUsage={contextUsageBySession[activeSession.id]}
+                                defaultModel={model}
+                                hub={hubRef.current}
+                                initialEvents={initialEventsBySession[activeSession.id]}
+                                key={activeSession.id}
+                                models={models}
+                                onModelChange={setModel}
+                                onModelConfigChange={(next, thinkingVariant) =>
+                                  void updateModelThinking(next, thinkingVariant)
+                                }
+                                onOpenReview={openReview}
+                                onOpenSubagent={openSubagent}
+                                onComposerDraftChange={(update) =>
+                                  updateSessionComposerDraft(activeSession.id, update)
+                                }
+                                onInitialEventsConsumed={(sessionId) => {
+                                  setInitialEventsBySession((current) => {
+                                    if (!current[sessionId]) {
+                                      return current;
+                                    }
+                                    const next = { ...current };
+                                    delete next[sessionId];
+                                    return next;
+                                  });
+                                }}
+                                onPlanUpdated={handleChatPlanUpdated}
+                                ref={chatPaneRef}
+                                onSessionsChanged={() => void refreshSessions()}
+                                session={activeSession}
+                                workspace={
+                                  workspaceById.get(activeSession.workspaceId) ?? activeWorkspace
+                                }
+                              />
+                            </Suspense>
                           </m.div>
                         ) : (
                           <m.div
@@ -860,40 +972,42 @@ export function App() {
                       </AnimatePresence>
                     </main>
 
-                    {hasSession ? (
-                      <Inspector
-                        activeWorkspace={activeWorkspace}
-                        contextUsageBySession={contextUsageBySession}
-                        cwd={reviewCwd ?? activeCwd}
-                        defaultModel={model}
-                        hub={hubRef.current}
-                        sessionId={activeSession?.id}
-                        maxWidth={inspectorMaxWidth}
-                        models={models}
-                        onModelChange={setModel}
-                        onModelConfigChange={(next, thinkingVariant) =>
-                          void updateModelThinking(next, thinkingVariant)
-                        }
-                        onOpenChange={setInspectorOpen}
-                        onOpenReview={openReview}
-                        onOpenSubagent={openSubagent}
-                        onPlanUpdated={rememberActivePlan}
-                        onSelectSubagent={setSelectedSubagentId}
-                        onSessionsChanged={() => void refreshSessions()}
-                        onTabChange={setInspectorTab}
-                        onWidthChange={setInspectorWidth}
-                        open={inspectorOpen}
-                        {...(activeSession && activePlanBySession[activeSession.id]
-                          ? { plan: activePlanBySession[activeSession.id] }
-                          : {})}
-                        sessionWorking={activeRunning}
-                        onBuildPlan={buildActivePlan}
-                        securityState={securityState}
-                        selectedSubagentId={selectedSubagentId}
-                        sessions={agentSessions}
-                        tab={inspectorTab}
-                        width={inspectorWidth}
-                      />
+                    {responsiveInspectorOpen ? (
+                      <Suspense fallback={<ModusLoadingFallback />}>
+                        <Inspector
+                          activeWorkspace={activeWorkspace}
+                          contextUsageBySession={contextUsageBySession}
+                          cwd={reviewCwd ?? activeCwd}
+                          defaultModel={model}
+                          hub={hubRef.current}
+                          sessionId={activeSession?.id}
+                          maxWidth={inspectorMaxWidth}
+                          models={models}
+                          onModelChange={setModel}
+                          onModelConfigChange={(next, thinkingVariant) =>
+                            void updateModelThinking(next, thinkingVariant)
+                          }
+                          onOpenChange={setInspectorOpen}
+                          onOpenReview={openReview}
+                          onOpenSubagent={openSubagent}
+                          onPlanUpdated={rememberActivePlan}
+                          onSelectSubagent={setSelectedSubagentId}
+                          onSessionsChanged={() => void refreshSessions()}
+                          onTabChange={setInspectorTab}
+                          onWidthChange={setInspectorWidth}
+                          open={inspectorOpen}
+                          {...(activeSession && activePlanBySession[activeSession.id]
+                            ? { plan: activePlanBySession[activeSession.id] }
+                            : {})}
+                          sessionWorking={activeRunning}
+                          onBuildPlan={buildActivePlan}
+                          securityState={securityState}
+                          selectedSubagentId={selectedSubagentId}
+                          sessions={agentSessions}
+                          tab={inspectorTab}
+                          width={inspectorWidth}
+                        />
+                      </Suspense>
                     ) : null}
                   </>
                 )}

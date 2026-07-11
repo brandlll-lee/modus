@@ -119,6 +119,7 @@ import { onManagedProcessChange } from "../process/managed-process-bus";
 import { killManagedProcess, listManagedProcesses } from "../process/managed-process-facade";
 import { listRuleFiles } from "../rules/rules-service";
 import { createSkill, ensureSkillsDir, getSkill, listSkills } from "../skills/skills-service";
+import type { StartupTimeline } from "../startup/startup-timeline";
 import {
   createTerminal,
   killTerminal,
@@ -188,6 +189,7 @@ import {
   sessionPinSchema,
   skillsCreateSchema,
   skillsGetSchema,
+  startupMetricSchema,
   subagentsCreateSchema,
   subagentsDeleteSchema,
   subagentsGetSchema,
@@ -246,7 +248,11 @@ function getSenderWindow(event: IpcMainInvokeEvent): BrowserWindowType {
   return window;
 }
 
-export function registerAppIpc(): void {
+export function registerAppIpc({
+  startupTimeline,
+}: {
+  startupTimeline?: StartupTimeline;
+} = {}): void {
   ipcMain.handle(IPC_CHANNELS.appVersion, (event) => {
     assertTrustedSender(event);
     return app.getVersion();
@@ -261,6 +267,12 @@ export function registerAppIpc(): void {
       sandbox: true,
       senderValidation: true,
     };
+  });
+
+  ipcMain.handle(IPC_CHANNELS.appStartupMetric, (event, input) => {
+    assertTrustedSender(event);
+    const metric = parseIpcInput(startupMetricSchema, input, IPC_CHANNELS.appStartupMetric);
+    startupTimeline?.mark(metric.milestone, metric.rendererElapsedMs);
   });
 
   ipcMain.handle(IPC_CHANNELS.workspaceOpen, async (event) => {

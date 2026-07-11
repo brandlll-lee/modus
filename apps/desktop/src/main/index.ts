@@ -1,14 +1,18 @@
 import { app, BrowserWindow, type BrowserWindow as BrowserWindowType } from "electron";
 import { registerAppIpc } from "./ipc/register-app-ipc";
 import { disposeAllMcp } from "./mcp/mcp-service";
+import { createStartupTimeline } from "./startup/startup-timeline";
 import { createMainWindow } from "./windows/main-window";
 
 let mainWindow: BrowserWindowType | null = null;
+const startupTimeline = createStartupTimeline();
+
+startupTimeline.mark("main.entry");
 
 function boot(): void {
-  registerAppIpc();
+  registerAppIpc({ startupTimeline });
 
-  mainWindow = createMainWindow();
+  mainWindow = createMainWindow({ startupTimeline });
 
   mainWindow.on("closed", () => {
     mainWindow = null;
@@ -32,7 +36,10 @@ if (!app.requestSingleInstanceLock()) {
 
   app
     .whenReady()
-    .then(boot)
+    .then(() => {
+      startupTimeline.mark("main.electron-ready");
+      boot();
+    })
     .catch((error: unknown) => {
       console.error("Failed to boot Modus desktop.", error);
       app.exit(1);
