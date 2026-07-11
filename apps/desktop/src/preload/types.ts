@@ -77,7 +77,6 @@ export type SecurityState = {
 /** Resolved Modus theme tokens forwarded to the in-page Design Mode overlay. */
 export type DesignModeTheme = {
   accent: string;
-  accentSoft: string;
   accentContrast: string;
   surface: string;
   elevated: string;
@@ -86,7 +85,6 @@ export type DesignModeTheme = {
   fontFamily: string;
   border: string;
   shadow: string;
-  fill: string;
 };
 
 export type ModusApi = {

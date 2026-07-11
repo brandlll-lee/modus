@@ -10,7 +10,7 @@ import { IPC_CHANNELS } from "../ipc/channels";
 import { AgentVisualizer } from "./agent-visualizer";
 import { DialogController } from "./cdp/lifecycle";
 import { NetworkRecorder } from "./cdp/network";
-import { captureElementClip } from "./cdp/screenshot";
+import { captureViewRect, clampViewportRect, growViewportRect } from "./view-capture";
 import { CdpSession } from "./cdp/session";
 import { SnapshotStore } from "./cdp/snapshot";
 import { DesignModeController } from "./design-mode";
@@ -350,17 +350,32 @@ export function createTab(
   tab.design = new DesignModeController(view.webContents, {
     tabId: id,
     getUrl: () => tab.view.webContents.getURL(),
-    capture: async (rect) => {
-      const shot = await captureElementClip(tab.cdp, rect);
+    // Electron capturePage — not CDP clip (avoids Chromium region-screenshot flash).
+    capture: async (rect, options) => {
+      const bounds = tab.view.getBounds();
+      const viewport = { x: 0, y: 0, width: bounds.width, height: bounds.height };
+      const clip = options?.exact
+        ? clampViewportRect(rect, viewport)
+        : growViewportRect(rect, viewport);
+      const shot = await captureViewRect(tab.view.webContents, clip);
       return `data:image/png;base64,${shot.base64}`;
     },
-    onSelect: (element, seedText) =>
+    onSelect: (element, intent, seedText) =>
       emitBrowserEvent({
         type: "browser.design-select",
         workspaceId: input.workspaceId,
         tabId: id,
+        intent,
         element,
         ...(seedText ? { seedText } : {}),
+      }),
+    onAnnotate: (annotation, intent) =>
+      emitBrowserEvent({
+        type: "browser.design-annotate",
+        workspaceId: input.workspaceId,
+        tabId: id,
+        intent,
+        annotation,
       }),
   });
 

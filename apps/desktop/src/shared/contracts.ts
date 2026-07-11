@@ -627,7 +627,8 @@ export type ContextKind =
   | "recent-changes"
   | "rules"
   | "search"
-  | "design-element";
+  | "design-element"
+  | "design-annotation";
 
 export type ContextItem =
   | { type: "file"; path: string }
@@ -648,7 +649,11 @@ export type ContextItem =
    * unlike file/doc refs it is NOT re-resolved from an id — `resolveContext`
    * just formats `element` into model-readable text.
    */
-  | { type: "design-element"; element: DesignElementPayload };
+  | { type: "design-element"; element: DesignElementPayload }
+  | { type: "design-annotation"; annotation: DesignAnnotationPayload };
+
+/** Design Mode theme accent — always the first mark / first multi-select slot. */
+export const DESIGN_ACCENT_COLOR = "#1D9BFF";
 
 /**
  * A point-in-time capture of a DOM element selected via the browser's Design
@@ -691,6 +696,12 @@ export type DesignElementPart = {
   props?: Record<string, string>;
   /** Element bounding box in CSS pixels (root viewport). */
   rect: { x: number; y: number; width: number; height: number };
+  /**
+   * Mark color as `#RRGGBB` — authority for highlight, ink, and composer chips.
+   * First mark in a session is always {@link DESIGN_ACCENT_COLOR}; later marks
+   * are random bright hues assigned at capture time.
+   */
+  color?: string;
 };
 
 export type DesignElementContentPart =
@@ -709,6 +720,32 @@ export type DesignElementPayload = DesignElementPart & {
   /** Inline order from the Design Mode prompt: text and selected element chips. */
   contentParts?: DesignElementContentPart[];
   /** Element-clipped screenshot as a data URL (PNG). Shown as a thumbnail. */
+  screenshotDataUrl?: string;
+};
+
+export type DesignAnnotationPayload = {
+  /** Stable id for de-dup / removal in the composer. */
+  id: string;
+  /** Browser tab the annotation was captured from. */
+  tabId: string;
+  /** Page URL at capture time. */
+  url: string;
+  /** Human-readable chip label. */
+  label: string;
+  /** Visual annotation mode used in Design Mode. */
+  kind: "freehand" | "box";
+  /** Annotated region in CSS pixels (root viewport). */
+  rect: { x: number; y: number; width: number; height: number };
+  /** User note typed in the Design Mode popover, when present. */
+  seedText?: string;
+  /** Minimal geometry for the drawn mark, in viewport CSS pixels. */
+  points?: Array<{ x: number; y: number }>;
+  /**
+   * Mark color as `#RRGGBB` — same authority as {@link DesignElementPart.color}.
+   * First annotation is accent blue; each new gesture picks a random bright hue.
+   */
+  color?: string;
+  /** Annotated region screenshot (PNG data URL): page + drawn mark + pad. */
   screenshotDataUrl?: string;
 };
 
@@ -731,6 +768,8 @@ export type MessageContextChip = {
   label: string;
   /** Secondary hover detail, e.g. `src/app.tsx:42` for a design element. */
   detail?: string;
+  /** Design Mode mark color (`#RRGGBB`), when the chip came from a colored mark. */
+  color?: string;
 };
 
 export type ResolvedContext = {
@@ -800,12 +839,21 @@ export type BrowserEvent =
       enabled: boolean;
     }
   | {
-      /** User selected an element in Design Mode and asked to add it to chat. */
+      /** User selected an element in Design Mode. */
       type: "browser.design-select";
       workspaceId: string;
       tabId: string;
+      intent?: "add" | "submit";
       element: DesignElementPayload;
       seedText?: string;
+    }
+  | {
+      /** User marked a visual region in Design Mode. */
+      type: "browser.design-annotate";
+      workspaceId: string;
+      tabId: string;
+      intent?: "add" | "submit";
+      annotation: DesignAnnotationPayload;
     };
 
 export type BrowserBounds = {

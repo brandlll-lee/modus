@@ -72,6 +72,8 @@ describe("context-service", () => {
 
     const content = resolved[0]?.content ?? "";
     expect(content).toContain("MDXContent");
+    expect(content).toContain("Preferred source");
+    expect(content).toContain("Inspect this source first");
     expect(content).toContain("src/content/page.mdx:42:7");
     expect(content).toContain("<span>");
     expect(content).toContain("A screenshot of this element is attached");
@@ -118,5 +120,30 @@ describe("context-service", () => {
     expect(content).toContain("Text: \"Pricing\"");
     expect(content).toContain("2. button");
     expect(content).toContain("DOM path: nav > button");
+  });
+
+  it("formats a design annotation as visual evidence for the model", async () => {
+    const resolved = await resolveContext(repo, [
+      {
+        type: "design-annotation",
+        annotation: {
+          id: "annotation-1",
+          tabId: "tab-1",
+          url: "https://example.com/pricing",
+          label: "Selected region",
+          kind: "box",
+          rect: { x: 12, y: 34, width: 320, height: 180 },
+          seedText: "Make this area less muted.",
+          screenshotDataUrl: "data:image/png;base64,AAAA",
+        },
+      },
+    ]);
+
+    const content = resolved[0]?.content ?? "";
+    expect(content).toContain("Visual annotation");
+    expect(content).toContain("User note: Make this area less muted.");
+    expect(content).toContain("width=320");
+    expect(content).toContain("visual evidence only");
+    expect(content).toContain("A screenshot of the marked region is attached");
   });
 });

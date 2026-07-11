@@ -114,6 +114,9 @@ function inlinePartLabel(part: MentionEditorPart): string | undefined {
         part.item.element.componentName || part.item.element.tagName || part.item.element.label
       );
     }
+    if (part.item.type === "design-annotation") {
+      return part.item.annotation.label;
+    }
     return undefined;
   }
   if (part.type === "skill") {
@@ -122,7 +125,7 @@ function inlinePartLabel(part: MentionEditorPart): string | undefined {
   return undefined;
 }
 
-function messageFromParts(parts: MentionEditorPart[] | undefined, fallback: string): string {
+export function messageFromParts(parts: MentionEditorPart[] | undefined, fallback: string): string {
   if (!parts || parts.length === 0) {
     return fallback;
   }

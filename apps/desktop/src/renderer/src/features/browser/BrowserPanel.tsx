@@ -20,11 +20,12 @@ import {
   useRef,
   useState,
 } from "react";
-import type {
-  BrowserBounds,
-  BrowserEvent,
-  BrowserRecentInfo,
-  BrowserTabInfo,
+import {
+  DESIGN_ACCENT_COLOR,
+  type BrowserBounds,
+  type BrowserEvent,
+  type BrowserRecentInfo,
+  type BrowserTabInfo,
 } from "../../../../shared/contracts";
 import { useNativeSurfaceSuppressed } from "../../components/ui/nativeSurface";
 import { Tooltip } from "../../components/ui/Tooltip";
@@ -791,8 +792,7 @@ function resolveDesignTheme() {
   const token = (name: string, fallback: string): string =>
     styles.getPropertyValue(name).trim() || fallback;
   return {
-    accent: "#2f8edb",
-    accentSoft: "#6bbcff",
+    accent: DESIGN_ACCENT_COLOR,
     accentContrast: "#ffffff",
     surface: token("--color-surface", "#1c1c1d"),
     elevated: token("--color-elevated", "#232325"),
@@ -801,7 +801,6 @@ function resolveDesignTheme() {
     fontFamily: token("--font-sans", '"Inter Variable", "Inter", system-ui, sans-serif'),
     border: token("--color-hairline-strong", "rgba(255,255,255,0.08)"),
     shadow: "rgba(0,0,0,0.5)",
-    fill: "rgba(47, 142, 219, 0.12)",
   };
 }
 

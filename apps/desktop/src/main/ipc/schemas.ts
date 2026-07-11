@@ -199,7 +199,6 @@ export const browserDesignModeSchema = z.object({
   theme: z
     .object({
       accent: hexColor,
-      accentSoft: hexColor,
       accentContrast: hexColor,
       surface: hexColor,
       elevated: hexColor,
@@ -208,7 +207,6 @@ export const browserDesignModeSchema = z.object({
       fontFamily: z.string().trim().min(1).max(512),
       border: hexColor,
       shadow: hexColor,
-      fill: hexColor,
     })
     .optional(),
 });

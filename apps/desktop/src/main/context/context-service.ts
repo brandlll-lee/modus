@@ -369,7 +369,10 @@ export async function resolveContext(
         `Selected UI element from the in-app browser (Design Mode): ${el.label}`,
         selectedElements ? `Selected elements:\n${selectedElements}` : "",
         el.componentName ? `Component: ${el.componentName}` : "",
-        sourceLine ? `Source: ${sourceLine}` : "",
+        sourceLine ? `Preferred source: ${sourceLine}` : "",
+        sourceLine
+          ? "Inspect this source first. If it no longer matches, fall back to the DOM/style/screenshot facts below."
+          : "",
         `Tag: <${el.tagName}>`,
         attributes ? `Attributes: ${attributes}` : "",
         props ? `React props: ${props}` : "",
@@ -383,6 +386,26 @@ export async function resolveContext(
       resolvedItems.push({
         item,
         title: `design-element:${el.label}`,
+        content: lines.join("\n"),
+      });
+    }
+
+    if (item.type === "design-annotation") {
+      const annotation = item.annotation;
+      const lines = [
+        `Visual annotation from the in-app browser (Design Mode): ${annotation.label}`,
+        `Annotation kind: ${annotation.kind}`,
+        annotation.seedText ? `User note: ${annotation.seedText}` : "",
+        `Region: x=${Math.round(annotation.rect.x)}, y=${Math.round(annotation.rect.y)}, width=${Math.round(annotation.rect.width)}, height=${Math.round(annotation.rect.height)} CSS pixels`,
+        `Page URL: ${annotation.url}`,
+        annotation.screenshotDataUrl
+          ? "A screenshot of the marked region is attached to the message."
+          : "",
+        "This is visual evidence only; do not infer a DOM element from the region unless other context identifies one.",
+      ].filter(Boolean);
+      resolvedItems.push({
+        item,
+        title: `design-annotation:${annotation.label}`,
         content: lines.join("\n"),
       });
     }

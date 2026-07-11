@@ -1,20 +1,17 @@
 import type { CdpSession } from "./session";
 
 /**
- * Screenshots via CDP `Page.captureScreenshot`.
+ * Full-page / viewport screenshots via CDP `Page.captureScreenshot`.
  *
- * CDP clip values and input coordinates are CSS pixels. Some platforms still
- * emit PNGs in device pixels, so callers get both CSS and actual image size.
- * `captureBeyondViewport` provides real full-page capture (the Puppeteer
- * implementation strategy).
+ * Design Mode region captures intentionally do NOT live here — CDP clip
+ * flashes the compositor in a visible WebContentsView (see view-capture.ts).
+ * Agent/tool full-page shots still use this path.
  */
 
 interface LayoutMetrics {
   cssLayoutViewport?: { clientWidth?: number; clientHeight?: number };
-  cssVisualViewport?: { pageX?: number; pageY?: number };
   cssContentSize?: { width?: number; height?: number };
   layoutViewport?: { clientWidth?: number; clientHeight?: number };
-  visualViewport?: { pageX?: number; pageY?: number };
   contentSize?: { width?: number; height?: number };
 }
 
@@ -92,114 +89,4 @@ export async function captureScreenshot(
     ...(scaleFactor !== undefined ? { deviceScaleFactor: scaleFactor } : {}),
     fullPage,
   };
-}
-
-/** Upper bound on an element clip so a giant element can't produce a huge PNG. */
-const MAX_CLIP_EDGE = 2400;
-
-/**
- * Extra page context captured around the selected element, as a fraction of its
- * larger edge (clamped). The element shouldn't be cropped flush to its own box
- * (Cursor parity): a margin of surrounding page makes the thumbnail readable
- * and gives the model spatial context.
- */
-const ELEMENT_CONTEXT_RATIO = 0.45;
-const MIN_ELEMENT_CONTEXT = 24;
-const MAX_ELEMENT_CONTEXT = 320;
-/**
- * Floor on the captured region's CSS edges. A tiny element (a logo, an icon,
- * a one-line label) captured flush to its own box yields only a handful of
- * pixels and looks badly blurry once shown at thumbnail/lightbox size. Forcing
- * a minimum captured slice of the page guarantees enough pixels to stay sharp.
- */
-const MIN_CAPTURE_EDGE = 360;
-/**
- * Capture small regions at 2× device pixels for crispness; leave already-large
- * regions at 1× so the PNG payload stays bounded.
- */
-const ELEMENT_HIDPI_THRESHOLD = 720;
-
-export function elementClipForRect(
-  rect: { x: number; y: number; width: number; height: number },
-  page: { width: number; height: number },
-  viewport: { pageX: number; pageY: number } = { pageX: 0, pageY: 0 },
-): { x: number; y: number; width: number; height: number; scale: number } {
-  const pageWidth = Math.floor(page.width) || Number.POSITIVE_INFINITY;
-  const pageHeight = Math.floor(page.height) || Number.POSITIVE_INFINITY;
-  const elementWidth = Math.max(1, rect.width);
-  const elementHeight = Math.max(1, rect.height);
-  const context = Math.min(
-    MAX_ELEMENT_CONTEXT,
-    Math.max(
-      MIN_ELEMENT_CONTEXT,
-      Math.round(Math.max(elementWidth, elementHeight) * ELEMENT_CONTEXT_RATIO),
-    ),
-  );
-  let width = Math.min(
-    MAX_CLIP_EDGE,
-    pageWidth,
-    Math.max(elementWidth + context * 2, MIN_CAPTURE_EDGE),
-  );
-  let height = Math.min(
-    MAX_CLIP_EDGE,
-    pageHeight,
-    Math.max(elementHeight + context * 2, MIN_CAPTURE_EDGE),
-  );
-  const centerX = viewport.pageX + rect.x + elementWidth / 2;
-  const centerY = viewport.pageY + rect.y + elementHeight / 2;
-  let x = centerX - width / 2;
-  let y = centerY - height / 2;
-  const maxX = pageWidth === Number.POSITIVE_INFINITY ? x : Math.max(0, pageWidth - width);
-  const maxY = pageHeight === Number.POSITIVE_INFINITY ? y : Math.max(0, pageHeight - height);
-  x = Math.max(0, Math.min(x, maxX));
-  y = Math.max(0, Math.min(y, maxY));
-  x = Math.floor(x);
-  y = Math.floor(y);
-  width = Math.max(1, Math.floor(width));
-  height = Math.max(1, Math.floor(height));
-  const scale = Math.max(width, height) <= ELEMENT_HIDPI_THRESHOLD ? 2 : 1;
-  return { x, y, width, height, scale };
-}
-
-/**
- * Capture a selected element with surrounding page context, centered in the
- * clip (root-viewport CSS pixels). Used by Design Mode to attach an element
- * thumbnail to the chat context.
- *
- * Rather than cropping flush to the element's box — which leaves tiny elements
- * with too few pixels to read once enlarged — the clip is grown by a context
- * margin and floored to {@link MIN_CAPTURE_EDGE}, then centered on the element
- * and clamped inside the page. Small clips are captured at 2× so they stay
- * crisp; large clips stay at 1× and are bounded by {@link MAX_CLIP_EDGE}.
- */
-export async function captureElementClip(
-  session: CdpSession,
-  rect: { x: number; y: number; width: number; height: number },
-  options: { format?: "png" | "jpeg" } = {},
-): Promise<ScreenshotResult> {
-  await session.ensureAttached();
-  const format = options.format ?? "png";
-
-  // Page box (document CSS size) to clamp the grown region against, so we never
-  // capture blank margin past the page edges. Unknown sizes fall back to no
-  // clamp (Infinity), preserving capture for pages that don't report metrics.
-  const metrics = await session.send<LayoutMetrics>("Page.getLayoutMetrics");
-  const content = metrics.cssContentSize ?? metrics.contentSize;
-  const visualViewport = metrics.cssVisualViewport ?? metrics.visualViewport;
-  const clip = elementClipForRect(
-    rect,
-    { width: content?.width ?? 0, height: content?.height ?? 0 },
-    { pageX: visualViewport?.pageX ?? 0, pageY: visualViewport?.pageY ?? 0 },
-  );
-
-  const result = await session.send<{ data?: string }>("Page.captureScreenshot", {
-    format,
-    ...(format === "jpeg" ? { quality: 90 } : {}),
-    captureBeyondViewport: true,
-    clip,
-  });
-  if (!result.data) {
-    throw new Error("Element screenshot capture returned no data.");
-  }
-  return { base64: result.data, width: clip.width, height: clip.height, fullPage: false };
 }

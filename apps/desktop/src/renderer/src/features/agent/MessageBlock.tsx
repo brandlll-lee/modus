@@ -32,7 +32,7 @@ import {
   type MentionEditorPart,
 } from "../composer/MentionEditor";
 import { SlashMenu } from "../composer/SlashMenu";
-import { contextItemKey, SkillTokenContent } from "../composer/composerTokens";
+import { contextItemKey, InspectGlyph, SkillTokenContent } from "../composer/composerTokens";
 import { type MentionRow, useComposerMentions } from "../composer/useComposerMentions";
 import { type SlashItem, useComposerSlash } from "../composer/useComposerSlash";
 import { CheckpointRestoreButton } from "./CheckpointRestoreButton";
@@ -499,9 +499,10 @@ function InlineContextToken({ chip }: { chip: MessageContextChip }) {
   return (
     <span
       className="mr-1 inline-flex max-w-[220px] items-center gap-1 align-[-0.15em] font-medium text-link text-sm"
+      style={chip.color ? { color: chip.color } : undefined}
       title={chip.detail ? `${chip.label} — ${chip.detail}` : chip.label}
     >
-      {chip.kind === "design-element" ? <InspectGlyph /> : <ContextKindIcon kind={chip.kind} />}
+      {chip.kind === "design-element" ? <InspectGlyph size={12} /> : <ContextKindIcon kind={chip.kind} />}
       <span className="truncate">{chip.label}</span>
     </span>
   );
@@ -540,36 +541,9 @@ function ContextKindIcon({ kind }: { kind: MessageContextChip["kind"] }) {
       return <IconLayoutList {...props} />;
     case "search":
       return <IconSearch {...props} />;
+    case "design-annotation":
+      return <IconPencil {...props} />;
     default:
       return <IconFile {...props} />;
   }
-}
-
-/** Pointer-in-frame inspect glyph — identical to the composer token + popover. */
-function InspectGlyph() {
-  return (
-    <svg
-      aria-hidden="true"
-      className="size-3 shrink-0"
-      fill="none"
-      height="12"
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth={2}
-      viewBox="0 0 24 24"
-      width="12"
-    >
-      <path d="M5 3a2 2 0 0 0-2 2" />
-      <path d="M19 3a2 2 0 0 1 2 2" />
-      <path d="M5 21a2 2 0 0 1-2-2" />
-      <path d="M9 3h1" />
-      <path d="M9 21h2" />
-      <path d="M14 3h1" />
-      <path d="M3 9v1" />
-      <path d="M21 9v2" />
-      <path d="M3 14v1" />
-      <path d="m12 12 4 10 1.7-4.3L22 16Z" />
-    </svg>
-  );
 }

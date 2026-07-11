@@ -7,7 +7,7 @@ import {
   IconListSearch,
   IconMessage2,
   IconNotebook,
-  IconPointer,
+  IconPencil,
   IconReportSearch,
   IconSearch,
   IconTerminal2,
@@ -27,6 +27,35 @@ function fileTokenIcon(path: string): ReactNode {
     <img alt="" className="size-[13px]" draggable={false} src={iconUrl} />
   ) : (
     <IconFileText size={13} stroke={1.7} />
+  );
+}
+
+/** Same inspect glyph as Design Mode's in-page chip (corner brackets + pointer). */
+export function InspectGlyph({ size = 13 }: { size?: number }) {
+  return (
+    <svg
+      aria-hidden="true"
+      className="shrink-0"
+      fill="none"
+      height={size}
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={2}
+      viewBox="0 0 24 24"
+      width={size}
+    >
+      <path d="M5 3a2 2 0 0 0-2 2" />
+      <path d="M19 3a2 2 0 0 1 2 2" />
+      <path d="M5 21a2 2 0 0 1-2-2" />
+      <path d="M9 3h1" />
+      <path d="M9 21h2" />
+      <path d="M14 3h1" />
+      <path d="M3 9v1" />
+      <path d="M21 9v2" />
+      <path d="M3 14v1" />
+      <path d="m12 12 4 10 1.7-4.3L22 16Z" />
+    </svg>
   );
 }
 
@@ -65,9 +94,11 @@ export function tokenMeta(item: ContextItem): { icon: ReactNode; label: string }
       return { icon: <IconSearch {...props} />, label: `search:${item.query}` };
     case "design-element":
       return {
-        icon: <IconPointer {...props} />,
+        icon: <InspectGlyph />,
         label: item.element.componentName || item.element.tagName || item.element.label,
       };
+    case "design-annotation":
+      return { icon: <IconPencil {...props} />, label: item.annotation.label };
     default:
       return { icon: <IconFileText {...props} />, label: "context" };
   }
@@ -80,8 +111,17 @@ export function tokenMeta(item: ContextItem): { icon: ReactNode; label: string }
  */
 export function TokenContent({ item }: { item: ContextItem }) {
   const meta = tokenMeta(item);
+  const markColor =
+    item.type === "design-element"
+      ? item.element.color
+      : item.type === "design-annotation"
+        ? item.annotation.color
+        : undefined;
   return (
-    <span className="inline-flex max-w-[220px] items-center gap-1 align-[-0.15em] text-link">
+    <span
+      className="inline-flex max-w-[220px] items-center gap-1 align-[-0.15em] text-link"
+      style={markColor ? { color: markColor } : undefined}
+    >
       <span className="inline-flex">{meta.icon}</span>
       <span className="truncate">{meta.label}</span>
     </span>
@@ -126,6 +166,10 @@ export function contextItemKey(item: ContextItem): string {
 
   if (item.type === "design-element") {
     return `design-element:${item.element.id}`;
+  }
+
+  if (item.type === "design-annotation") {
+    return `design-annotation:${item.annotation.id}`;
   }
 
   return item.type;

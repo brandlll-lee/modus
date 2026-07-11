@@ -1535,7 +1535,21 @@ function contextChipFor(item: ContextItem): MessageContextChip {
         ? ` "${el.text.length > 24 ? `${el.text.slice(0, 23)}…` : el.text}"`
         : "";
       const detail = el.source ? `${el.source.file}:${el.source.line}` : el.domPath;
-      return { kind: "design-element", label: `${el.label}${text}`, detail };
+      return {
+        kind: "design-element",
+        label: `${el.label}${text}`,
+        detail,
+        ...(el.color ? { color: el.color } : {}),
+      };
+    }
+    case "design-annotation": {
+      const annotation = item.annotation;
+      return {
+        kind: "design-annotation",
+        label: annotation.label,
+        detail: `${Math.round(annotation.rect.width)}×${Math.round(annotation.rect.height)}`,
+        ...(annotation.color ? { color: annotation.color } : {}),
+      };
     }
   }
 }

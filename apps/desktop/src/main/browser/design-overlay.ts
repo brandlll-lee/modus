@@ -1,3 +1,5 @@
+import { DESIGN_ACCENT_COLOR } from "../../shared/contracts";
+
 /**
  * Page-injected Design Mode overlay (runs in an ISOLATED WORLD, distinct from
  * the agent cursor's).
@@ -15,7 +17,7 @@
  * tab has no preload). It exposes `window.__modusDesignOverlay` whose
  * `takeEvents()` the main process drains by polling while Design Mode is on.
  *
- * Responsibilities: hover highlight + centered identity chip; click to select +
+ * Responsibilities: hover highlight + edge-anchored identity chip; click to select +
  * anchored prompt popover; Ctrl+L / send to enqueue a selection; identity via
  * React fiber `_debugSource` (file:line) + owner name, DOM-path fallback;
  * theming via CSS vars set by `setTheme(...)` so it matches Modus light/dark.
@@ -27,7 +29,6 @@ export const DESIGN_WORLD_ID = 1560;
 /** Theme tokens the renderer resolves from Modus's CSS vars and forwards. */
 export type DesignThemeTokens = {
   accent: string;
-  accentSoft: string;
   accentContrast: string;
   surface: string;
   elevated: string;
@@ -36,37 +37,88 @@ export type DesignThemeTokens = {
   fontFamily: string;
   border: string;
   shadow: string;
-  fill: string;
 };
 
 /**
  * Styles live INSIDE the shadow root (injected as a <style> by the bootstrap),
  * so they are immune to the page and need no `insertCSS`. `:host` styles the
  * overlay host element itself; class names are shadow-scoped (short + clean).
+ *
+ * Highlight fill is derived from --mdo-color: hover 2% (near-invisible),
+ * selected 10% (noticeable). Color is the mark's own hex (first = accent,
+ * later = random bright). Plain hover uses accent. Controls keep a stronger
+ * 16% --mdo-fill.
  */
 const SHADOW_CSS = `
 :host { all: initial; position: fixed !important; inset: 0 !important; pointer-events: none !important;
   z-index: 2147483646 !important; display: block !important;
   font-family: var(--mdo-font-family);
-  --mdo-accent: #2f8edb; --mdo-accent-soft: #6bbcff; --mdo-accent-contrast: #ffffff;
+  --mdo-accent: ${DESIGN_ACCENT_COLOR}; --mdo-accent-contrast: #ffffff;
   --mdo-surface: #1c1c1d; --mdo-elevated: #232325; --mdo-fg: #e4e4e3; --mdo-fg-subtle: #8a8a87;
   --mdo-font-family: "Inter Variable", "Inter", system-ui, sans-serif;
-  --mdo-border: rgba(255,255,255,0.10); --mdo-shadow: rgba(0,0,0,0.55); --mdo-fill: rgba(47,142,219,0.14); }
+  --mdo-border: rgba(255,255,255,0.10); --mdo-shadow: rgba(0,0,0,0.55);
+  --mdo-fill: color-mix(in srgb, var(--mdo-accent) 16%, transparent); }
 * { box-sizing: border-box; }
 
-.box { position: absolute; left: 0; top: 0; pointer-events: none; border-radius: 5px;
-  box-shadow: 0 0 0 1.5px var(--mdo-accent); background: var(--mdo-fill); opacity: 0;
+.box { position: absolute; left: 0; top: 0; pointer-events: none; border-radius: 0;
+  --mdo-color: var(--mdo-accent);
+  box-shadow: 0 0 0 1.5px var(--mdo-color);
+  background: color-mix(in srgb, var(--mdo-color) 2%, transparent); opacity: 0;
   transition: transform 90ms cubic-bezier(0.22,1,0.36,1), width 90ms cubic-bezier(0.22,1,0.36,1),
-    height 90ms cubic-bezier(0.22,1,0.36,1), opacity 100ms; }
+    height 90ms cubic-bezier(0.22,1,0.36,1), opacity 100ms, background 100ms; }
 .box.is-shown { opacity: 1; }
-.box.is-selected { box-shadow: 0 0 0 2px var(--mdo-accent); }
-.multi-box { position: absolute; left: 0; top: 0; pointer-events: none; border-radius: 5px;
-  box-shadow: 0 0 0 2px var(--mdo-color); background: color-mix(in srgb, var(--mdo-color) 14%, transparent); }
+.box.is-selected { background: color-mix(in srgb, var(--mdo-color) 10%, transparent); }
+.multi-box { position: absolute; left: 0; top: 0; pointer-events: none; border-radius: 0;
+  box-shadow: 0 0 0 1.5px var(--mdo-color);
+  background: color-mix(in srgb, var(--mdo-color) 10%, transparent); }
+.draw-layer { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+.draw-line { fill: none; stroke: var(--mdo-color, var(--mdo-accent)); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round;
+  /* Tight ink lift — not the heavy panel --mdo-shadow (too dark/spread on light pages). */
+  filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, 0.18)); }
+.draw-box { fill: transparent; stroke: var(--mdo-color, var(--mdo-accent)); stroke-width: 2; stroke-dasharray: 7 5; }
+
+.lens {
+  position: absolute; left: 0; top: 0; pointer-events: none; border-radius: 14px; overflow: hidden;
+  /* Fallback before the shot lands; shot covers it. */
+  background: var(--mdo-elevated);
+  /* Glass sheet on any page: dark lift (reads on light) + light hairline (reads on dark). */
+  border: none;
+  box-shadow:
+    0 18px 44px -14px rgba(0, 0, 0, 0.52),
+    0 6px 16px -4px rgba(0, 0, 0, 0.32),
+    0 1px 3px rgba(0, 0, 0, 0.22),
+    0 0 0 0.5px rgba(255, 255, 255, 0.22),
+    0 0 0 1px rgba(0, 0, 0, 0.28);
+  opacity: 0; transition: opacity 160ms cubic-bezier(0.22,1,0.36,1);
+}
+.lens.is-shown { opacity: 1; }
+.lens-shot { display: block; width: 100%; height: 100%; object-fit: fill; pointer-events: none; }
+.lens-ink { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; z-index: 1; }
+.lens-ink .draw-line { filter: none; }
+/* Rim sits above shot + ink: inset specular / press, top sheen — thin glass edge. */
+.lens::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; z-index: 2;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.42),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.38),
+    inset 1px 0 0 rgba(255, 255, 255, 0.14),
+    inset -1px 0 0 rgba(0, 0, 0, 0.18);
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.03) 6%, transparent 18%);
+}
+/* Capture chrome hide: NEVER opacity on :host (full-viewport opacity:0 flashes
+   the WebContentsView white backing). Hide only non-ink chrome via visibility. */
+:host([data-capturing]) .box,
+:host([data-capturing]) .chip,
+:host([data-capturing]) .popover,
+:host([data-capturing]) .multi-box,
+:host([data-capturing]) .lens { visibility: hidden !important; }
+:host([data-capturing="page"]) .draw-layer { visibility: hidden !important; }
 
 .chip { position: absolute; left: 0; top: 0; pointer-events: none; display: inline-flex; align-items: center;
-  gap: 6px; height: 23px; padding: 0 10px; border-radius: 6px; background: var(--mdo-accent);
-  color: var(--mdo-accent-contrast); font-size: 12px; line-height: 1; font-weight: 600; letter-spacing: 0.01em;
-  white-space: nowrap; box-shadow: 0 4px 14px -4px var(--mdo-shadow); opacity: 0; transform: translateX(-50%);
+  gap: 5px; height: 20px; padding: 0 8px; border-radius: 999px;
+  --mdo-color: var(--mdo-accent); background: var(--mdo-color);
+  color: var(--mdo-accent-contrast); font-size: 11px; line-height: 1; font-weight: 500; letter-spacing: 0.01em;
+  white-space: nowrap; box-shadow: 0 2px 8px -2px var(--mdo-shadow); opacity: 0;
   transition: opacity 100ms; }
 .chip.is-shown { opacity: 1; transition: opacity 100ms, left 90ms cubic-bezier(0.22,1,0.36,1), top 90ms cubic-bezier(0.22,1,0.36,1); }
 .chip-tag { opacity: 0.68; font-weight: 500; }
@@ -149,6 +201,9 @@ export const DESIGN_OVERLAY_BOOTSTRAP = `
   chip.appendChild(chipName); chip.appendChild(chipTag);
 
   var SVGNS = "http://www.w3.org/2000/svg";
+  var drawLayer = document.createElementNS(SVGNS, "svg");
+  drawLayer.classList.add("draw-layer");
+  drawLayer.setAttribute("aria-hidden", "true");
   function makeIcon(paths, sw) {
     var svg = document.createElementNS(SVGNS, "svg");
     svg.setAttribute("viewBox", "0 0 24 24"); svg.setAttribute("fill", "none");
@@ -174,7 +229,13 @@ export const DESIGN_OVERLAY_BOOTSTRAP = `
   porow.appendChild(popInput); porow.appendChild(popSend);
   popover.appendChild(porow);
 
-  shadow.appendChild(box); shadow.appendChild(chip); shadow.appendChild(popover);
+  var lens = document.createElement("div"); lens.className = "lens";
+  var lensShot = document.createElement("img"); lensShot.className = "lens-shot"; lensShot.alt = "";
+  var lensInk = document.createElementNS(SVGNS, "svg"); lensInk.classList.add("lens-ink");
+  lensInk.setAttribute("aria-hidden", "true");
+  lens.appendChild(lensShot); lens.appendChild(lensInk);
+
+  shadow.appendChild(drawLayer); shadow.appendChild(lens); shadow.appendChild(box); shadow.appendChild(chip); shadow.appendChild(popover);
 
   function attach() {
     var h = document.documentElement || document.body;
@@ -187,12 +248,45 @@ export const DESIGN_OVERLAY_BOOTSTRAP = `
   var state = { on: false, hovered: null, selected: null };
   var selectedItems = [];
   var multiBoxes = [];
+  var drawState = null;
+  var pendingAnnotation = null;
+  var suppressClick = false;
   var events = [];
-  var SELECT_COLORS = ["var(--mdo-accent)", "#35c878", "#f15bb5"];
+  var ACCENT = ${JSON.stringify(DESIGN_ACCENT_COLOR)};
+  var usedAccent = false;
+  var DRAG_THRESHOLD = 5;
+  var LENS_PAD = 24;
+
+  // Mark color authority (mirrors shared/design-mark-color): first = accent, later = random bright.
+  function nextMarkColor() {
+    if (!usedAccent) { usedAccent = true; return ACCENT; }
+    var h = Math.floor(Math.random() * 360);
+    var s = 72 + Math.floor(Math.random() * 18);
+    var l = 48 + Math.floor(Math.random() * 12);
+    return hslToHex(h, s, l);
+  }
+  function hslToHex(h, s, l) {
+    s /= 100; l /= 100;
+    var c = (1 - Math.abs(2 * l - 1)) * s;
+    var x = c * (1 - Math.abs((h / 60) % 2 - 1));
+    var m = l - c / 2;
+    var r = 0, g = 0, b = 0;
+    if (h < 60) { r = c; g = x; }
+    else if (h < 120) { r = x; g = c; }
+    else if (h < 180) { g = c; b = x; }
+    else if (h < 240) { g = x; b = c; }
+    else if (h < 300) { r = x; b = c; }
+    else { r = c; b = x; }
+    function hex(n) { var v = Math.round((n + m) * 255); return (v < 16 ? "0" : "") + v.toString(16); }
+    return "#" + hex(r) + hex(g) + hex(b);
+  }
+  function paintMark(node, color) {
+    if (node && color) { node.style.setProperty("--mdo-color", color); }
+  }
 
   function targetAt(x, y) {
-    // Our host is pointer-events:none so elementFromPoint already skips it; the
-    // explicit hide is belt-and-suspenders for the pointer-events:auto popover.
+    // The host stays pointer-events:none so document-level capture sees the
+    // real page events; hide it defensively while probing the underlying node.
     var prev = host.style.display; host.style.display = "none";
     var el = document.elementFromPoint(x, y);
     host.style.display = prev;
@@ -312,6 +406,105 @@ export const DESIGN_OVERLAY_BOOTSTRAP = `
     return id;
   }
 
+  function rectFromPoints(points, pad) {
+    if (pad == null) { pad = 0; }
+    var minX = points[0].x, minY = points[0].y, maxX = points[0].x, maxY = points[0].y;
+    for (var i = 1; i < points.length; i++) {
+      var p = points[i];
+      minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
+      maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
+    }
+    minX = Math.max(0, minX - pad); minY = Math.max(0, minY - pad);
+    maxX = Math.min(window.innerWidth, maxX + pad); maxY = Math.min(window.innerHeight, maxY + pad);
+    return { x: minX, y: minY, width: Math.max(1, maxX - minX), height: Math.max(1, maxY - minY) };
+  }
+
+  function inflateRect(r, pad) {
+    return rectFromPoints([
+      { x: r.x, y: r.y },
+      { x: r.x + r.width, y: r.y + r.height },
+    ], pad);
+  }
+
+  function setSvgRect(el, r) {
+    el.setAttribute("x", String(r.x)); el.setAttribute("y", String(r.y));
+    el.setAttribute("width", String(Math.max(1, r.width)));
+    el.setAttribute("height", String(Math.max(1, r.height)));
+  }
+
+  function pathFromPoints(points) {
+    if (!points || points.length === 0) { return ""; }
+    var d = "M " + points[0].x + " " + points[0].y;
+    for (var i = 1; i < points.length; i++) { d += " L " + points[i].x + " " + points[i].y; }
+    return d;
+  }
+
+  function clearLens() {
+    lens.classList.remove("is-shown");
+    lensShot.removeAttribute("src");
+    lensInk.replaceChildren();
+  }
+
+  function clearAnnotation() {
+    drawLayer.replaceChildren();
+    clearLens();
+    drawState = null;
+    pendingAnnotation = null;
+  }
+
+  function showLens(payload) {
+    if (!payload || !pendingAnnotation) { return false; }
+    var lr = payload.lensRect || pendingAnnotation.lensRect;
+    var ink = payload.inkRect || pendingAnnotation.inkRect;
+    if (!lr || !ink) { return false; }
+    if (payload.dataUrl) {
+      pendingAnnotation.screenshotDataUrl = payload.dataUrl;
+      lensShot.src = payload.dataUrl;
+    }
+    lens.style.transform = "translate(" + lr.x + "px," + lr.y + "px)";
+    lens.style.width = Math.max(1, lr.width) + "px";
+    lens.style.height = Math.max(1, lr.height) + "px";
+    lensInk.setAttribute("viewBox", "0 0 " + lr.width + " " + lr.height);
+    lensInk.replaceChildren();
+    // Bitmap from ink-mode capture already includes the mark. Local SVG is only
+    // a fallback when capture failed (no dataUrl).
+    if (!payload.dataUrl) {
+      var markColor = pendingAnnotation.color || ACCENT;
+      if (pendingAnnotation.kind === "box") {
+        var rect = document.createElementNS(SVGNS, "rect");
+        rect.classList.add("draw-box");
+        paintMark(rect, markColor);
+        setSvgRect(rect, {
+          x: ink.x - lr.x, y: ink.y - lr.y,
+          width: ink.width, height: ink.height,
+        });
+        lensInk.appendChild(rect);
+      } else if (pendingAnnotation.points && pendingAnnotation.points.length > 0) {
+        var local = [];
+        for (var i = 0; i < pendingAnnotation.points.length; i++) {
+          local.push({
+            x: pendingAnnotation.points[i].x - lr.x,
+            y: pendingAnnotation.points[i].y - lr.y,
+          });
+        }
+        var path = document.createElementNS(SVGNS, "path");
+        path.classList.add("draw-line");
+        paintMark(path, markColor);
+        path.setAttribute("d", pathFromPoints(local));
+        lensInk.appendChild(path);
+      }
+    }
+    // One paint: drop live ink + end capture mode + show lens (no ink flash).
+    drawLayer.replaceChildren();
+    host.removeAttribute("data-capturing");
+    lens.classList.add("is-shown");
+    openPopover({
+      left: lr.x, top: lr.y,
+      right: lr.x + lr.width, bottom: lr.y + lr.height,
+    }, { label: pendingAnnotation.kind });
+    return true;
+  }
+
   function unionRect(items) {
     var first = items[0].payload.rect;
     var left = first.x, top = first.y, right = first.x + first.width, bottom = first.y + first.height;
@@ -323,24 +516,52 @@ export const DESIGN_OVERLAY_BOOTSTRAP = `
     return { x: left, y: top, width: right - left, height: bottom - top };
   }
 
-  function placeBox(r, selected) {
+  function indexOfSelected(el) {
+    for (var i = 0; i < selectedItems.length; i++) {
+      if (selectedItems[i].el === el) { return i; }
+    }
+    return -1;
+  }
+  // One paint path: color from the mark's own hex (or accent for plain hover).
+  function paintHighlight(node, color, selected) {
+    node.style.setProperty("--mdo-color", color || ACCENT);
+    node.classList.toggle("is-selected", !!selected);
+  }
+  function placeBox(r, color, selected) {
     box.style.transform = "translate(" + r.left + "px," + r.top + "px)";
     box.style.width = Math.max(0, r.width) + "px"; box.style.height = Math.max(0, r.height) + "px";
-    box.classList.toggle("is-selected", !!selected);
+    paintHighlight(box, color, selected);
     box.classList.add("is-shown");
   }
-  function placeChip(r, id) {
+  function placeChip(r, id, color) {
     chipName.textContent = id.componentName || id.tagName;
     chipTag.textContent = id.componentName ? ("\\u00b7 " + id.tagName) : "";
-    var below = r.bottom + 6;
-    var top = (below + 27 <= window.innerHeight) ? below : Math.max(6, r.top - 29);
-    var centerX = Math.min(window.innerWidth - 12, Math.max(12, r.left + r.width / 2));
-    chip.style.left = centerX + "px"; chip.style.top = top + "px";
+    chip.style.setProperty("--mdo-color", color || ACCENT);
+    // Measure after text update (opacity:0 still lays out); then anchor.
+    var cw = Math.max(chip.offsetWidth, 1); var ch = chip.offsetHeight || 20;
+    // Right-flush when the chip fits the box; otherwise center on the bottom edge.
+    var left = cw <= r.width ? (r.right - cw) : (r.left + r.width / 2 - cw / 2);
+    left = Math.min(window.innerWidth - cw, Math.max(0, left));
+    // Ride the bottom edge; flip to the top edge if the viewport would clip it.
+    var top = r.bottom - ch / 2;
+    if (top + ch > window.innerHeight) { top = r.top - ch / 2; }
+    top = Math.min(window.innerHeight - ch, Math.max(0, top));
+    chip.style.left = left + "px"; chip.style.top = top + "px";
     chip.classList.add("is-shown");
   }
   // Class-driven visibility (never inline opacity): a stale inline opacity:0
   // would outrank the class rule and keep the box hidden on the next enable.
-  function clearHover() { box.classList.remove("is-shown"); chip.classList.remove("is-shown"); }
+  function clearHover() {
+    box.classList.remove("is-shown"); box.classList.remove("is-selected");
+    chip.classList.remove("is-shown");
+  }
+
+  function clearHoverPreview() {
+    if (pendingAnnotation || selectedItems.length > 0 || !state.selected || state.hovered !== state.selected) {
+      clearHover();
+    }
+    state.hovered = state.selected || null;
+  }
 
   function clearMulti() {
     for (var i = 0; i < multiBoxes.length; i++) { multiBoxes[i].remove(); }
@@ -354,7 +575,8 @@ export const DESIGN_OVERLAY_BOOTSTRAP = `
     token.className = "token";
     token.contentEditable = "false";
     token.setAttribute("data-token-index", String(index));
-    token.style.setProperty("--mdo-color", SELECT_COLORS[index % SELECT_COLORS.length]);
+    token.setAttribute("data-path", item.domPath || "");
+    token.style.setProperty("--mdo-color", item.color || ACCENT);
     token.appendChild(makeIcon(${JSON.stringify(INSPECT_PATHS)}, "2"));
     var label = document.createElement("span");
     label.className = "token-label";
@@ -368,12 +590,65 @@ export const DESIGN_OVERLAY_BOOTSTRAP = `
     return token;
   }
 
+  // Selection model is authoritative for WHICH elements are selected (and their
+  // mark color). The contenteditable's own child order is authoritative for
+  // WHERE tokens sit relative to the user's typed prompt. Sync must never
+  // restack "all tokens then text" — that prepends new tokens in front of the
+  // prompt and is exactly the order bug users see.
+  function selectionItems() {
+    if (pendingAnnotation) { return []; }
+    return selectedItems;
+  }
+  function tokenPath(item) {
+    return (item && item.payload && item.payload.domPath) || "";
+  }
+  function appendTokenNode(index, item) {
+    var token = tokenFor(index, item.payload);
+    if (!token) { return null; }
+    // Always append at the end of the contenteditable so a newly selected
+    // element lands after any already-typed prompt — never restacked in front.
+    popInput.appendChild(token);
+    popInput.appendChild(document.createTextNode("\\u00a0"));
+    return token;
+  }
   function seedInput() {
     popInput.replaceChildren();
-    var items = selectedItems.length > 0 ? selectedItems : (state.selected ? [{ el: state.selected, payload: payloadOf(state.selected) }] : []);
+    if (pendingAnnotation) { placeCaretAtEnd(); return; }
+    var items = selectionItems();
+    for (var i = 0; i < items.length; i++) { appendTokenNode(i, items[i]); }
+    placeCaretAtEnd();
+  }
+  function syncTokensPreservePrompt() {
+    if (pendingAnnotation) { return; }
+    var items = selectionItems();
+    var tokens = Array.prototype.slice.call(popInput.querySelectorAll(".token"));
+    var byPath = {};
+    for (var t = 0; t < tokens.length; t++) {
+      byPath[tokens[t].getAttribute("data-path") || ("#" + t)] = tokens[t];
+    }
+    var keep = {};
     for (var i = 0; i < items.length; i++) {
-      var token = tokenFor(i, items[i].payload);
-      if (token) { popInput.appendChild(token, document.createTextNode("\\u00a0")); }
+      var path = tokenPath(items[i]) || ("#" + i);
+      var existing = byPath[path];
+      if (!existing) {
+        // New selection → append after existing content (including typed prompt).
+        appendTokenNode(i, items[i]);
+      } else {
+        existing.setAttribute("data-token-index", String(i));
+        existing.style.setProperty("--mdo-color", items[i].payload.color || ACCENT);
+        var label = existing.querySelector(".token-label");
+        if (label) {
+          label.textContent = items[i].payload.componentName || items[i].payload.tagName;
+        }
+      }
+      keep[path] = true;
+    }
+    for (var r = 0; r < tokens.length; r++) {
+      var oldPath = tokens[r].getAttribute("data-path") || ("#" + r);
+      if (keep[oldPath]) { continue; }
+      var next = tokens[r].nextSibling;
+      tokens[r].remove();
+      if (next && next.nodeType === Node.TEXT_NODE && next.textContent === "\\u00a0") { next.remove(); }
     }
     placeCaretAtEnd();
   }
@@ -390,10 +665,12 @@ export const DESIGN_OVERLAY_BOOTSTRAP = `
     for (var i = 0; i < multiBoxes.length; i++) { multiBoxes[i].remove(); }
     multiBoxes = [];
     for (var j = 0; j < selectedItems.length; j++) {
-      var r = selectedItems[j].payload.rect;
+      var item = selectedItems[j];
+      // Color is assigned at select time (selectAt / toggleMulti); paint only.
+      var r = item.payload.rect;
       var marker = document.createElement("div");
       marker.className = "multi-box";
-      marker.style.setProperty("--mdo-color", SELECT_COLORS[j % SELECT_COLORS.length]);
+      marker.style.setProperty("--mdo-color", item.payload.color || ACCENT);
       marker.style.transform = "translate(" + r.x + "px," + r.y + "px)";
       marker.style.width = Math.max(0, r.width) + "px";
       marker.style.height = Math.max(0, r.height) + "px";
@@ -410,7 +687,9 @@ export const DESIGN_OVERLAY_BOOTSTRAP = `
         return;
       }
     }
-    selectedItems.push({ el: el, payload: payloadOf(el) });
+    var payload = payloadOf(el);
+    payload.color = nextMarkColor();
+    selectedItems.push({ el: el, payload: payload });
     drawMulti();
   }
 
@@ -420,24 +699,28 @@ export const DESIGN_OVERLAY_BOOTSTRAP = `
     var top = r.bottom + 10;
     if (top + height > window.innerHeight) { top = Math.max(8, r.top - height - 10); }
     popover.style.left = left + "px"; popover.style.top = top + "px";
+    var wasOpen = popover.classList.contains("is-open");
     popover.classList.add("is-open");
-    seedInput();
+    // Fresh open → seed tokens. Already open → selection changed; keep the prompt.
+    if (wasOpen) { syncTokensPreservePrompt(); }
+    else { seedInput(); }
     setTimeout(function () { try { popInput.focus(); } catch (e) {} }, 30);
   }
   function closePopover() { popover.classList.remove("is-open"); }
 
   // Cancel the current selection entirely (Esc / after hand-off): close the
-  // popover, drop the selected state + its box styling, and return focus to the
-  // page so hover/selection can resume immediately.
+  // popover, drop the selected state, and return focus to the page so
+  // hover/selection can resume immediately.
   function deselect() {
     closePopover();
     state.selected = null;
-    box.classList.remove("is-selected");
     clearMulti();
+    clearAnnotation();
     try { popInput.blur(); } catch (e) {}
   }
   function handOffSelection() {
     closePopover();
+    clearLens();
     try { popInput.blur(); } catch (e) {}
   }
 
@@ -483,7 +766,10 @@ export const DESIGN_OVERLAY_BOOTSTRAP = `
 
   function emit(kind, el, contentParts) {
     if (!el || !el.isConnected) { return; }
+    prepareCapture();
     var p = payloadOf(el); p.kind = kind;
+    var selected = selectedItems[0];
+    p.color = (selected && selected.el === el && selected.payload.color) || ACCENT;
     var text = plainInputText(contentParts || []);
     if (text) { p.seedText = text; }
     if (contentParts && contentParts.length > 0) { p.contentParts = contentParts; }
@@ -497,11 +783,15 @@ export const DESIGN_OVERLAY_BOOTSTRAP = `
     var live = [];
     for (var i = 0; i < indices.length; i++) {
       var item = selectedItems[indices[i]];
-      if (item && item.el.isConnected) { live.push({ el: item.el, payload: payloadOf(item.el) }); }
+      if (item && item.el.isConnected) {
+        var payload = payloadOf(item.el);
+        payload.color = item.payload.color || nextMarkColor();
+        live.push({ el: item.el, payload: payload });
+      }
     }
     if (live.length === 0) { return; }
     selectedItems = live;
-    drawMulti();
+    prepareCapture();
     var p = {
       kind: kind,
       label: live.length + " selected elements",
@@ -517,26 +807,129 @@ export const DESIGN_OVERLAY_BOOTSTRAP = `
     events.push(p);
   }
 
-  function onMove(e) {
-    if (!state.on) { return; }
-    // Keep previewing other elements while the popover is open (so a single
-    // click can smoothly retarget) — but never re-target when the pointer is
-    // over the popover card itself.
-    if (overUi(e)) { return; }
-    var el = targetAt(e.clientX, e.clientY);
-    if (!el || el === state.hovered) { return; }
-    state.hovered = el;
-    var r = el.getBoundingClientRect(); var id = identify(el);
-    placeBox(r, state.selected === el); placeChip(r, id);
+  function emitAnnotation(kind, contentParts) {
+    if (!pendingAnnotation) { return; }
+    prepareCapture();
+    var text = plainInputText(contentParts || []);
+    var p = {
+      type: "annotation",
+      kind: kind,
+      annotationKind: pendingAnnotation.kind,
+      label: pendingAnnotation.kind === "box" ? "Selected region" : "Drawn annotation",
+      rect: pendingAnnotation.lensRect || pendingAnnotation.rect,
+      color: pendingAnnotation.color || ACCENT,
+    };
+    if (pendingAnnotation.points && pendingAnnotation.points.length > 0) { p.points = pendingAnnotation.points; }
+    if (pendingAnnotation.screenshotDataUrl) { p.screenshotDataUrl = pendingAnnotation.screenshotDataUrl; }
+    if (text) { p.seedText = text; }
+    events.push(p);
   }
-  function onClick(e) {
-    if (!state.on) { return; }
-    // Clicks inside the popover belong to its input/button — leave them be.
-    if (overUi(e)) { return; }
+
+  function prepareCapture() {
+    clearHover();
+    if (!pendingAnnotation && selectedItems.length > 0) { drawMulti(); }
+  }
+
+  function requestLensPreview() {
+    if (!pendingAnnotation || !pendingAnnotation.lensRect) { return; }
+    events.push({
+      type: "annotation-preview",
+      annotationKind: pendingAnnotation.kind,
+      rect: pendingAnnotation.lensRect,
+      inkRect: pendingAnnotation.inkRect,
+      points: pendingAnnotation.points,
+    });
+  }
+
+  function startDraw(e) {
+    if (!state.on || overUi(e) || e.button !== 0) { return; }
+    e.preventDefault(); e.stopPropagation();
+    drawState = {
+      started: false,
+      kind: e.shiftKey ? "box" : "freehand",
+      start: { x: e.clientX, y: e.clientY },
+      points: [{ x: e.clientX, y: e.clientY }],
+      node: null,
+    };
+  }
+
+  function updateDraw(e) {
+    if (!drawState) { return; }
+    var dx = e.clientX - drawState.start.x;
+    var dy = e.clientY - drawState.start.y;
+    if (!drawState.started && Math.sqrt(dx * dx + dy * dy) < DRAG_THRESHOLD) { return; }
+    e.preventDefault(); e.stopPropagation();
+    if (!drawState.started) {
+      drawState.started = true;
+      // Clear prior selection/annotation UI, but NEVER clearAnnotation() here —
+      // that nulls drawState and aborts the gesture mid-flight.
+      closePopover(); clearHover(); clearMulti(); clearLens();
+      pendingAnnotation = null; state.selected = null;
+      drawLayer.replaceChildren();
+      var markColor = nextMarkColor();
+      drawState.color = markColor;
+      if (drawState.kind === "box") {
+        drawState.node = document.createElementNS(SVGNS, "rect");
+        drawState.node.classList.add("draw-box");
+        setSvgRect(drawState.node, { x: drawState.start.x, y: drawState.start.y, width: 1, height: 1 });
+      } else {
+        drawState.node = document.createElementNS(SVGNS, "path");
+        drawState.node.classList.add("draw-line");
+      }
+      paintMark(drawState.node, markColor);
+      drawLayer.appendChild(drawState.node);
+    }
+    if (drawState.kind === "box") {
+      var r = rectFromPoints([drawState.start, { x: e.clientX, y: e.clientY }], 0);
+      setSvgRect(drawState.node, r);
+    } else {
+      drawState.points.push({ x: e.clientX, y: e.clientY });
+      drawState.node.setAttribute("d", pathFromPoints(drawState.points));
+    }
+  }
+
+  function finishDraw(e) {
+    if (!drawState) { return; }
+    if (!drawState.started) {
+      drawState = null;
+      e.preventDefault(); e.stopPropagation();
+      suppressClick = true;
+      window.setTimeout(function () { suppressClick = false; }, 0);
+      selectAt(e);
+      return;
+    }
+    e.preventDefault(); e.stopPropagation();
+    suppressClick = true;
+    window.setTimeout(function () { suppressClick = false; }, 0);
+    if (drawState.kind === "freehand") {
+      drawState.points.push({ x: e.clientX, y: e.clientY });
+      drawState.node.setAttribute("d", pathFromPoints(drawState.points));
+    }
+    var points = drawState.kind === "box"
+      ? [drawState.start, { x: e.clientX, y: e.clientY }]
+      : drawState.points;
+    // Ink = exact gesture (pad 0). Lens = ink + pad for the glass card / capture.
+    var inkRect = rectFromPoints(points, 0);
+    var lensRect = inflateRect(inkRect, LENS_PAD);
+    if (drawState.kind === "box") { setSvgRect(drawState.node, inkRect); }
+    pendingAnnotation = {
+      kind: drawState.kind,
+      inkRect: inkRect,
+      lensRect: lensRect,
+      rect: lensRect,
+      color: drawState.color || ACCENT,
+      points: drawState.kind === "freehand" ? drawState.points.slice() : undefined,
+    };
+    drawState = null;
+    // Keep live ink until ink-mode capture; showLens ends capturing in one paint.
+    requestLensPreview();
+  }
+
+  function selectAt(e) {
     var el = targetAt(e.clientX, e.clientY);
     if (!el) { return; }
-    e.preventDefault(); e.stopPropagation();
     if (e.shiftKey) {
+      // Append-only: array order IS selection order. Never prepend.
       toggleMulti(el);
       state.selected = selectedItems[0] ? selectedItems[0].el : null;
       state.hovered = el;
@@ -547,20 +940,48 @@ export const DESIGN_OVERLAY_BOOTSTRAP = `
       } else { closePopover(); }
       return;
     }
+    // Single select replaces the set with exactly this element (first color = accent).
     clearMulti();
+    var payload = payloadOf(el);
+    payload.color = nextMarkColor();
+    selectedItems.push({ el: el, payload: payload });
     state.selected = el; state.hovered = el;
+    drawMulti();
+    var r = el.getBoundingClientRect();
+    clearHover();
+    openPopover(r, identify(el));
+  }
+
+  function onMove(e) {
+    if (!state.on) { return; }
+    if (drawState) { updateDraw(e); return; }
+    if (overUi(e)) { clearHoverPreview(); return; }
+    e.preventDefault(); e.stopPropagation();
+    var el = targetAt(e.clientX, e.clientY);
+    if (!el || el === state.hovered) { return; }
+    state.hovered = el;
+    // Selected elements already have a colored multi-box — don't overlay accent hover.
+    if (indexOfSelected(el) >= 0) { clearHover(); return; }
     var r = el.getBoundingClientRect(); var id = identify(el);
-    // Box + chip + popover all snap (and CSS-glide) to the newly clicked target.
-    placeBox(r, true); placeChip(r, id); openPopover(r, id);
+    placeBox(r, ACCENT, false); placeChip(r, id, ACCENT);
+  }
+  function onClick(e) {
+    if (!state.on) { return; }
+    if (suppressClick) { e.preventDefault(); e.stopPropagation(); return; }
+    // Clicks inside the popover belong to its input/button — leave them be.
+    if (overUi(e)) { return; }
+    e.preventDefault(); e.stopPropagation();
+    selectAt(e);
   }
   function onKey(e) {
     if (!state.on) { return; }
     if ((e.ctrlKey || e.metaKey) && (e.key === "l" || e.key === "L")) {
       var el = state.selected || state.hovered;
-      if (selectedItems.length > 0 || el) {
+      if (pendingAnnotation || selectedItems.length > 0 || el) {
         e.preventDefault(); e.stopPropagation();
         var parts = inputParts();
-        if (selectedItems.length > 0) { emitMulti("add", parts); }
+        if (pendingAnnotation) { emitAnnotation("add", parts); }
+        else if (selectedItems.length > 0) { emitMulti("add", parts); }
         else { emit("add", el, parts); }
         handOffSelection();
       }
@@ -568,10 +989,12 @@ export const DESIGN_OVERLAY_BOOTSTRAP = `
   }
   function submitPopover() {
     var parts = inputParts();
-    if (selectedItems.length > 0) { emitMulti("submit", parts); handOffSelection(); }
+    if (pendingAnnotation) { emitAnnotation("submit", parts); handOffSelection(); }
+    else if (selectedItems.length > 0) { emitMulti("submit", parts); handOffSelection(); }
     else if (state.selected) { emit("submit", state.selected, parts); handOffSelection(); }
   }
   popSend.addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); submitPopover(); });
+  popInput.addEventListener("focusin", clearHoverPreview);
   popInput.addEventListener("keydown", function (e) {
     e.stopPropagation();
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submitPopover(); }
@@ -579,7 +1002,8 @@ export const DESIGN_OVERLAY_BOOTSTRAP = `
     else if ((e.ctrlKey || e.metaKey) && (e.key === "l" || e.key === "L")) {
       e.preventDefault();
       var parts = inputParts();
-      if (selectedItems.length > 0) { emitMulti("add", parts); handOffSelection(); }
+      if (pendingAnnotation) { emitAnnotation("add", parts); handOffSelection(); }
+      else if (selectedItems.length > 0) { emitMulti("add", parts); handOffSelection(); }
       else if (state.selected) { emit("add", state.selected, parts); handOffSelection(); }
     }
   });
@@ -589,7 +1013,14 @@ export const DESIGN_OVERLAY_BOOTSTRAP = `
     var token = remove && remove.closest("[data-token-index]");
     if (token) {
       e.preventDefault();
-      token.remove();
+      var idx = Number(token.getAttribute("data-token-index"));
+      if (!isNaN(idx) && idx >= 0 && idx < selectedItems.length) {
+        selectedItems.splice(idx, 1);
+        drawMulti();
+        state.selected = selectedItems[0] ? selectedItems[0].el : null;
+      }
+      if (selectedItems.length === 0 && !pendingAnnotation) { deselect(); }
+      else { syncTokensPreservePrompt(); }
     }
   });
 
@@ -601,10 +1032,13 @@ export const DESIGN_OVERLAY_BOOTSTRAP = `
   // INSIDE our own popover (a long prompt) is still allowed via composedPath.
   var savedOverflow = null;
   function overUiPath(e) {
-    return typeof e.composedPath === "function" && e.composedPath().indexOf(host) >= 0;
+    return typeof e.composedPath === "function" && e.composedPath().indexOf(popover) >= 0;
   }
   function onWheel(e) { if (!overUiPath(e)) { e.preventDefault(); } }
   function onTouchMove(e) { if (!overUiPath(e)) { e.preventDefault(); } }
+  function blockPageGesture(e) {
+    if (state.on && !overUiPath(e)) { e.preventDefault(); e.stopPropagation(); }
+  }
   function lockScroll() {
     if (savedOverflow) { return; }
     var de = document.documentElement, b = document.body;
@@ -613,6 +1047,8 @@ export const DESIGN_OVERLAY_BOOTSTRAP = `
     if (b) { b.style.overflow = "hidden"; }
     document.addEventListener("wheel", onWheel, { capture: true, passive: false });
     document.addEventListener("touchmove", onTouchMove, { capture: true, passive: false });
+    document.addEventListener("selectstart", blockPageGesture, true);
+    document.addEventListener("dragstart", blockPageGesture, true);
   }
   function unlockScroll() {
     if (savedOverflow) {
@@ -623,15 +1059,21 @@ export const DESIGN_OVERLAY_BOOTSTRAP = `
     }
     document.removeEventListener("wheel", onWheel, true);
     document.removeEventListener("touchmove", onTouchMove, true);
+    document.removeEventListener("selectstart", blockPageGesture, true);
+    document.removeEventListener("dragstart", blockPageGesture, true);
   }
 
   function bind() {
+    document.addEventListener("mousedown", startDraw, true);
     document.addEventListener("mousemove", onMove, true);
+    document.addEventListener("mouseup", finishDraw, true);
     document.addEventListener("click", onClick, true);
     document.addEventListener("keydown", onKey, true);
   }
   function unbind() {
+    document.removeEventListener("mousedown", startDraw, true);
     document.removeEventListener("mousemove", onMove, true);
+    document.removeEventListener("mouseup", finishDraw, true);
     document.removeEventListener("click", onClick, true);
     document.removeEventListener("keydown", onKey, true);
   }
@@ -641,8 +1083,9 @@ export const DESIGN_OVERLAY_BOOTSTRAP = `
       attach(); state.on = !!on;
       if (state.on) { bind(); lockScroll(); }
       else {
-        unbind(); unlockScroll(); clearHover(); closePopover(); clearMulti();
-        box.classList.remove("is-selected"); state.hovered = null; state.selected = null;
+        unbind(); unlockScroll(); clearHover(); closePopover(); clearMulti(); clearAnnotation();
+        state.hovered = null; state.selected = null;
+        usedAccent = false;
       }
       return true;
     },
@@ -650,7 +1093,6 @@ export const DESIGN_OVERLAY_BOOTSTRAP = `
       if (!t) { return true; }
       var s = host.style;
       if (t.accent) s.setProperty("--mdo-accent", t.accent);
-      if (t.accentSoft) s.setProperty("--mdo-accent-soft", t.accentSoft);
       if (t.accentContrast) s.setProperty("--mdo-accent-contrast", t.accentContrast);
       if (t.surface) s.setProperty("--mdo-surface", t.surface);
       if (t.elevated) s.setProperty("--mdo-elevated", t.elevated);
@@ -659,11 +1101,26 @@ export const DESIGN_OVERLAY_BOOTSTRAP = `
       if (t.fontFamily) s.setProperty("--mdo-font-family", t.fontFamily);
       if (t.border) s.setProperty("--mdo-border", t.border);
       if (t.shadow) s.setProperty("--mdo-shadow", t.shadow);
-      if (t.fill) s.setProperty("--mdo-fill", t.fill);
       return true;
     },
     takeEvents: function () { var out = events.slice(); events.length = 0; return JSON.stringify(out); },
     clearSelection: function () { deselect(); return true; },
+    showLens: function (payload) { return showLens(payload || {}); },
+    /**
+     * Capture mode — authority for what the view capture may see:
+     *   "off"  — normal UI
+     *   "page" — hide all chrome (element thumbnails: clean page only)
+     *   "ink"  — hide chrome but keep draw-layer strokes (annotation: page + mark)
+     * Returns a promise that resolves after the next paint so capture doesn't race.
+     */
+    setCaptureMode: function (mode) {
+      attach();
+      if (mode === "page" || mode === "ink") { host.setAttribute("data-capturing", mode); }
+      else { host.removeAttribute("data-capturing"); }
+      return new Promise(function (resolve) {
+        requestAnimationFrame(function () { resolve(true); });
+      });
+    },
     isEnabled: function () { return state.on; },
   };
   return true;
