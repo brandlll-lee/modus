@@ -909,6 +909,7 @@ export type ModelProviderInfo = {
   configured: boolean;
   authSource?: string;
   authLabel?: string;
+  authKind?: "api-key" | "oauth";
   modelCount: number;
   enabledModelCount: number;
   baseUrl?: string;
@@ -931,6 +932,38 @@ export type ProviderModelConfig = {
 
 export type ModelProviderDetail = ModelProviderInfo & {
   models: ProviderModelConfig[];
+};
+
+export type ProviderConnectionMethod = {
+  kind: "api-key" | "oauth";
+  label: string;
+};
+
+export type ProviderAuthOption = {
+  id: string;
+  label: string;
+};
+
+export type ProviderAuthOperationState = {
+  id: string;
+  provider: string;
+  status:
+    | "pending"
+    | "select"
+    | "browser"
+    | "device-code"
+    | "prompt"
+    | "manual-code"
+    | "complete"
+    | "error"
+    | "cancelled";
+  message?: string | undefined;
+  options?: ProviderAuthOption[] | undefined;
+  url?: string | undefined;
+  instructions?: string | undefined;
+  userCode?: string | undefined;
+  placeholder?: string | undefined;
+  allowEmpty?: boolean | undefined;
 };
 
 export type ModelSettingsState = {

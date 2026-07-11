@@ -159,6 +159,13 @@ const api: ModusApi = {
     setDefault: (model) => ipcRenderer.invoke("model:set-default", model),
     settings: () => ipcRenderer.invoke("model:settings"),
     providerDetail: (provider) => ipcRenderer.invoke("model:provider-detail", provider),
+    connectionMethods: (provider) =>
+      ipcRenderer.invoke("model:provider-connection-methods", provider),
+    startProviderAuth: (input) => ipcRenderer.invoke("model:provider-auth-start", input),
+    providerAuthState: (input) => ipcRenderer.invoke("model:provider-auth-state", input),
+    respondProviderAuth: (input) => ipcRenderer.invoke("model:provider-auth-respond", input),
+    cancelProviderAuth: (input) => ipcRenderer.invoke("model:provider-auth-cancel", input),
+    disconnectProvider: (provider) => ipcRenderer.invoke("model:disconnect-provider", provider),
     customProviderConfig: (provider) =>
       ipcRenderer.invoke("model:custom-provider-config", provider),
     deleteCustomProvider: (provider) =>

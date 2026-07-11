@@ -459,6 +459,19 @@ export const configureProviderSchema = z.object({
   enabledModelIds: z.array(nonEmptyString).optional(),
 });
 
+export const providerAuthStartSchema = z.object({
+  provider: nonEmptyString,
+});
+
+export const providerAuthOperationSchema = z.object({
+  operationId: nonEmptyString,
+});
+
+export const providerAuthResponseSchema = z.object({
+  operationId: nonEmptyString,
+  value: z.string().max(20_000).optional(),
+});
+
 const providerCompatibilitySchema = z.object({
   supportsDeveloperRole: z.boolean().optional(),
   supportsReasoningEffort: z.boolean().optional(),

@@ -20,6 +20,8 @@ import type {
   ModelProviderDetail,
   ModelProviderInfo,
   ModelSettingsState,
+  ProviderAuthOperationState,
+  ProviderConnectionMethod,
   ProviderModelConfig,
   TestCustomProviderInput,
   TestCustomProviderResult,
@@ -139,6 +141,15 @@ const MANAGED_CLIENT_HEADER_KEYS = new Set<string>([
 ]);
 
 let registry: ModelRegistry | undefined;
+
+type ProviderAuthOperation = {
+  cancelled: boolean;
+  controller: AbortController;
+  respond: ((value: string | undefined) => void) | undefined;
+  state: ProviderAuthOperationState;
+};
+
+const providerAuthOperations = new Map<string, ProviderAuthOperation>();
 
 function agentDir(): string {
   const dir = join(app.getPath("userData"), "pi-agent");
@@ -414,10 +425,7 @@ function thinkingLevelMapForModel(
 ): Partial<Record<ThinkingLevel, string | null>> | undefined {
   if (config?.thinking_level_map_json) {
     return normalizeThinkingLevelMap(
-      parseJson<Partial<Record<ThinkingLevel, string | null>>>(
-        config.thinking_level_map_json,
-        {},
-      ),
+      parseJson<Partial<Record<ThinkingLevel, string | null>>>(config.thinking_level_map_json, {}),
     );
   }
 
@@ -581,8 +589,7 @@ function configToInfo(config: ModelConfigRow, available: boolean): ModelInfo {
   };
 }
 
-export function listModels(): ModelInfo[] {
-  const modelRegistry = refreshRegistry();
+function listModelsFromRegistry(modelRegistry: ModelRegistry): ModelInfo[] {
   const configs = new Map(listModelConfigRows().map((row) => [row.id, row]));
   const availableIds = new Set(modelRegistry.getAvailable().map(modelToId));
   const allModels = new Map(modelRegistry.getAll().map((model) => [modelToId(model), model]));
@@ -603,6 +610,10 @@ export function listModels(): ModelInfo[] {
   });
 
   return configuredInfos;
+}
+
+export function listModels(): ModelInfo[] {
+  return listModelsFromRegistry(refreshRegistry());
 }
 
 export function listAllProviderModels(provider: string): ProviderModelConfig[] {
@@ -660,8 +671,7 @@ function providerSortIndex(provider: string): number {
   return index === -1 ? Number.MAX_SAFE_INTEGER : index;
 }
 
-export function listProviders(): ModelProviderInfo[] {
-  const modelRegistry = refreshRegistry();
+function listProvidersFromRegistry(modelRegistry: ModelRegistry): ModelProviderInfo[] {
   const providerConfigs = new Map(listProviderConfigRows().map((row) => [row.provider_id, row]));
   const modelConfigs = listModelConfigRows();
   const providerIds = new Set<string>();
@@ -677,6 +687,16 @@ export function listProviders(): ModelProviderInfo[] {
     const providerModels = modelRegistry.getAll().filter((model) => model.provider === provider);
     const configuredModels = modelConfigs.filter((config) => config.provider_id === provider);
     const authStatus = modelRegistry.getProviderAuthStatus(provider);
+    const credential = authStatus.source === "stored" ? modelRegistry.authStorage.get(provider) : undefined;
+    const authKind =
+      credential?.type === "oauth" ? "oauth" : credential?.type === "api_key" ? "api-key" : undefined;
+    const oauthProvider =
+      authKind === "oauth"
+        ? modelRegistry.authStorage.getOAuthProviders().find((item) => item.id === provider)
+        : undefined;
+    const authLabel =
+      authStatus.label ??
+      (authKind === "oauth" ? oauthProvider?.name ?? "OAuth" : authKind === "api-key" ? "API key" : undefined);
     const configured =
       authStatus.configured || (row?.source === "custom" && configuredModels.length > 0);
     const enabledModelCount = configured
@@ -693,7 +713,8 @@ export function listProviders(): ModelProviderInfo[] {
       ...(row?.base_url ? { baseUrl: row.base_url } : {}),
       ...(row?.api ? { api: row.api } : {}),
       ...(authStatus.source ? { authSource: authStatus.source } : {}),
-      ...(authStatus.label ? { authLabel: authStatus.label } : {}),
+      ...(authKind ? { authKind } : {}),
+      ...(authLabel ? { authLabel } : {}),
       ...(loadError ? { error: loadError } : {}),
     };
     return info;
@@ -710,6 +731,10 @@ export function listProviders(): ModelProviderInfo[] {
   return providers;
 }
 
+export function listProviders(): ModelProviderInfo[] {
+  return listProvidersFromRegistry(refreshRegistry());
+}
+
 export function getProviderDetail(provider: string): ModelProviderDetail | undefined {
   const item = listProviders().find((candidate) => candidate.id === provider);
   if (!item) {
@@ -719,12 +744,235 @@ export function getProviderDetail(provider: string): ModelProviderDetail | undef
 }
 
 export function getModelSettings(): ModelSettingsState {
-  const defaultModel = getDefaultModelId();
+  const modelRegistry = refreshRegistry();
+  const models = listModelsFromRegistry(modelRegistry);
+  const defaultModel = getDefaultModelId(models);
   return {
-    providers: listProviders(),
-    models: listModels(),
+    providers: listProvidersFromRegistry(modelRegistry),
+    models,
     ...(defaultModel ? { defaultModel } : {}),
   };
+}
+
+export function listProviderConnectionMethods(provider: string): ProviderConnectionMethod[] {
+  const id = provider.trim();
+  const modelRegistry = refreshRegistry();
+  const config = getProviderConfig(id);
+  const known = modelRegistry.getAll().some((model) => model.provider === id);
+  if (!id || (!known && !config)) {
+    throw new Error(`Unknown provider: ${provider}`);
+  }
+  if (config?.source === "custom") {
+    return [];
+  }
+
+  const oauth = modelRegistry.authStorage.getOAuthProviders().find((item) => item.id === id);
+  return [
+    { kind: "api-key", label: "API key" },
+    ...(oauth ? [{ kind: "oauth" as const, label: oauth.name }] : []),
+  ];
+}
+
+function findProviderAuthOperation(operationId: string): ProviderAuthOperation {
+  const operation = providerAuthOperations.get(operationId);
+  if (!operation) {
+    throw new Error("Provider sign-in is no longer active.");
+  }
+  return operation;
+}
+
+function updateProviderAuthOperation(
+  operation: ProviderAuthOperation,
+  patch: Omit<Partial<ProviderAuthOperationState>, "id" | "provider">,
+): void {
+  operation.state = { ...operation.state, ...patch };
+}
+
+function waitForProviderAuthInput(
+  operation: ProviderAuthOperation,
+  state: Omit<ProviderAuthOperationState, "id" | "provider">,
+): Promise<string | undefined> {
+  if (operation.cancelled) {
+    return Promise.resolve(undefined);
+  }
+  updateProviderAuthOperation(operation, state);
+  return new Promise((resolve) => {
+    operation.respond = resolve;
+  });
+}
+
+export function startProviderAuth(
+  provider: string,
+  openExternal: (url: string) => Promise<void>,
+): ProviderAuthOperationState {
+  const id = provider.trim();
+  const modelRegistry = refreshRegistry();
+  if (!id || !modelRegistry.authStorage.getOAuthProviders().some((item) => item.id === id)) {
+    throw new Error(`No native sign-in is available for ${provider}.`);
+  }
+  if (
+    [...providerAuthOperations.values()].some(
+      (operation) =>
+        operation.state.provider === id &&
+        !operation.cancelled &&
+        !["complete", "error", "cancelled"].includes(operation.state.status),
+    )
+  ) {
+    throw new Error(`A sign-in is already in progress for ${id}.`);
+  }
+
+  const operation: ProviderAuthOperation = {
+    cancelled: false,
+    controller: new AbortController(),
+    respond: undefined,
+    state: {
+      id: crypto.randomUUID(),
+      provider: id,
+      status: "pending",
+      message: "Preparing sign-in…",
+    },
+  };
+  providerAuthOperations.set(operation.state.id, operation);
+
+  void modelRegistry.authStorage
+    .login(id, {
+      signal: operation.controller.signal,
+      onAuth: (info) => {
+        if (operation.cancelled) {
+          return;
+        }
+        updateProviderAuthOperation(operation, {
+          status: "browser",
+          url: info.url,
+          instructions: info.instructions,
+          message: "Continue sign-in in your browser.",
+        });
+        void openExternal(info.url).catch(() => {
+          updateProviderAuthOperation(operation, {
+            message: "Browser could not be opened. Copy the link below to continue.",
+          });
+        });
+      },
+      onDeviceCode: (info) => {
+        if (operation.cancelled) {
+          return;
+        }
+        updateProviderAuthOperation(operation, {
+          status: "device-code",
+          url: info.verificationUri,
+          userCode: info.userCode,
+          message: "Enter this code in your browser to continue.",
+        });
+        void openExternal(info.verificationUri).catch(() => {
+          updateProviderAuthOperation(operation, {
+            message: "Browser could not be opened. Copy the link below to continue.",
+          });
+        });
+      },
+      onPrompt: async (prompt) => {
+        const value = await waitForProviderAuthInput(operation, {
+          status: "prompt",
+          message: prompt.message,
+          placeholder: prompt.placeholder,
+          allowEmpty: prompt.allowEmpty,
+          options: undefined,
+          url: undefined,
+          userCode: undefined,
+        });
+        if (operation.cancelled) {
+          throw new Error("Sign-in cancelled.");
+        }
+        if (!value && !prompt.allowEmpty) {
+          throw new Error("A value is required to continue sign-in.");
+        }
+        return value ?? "";
+      },
+      onManualCodeInput: async () => {
+        const value = await waitForProviderAuthInput(operation, {
+          status: "manual-code",
+          message: "Paste the authorization code or complete redirect URL.",
+          placeholder: "Authorization code or redirect URL",
+          allowEmpty: false,
+          options: undefined,
+        });
+        if (operation.cancelled || !value) {
+          throw new Error("Sign-in cancelled.");
+        }
+        return value;
+      },
+      onProgress: (message) => {
+        if (!operation.cancelled) {
+          updateProviderAuthOperation(operation, { message });
+        }
+      },
+      onSelect: async (prompt) => {
+        const value = await waitForProviderAuthInput(operation, {
+          status: "select",
+          message: prompt.message,
+          options: prompt.options,
+          url: undefined,
+          userCode: undefined,
+        });
+        return operation.cancelled ? undefined : value;
+      },
+    })
+    .then(async () => {
+      if (operation.cancelled) {
+        return;
+      }
+      await configureProvider({ provider: id, baseUrl: "" });
+      if (!operation.cancelled) {
+        updateProviderAuthOperation(operation, { status: "complete", message: "Connected." });
+      }
+    })
+    .catch((error: unknown) => {
+      if (operation.cancelled || operation.controller.signal.aborted) {
+        updateProviderAuthOperation(operation, { status: "cancelled", message: "Sign-in cancelled." });
+        return;
+      }
+      updateProviderAuthOperation(operation, {
+        status: "error",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    });
+
+  return operation.state;
+}
+
+export function getProviderAuthState(operationId: string): ProviderAuthOperationState {
+  const operation = findProviderAuthOperation(operationId);
+  const state = { ...operation.state };
+  if (["complete", "error", "cancelled"].includes(state.status)) {
+    providerAuthOperations.delete(state.id);
+  }
+  return state;
+}
+
+export function respondProviderAuth(operationId: string, value: string | undefined): void {
+  const operation = findProviderAuthOperation(operationId);
+  const respond = operation.respond;
+  if (!respond) {
+    throw new Error("Provider sign-in is not waiting for input.");
+  }
+  operation.respond = undefined;
+  updateProviderAuthOperation(operation, {
+    status: "pending",
+    message: "Continuing sign-in…",
+    options: undefined,
+    placeholder: undefined,
+    allowEmpty: undefined,
+  });
+  respond(value);
+}
+
+export function cancelProviderAuth(operationId: string): void {
+  const operation = findProviderAuthOperation(operationId);
+  operation.cancelled = true;
+  operation.controller.abort();
+  operation.respond?.(undefined);
+  operation.respond = undefined;
+  updateProviderAuthOperation(operation, { status: "cancelled", message: "Sign-in cancelled." });
+  providerAuthOperations.delete(operationId);
 }
 
 /** The wire protocol of a built-in provider, read from its first bundled model. */
@@ -1210,6 +1458,38 @@ function removeCustomModelsJson(provider: string): void {
   writeFileSync(path, `${JSON.stringify(data, null, 2)}\n`, "utf-8");
 }
 
+function clearProviderConnectionState(provider: string, modelRegistry: ModelRegistry): void {
+  modelRegistry.authStorage.remove(provider);
+  const db = getDatabase();
+  db.prepare("delete from model_configs where provider_id = ?").run(provider);
+
+  const currentDefault = readSetting("model.default");
+  if (currentDefault?.startsWith(`${provider}/`)) {
+    writeSetting("model.default", undefined);
+  }
+}
+
+export function disconnectProvider(provider: string): void {
+  const id = provider.trim();
+  const modelRegistry = refreshRegistry();
+  const authStatus = modelRegistry.getProviderAuthStatus(id);
+  if (authStatus.source !== "stored") {
+    throw new Error("This provider is managed outside Modus and cannot be disconnected here.");
+  }
+
+  const config = getProviderConfig(id);
+  if (!config && !modelRegistry.getAll().some((model) => model.provider === id)) {
+    throw new Error(`Unknown provider: ${provider}`);
+  }
+
+  clearProviderConnectionState(id, modelRegistry);
+  if (config?.source !== "custom") {
+    getDatabase().prepare("delete from model_provider_configs where provider_id = ?").run(id);
+    setProviderRuntimeConfig(id, undefined);
+  }
+  refreshRegistry();
+}
+
 /**
  * Fully removes a custom provider from local state: the models.json entry, both
  * DB config tables, the stored API key, and the default-model pointer if it
@@ -1223,21 +1503,9 @@ export function deleteCustomProvider(provider: string): void {
     throw new Error(`Only custom providers can be removed: ${provider}`);
   }
 
+  clearProviderConnectionState(id, refreshRegistry());
   removeCustomModelsJson(id);
-  const db = getDatabase();
-  db.prepare("delete from model_configs where provider_id = ?").run(id);
-  db.prepare("delete from model_provider_configs where provider_id = ?").run(id);
-
-  try {
-    getModelRegistry().authStorage.remove(id);
-  } catch {
-    // No stored credential to remove.
-  }
-
-  const currentDefault = readSetting("model.default");
-  if (currentDefault?.startsWith(`${id}/`)) {
-    writeSetting("model.default", undefined);
-  }
+  getDatabase().prepare("delete from model_provider_configs where provider_id = ?").run(id);
 
   refreshRegistry();
 }
@@ -1334,13 +1602,13 @@ export function getDefaultModel(): Model<Api> | undefined {
   return findModel(firstEnabled?.id);
 }
 
-export function getDefaultModelId(): string | undefined {
+export function getDefaultModelId(models = listModels()): string | undefined {
   const configured = readSetting("model.default");
-  if (configured && listModels().some((model) => model.id === configured && model.enabled)) {
+  if (configured && models.some((model) => model.id === configured && model.enabled)) {
     return configured;
   }
 
-  return listModels()[0]?.id;
+  return models[0]?.id;
 }
 
 export function getModelThinkingLevel(modelId: string | undefined): ThinkingLevel {

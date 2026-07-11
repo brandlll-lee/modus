@@ -22,13 +22,19 @@ import {
   restoreCheckpoint,
 } from "../agent/checkpoint-service";
 import {
+  cancelProviderAuth,
   configureProvider,
   deleteCustomProvider,
+  disconnectProvider,
+  getProviderAuthState,
   getCustomProviderConfig,
   getModelSettings,
   getProviderDetail,
+  listProviderConnectionMethods,
   listModels,
+  respondProviderAuth,
   setDefaultModel,
+  startProviderAuth,
   testCustomProvider,
   updateModelConfig,
   upsertCustomProvider,
@@ -181,6 +187,9 @@ import {
   parseIpcInput,
   permissionDecideSchema,
   personalizationSaveSchema,
+  providerAuthOperationSchema,
+  providerAuthResponseSchema,
+  providerAuthStartSchema,
   processKillSchema,
   processListSchema,
   questionRespondSchema,
@@ -1177,6 +1186,60 @@ export function registerAppIpc({
     assertTrustedSender(event);
     return getProviderDetail(
       parseIpcInput(sessionIdSchema, provider, IPC_CHANNELS.modelProviderDetail),
+    );
+  });
+
+  ipcMain.handle(IPC_CHANNELS.modelProviderConnectionMethods, (event, provider: string) => {
+    assertTrustedSender(event);
+    return listProviderConnectionMethods(
+      parseIpcInput(sessionIdSchema, provider, IPC_CHANNELS.modelProviderConnectionMethods),
+    );
+  });
+
+  ipcMain.handle(IPC_CHANNELS.modelProviderAuthStart, (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(
+      providerAuthStartSchema,
+      input,
+      IPC_CHANNELS.modelProviderAuthStart,
+    );
+    return startProviderAuth(parsed.provider, (url) => shell.openExternal(url));
+  });
+
+  ipcMain.handle(IPC_CHANNELS.modelProviderAuthState, (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(
+      providerAuthOperationSchema,
+      input,
+      IPC_CHANNELS.modelProviderAuthState,
+    );
+    return getProviderAuthState(parsed.operationId);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.modelProviderAuthRespond, (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(
+      providerAuthResponseSchema,
+      input,
+      IPC_CHANNELS.modelProviderAuthRespond,
+    );
+    respondProviderAuth(parsed.operationId, parsed.value);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.modelProviderAuthCancel, (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(
+      providerAuthOperationSchema,
+      input,
+      IPC_CHANNELS.modelProviderAuthCancel,
+    );
+    cancelProviderAuth(parsed.operationId);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.modelDisconnectProvider, (event, provider: string) => {
+    assertTrustedSender(event);
+    disconnectProvider(
+      parseIpcInput(sessionIdSchema, provider, IPC_CHANNELS.modelDisconnectProvider),
     );
   });
 

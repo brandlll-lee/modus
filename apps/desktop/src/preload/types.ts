@@ -36,6 +36,8 @@ import type {
   McpServerInfo,
   McpServerUpsertInput,
   ModelInfo,
+  ProviderAuthOperationState,
+  ProviderConnectionMethod,
   ModelProviderDetail,
   ModelSettingsState,
   PermissionAction,
@@ -322,6 +324,12 @@ export type ModusApi = {
     setDefault(model: string): Promise<void>;
     settings(): Promise<ModelSettingsState>;
     providerDetail(provider: string): Promise<ModelProviderDetail | undefined>;
+    connectionMethods(provider: string): Promise<ProviderConnectionMethod[]>;
+    startProviderAuth(input: { provider: string }): Promise<ProviderAuthOperationState>;
+    providerAuthState(input: { operationId: string }): Promise<ProviderAuthOperationState>;
+    respondProviderAuth(input: { operationId: string; value?: string }): Promise<void>;
+    cancelProviderAuth(input: { operationId: string }): Promise<void>;
+    disconnectProvider(provider: string): Promise<void>;
     customProviderConfig(provider: string): Promise<CustomProviderConfig | undefined>;
     deleteCustomProvider(provider: string): Promise<void>;
     configureProvider(input: ConfigureProviderInput): Promise<ModelProviderDetail>;

@@ -6,8 +6,8 @@ import {
   IconBrain,
   IconCheck,
   IconChevronRight,
-  IconCircleCheck,
   IconCodeDots,
+  IconCopy,
   IconCube,
   IconEdit,
   IconFileText,
@@ -31,7 +31,7 @@ import {
   IconX,
 } from "@tabler/icons-react";
 import { AnimatePresence, m } from "motion/react";
-import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { joinCommandLine, splitCommandLine } from "../../../../shared/command-line";
 import type {
   ConfigScope,
@@ -41,6 +41,8 @@ import type {
   ModelProviderInfo,
   ModelSettingsState,
   PersonalizationState,
+  ProviderAuthOperationState,
+  ProviderConnectionMethod,
   ProviderModelConfig,
   RuleFileInfo,
   RuleMode,
@@ -105,6 +107,12 @@ export function SettingsPanel({
   const [providerDetailOpen, setProviderDetailOpen] = useState(false);
   const [customOpen, setCustomOpen] = useState(false);
   const [customInitial, setCustomInitial] = useState<CustomProviderConfig | undefined>();
+  const [connectionProvider, setConnectionProvider] = useState<ModelProviderInfo | undefined>();
+  const [connectionMethods, setConnectionMethods] = useState<ProviderConnectionMethod[]>([]);
+  const [authOperation, setAuthOperation] = useState<ProviderAuthOperationState | undefined>();
+  const authOperationRef = useRef(authOperation);
+  authOperationRef.current = authOperation;
+  const [credentialEditorProvider, setCredentialEditorProvider] = useState<string | undefined>();
   const [providerKeys, setProviderKeys] = useState<Record<string, string>>({});
   const [activeSection, setActiveSection] = useState<SettingsSectionId>("model-provider");
   const [settingsQuery, setSettingsQuery] = useState("");
@@ -117,6 +125,16 @@ export function SettingsPanel({
     (provider) => !connected.some((item) => item.id === provider.id),
   );
   const currentProvider = providers.find((provider) => provider.id === selectedProvider);
+
+  useEffect(
+    () => () => {
+      const operationId = authOperationRef.current?.id;
+      if (operationId) {
+        void window.modus.model.cancelProviderAuth({ operationId }).catch(() => undefined);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!selectedProvider) {
@@ -161,6 +179,7 @@ export function SettingsPanel({
         enabledModelIds: providerDetail?.models.map((model) => model.id),
       });
       setProviderKeys((current) => ({ ...current, [provider.id]: "" }));
+      setCredentialEditorProvider(undefined);
       onRefresh();
       setSelectedProvider(provider.id);
       setDetail(await window.modus.model.providerDetail(provider.id));
@@ -250,6 +269,176 @@ export function SettingsPanel({
     }
   }
 
+  async function disconnectProvider(provider: ModelProviderInfo): Promise<void> {
+    const keepsDefinition =
+      provider.source === "custom"
+        ? " Its endpoint and model definition will remain for reconnection."
+        : " Any Modus base URL override will also be removed.";
+    const confirmed = window.confirm(
+      `Disconnect "${provider.name}"? This removes saved credentials and enabled models from Modus.${keepsDefinition}`,
+    );
+    if (!confirmed) {
+      return;
+    }
+    setBusy(true);
+    setError(undefined);
+    try {
+      await window.modus.model.disconnectProvider(provider.id);
+      setProviderKeys((current) => ({ ...current, [provider.id]: "" }));
+      setProviderDetailOpen(false);
+      setSelectedProvider(undefined);
+      setDetail(undefined);
+      onRefresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function selectProvider(provider: ModelProviderInfo): Promise<void> {
+    setCustomOpen(false);
+    setCredentialEditorProvider(undefined);
+    setDetail(undefined);
+    setDetailLoading(true);
+    setSelectedProvider(provider.id);
+
+    const connectedProvider = provider.configured || provider.enabledModelCount > 0;
+    if (provider.source === "custom" && !connectedProvider) {
+      await openCustomEditor(provider.id);
+      return;
+    }
+    if (connectedProvider) {
+      setProviderDetailOpen(true);
+      return;
+    }
+
+    setBusy(true);
+    setError(undefined);
+    try {
+      const methods = await window.modus.model.connectionMethods(provider.id);
+      if (methods.length > 1) {
+        setConnectionMethods(methods);
+        setConnectionProvider(provider);
+        return;
+      }
+      setProviderDetailOpen(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setProviderDetailOpen(true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function openProviderConnection(provider: ModelProviderInfo): Promise<void> {
+    if (provider.source === "custom") {
+      await openCustomEditor(provider.id);
+      return;
+    }
+
+    setBusy(true);
+    setError(undefined);
+    try {
+      const methods = await window.modus.model.connectionMethods(provider.id);
+      if (methods.length > 1) {
+        setConnectionMethods(methods);
+        setConnectionProvider(provider);
+        return;
+      }
+      setCredentialEditorProvider(provider.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function startProviderAuth(provider: ModelProviderInfo): Promise<void> {
+    setBusy(true);
+    setError(undefined);
+    try {
+      const operation = await window.modus.model.startProviderAuth({ provider: provider.id });
+      setConnectionProvider(undefined);
+      setAuthOperation(operation);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function respondProviderAuth(value: string | undefined): Promise<void> {
+    if (!authOperation) {
+      return;
+    }
+    setBusy(true);
+    try {
+      await window.modus.model.respondProviderAuth({ operationId: authOperation.id, value });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setAuthOperation(undefined);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function cancelProviderAuth(): void {
+    if (authOperation) {
+      void window.modus.model.cancelProviderAuth({ operationId: authOperation.id });
+    }
+    setAuthOperation(undefined);
+  }
+
+  useEffect(() => {
+    const operationId = authOperation?.id;
+    if (!operationId) {
+      return;
+    }
+    let alive = true;
+    const poll = () => {
+      void window.modus.model
+        .providerAuthState({ operationId })
+        .then(async (next: ProviderAuthOperationState) => {
+          if (!alive) {
+            return;
+          }
+          if (next.status === "complete") {
+            setAuthOperation(undefined);
+            setDetailLoading(true);
+            setSelectedProvider(next.provider);
+            setProviderDetailOpen(true);
+            onRefresh();
+            setDetail(await window.modus.model.providerDetail(next.provider));
+            setDetailLoading(false);
+            return;
+          }
+          if (next.status === "error") {
+            setError(next.message ?? "Provider sign-in failed.");
+            setAuthOperation(undefined);
+            return;
+          }
+          if (next.status === "cancelled") {
+            setAuthOperation(undefined);
+            return;
+          }
+          setAuthOperation(next);
+        })
+        .catch((err: unknown) => {
+          if (alive) {
+            setError(err instanceof Error ? err.message : String(err));
+            setAuthOperation(undefined);
+          }
+        });
+    };
+    poll();
+    const timer = window.setInterval(poll, 400);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, [authOperation?.id, onRefresh]);
+
   return (
     <div className="flex min-h-0 flex-1 overflow-hidden bg-panel">
       <SettingsSidebar
@@ -275,8 +464,12 @@ export function SettingsPanel({
           {activeSection === "rules" ? <RulesSettingsPanel cwd={workspaceCwd} /> : null}
           {activeSection === "model-provider" ? (
             <ModelProviderSettingsPanel
+              authOperation={authOperation}
               busy={busy}
+              connectionMethods={connectionMethods}
+              connectionProvider={connectionProvider}
               connected={connected}
+              credentialEditorOpen={credentialEditorProvider === detail?.id}
               currentProvider={currentProvider}
               customInitial={customInitial}
               customOpen={customOpen}
@@ -288,6 +481,22 @@ export function SettingsPanel({
               onConnectProvider={(provider, apiKey, baseUrl) =>
                 void connectProvider(provider, apiKey, baseUrl)
               }
+              onCancelProviderAuth={cancelProviderAuth}
+              onChooseConnectionMethod={(method) => {
+                if (!connectionProvider) {
+                  return;
+                }
+                const provider = connectionProvider;
+                if (method.kind === "oauth") {
+                  setConnectionProvider(undefined);
+                  void startProviderAuth(provider);
+                  return;
+                }
+                setConnectionProvider(undefined);
+                setCredentialEditorProvider(provider.id);
+                setProviderDetailOpen(true);
+              }}
+              onCredentialEditorClose={() => setCredentialEditorProvider(undefined)}
               onCustomCancel={() => {
                 setCustomOpen(false);
                 setCustomInitial(undefined);
@@ -295,6 +504,7 @@ export function SettingsPanel({
               onCustomComplete={(provider) => {
                 setCustomOpen(false);
                 setCustomInitial(undefined);
+                setCredentialEditorProvider(undefined);
                 setDetail(undefined);
                 setDetailLoading(true);
                 setSelectedProvider(provider);
@@ -311,6 +521,7 @@ export function SettingsPanel({
               onEditModel={(model, patch) => void editModel(model, patch)}
               onEditProvider={(providerId) => void openCustomEditor(providerId)}
               onDeleteProvider={(provider) => void deleteProvider(provider)}
+              onDisconnectProvider={(provider) => void disconnectProvider(provider)}
               onError={setError}
               onKeyChange={(apiKey) => {
                 if (!detail) {
@@ -320,18 +531,16 @@ export function SettingsPanel({
               }}
               onProviderDetailClose={() => {
                 setProviderDetailOpen(false);
+                setCredentialEditorProvider(undefined);
                 setSelectedProvider(undefined);
                 setDetail(undefined);
                 setDetailLoading(false);
               }}
+              onProviderConnectionClose={() => setConnectionProvider(undefined)}
+              onOpenProviderConnection={(provider) => void openProviderConnection(provider)}
+              onProviderAuthRespond={(value) => void respondProviderAuth(value)}
               onRefresh={onRefresh}
-              onSelectProvider={(provider) => {
-                setCustomOpen(false);
-                setDetail(undefined);
-                setDetailLoading(true);
-                setSelectedProvider(provider.id);
-                setProviderDetailOpen(true);
-              }}
+              onSelectProvider={(provider) => void selectProvider(provider)}
               onToggleModel={(model, enabled) => void toggleModel(model, enabled)}
               popular={popular}
             />
@@ -485,8 +694,12 @@ function SettingsNavItem({
 }
 
 function ModelProviderSettingsPanel({
+  authOperation,
   busy,
   connected,
+  connectionMethods,
+  connectionProvider,
+  credentialEditorOpen,
   currentProvider,
   customInitial,
   customOpen,
@@ -497,21 +710,32 @@ function ModelProviderSettingsPanel({
   popular,
   providerDetailOpen,
   onConnectProvider,
+  onCancelProviderAuth,
+  onChooseConnectionMethod,
+  onCredentialEditorClose,
   onCustomCancel,
   onCustomComplete,
   onCustomOpen,
   onDeleteProvider,
+  onDisconnectProvider,
   onEditModel,
   onEditProvider,
   onError,
   onKeyChange,
   onProviderDetailClose,
+  onProviderConnectionClose,
+  onProviderAuthRespond,
+  onOpenProviderConnection,
   onRefresh,
   onSelectProvider,
   onToggleModel,
 }: {
+  authOperation: ProviderAuthOperationState | undefined;
   busy: boolean;
   connected: ModelProviderInfo[];
+  connectionMethods: ProviderConnectionMethod[];
+  connectionProvider: ModelProviderInfo | undefined;
+  credentialEditorOpen: boolean;
   currentProvider: ModelProviderInfo | undefined;
   customInitial: CustomProviderConfig | undefined;
   customOpen: boolean;
@@ -522,15 +746,22 @@ function ModelProviderSettingsPanel({
   popular: ModelProviderInfo[];
   providerDetailOpen: boolean;
   onConnectProvider(provider: ModelProviderInfo, apiKey?: string, baseUrl?: string): void;
+  onCancelProviderAuth(): void;
+  onChooseConnectionMethod(method: ProviderConnectionMethod): void;
+  onCredentialEditorClose(): void;
   onCustomCancel(): void;
   onCustomComplete(provider: string): void;
   onCustomOpen(): void;
   onDeleteProvider(provider: ModelProviderInfo): void;
+  onDisconnectProvider(provider: ModelProviderInfo): void;
   onEditModel(model: ProviderModelConfig, patch: ModelConfigPatch): void;
   onEditProvider(providerId: string): void;
   onError(message: string | undefined): void;
   onKeyChange(apiKey: string): void;
   onProviderDetailClose(): void;
+  onProviderConnectionClose(): void;
+  onProviderAuthRespond(value: string | undefined): void;
+  onOpenProviderConnection(provider: ModelProviderInfo): void;
   onRefresh(): void;
   onSelectProvider(provider: ModelProviderInfo): void;
   onToggleModel(model: ProviderModelConfig, enabled: boolean): void;
@@ -596,7 +827,6 @@ function ModelProviderSettingsPanel({
         <ProviderCatalog
           connected={connected}
           currentProvider={currentProvider}
-          onDeleteProvider={onDeleteProvider}
           onQueryChange={setProviderQuery}
           onSelectProvider={onSelectProvider}
           popular={popular}
@@ -606,16 +836,36 @@ function ModelProviderSettingsPanel({
 
       <ProviderDetailDialog
         busy={busy}
+        credentialEditorOpen={credentialEditorOpen}
         detail={detail}
         detailLoading={detailLoading}
         keyValue={keyValue}
         open={providerDetailOpen}
         onClose={onProviderDetailClose}
         onConnectProvider={onConnectProvider}
+        onCredentialEditorClose={onCredentialEditorClose}
+        onDeleteProvider={onDeleteProvider}
+        onDisconnectProvider={onDisconnectProvider}
         onEditModel={onEditModel}
         onEditProvider={onEditProvider}
         onKeyChange={onKeyChange}
+        onOpenProviderConnection={onOpenProviderConnection}
         onToggleModel={onToggleModel}
+      />
+
+      <ProviderConnectionDialog
+        methods={connectionMethods}
+        provider={connectionProvider}
+        onClose={onProviderConnectionClose}
+        onSelect={onChooseConnectionMethod}
+      />
+
+      <ProviderAuthDialog
+        busy={busy}
+        key={`${authOperation?.id ?? "none"}:${authOperation?.status ?? "closed"}`}
+        operation={authOperation}
+        onCancel={onCancelProviderAuth}
+        onRespond={onProviderAuthRespond}
       />
 
       <CustomProviderDialog
@@ -634,7 +884,6 @@ function ProviderCatalog({
   currentProvider,
   popular,
   query,
-  onDeleteProvider,
   onQueryChange,
   onSelectProvider,
 }: {
@@ -642,7 +891,6 @@ function ProviderCatalog({
   currentProvider: ModelProviderInfo | undefined;
   popular: ModelProviderInfo[];
   query: string;
-  onDeleteProvider(provider: ModelProviderInfo): void;
   onQueryChange(query: string): void;
   onSelectProvider(provider: ModelProviderInfo): void;
 }) {
@@ -688,9 +936,6 @@ function ProviderCatalog({
                     active={provider.id === currentProvider?.id}
                     key={provider.id}
                     onClick={() => onSelectProvider(provider)}
-                    onDelete={
-                      provider.source === "custom" ? () => onDeleteProvider(provider) : undefined
-                    }
                     provider={provider}
                   />
                 ))}
@@ -702,9 +947,6 @@ function ProviderCatalog({
                     active={provider.id === currentProvider?.id}
                     key={provider.id}
                     onClick={() => onSelectProvider(provider)}
-                    onDelete={
-                      provider.source === "custom" ? () => onDeleteProvider(provider) : undefined
-                    }
                     provider={provider}
                   />
                 ))}
@@ -778,27 +1020,37 @@ function ProviderConfigDialogShell({
 
 function ProviderDetailDialog({
   busy,
+  credentialEditorOpen,
   detail,
   detailLoading,
   keyValue,
   open,
   onClose,
   onConnectProvider,
+  onCredentialEditorClose,
+  onDeleteProvider,
+  onDisconnectProvider,
   onEditModel,
   onEditProvider,
   onKeyChange,
+  onOpenProviderConnection,
   onToggleModel,
 }: {
   busy: boolean;
+  credentialEditorOpen: boolean;
   detail: ModelProviderDetail | undefined;
   detailLoading: boolean;
   keyValue: string;
   open: boolean;
   onClose(): void;
   onConnectProvider(provider: ModelProviderInfo, apiKey?: string, baseUrl?: string): void;
+  onCredentialEditorClose(): void;
+  onDeleteProvider(provider: ModelProviderInfo): void;
+  onDisconnectProvider(provider: ModelProviderInfo): void;
   onEditModel(model: ProviderModelConfig, patch: ModelConfigPatch): void;
   onEditProvider(providerId: string): void;
   onKeyChange(apiKey: string): void;
+  onOpenProviderConnection(provider: ModelProviderInfo): void;
   onToggleModel(model: ProviderModelConfig, enabled: boolean): void;
 }) {
   const title = detail ? `Configure ${detail.name}` : "Configure provider";
@@ -816,13 +1068,18 @@ function ProviderDetailDialog({
       ) : detail ? (
         <ProviderDetail
           busy={busy}
+          credentialEditorOpen={credentialEditorOpen}
           detail={detail}
           key={detail.id}
           keyValue={keyValue}
           onConnect={(apiKey, baseUrl) => onConnectProvider(detail, apiKey, baseUrl)}
+          onCredentialEditorClose={onCredentialEditorClose}
+          onDeleteProvider={() => onDeleteProvider(detail)}
+          onDisconnectProvider={() => onDisconnectProvider(detail)}
           onEditModel={onEditModel}
           onEditProvider={onEditProvider}
           onKeyChange={onKeyChange}
+          onOpenProviderConnection={() => onOpenProviderConnection(detail)}
           onToggleModel={onToggleModel}
         />
       ) : (
@@ -831,6 +1088,179 @@ function ProviderDetailDialog({
           title="Provider unavailable"
         />
       )}
+    </ProviderConfigDialogShell>
+  );
+}
+
+function ProviderConnectionDialog({
+  methods,
+  provider,
+  onClose,
+  onSelect,
+}: {
+  methods: ProviderConnectionMethod[];
+  provider: ModelProviderInfo | undefined;
+  onClose(): void;
+  onSelect(method: ProviderConnectionMethod): void;
+}) {
+  if (!provider) {
+    return null;
+  }
+
+  return (
+    <ProviderConfigDialogShell
+      closeLabel="Close connection method selection"
+      description="Choose how Modus should connect this provider."
+      open
+      title={`Connect ${provider.name}`}
+      onClose={onClose}
+    >
+      <div className="pt-5">
+        <div className="flex items-center gap-3">
+          <ProviderLogo framed={false} name={provider.name} provider={provider.id} size="lg" />
+          <div>
+            <h3 className="text-md font-normal text-fg">Connect {provider.name}</h3>
+            <p className="mt-1 text-xs text-fg-faint">Choose a sign-in method.</p>
+          </div>
+        </div>
+        <div className="mt-7 grid gap-2">
+          {methods.map((method) => (
+            <button
+              className="flex min-h-12 items-center justify-between gap-4 rounded-md px-3 text-left transition-colors hover:bg-hover"
+              key={`${method.kind}:${method.label}`}
+              onClick={() => onSelect(method)}
+              type="button"
+            >
+              <span className="flex min-w-0 items-center gap-3">
+                {method.kind === "api-key" ? (
+                  <IconKey className="text-fg-subtle" size={17} stroke={1.7} />
+                ) : (
+                  <IconPlugConnected className="text-fg-subtle" size={17} stroke={1.7} />
+                )}
+                <span className="truncate text-sm text-fg">{method.label}</span>
+              </span>
+              <IconChevronRight className="shrink-0 text-fg-faint" size={16} stroke={1.7} />
+            </button>
+          ))}
+        </div>
+      </div>
+    </ProviderConfigDialogShell>
+  );
+}
+
+function ProviderAuthDialog({
+  busy,
+  operation,
+  onCancel,
+  onRespond,
+}: {
+  busy: boolean;
+  operation: ProviderAuthOperationState | undefined;
+  onCancel(): void;
+  onRespond(value: string | undefined): void;
+}) {
+  const [value, setValue] = useState("");
+
+  if (!operation) {
+    return null;
+  }
+
+  const canSubmit = operation.allowEmpty || Boolean(value.trim());
+  const copy = (text: string | undefined) => {
+    if (text) {
+      void navigator.clipboard.writeText(text).catch(() => undefined);
+    }
+  };
+
+  return (
+    <ProviderConfigDialogShell
+      closeLabel="Cancel provider sign-in"
+      description="Complete the provider sign-in in the requested browser or device flow."
+      open
+      title="Complete sign-in"
+      onClose={onCancel}
+    >
+      <div className="pt-5">
+        <h3 className="text-md font-normal text-fg">Complete sign-in</h3>
+        <p className="mt-2 text-sm text-fg-muted">{operation.message ?? "Waiting for sign-in…"}</p>
+
+        {operation.status === "select" ? (
+          <div className="mt-6 grid gap-2">
+            {operation.options?.map((option) => (
+              <button
+                className="flex min-h-12 items-center justify-between gap-4 rounded-md px-3 text-left transition-colors hover:bg-hover disabled:opacity-50"
+                disabled={busy}
+                key={option.id}
+                onClick={() => onRespond(option.id)}
+                type="button"
+              >
+                <span className="text-sm text-fg">{option.label}</span>
+                <IconChevronRight className="text-fg-faint" size={16} stroke={1.7} />
+              </button>
+            ))}
+          </div>
+        ) : null}
+
+        {operation.status === "browser" || operation.status === "device-code" ? (
+          <div className="mt-6 space-y-3">
+            {operation.userCode ? (
+              <div className="rounded-md border border-hairline-soft bg-panel px-3 py-3">
+                <div className="text-2xs text-fg-faint">Verification code</div>
+                <div className="mt-1 font-mono text-lg text-fg">{operation.userCode}</div>
+              </div>
+            ) : null}
+            {operation.url ? (
+              <div className="rounded-md border border-hairline-soft bg-panel px-3 py-3">
+                <div className="break-all font-mono text-xs text-fg-muted">{operation.url}</div>
+                <button
+                  className="mt-3 flex h-8 items-center gap-1.5 rounded-md border border-hairline bg-canvas px-2.5 text-xs text-fg-muted transition-colors hover:bg-hover hover:text-fg"
+                  onClick={() => copy(operation.url)}
+                  type="button"
+                >
+                  <IconCopy size={13} stroke={1.7} />
+                  Copy link
+                </button>
+              </div>
+            ) : null}
+            {operation.instructions ? (
+              <p className="text-xs text-fg-faint">{operation.instructions}</p>
+            ) : null}
+          </div>
+        ) : null}
+
+        {operation.status === "prompt" || operation.status === "manual-code" ? (
+          <form
+            className="mt-6 flex gap-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (canSubmit) {
+                onRespond(value.trim() || undefined);
+              }
+            }}
+          >
+            <input
+              className="h-9 min-w-0 flex-1 rounded-md border border-hairline bg-panel px-3 text-sm text-fg outline-none placeholder:text-fg-faint focus:border-hairline-strong"
+              onChange={(event) => setValue(event.target.value)}
+              placeholder={operation.placeholder}
+              type="text"
+              value={value}
+            />
+            <button
+              className="h-9 rounded-md bg-fg px-3 text-sm text-canvas transition-colors hover:bg-white disabled:opacity-50"
+              disabled={busy || !canSubmit}
+              type="submit"
+            >
+              Continue
+            </button>
+          </form>
+        ) : null}
+
+        {operation.status === "pending" ? (
+          <div className="mt-6 text-sm text-fg-faint">
+            <ShinyText>Waiting for provider…</ShinyText>
+          </div>
+        ) : null}
+      </div>
     </ProviderConfigDialogShell>
   );
 }
@@ -2876,31 +3306,12 @@ function ProviderCatalogRow({
   provider,
   active,
   onClick,
-  onDelete,
 }: {
   provider: ModelProviderInfo;
   active: boolean;
   onClick(): void;
-  onDelete?: (() => void) | undefined;
 }) {
-  return (
-    <div className="group/row relative">
-      <ProviderRow active={active} onClick={onClick} provider={provider} />
-      {onDelete ? (
-        <button
-          aria-label={`Delete ${provider.name}`}
-          className="absolute top-1/2 right-2 hidden size-7 -translate-y-1/2 items-center justify-center rounded-md bg-canvas/80 text-[#ef4444] transition-colors hover:bg-[#ef4444]/15 hover:text-[#f87171] group-hover/row:flex"
-          onClick={(event) => {
-            event.stopPropagation();
-            onDelete();
-          }}
-          type="button"
-        >
-          <IconTrash size={15} stroke={1.7} />
-        </button>
-      ) : null}
-    </div>
-  );
+  return <ProviderRow active={active} onClick={onClick} provider={provider} />;
 }
 
 function ProviderRow({
@@ -2928,7 +3339,7 @@ function ProviderRow({
       type="button"
       whileTap={{ scale: 0.992 }}
     >
-      <ProviderLogo name={provider.name} provider={provider.id} />
+      <ProviderLogo framed={false} name={provider.name} provider={provider.id} size="sm" />
       <span className="min-w-0">
         <span className="flex min-w-0 items-center gap-2">
           <span className="truncate text-sm text-fg">{provider.name}</span>
@@ -2956,22 +3367,33 @@ function ProviderRow({
 function ProviderDetail({
   detail,
   busy,
+  credentialEditorOpen,
   keyValue,
   onConnect,
+  onCredentialEditorClose,
+  onDeleteProvider,
+  onDisconnectProvider,
   onEditModel,
   onEditProvider,
   onKeyChange,
+  onOpenProviderConnection,
   onToggleModel,
 }: {
   detail: ModelProviderDetail;
   busy: boolean;
+  credentialEditorOpen: boolean;
   keyValue: string;
   onConnect(apiKey: string, baseUrl?: string): void;
+  onCredentialEditorClose(): void;
+  onDeleteProvider(): void;
+  onDisconnectProvider(): void;
   onEditModel(model: ProviderModelConfig, patch: ModelConfigPatch): void;
   onEditProvider(providerId: string): void;
   onKeyChange(apiKey: string): void;
+  onOpenProviderConnection(): void;
   onToggleModel(model: ProviderModelConfig, enabled: boolean): void;
 }) {
+  const [modelsOpen, setModelsOpen] = useState(false);
   const [modelQuery, setModelQuery] = useState("");
   const [modelFilter, setModelFilter] = useState<ModelFilter>("all");
   const models = useMemo(() => detail.models.slice().sort(compareModelConfig), [detail.models]);
@@ -2988,11 +3410,6 @@ function ProviderDetail({
   );
   const modelGroups = useMemo(() => groupProviderModels(filteredModels), [filteredModels]);
 
-  useEffect(() => {
-    setModelQuery("");
-    setModelFilter("all");
-  }, []);
-
   return (
     <m.section
       animate={{ opacity: 1, y: 0 }}
@@ -3001,7 +3418,7 @@ function ProviderDetail({
       initial={{ opacity: 0, y: 8 }}
       transition={{ duration: 0.16, ease: "easeOut" }}
     >
-      <div className="pb-5">
+      <div className="pb-4">
         <div className="flex items-start justify-between gap-4">
           <div className="flex min-w-0 items-start gap-3">
             <ProviderLogo name={detail.name} provider={detail.id} size="lg" />
@@ -3010,91 +3427,104 @@ function ProviderDetail({
                 <h3 className="truncate text-md font-normal text-fg">{detail.name}</h3>
                 {detail.source === "custom" ? <TinyBadge>custom</TinyBadge> : null}
               </div>
-              <p className="mt-1 truncate text-xs text-fg-faint">{providerIdentity(detail)}</p>
             </div>
           </div>
           <ProviderStatusPill status={providerStatus(detail)} />
-        </div>
-
-        <div className="mt-4 flex flex-wrap gap-2">
-          <ReadOnlyPill>{`${detail.modelCount} models`}</ReadOnlyPill>
-          <ReadOnlyPill>{`${enabledCount} enabled`}</ReadOnlyPill>
-          <ReadOnlyPill>{`${thinkingCount} thinking`}</ReadOnlyPill>
         </div>
       </div>
 
       <ProviderCredentials
         busy={busy}
+        credentialEditorOpen={credentialEditorOpen}
         detail={detail}
         keyValue={keyValue}
         onConnect={onConnect}
+        onCredentialEditorClose={onCredentialEditorClose}
+        onDeleteProvider={onDeleteProvider}
+        onDisconnectProvider={onDisconnectProvider}
+        onEditProvider={() => onEditProvider(detail.id)}
         onKeyChange={onKeyChange}
+        onOpenConnection={onOpenProviderConnection}
       />
 
-      <div className="pt-5">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="min-w-0">
-            <h4 className="text-sm font-normal text-fg">Models</h4>
-            <p className="mt-1 text-xs text-fg-faint">
-              Choose which models appear in the composer. Expand a model to set its thinking level
-              {detail.source === "custom" ? " or limits" : ""}.
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            {busy ? (
-              <span className="rounded-md bg-chip px-2.5 py-1 text-xs text-fg-muted">
-                <ShinyText>Saving</ShinyText>
-              </span>
-            ) : (
-              <ReadOnlyPill>{modelResultLabel(filteredModels.length)}</ReadOnlyPill>
-            )}
-            {detail.source === "custom" ? (
-              <button
-                className="flex h-8 items-center gap-1.5 rounded-md border border-hairline bg-chip-faint px-3 text-sm text-fg-subtle transition-colors hover:bg-hover hover:text-fg"
-                onClick={() => onEditProvider(detail.id)}
-                type="button"
-              >
-                <IconPlus size={14} stroke={1.8} />
-                Add / edit models
-              </button>
-            ) : null}
-          </div>
-        </div>
-
-        <div className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-center">
-          <SearchField
-            ariaLabel="Search models"
-            onChange={setModelQuery}
-            placeholder="Search models..."
-            value={modelQuery}
+      <div className="mt-4">
+        <button
+          aria-expanded={modelsOpen}
+          className="flex w-full items-center justify-between gap-3 rounded-lg bg-chip-faint px-3 py-3 text-left transition-colors hover:bg-hover"
+          onClick={() => setModelsOpen((open) => !open)}
+          type="button"
+        >
+          <span className="min-w-0">
+            <span className="block text-sm text-fg">Models</span>
+            <span className="mt-0.5 block text-xs text-fg-faint">
+              {`${enabledCount} of ${detail.modelCount} enabled`}
+            </span>
+          </span>
+          <IconChevronRight
+            className={cn("shrink-0 text-fg-faint transition-transform", modelsOpen && "rotate-90")}
+            size={16}
+            stroke={1.7}
           />
-          <SegmentedFilter
-            enabledCount={enabledCount}
-            onChange={setModelFilter}
-            thinkingCount={thinkingCount}
-            value={modelFilter}
-          />
-        </div>
+        </button>
 
-        <div className="mt-4 overflow-hidden rounded-lg border border-hairline-soft bg-panel">
-          {filteredModels.length > 0 ? (
-            modelGroups.map((group) => (
-              <ModelGroupSection
-                busy={busy}
-                editableLimits={detail.source === "custom"}
-                group={group}
-                key={group.id}
-                onEditModel={onEditModel}
-                onToggleModel={onToggleModel}
+        <CollapsibleMotion open={modelsOpen} preset="compact">
+          <div className="pt-3">
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {busy ? (
+                <span className="rounded-md bg-chip px-2.5 py-1 text-xs text-fg-muted">
+                  <ShinyText>Saving</ShinyText>
+                </span>
+              ) : (
+                <ReadOnlyPill>{modelResultLabel(filteredModels.length)}</ReadOnlyPill>
+              )}
+              {detail.source === "custom" ? (
+                <button
+                  className="flex h-8 items-center gap-1.5 rounded-md bg-chip-faint px-3 text-sm text-fg-subtle transition-colors hover:bg-hover hover:text-fg"
+                  onClick={() => onEditProvider(detail.id)}
+                  type="button"
+                >
+                  <IconPlus size={14} stroke={1.8} />
+                  Edit models
+                </button>
+              ) : null}
+            </div>
+
+            <div className="mt-3 flex flex-col gap-3 lg:flex-row lg:items-center">
+              <SearchField
+                ariaLabel="Search models"
+                onChange={setModelQuery}
+                placeholder="Search models..."
+                value={modelQuery}
               />
-            ))
-          ) : (
-            <EmptyState
-              description="Adjust the search text or filter to bring models back."
-              title="No models match"
-            />
-          )}
-        </div>
+              <SegmentedFilter
+                enabledCount={enabledCount}
+                onChange={setModelFilter}
+                thinkingCount={thinkingCount}
+                value={modelFilter}
+              />
+            </div>
+
+            <div className="mt-4 overflow-hidden rounded-lg border border-hairline-soft bg-panel">
+              {filteredModels.length > 0 ? (
+                modelGroups.map((group) => (
+                  <ModelGroupSection
+                    busy={busy}
+                    editableLimits={detail.source === "custom"}
+                    group={group}
+                    key={group.id}
+                    onEditModel={onEditModel}
+                    onToggleModel={onToggleModel}
+                  />
+                ))
+              ) : (
+                <EmptyState
+                  description="Adjust the search text or filter to bring models back."
+                  title="No models match"
+                />
+              )}
+            </div>
+          </div>
+        </CollapsibleMotion>
       </div>
     </m.section>
   );
@@ -3103,51 +3533,90 @@ function ProviderDetail({
 function ProviderCredentials({
   detail,
   busy,
+  credentialEditorOpen,
   keyValue,
   onConnect,
+  onCredentialEditorClose,
+  onDeleteProvider,
+  onDisconnectProvider,
+  onEditProvider,
   onKeyChange,
+  onOpenConnection,
 }: {
   detail: ModelProviderDetail;
   busy: boolean;
+  credentialEditorOpen: boolean;
   keyValue: string;
   onConnect(apiKey: string, baseUrl?: string): void;
+  onCredentialEditorClose(): void;
+  onDeleteProvider(): void;
+  onDisconnectProvider(): void;
+  onEditProvider(): void;
   onKeyChange(apiKey: string): void;
+  onOpenConnection(): void;
 }) {
-  // Custom providers own their base URL through the custom-provider form; only
-  // built-in providers expose an optional relay endpoint here. Seeded per
-  // provider (ProviderDetail is keyed by id, so this remounts on switch).
-  const supportsBaseUrl = detail.source === "builtin";
   const storedBaseUrl = detail.baseUrl ?? "";
   const [baseUrl, setBaseUrl] = useState(storedBaseUrl);
-  const baseUrlChanged = supportsBaseUrl && baseUrl.trim() !== storedBaseUrl;
+  const baseUrlChanged = baseUrl.trim() !== storedBaseUrl;
   const canSubmit = Boolean(keyValue.trim()) || baseUrlChanged;
+  const canDisconnect = detail.authSource === "stored" && Boolean(detail.authKind);
+  const editing = detail.source === "builtin" && (!detail.configured || credentialEditorOpen);
+  const connectionLabel = !detail.configured
+    ? "Not connected"
+    : canDisconnect
+      ? detail.authLabel ?? "Connected locally"
+      : detail.authSource
+        ? `Managed by ${detail.authLabel ?? detail.authSource}`
+        : "Saved in Modus";
+
+  if (!editing) {
+    return (
+      <section className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-chip-faint px-3 py-3">
+        <span className="min-w-0">
+          <span className="block text-sm text-fg">Connection</span>
+          <span className="mt-0.5 block truncate text-xs text-fg-faint">{connectionLabel}</span>
+        </span>
+        <span className="flex shrink-0 items-center gap-1.5">
+          <button
+            className="h-8 rounded-full bg-canvas/70 px-3 text-xs text-fg-subtle transition-colors hover:bg-hover hover:text-fg"
+            onClick={detail.source === "custom" ? onEditProvider : onOpenConnection}
+            type="button"
+          >
+            {detail.source === "custom" ? "Edit" : "Change"}
+          </button>
+          {canDisconnect ? (
+            <button
+              className="h-8 rounded-full bg-danger/10 px-3 text-xs text-danger transition-[background-color,transform] duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] hover:bg-danger/15 active:scale-[0.97]"
+              onClick={onDisconnectProvider}
+              type="button"
+            >
+              Disconnect
+            </button>
+          ) : null}
+          {detail.source === "custom" ? (
+            <button
+              aria-label={`Remove ${detail.name}`}
+              className="flex size-8 items-center justify-center rounded-full text-danger transition-colors hover:bg-danger/10"
+              onClick={onDeleteProvider}
+              type="button"
+            >
+              <IconTrash size={14} stroke={1.7} />
+            </button>
+          ) : null}
+        </span>
+      </section>
+    );
+  }
 
   return (
     <form
-      className="border-hairline-soft border-y py-5"
+      className="rounded-lg bg-chip-faint p-3"
       onSubmit={(event) => {
         event.preventDefault();
-        onConnect(keyValue, supportsBaseUrl ? baseUrl.trim() : undefined);
+        onConnect(keyValue, baseUrl.trim());
       }}
     >
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0">
-          <h4 className="text-sm font-normal text-fg">Provider credentials</h4>
-          <p className="mt-1 text-xs text-fg-faint">
-            {detail.configured
-              ? "Update the stored key without changing enabled models."
-              : "Connect an API key before using this provider in the composer."}
-          </p>
-        </div>
-        {detail.configured ? (
-          <span className="flex items-center gap-1 rounded-md bg-success/10 px-2 py-1 text-xs text-success">
-            <IconCircleCheck size={13} stroke={1.8} />
-            Connected
-          </span>
-        ) : null}
-      </div>
-
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <label className="relative min-w-0 flex-1">
           <span className="sr-only">API key for {detail.name}</span>
           <IconKey
@@ -3176,33 +3645,35 @@ function ProviderCredentials({
             "Connect"
           )}
         </button>
+        {detail.configured ? (
+          <button
+            className="h-9 rounded-md px-3 text-sm text-fg-faint transition-colors hover:bg-hover hover:text-fg"
+            disabled={busy}
+            onClick={onCredentialEditorClose}
+            type="button"
+          >
+            Cancel
+          </button>
+        ) : null}
       </div>
 
-      {supportsBaseUrl ? (
-        <div className="mt-3">
-          <label className="relative block min-w-0">
-            <span className="sr-only">Custom base URL for {detail.name}</span>
-            <IconWorld
-              className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-fg-faint"
-              size={15}
-              stroke={1.7}
-            />
-            <input
-              autoComplete="off"
-              className="h-9 w-full rounded-md border border-hairline bg-canvas pr-3 pl-9 font-mono text-sm text-fg outline-none placeholder:text-fg-faint transition-colors focus:border-hairline-strong"
-              onChange={(event) => setBaseUrl(event.target.value)}
-              placeholder="Custom base URL — official endpoint by default"
-              spellCheck={false}
-              type="url"
-              value={baseUrl}
-            />
-          </label>
-          <p className="mt-1.5 text-xs text-fg-faint">
-            Optional. Route this provider's protocol through a compatible gateway (e.g.
-            {" https://relay.example.com/v1"}). Leave empty to use the official endpoint.
-          </p>
-        </div>
-      ) : null}
+      <label className="relative mt-2 block min-w-0">
+        <span className="sr-only">Custom base URL for {detail.name}</span>
+        <IconWorld
+          className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-fg-faint"
+          size={15}
+          stroke={1.7}
+        />
+        <input
+          autoComplete="off"
+          className="h-9 w-full rounded-md border border-hairline bg-canvas pr-3 pl-9 font-mono text-sm text-fg outline-none placeholder:text-fg-faint transition-colors focus:border-hairline-strong"
+          onChange={(event) => setBaseUrl(event.target.value)}
+          placeholder="Custom base URL — official endpoint by default"
+          spellCheck={false}
+          type="url"
+          value={baseUrl}
+        />
+      </label>
     </form>
   );
 }
@@ -3539,10 +4010,6 @@ function providerSummary(provider: ModelProviderInfo): string {
     return `${provider.modelCount} models · key configured`;
   }
   return `${provider.modelCount} models`;
-}
-
-function providerIdentity(provider: ModelProviderInfo): string {
-  return provider.baseUrl ?? provider.authLabel ?? provider.authSource ?? "PI built-in provider";
 }
 
 function normalizeSearchValue(value: string): string {

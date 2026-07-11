@@ -6,8 +6,12 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 let userData: string;
 let getDatabase: typeof import("../db/database").getDatabase;
 let configureProvider: typeof import("./model-service").configureProvider;
+let disconnectProvider: typeof import("./model-service").disconnectProvider;
 let findModel: typeof import("./model-service").findModel;
 let getCustomProviderConfig: typeof import("./model-service").getCustomProviderConfig;
+let getModelRegistry: typeof import("./model-service").getModelRegistry;
+let getModelSettings: typeof import("./model-service").getModelSettings;
+let listProviderConnectionMethods: typeof import("./model-service").listProviderConnectionMethods;
 let listModels: typeof import("./model-service").listModels;
 let resolveModelThinking: typeof import("./model-service").resolveModelThinking;
 let updateModelConfig: typeof import("./model-service").updateModelConfig;
@@ -24,8 +28,12 @@ beforeAll(async () => {
   ({ getDatabase } = await import("../db/database"));
   ({
     configureProvider,
+    disconnectProvider,
     findModel,
     getCustomProviderConfig,
+    getModelRegistry,
+    getModelSettings,
+    listProviderConnectionMethods,
     listModels,
     resolveModelThinking,
     updateModelConfig,
@@ -38,6 +46,15 @@ afterAll(async () => {
 });
 
 describe("model-service custom provider config", () => {
+  it("refreshes the model registry once when assembling first-screen settings", () => {
+    const refresh = vi.spyOn(getModelRegistry(), "refresh");
+
+    getModelSettings();
+
+    expect(refresh).toHaveBeenCalledOnce();
+    refresh.mockRestore();
+  });
+
   it("writes PI custom provider metadata without leaking the stored API key", async () => {
     const provider = `relay-${crypto.randomUUID().slice(0, 8)}`;
 
@@ -419,5 +436,73 @@ describe("model-service built-in provider base URL override", () => {
     await expect(
       configureProvider({ provider: "anthropic", baseUrl: "ftp://nope.example.test" }),
     ).rejects.toThrow(/base URL/i);
+  });
+});
+
+describe("provider disconnection", () => {
+  it("discovers native sign-in methods from the runtime provider registry", () => {
+    const oauthProvider = getModelRegistry().authStorage.getOAuthProviders()[0];
+    if (!oauthProvider) {
+      throw new Error("expected a native OAuth provider");
+    }
+
+    expect(listProviderConnectionMethods(oauthProvider.id)).toEqual(
+      expect.arrayContaining([
+        { kind: "api-key", label: "API key" },
+        { kind: "oauth", label: oauthProvider.name },
+      ]),
+    );
+  });
+
+  it("clears a built-in provider's local credential, models, and relay override", async () => {
+    const provider = "deepseek";
+    await configureProvider({
+      provider,
+      apiKey: "sk-disconnect-builtin",
+      baseUrl: "https://relay.example.test/deepseek",
+    });
+
+    disconnectProvider(provider);
+
+    expect(getModelRegistry().authStorage.get(provider)).toBeUndefined();
+    expect(getModelSettings().providers.find((item) => item.id === provider)).toMatchObject({
+      configured: false,
+      enabledModelCount: 0,
+    });
+    expect(
+      getDatabase()
+        .prepare("select provider_id from model_provider_configs where provider_id = ?")
+        .get(provider),
+    ).toBeUndefined();
+
+    const modelsJson = JSON.parse(
+      await readFile(join(userData, "pi-agent", "models.json"), "utf-8"),
+    ) as { providers?: Record<string, unknown> };
+    expect(modelsJson.providers?.[provider]).toBeUndefined();
+  });
+
+  it("keeps a custom provider definition after disconnecting its stored key", async () => {
+    const provider = `disconnect-${crypto.randomUUID().slice(0, 8)}`;
+    await upsertCustomProvider({
+      provider,
+      name: "Reconnectable relay",
+      baseUrl: "https://relay.example.test/v1",
+      apiKey: "sk-disconnect-custom",
+      models: [{ id: "relay-model", name: "Relay model" }],
+    });
+
+    disconnectProvider(provider);
+
+    expect(getModelRegistry().authStorage.get(provider)).toBeUndefined();
+    expect(getCustomProviderConfig(provider)).toMatchObject({
+      provider,
+      baseUrl: "https://relay.example.test/v1",
+      models: [{ id: "relay-model" }],
+    });
+    expect(getModelSettings().providers.find((item) => item.id === provider)).toMatchObject({
+      source: "custom",
+      configured: false,
+      enabledModelCount: 0,
+    });
   });
 });
