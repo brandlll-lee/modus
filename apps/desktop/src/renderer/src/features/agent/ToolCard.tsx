@@ -128,11 +128,8 @@ type FlatToolRowProps = Omit<ToolCardProps, "cwd">;
 
 const LIVE_AUTO_COLLAPSE_MS = 800;
 const LIVE_OUTPUT_PACING = {
-  minCps: 220,
-  maxCps: 1800,
-  pressureScale: 1200,
-  maxLag: 1800,
-  frameCap: 36,
+  paceMs: 16,
+  maxStep: 36,
 } as const;
 
 function LiveToolCard({

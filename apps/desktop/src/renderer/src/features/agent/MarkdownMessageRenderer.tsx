@@ -5,12 +5,13 @@ import { createCodePlugin } from "@streamdown/code";
 import { createMathPlugin } from "@streamdown/math";
 import type { MermaidConfig } from "@streamdown/mermaid";
 import { createMermaidPlugin } from "@streamdown/mermaid";
-import { useMemo } from "react";
+import { memo, useContext, useLayoutEffect, useMemo } from "react";
 import remarkBreaks from "remark-breaks";
-import type { Components, StreamdownProps } from "streamdown";
-import { defaultRemarkPlugins, Streamdown } from "streamdown";
+import type { BlockProps, Components, StreamdownProps } from "streamdown";
+import { Block, defaultRemarkPlugins, Streamdown, StreamdownContext } from "streamdown";
 import { cn } from "../../lib/cn";
 import { type ThemeMode, useTheme } from "../../lib/theme";
+import { createStreamingTailAnimation } from "./streamingTailAnimation";
 
 type MarkdownMessageRendererProps = {
   className?: string | undefined;
@@ -99,28 +100,30 @@ function buildMermaidConfig(theme: ThemeMode): MermaidConfig {
   } satisfies MermaidConfig;
 }
 
-/* ── Stable references ─────────────────────────────────────────────────
- * Streamdown's React.memo watches `animated`, `linkSafety`, `mode`, `plugins`,
- * `className`, etc. Passing fresh inline objects on every render busts that memo
- * and forces a full re-parse/re-render of ALL blocks per streamed frame, which
- * (a) re-mounts word spans → the fade-in restarts out of order, and
- * (b) saturates the main thread → text + tool loading stutter.
- * Hoisting these to module-level constants keeps the references stable so only
- * the last streaming block re-renders incrementally.
- * Refs: https://streamdown.ai/docs/memoization, vercel/streamdown#435 */
-const STREAMING_ANIMATION: NonNullable<StreamdownProps["animated"]> = {
-  animation: "fadeIn",
-  duration: 120,
-  easing: "ease-out",
-  sep: "char",
-  stagger: 0,
-};
-
 const LINK_SAFETY: NonNullable<StreamdownProps["linkSafety"]> = { enabled: false };
 
 /* Render a single `\n` as a hard line break (GFM soft breaks otherwise collapse
  * lines into one paragraph). Stable module-level reference to preserve memo. */
 const REMARK_PLUGINS = [...Object.values(defaultRemarkPlugins), remarkBreaks];
+
+const StreamingBlock = memo(function StreamingBlock({
+  content,
+  rehypePlugins,
+  ...props
+}: BlockProps) {
+  const { isAnimating } = useContext(StreamdownContext);
+  const tailAnimation = useMemo(createStreamingTailAnimation, []);
+  const tailPlugin = useMemo(
+    () => tailAnimation.plugin(content, isAnimating),
+    [content, isAnimating, tailAnimation],
+  );
+  const plugins = useMemo<NonNullable<BlockProps["rehypePlugins"]>>(
+    () => [...(rehypePlugins ?? []), tailPlugin],
+    [rehypePlugins, tailPlugin],
+  );
+  useLayoutEffect(() => tailAnimation.commit(content), [content, tailAnimation]);
+  return <Block content={content} rehypePlugins={plugins} {...props} />;
+});
 
 /* ── Controls ──────────────────────────────────────────────────────── */
 const controls = {
@@ -198,7 +201,7 @@ export default function MarkdownMessageRenderer({
 
   return (
     <Streamdown
-      animated={STREAMING_ANIMATION}
+      BlockComponent={StreamingBlock}
       className={cn("modus-markdown text-fg", className)}
       components={components}
       controls={controls}
@@ -207,9 +210,9 @@ export default function MarkdownMessageRenderer({
       linkSafety={LINK_SAFETY}
       lineNumbers={false}
       mermaid={mermaidProp}
-      mode={streaming ? "streaming" : "static"}
+      mode="streaming"
       normalizeHtmlIndentation
-      parseIncompleteMarkdown={streaming}
+      parseIncompleteMarkdown
       plugins={plugins}
       remarkPlugins={REMARK_PLUGINS}
       translations={translations}

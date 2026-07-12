@@ -1,33 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 
-/**
- * Client-side typewriter / jitter-buffer for streamed text.
- *
- * Why: providers stream in bursty chunks, so feeding raw deltas to the renderer
- * makes whole batches "pop in" at once instead of revealing smoothly like
- * ChatGPT/Codex. This hook decouples display from network cadence: it holds the
- * full accumulated text and reveals a steadily-growing prefix on a rAF loop at
- * an adaptive rate, snapping to grapheme boundaries (CJK/emoji safe) via
- * Intl.Segmenter. When streaming ends it flushes the remainder instantly.
- *
- * Pattern mirrors coder/coder#22503 and onyx#10093. Intl.Segmenter is Baseline
- * 2024 and fully supported in Electron's Chromium.
- */
-
-// Generic smoothing for streamed text and live tool output.
-const MIN_CPS = 48; // chars/sec when nearly caught up, unhurried, readable
-const MAX_CPS = 300; // chars/sec ceiling when far behind, drains bursts calmly
-const PRESSURE_SCALE = 420; // backlog (chars) that maps to full speed, gentle ramp
-const MAX_LAG = 480; // hard cap: never lag more than this many chars
-const FRAME_CAP = 12; // max graphemes revealed in a single frame, kills the burst/flash
-const MAX_DT = 0.05; // clamp frame delta (s) to avoid jumps after tab blur
+const DEFAULT_PACE_MS = 24;
+const DEFAULT_MAX_STEP = 24;
+const SNAP_AHEAD = 8;
+const SNAP_BOUNDARY = /[\p{P}\p{Z}]/u;
 
 type SmoothStreamingTextOptions = {
-  minCps?: number;
-  maxCps?: number;
-  pressureScale?: number;
-  maxLag?: number;
-  frameCap?: number;
+  paceMs?: number;
+  maxStep?: number;
 };
 
 const segmenter =
@@ -35,22 +15,18 @@ const segmenter =
     ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
     : null;
 
-/** Advance `count` grapheme clusters from `fromIndex`, returning the new code-unit index. */
 function advanceGraphemes(text: string, fromIndex: number, count: number): number {
   if (count <= 0 || fromIndex >= text.length) {
     return Math.min(fromIndex, text.length);
   }
   if (!segmenter) {
     let index = fromIndex;
-    let revealed = 0;
-    while (index < text.length && revealed < count) {
-      const codePoint = text.codePointAt(index) ?? 0;
-      index += codePoint > 0xffff ? 2 : 1;
-      revealed += 1;
+    for (let consumed = 0; index < text.length && consumed < count; consumed += 1) {
+      index += (text.codePointAt(index) ?? 0) > 0xffff ? 2 : 1;
     }
     return index;
   }
-  // Bound the work per frame: a window large enough to hold `count` graphemes.
+
   const window = text.slice(fromIndex, fromIndex + count * 8 + 8);
   let consumed = 0;
   let endOffset = 0;
@@ -64,92 +40,81 @@ function advanceGraphemes(text: string, fromIndex: number, count: number): numbe
   return fromIndex + endOffset;
 }
 
+function step(backlog: number, maxStep: number): number {
+  if (backlog <= 12) return Math.min(2, maxStep);
+  if (backlog <= 48) return Math.min(4, maxStep);
+  if (backlog <= 96) return Math.min(8, maxStep);
+  return Math.min(maxStep, Math.ceil(backlog / 8));
+}
+
+export function nextPacedTextIndex(text: string, start: number, maxStep = DEFAULT_MAX_STEP): number {
+  const end = advanceGraphemes(text, start, step(text.length - start, maxStep));
+  let cursor = end;
+  for (let offset = 0; offset < SNAP_AHEAD && cursor < text.length; offset += 1) {
+    const next = advanceGraphemes(text, cursor, 1);
+    if (SNAP_BOUNDARY.test(text.slice(cursor, next))) {
+      return next;
+    }
+    cursor = next;
+  }
+  return end;
+}
+
 export function useSmoothStreamingText(
   fullText: string,
   isStreaming: boolean,
   options?: SmoothStreamingTextOptions,
 ): string {
-  const minCps = options?.minCps ?? MIN_CPS;
-  const maxCps = options?.maxCps ?? MAX_CPS;
-  const pressureScale = options?.pressureScale ?? PRESSURE_SCALE;
-  const maxLag = options?.maxLag ?? MAX_LAG;
-  const frameCap = options?.frameCap ?? FRAME_CAP;
-  const [visible, setVisible] = useState(isStreaming ? "" : fullText);
-
+  const paceMs = Math.max(0, options?.paceMs ?? DEFAULT_PACE_MS);
+  const maxStep = Math.max(1, options?.maxStep ?? DEFAULT_MAX_STEP);
+  const [visible, setVisible] = useState(fullText);
   const fullRef = useRef(fullText);
-  fullRef.current = fullText;
-  const indexRef = useRef(isStreaming ? 0 : fullText.length);
-  const budgetRef = useRef(0);
-  const lastTsRef = useRef<number | null>(null);
-  const frameRef = useRef<number | null>(null);
+  const streamingRef = useRef(isStreaming);
+  const shownRef = useRef(fullText);
+  const timerRef = useRef<number | undefined>(undefined);
+  const runRef = useRef<() => void>(() => undefined);
 
-  useEffect(() => {
-    if (!isStreaming) {
-      // Flush: reveal everything immediately when the stream ends.
-      if (frameRef.current !== null) {
-        cancelAnimationFrame(frameRef.current);
-        frameRef.current = null;
-      }
-      lastTsRef.current = null;
-      budgetRef.current = 0;
-      indexRef.current = fullRef.current.length;
-      setVisible(fullRef.current);
+  fullRef.current = fullText;
+  streamingRef.current = isStreaming;
+  runRef.current = () => {
+    timerRef.current = undefined;
+    const text = fullRef.current;
+    const shown = shownRef.current;
+    if (!streamingRef.current || !text.startsWith(shown) || text.length <= shown.length) {
+      shownRef.current = text;
+      setVisible(text);
       return;
     }
 
-    const tick = (timestamp: number): void => {
-      const full = fullRef.current;
-      const total = full.length;
-      if (lastTsRef.current === null) {
-        lastTsRef.current = timestamp;
-      }
-      const dt = Math.min(MAX_DT, (timestamp - lastTsRef.current) / 1000);
-      lastTsRef.current = timestamp;
+    const end = nextPacedTextIndex(text, shown.length, maxStep);
+    shownRef.current = text.slice(0, end);
+    setVisible(shownRef.current);
+    if (end < text.length) {
+      timerRef.current = window.setTimeout(() => runRef.current(), paceMs);
+    }
+  };
 
-      let index = indexRef.current;
-      if (index > total) {
-        // Content was reset/replaced with something shorter, restart.
-        index = 0;
-        budgetRef.current = 0;
-      }
+  useEffect(() => {
+    const shown = shownRef.current;
+    if (!isStreaming || !fullText.startsWith(shown) || fullText.length < shown.length) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = undefined;
+      shownRef.current = fullText;
+      setVisible(fullText);
+      return;
+    }
+    if (fullText.length === shown.length || timerRef.current !== undefined) {
+      return;
+    }
+    timerRef.current = window.setTimeout(() => runRef.current(), paceMs);
+  }, [fullText, isStreaming, paceMs]);
 
-      const backlog = total - index;
-      if (backlog > 0) {
-        const pressure = Math.min(1, backlog / pressureScale);
-        const cps = minCps + (maxCps - minCps) * pressure;
-        budgetRef.current += cps * dt;
-
-        let reveal = Math.floor(budgetRef.current);
-        if (reveal >= 1) {
-          budgetRef.current -= reveal;
-        } else {
-          reveal = 0;
-        }
-        // Catch up hard if we have fallen too far behind.
-        if (backlog - reveal > maxLag) {
-          reveal = backlog - maxLag;
-        }
-        reveal = Math.min(reveal, frameCap, backlog);
-
-        if (reveal > 0) {
-          index = advanceGraphemes(full, index, reveal);
-          indexRef.current = index;
-          setVisible(full.slice(0, index));
-        }
-      }
-
-      frameRef.current = requestAnimationFrame(tick);
-    };
-
-    frameRef.current = requestAnimationFrame(tick);
-    return () => {
-      if (frameRef.current !== null) {
-        cancelAnimationFrame(frameRef.current);
-        frameRef.current = null;
-      }
-      lastTsRef.current = null;
-    };
-  }, [isStreaming, minCps, maxCps, pressureScale, maxLag, frameCap]);
+  useEffect(
+    () => () => {
+      window.clearTimeout(timerRef.current);
+    },
+    [],
+  );
 
   return visible;
 }

@@ -36,10 +36,6 @@ export function shouldShowScrollToLatest(distance: number, viewportHeight: numbe
   return viewportHeight > 0 && distance > viewportHeight;
 }
 
-const prefersReducedMotion = (): boolean =>
-  typeof window.matchMedia === "function" &&
-  window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-
 export type AutoScroll = {
   /** Callback ref for the scroll container. */
   scrollRef: (el: HTMLDivElement | null) => void;
@@ -243,15 +239,11 @@ export function useAutoScroll(working: boolean): AutoScroll {
     }
     const observer = new ResizeObserver(() => {
       const el = scrollEl;
-      updateScrollToLatestVisibility(el);
-      if (el && !canScroll(el)) {
-        if (userScrolledRef.current) {
-          userScrolledRef.current = false;
-          updateOverflowAnchor(el);
-        }
+      if (!el || !active() || userScrolledRef.current) {
         return;
       }
-      if (!active() || userScrolledRef.current) {
+      updateScrollToLatestVisibility(el);
+      if (!canScroll(el)) {
         return;
       }
       scrollToBottom(false);
@@ -266,7 +258,6 @@ export function useAutoScroll(working: boolean): AutoScroll {
     scrollEl,
     active,
     scrollToBottom,
-    updateOverflowAnchor,
     updateScrollToLatestVisibility,
   ]);
 
