@@ -380,9 +380,7 @@ function VisualLoading({ height }: { height: number }) {
     <div
       className={cn(
         "relative overflow-hidden rounded-lg border border-hairline-soft bg-canvas",
-        "before:pointer-events-none before:absolute before:inset-0 before:bg-[linear-gradient(-35deg,transparent_58%,rgba(255,255,255,.13)_70%,transparent_82%)]",
-        "visual-glare-loading before:bg-[length:220%_220%] before:bg-no-repeat",
-        "after:pointer-events-none after:absolute after:inset-0 after:bg-[radial-gradient(circle_at_50%_35%,rgba(255,255,255,.055),transparent_45%)]",
+        "visual-glare-loading",
       )}
       style={{ height }}
     />

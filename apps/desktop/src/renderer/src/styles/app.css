@@ -549,10 +549,28 @@ input {
 
 @keyframes visual-glare {
   from {
-    background-position: -120% -120%;
+    transform: translate3d(-32%, -32%, 0);
   }
   to {
-    background-position: 120% 120%;
+    transform: translate3d(32%, 32%, 0);
+  }
+}
+
+@keyframes modus-stream-tail-fade-a {
+  from {
+    opacity: 0.62;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes modus-stream-tail-fade-b {
+  from {
+    opacity: 0.62;
+  }
+  to {
+    opacity: 1;
   }
 }
 
@@ -573,7 +591,30 @@ input {
   }
 
   .visual-glare-loading::before {
-    animation: visual-glare 1.45s ease-in-out infinite;
+    position: absolute;
+    inset: -65%;
+    content: "";
+    pointer-events: none;
+    background: linear-gradient(
+      -35deg,
+      transparent 43%,
+      color-mix(in srgb, var(--color-fg) 13%, transparent) 50%,
+      transparent 57%
+    );
+    will-change: transform;
+    animation: visual-glare 1.65s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  }
+
+  .visual-glare-loading::after {
+    position: absolute;
+    inset: 0;
+    content: "";
+    pointer-events: none;
+    background: radial-gradient(
+      circle at 50% 35%,
+      color-mix(in srgb, var(--color-fg) 5.5%, transparent),
+      transparent 45%
+    );
   }
 }
 
@@ -583,6 +624,10 @@ input {
   }
 
   .visual-glare-loading::before {
+    animation: none;
+  }
+
+  .modus-markdown [data-sd-animate] {
     animation: none;
   }
 }
@@ -602,47 +647,56 @@ input {
   --sidebar: var(--color-surface);
   --sdm-bg: transparent;
   color: var(--markdown-fg);
-  font-size: var(--text-md); /* 14px — 比 13px 更易读，留白更舒展 */
+  font-size: var(--text-md);
   font-weight: 425;
-  line-height: 1.68;
+  line-height: 1.72;
   max-width: 100%;
   min-width: 0;
   overflow-wrap: anywhere;
 }
 
-.modus-markdown :where(p) {
-  margin: 0.72rem 0;
+.modus-markdown > :where(p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote, hr) {
+  max-width: 76ch;
 }
 
-/* 标题层级 —— 用字号拉开 h1>h2>h3，恢复正常的阅读结构（Streamdown 工具类未编译，靠这里承载） */
+.modus-markdown :where(p) {
+  margin: 0.78rem 0;
+}
+
 .modus-markdown :where(h1, h2, h3, h4, h5, h6) {
-  margin: 1.05rem 0 0.35rem;
+  margin: 1.9rem 0 0.52rem;
   color: var(--markdown-fg-strong);
-  font-weight: 650;
-  line-height: 1.32;
-  letter-spacing: 0;
+  line-height: 1.28;
+  letter-spacing: -0.012em;
 }
 
 .modus-markdown :where(h1) {
-  font-size: 1.18rem; /* ≈16.5px */
+  font-size: 1.5rem;
+  font-weight: 680;
 }
 
 .modus-markdown :where(h2) {
-  font-size: 1.08rem; /* ≈15px */
+  font-size: 1.28rem;
+  font-weight: 660;
 }
 
 .modus-markdown :where(h3) {
-  font-size: 1rem; /* ≈14px */
+  font-size: 1.08rem;
+  font-weight: 640;
 }
 
 .modus-markdown :where(h4, h5, h6) {
-  font-size: 0.95rem;
+  font-size: 1rem;
+  font-weight: 620;
   color: var(--markdown-fg-muted);
 }
 
-/* 首个标题不要顶出过大空隙 */
 .modus-markdown > :where(h1, h2, h3, h4, h5, h6):first-child {
   margin-top: 0;
+}
+
+.modus-markdown :where(h1, h2, h3, h4, h5, h6) + :where(p, ul, ol, blockquote) {
+  margin-top: 0.52rem;
 }
 
 .modus-markdown :where(h1, h2) {
@@ -671,8 +725,8 @@ input {
 }
 
 .modus-markdown :where(ul, ol) {
-  margin: 0.75rem 0;
-  padding-left: 1.15rem;
+  margin: 0.9rem 0;
+  padding-left: 1.25rem;
 }
 
 /* 恢复列表符号 —— Tailwind preflight 把 ul/ol 重置成 list-style:none，这里显式补回 */
@@ -684,14 +738,13 @@ input {
   list-style: decimal;
 }
 
-/* 嵌套无序列表换用空心圈，层级更清晰 */
 .modus-markdown :where(ul ul) {
   list-style: circle;
-  margin-top: 0.32rem;
+  margin-top: 0.38rem;
 }
 
 .modus-markdown :where(li) {
-  margin: 0.36rem 0;
+  margin: 0.46rem 0;
   padding-left: 0.1rem;
 }
 
@@ -700,7 +753,7 @@ input {
 }
 
 .modus-markdown :where(li > p) {
-  margin: 0.26rem 0;
+  margin: 0.22rem 0;
 }
 
 .modus-markdown :where(input[type="checkbox"]) {
@@ -712,8 +765,8 @@ input {
 }
 
 .modus-markdown :where(blockquote) {
-  margin: 0.65rem 0;
-  padding: 0.05rem 0 0.05rem 0.75rem;
+  margin: 1rem 0;
+  padding: 0.08rem 0 0.08rem 0.85rem;
   border-left: 1px solid var(--color-hairline-strong);
   color: var(--markdown-fg-muted);
   font-style: normal;
@@ -721,7 +774,7 @@ input {
 
 .modus-markdown :where(hr) {
   height: 1px;
-  margin: 1rem 0;
+  margin: 1.75rem 0;
   border: 0;
   background: var(--color-hairline-soft);
 }
@@ -849,14 +902,14 @@ input {
 /* ── Inline code ───────────────────────────────────────────────────── */
 .modus-markdown-inline-code,
 .modus-markdown :where([data-streamdown="inline-code"]) {
-  border: 1px solid var(--color-hairline-soft);
+  border: 0;
   border-radius: var(--radius-xs);
-  background: var(--color-chip);
-  color: var(--markdown-fg-strong);
+  background: color-mix(in oklab, var(--color-fg) 7%, transparent);
+  color: var(--markdown-fg-muted);
   font-family: var(--font-mono);
   font-size: 0.86em;
   line-height: 1.45;
-  padding: 0.04rem 0.24rem;
+  padding: 0.03rem 0.2rem;
   vertical-align: 0.06em;
 }
 
