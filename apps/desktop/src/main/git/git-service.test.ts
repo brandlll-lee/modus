@@ -9,8 +9,10 @@ import {
   abortSubagentWorktreeApply,
   applySubagentWorktree,
   checkoutBranch,
+  cleanupSessionWorktree,
   cleanupSubagentWorktree,
   commitOrPush,
+  createChatWorktree,
   createSubagentWorktree,
   discardFile,
   finishSubagentWorktree,
@@ -274,6 +276,55 @@ describe("git-service", () => {
     } finally {
       await rm(fresh, { recursive: true, force: true });
     }
+  });
+
+  it("creates a chat worktree from a selected local base branch", async () => {
+    const baseBranch = (await git(["branch", "--show-current"])).trim();
+    const worktree = await createChatWorktree(repo, {
+      sessionId: "abcdef12-3456-7890-abcd-ef1234567890",
+      baseBranch,
+    });
+
+    expect(worktree.path.replace(/\\/g, "/")).toContain(
+      `/.modus/worktrees/chat-${baseBranch}-abcdef12`,
+    );
+    expect(worktree.branch).toBe(`modus/chat/${baseBranch}-abcdef12`);
+    expect(worktree.baseBranch).toBe(baseBranch);
+    expect(worktree.status).toBe("active");
+    expect(existsSync(worktree.path)).toBe(true);
+
+    const cleaned = await cleanupSessionWorktree(repo, worktree);
+    expect(cleaned.status).toBe("cleaned");
+    expect(existsSync(worktree.path)).toBe(false);
+  });
+
+  it("creates a chat worktree directly from a remote-tracking base branch", async () => {
+    const baseSha = (await git(["rev-parse", "HEAD"])).trim();
+    await git(["update-ref", "refs/remotes/origin/feature/remote", baseSha]);
+
+    const worktree = await createChatWorktree(repo, {
+      sessionId: "abcdef12-3456-7890-abcd-ef1234567890",
+      baseBranch: "origin/feature/remote",
+      baseBranchRemote: true,
+    });
+
+    expect(worktree.baseBranch).toBe("origin/feature/remote");
+    expect(worktree.baseSha).toBe(baseSha);
+    expect((await execFileAsync("git", ["branch", "--show-current"], { cwd: worktree.path })).stdout.trim()).toBe(
+      worktree.branch,
+    );
+    expect((await git(["branch", "--list", "feature/remote"])).trim()).toBe("");
+
+    await cleanupSessionWorktree(repo, worktree);
+  });
+
+  it("rejects a chat worktree from a missing local base branch", async () => {
+    await expect(
+      createChatWorktree(repo, {
+        sessionId: "abcdef12-3456-7890-abcd-ef1234567890",
+        baseBranch: "origin/main",
+      }),
+    ).rejects.toThrow("not a local branch");
   });
 
   it("creates, finishes, applies, and cleans up a subagent worktree", async () => {

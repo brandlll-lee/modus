@@ -13,6 +13,7 @@ import type {
   GitCommit,
   GitCommitResult,
   GitStatusSummary,
+  SessionWorktreeInfo,
   SubagentWorktreeInfo,
   WorkingChangeStats,
 } from "../../shared/contracts";
@@ -727,7 +728,7 @@ export async function checkoutBranch(
   return { kind: "ok", output: await git(cwd, ["switch", "--track", target]) };
 }
 
-function subagentSlug(value: string): string {
+function worktreeSlug(value: string): string {
   return (
     value
       .toLowerCase()
@@ -744,6 +745,10 @@ function assertManagedWorktreePath(repoRoot: string, worktreePath: string): void
   if (!rel || rel.startsWith("..") || isAbsolute(rel)) {
     throw new Error("Refusing to manage a worktree outside .modus/worktrees.");
   }
+}
+
+async function branchRefExists(cwd: string, ref: string): Promise<boolean> {
+  return Boolean(await gitSafe(cwd, ["show-ref", "--verify", ref]));
 }
 
 async function changedFilesBetween(cwd: string, base: string, target: string): Promise<string[]> {
@@ -767,6 +772,59 @@ async function excludeManagedWorktrees(commonGitDir: string): Promise<void> {
   }
 }
 
+export async function createChatWorktree(
+  cwd: string,
+  input: { sessionId: string; baseBranch: string; baseBranchRemote?: boolean },
+): Promise<SessionWorktreeInfo> {
+  const repo = resolveRepo(cwd);
+  if (!repo) {
+    throw new Error("Worktree isolation requires a Git repository.");
+  }
+  const baseRef = input.baseBranchRemote
+    ? `refs/remotes/${input.baseBranch}`
+    : `refs/heads/${input.baseBranch}`;
+  if (!(await branchRefExists(repo.root, baseRef))) {
+    throw new Error(
+      input.baseBranchRemote
+        ? `Remote base branch "${input.baseBranch}" does not exist.`
+        : `Base branch "${input.baseBranch}" is not a local branch.`,
+    );
+  }
+  const baseSha = await gitSafe(repo.root, [
+    "rev-parse",
+    "--verify",
+    `${baseRef}^{commit}`,
+  ]);
+  if (!baseSha) {
+    throw new Error("Worktree isolation requires an initial commit.");
+  }
+
+  const shortId = input.sessionId.replace(/[^a-f0-9]/gi, "").slice(0, 8);
+  const name = `${worktreeSlug(input.baseBranch)}-${shortId || input.sessionId.slice(0, 8)}`;
+  const worktreeRoot = join(repo.root, ".modus", "worktrees");
+  const worktreePath = join(worktreeRoot, `chat-${name}`);
+  const branch = `modus/chat/${name}`;
+  await mkdir(worktreeRoot, { recursive: true });
+  await excludeManagedWorktrees(repo.commonGitDir);
+  await git(repo.root, ["worktree", "add", "-b", branch, worktreePath, baseRef]);
+  return { path: worktreePath, branch, baseBranch: input.baseBranch, baseSha, status: "active" };
+}
+
+export async function cleanupSessionWorktree(
+  parentCwd: string,
+  worktree: SessionWorktreeInfo,
+): Promise<SessionWorktreeInfo> {
+  const repo = resolveRepo(parentCwd);
+  if (!repo) {
+    throw new Error("Worktree cleanup requires a Git repository.");
+  }
+  assertManagedWorktreePath(repo.root, worktree.path);
+  await git(repo.root, ["worktree", "remove", "--force", worktree.path]);
+  await gitSafe(repo.root, ["branch", "-D", worktree.branch]);
+  await rm(worktree.path, { recursive: true, force: true }).catch(() => undefined);
+  return { ...worktree, status: "cleaned" };
+}
+
 export async function createSubagentWorktree(
   cwd: string,
   input: { sessionId: string; name: string },
@@ -781,7 +839,7 @@ export async function createSubagentWorktree(
   }
 
   const shortId = input.sessionId.replace(/[^a-f0-9]/gi, "").slice(0, 8);
-  const name = `${subagentSlug(input.name)}-${shortId || input.sessionId.slice(0, 8)}`;
+  const name = `${worktreeSlug(input.name)}-${shortId || input.sessionId.slice(0, 8)}`;
   const worktreeRoot = join(repo.root, ".modus", "worktrees");
   const worktreePath = join(worktreeRoot, name);
   const branch = `modus/subagent/${name}`;

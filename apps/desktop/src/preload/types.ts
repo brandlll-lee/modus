@@ -36,8 +36,6 @@ import type {
   McpServerInfo,
   McpServerUpsertInput,
   ModelInfo,
-  ProviderAuthOperationState,
-  ProviderConnectionMethod,
   ModelProviderDetail,
   ModelSettingsState,
   PermissionAction,
@@ -45,6 +43,8 @@ import type {
   PersonalizationState,
   PromptDelivery,
   PromptImageAttachment,
+  ProviderAuthOperationState,
+  ProviderConnectionMethod,
   QuestionAnswer,
   QuestionResponse,
   RawMcpEntry,
@@ -119,6 +119,9 @@ export type ModusApi = {
       cwd: string;
       title: string;
       model?: string;
+      draftScope?: "local" | "worktree";
+      baseBranch?: string;
+      baseBranchRemote?: boolean;
     }): Promise<AgentSessionInfo>;
     list(input?: { includeSessionId?: string }): Promise<AgentSessionInfo[]>;
     listArchived(workspaceId: string): Promise<AgentSessionInfo[]>;
@@ -156,6 +159,7 @@ export type ModusApi = {
     applySubagentWorktree(sessionId: string): Promise<AgentSessionInfo>;
     abortSubagentWorktreeApply(sessionId: string): Promise<AgentSessionInfo>;
     cleanupSubagentWorktree(sessionId: string): Promise<AgentSessionInfo>;
+    cleanupSessionWorktree(input: { sessionId: string; cwd: string }): Promise<AgentSessionInfo>;
     setModel(input: {
       sessionId: string;
       model: string;

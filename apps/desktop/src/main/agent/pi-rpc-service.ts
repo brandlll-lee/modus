@@ -27,7 +27,7 @@ function stringifyLine(line: unknown): string {
 
 export function createPiRpcSession(
   window: BrowserWindowType,
-  input: { workspaceId: string; cwd: string; title: string },
+  input: { workspaceId: string; cwd: string; title: string; branch?: string },
 ): AgentSessionInfo {
   const info = createAgentSessionRecord({ ...input, runtime: "pi-rpc" });
   const sessionDir = join(app.getPath("userData"), "pi-sessions");

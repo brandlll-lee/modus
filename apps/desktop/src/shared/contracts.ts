@@ -13,6 +13,8 @@ export type AgentSessionInfo = {
   workspaceId: string;
   title: string;
   cwd: string;
+  /** Branch checked out for this session, when known. */
+  branch?: string;
   status: "starting" | AgentRunStatus | "idle" | "exited" | "error";
   runtime?: "pi-sdk" | "pi-rpc";
   model?: string;
@@ -22,6 +24,7 @@ export type AgentSessionInfo = {
   subagentTask?: string;
   subagentType?: string;
   subagentReadOnly?: boolean;
+  worktree?: SessionWorktreeInfo;
   subagentWorktree?: SubagentWorktreeInfo;
   pinnedAt?: string;
   archivedAt?: string;
@@ -30,6 +33,14 @@ export type AgentSessionInfo = {
 };
 
 export type AgentRunStatus = "running" | "completed" | "failed" | "blocked" | "cancelled";
+
+export type SessionWorktreeInfo = {
+  path: string;
+  branch: string;
+  baseBranch: string;
+  baseSha: string;
+  status: "active" | "cleaned";
+};
 
 export type SubagentWorktreeInfo = {
   path: string;
