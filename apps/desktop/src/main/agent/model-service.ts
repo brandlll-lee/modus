@@ -5,10 +5,11 @@ import {
   getSupportedThinkingLevels,
   type Model,
   type ModelThinkingLevel,
-  streamSimple,
 } from "@earendil-works/pi-ai";
+import { streamSimple } from "@earendil-works/pi-ai/compat";
 import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { app } from "electron";
+import bundledCatalogJson from "../../../../../catalog/models.json";
 import type {
   ConfigureProviderInput,
   CustomProviderConfig,
@@ -31,6 +32,12 @@ import type {
   UpsertCustomProviderInput,
 } from "../../shared/contracts";
 import { getDatabase } from "../db/database";
+import {
+  forceModelCatalogRefresh,
+  type ModelCatalog,
+  parseModelCatalog,
+  startModelCatalogUpdates,
+} from "./model-catalog-service";
 
 type ModelConfigRow = {
   id: string;
@@ -56,6 +63,9 @@ type ProviderConfigRow = {
   auth_header: number;
   headers_json: string | null;
 };
+
+type ProviderConfigInput = Parameters<ModelRegistry["registerProvider"]>[1];
+type RegisteredModel = NonNullable<ProviderConfigInput["models"]>[number];
 
 type CustomModelsJson = {
   providers?: Record<string, CustomProviderJson>;
@@ -87,7 +97,15 @@ type CustomProviderModelJson = {
   thinkingLevelMap?: Partial<Record<ThinkingLevel, string | null>>;
 };
 
-const THINKING_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh"];
+const THINKING_LEVELS: ThinkingLevel[] = [
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+];
 const DEFAULT_CUSTOM_API = "openai-completions";
 const DEFAULT_CONTEXT_WINDOW = 128_000;
 const DEFAULT_MAX_TOKENS = 16_384;
@@ -141,6 +159,13 @@ const MANAGED_CLIENT_HEADER_KEYS = new Set<string>([
 ]);
 
 let registry: ModelRegistry | undefined;
+let stopCatalogUpdates: (() => void) | undefined;
+let catalogProviders = new Set<string>();
+let activeCatalog: ModelCatalog = parseModelCatalog(bundledCatalogJson);
+let catalogReasoningCapabilities = new Map<
+  string,
+  NonNullable<ModelCatalog["providers"][string][number]["reasoningCapability"]>
+>();
 
 type ProviderAuthOperation = {
   cancelled: boolean;
@@ -165,6 +190,120 @@ function modelsPath(): string {
   return join(agentDir(), "models.json");
 }
 
+function catalogPath(): string {
+  return join(agentDir(), "model-catalog.json");
+}
+
+function catalogProviderConfigs(
+  modelRegistry: ModelRegistry,
+  catalog: ModelCatalog,
+): Array<[string, ProviderConfigInput]> {
+  const bundledModels = ModelRegistry.inMemory(modelRegistry.authStorage).getAll();
+  const bundledProviders = new Set(bundledModels.map((model) => model.provider));
+  const supportedApis = new Set(bundledModels.map((model) => model.api));
+  const oauthProviders = new Map(
+    modelRegistry.authStorage.getOAuthProviders().map(({ id, ...provider }) => [id, provider]),
+  );
+
+  return Object.entries(catalog.providers).flatMap(([provider, models]) => {
+    const local = getProviderConfig(provider);
+    if (!bundledProviders.has(provider) || local?.source === "custom") return [];
+    const supported = models.filter((model) => supportedApis.has(model.api));
+    const baseUrl = supported.find((model) => model.baseUrl)?.baseUrl;
+    if (!baseUrl) return [];
+    const oauth = oauthProviders.get(provider);
+
+    return [
+      [
+        provider,
+        {
+          baseUrl,
+          ...(oauth ? { oauth } : { apiKey: "$MODUS_MODEL_CATALOG_API_KEY" }),
+          models: supported.map(
+            (model): RegisteredModel => ({
+              id: model.id,
+              name: model.name,
+              api: model.api,
+              ...(model.baseUrl ? { baseUrl: local?.base_url ?? model.baseUrl } : {}),
+              reasoning: model.reasoning,
+              input: model.input,
+              cost: {
+                input: model.cost.input,
+                output: model.cost.output,
+                cacheRead: model.cost.cacheRead,
+                cacheWrite: model.cost.cacheWrite,
+                ...(model.cost.tiers ? { tiers: model.cost.tiers } : {}),
+              },
+              contextWindow: model.contextWindow,
+              maxTokens: model.maxTokens,
+              ...(model.thinkingLevelMap
+                ? {
+                    thinkingLevelMap: model.thinkingLevelMap as RegisteredModel["thinkingLevelMap"],
+                  }
+                : {}),
+              ...(model.headers ? { headers: model.headers } : {}),
+              ...(model.compat ? { compat: model.compat as RegisteredModel["compat"] } : {}),
+            }),
+          ),
+          ...(local?.base_url ? { baseUrl: local.base_url } : {}),
+          ...(local?.api ? { api: local.api } : {}),
+          ...(local?.headers_json
+            ? { headers: parseJson<Record<string, string>>(local.headers_json, {}) }
+            : {}),
+          ...(local ? { authHeader: Boolean(local.auth_header) } : {}),
+        },
+      ],
+    ];
+  });
+}
+
+function applyModelCatalog(modelRegistry: ModelRegistry, catalog: ModelCatalog): void {
+  const providers = catalogProviderConfigs(modelRegistry, catalog);
+  const validationRegistry = ModelRegistry.inMemory(modelRegistry.authStorage);
+  for (const [provider, config] of providers) validationRegistry.registerProvider(provider, config);
+  const nextProviders = new Set(providers.map(([provider]) => provider));
+  for (const provider of catalogProviders) {
+    if (!nextProviders.has(provider)) modelRegistry.unregisterProvider(provider);
+  }
+  for (const [provider, config] of providers) modelRegistry.registerProvider(provider, config);
+  catalogProviders = nextProviders;
+  catalogReasoningCapabilities = new Map(
+    Object.entries(catalog.providers).flatMap(([provider, models]) =>
+      nextProviders.has(provider)
+        ? models.flatMap((model) =>
+            model.reasoningCapability
+              ? [[modelConfigId(provider, model.id), model.reasoningCapability] as const]
+              : [],
+          )
+        : [],
+    ),
+  );
+  activeCatalog = catalog;
+}
+
+export function startRemoteModelCatalog(onChanged: () => void): void {
+  if (stopCatalogUpdates) return;
+  const modelRegistry = getModelRegistry();
+  applyModelCatalog(modelRegistry, activeCatalog);
+  stopCatalogUpdates = startModelCatalogUpdates({
+    cachePath: catalogPath(),
+    onCatalog: (catalog) => {
+      applyModelCatalog(modelRegistry, catalog);
+      onChanged();
+    },
+  });
+}
+
+export function stopRemoteModelCatalog(): void {
+  stopCatalogUpdates?.();
+  stopCatalogUpdates = undefined;
+}
+
+export async function refreshRemoteModelCatalog(): Promise<ModelSettingsState> {
+  await forceModelCatalogRefresh();
+  return getModelSettings();
+}
+
 export function getModelRegistry(): ModelRegistry {
   if (!registry) {
     migrateCustomProviderRuntimeConfig();
@@ -179,6 +318,7 @@ function refreshRegistry(): ModelRegistry {
   const modelRegistry = getModelRegistry();
   modelRegistry.authStorage.reload();
   modelRegistry.refresh();
+  applyModelCatalog(modelRegistry, activeCatalog);
   return modelRegistry;
 }
 
@@ -432,20 +572,8 @@ function thinkingLevelMapForModel(
   return normalizeThinkingLevelMap(model?.thinkingLevelMap);
 }
 
-function adaptiveAnthropicEfforts(model: Model<Api> | undefined): string[] | undefined {
-  const forceAdaptive =
-    ((model?.compat as { forceAdaptiveThinking?: unknown } | undefined)?.forceAdaptiveThinking ??
-      false) === true;
-  if (!model?.reasoning || !forceAdaptive) {
-    return undefined;
-  }
-  const name = `${model.id} ${model.name ?? ""}`.toLowerCase().replace(/[\s_.:]+/g, "-");
-  const match = /opus-(\d+)-(\d+)(?:[/-]|$)/i.exec(name);
-  if (!match) return undefined;
-  const major = Number(match[1]);
-  const minor = Number(match[2]);
-  if (major < 4 || (major === 4 && minor < 7)) return undefined;
-  return ["low", "medium", "high", "xhigh", "max"];
+function catalogReasoningCapabilityForModel(model: Model<Api> | undefined) {
+  return model ? catalogReasoningCapabilities.get(modelToId(model)) : undefined;
 }
 
 function thinkingOptionsForModel(
@@ -453,26 +581,53 @@ function thinkingOptionsForModel(
   config: ModelConfigRow | undefined,
   levels = thinkingLevelsForModel(model, config),
 ): ThinkingOption[] {
-  const map = thinkingLevelMapForModel(model, config);
-  const base = levels.map((level) => {
-    const mapped = map?.[level];
-    const value = typeof mapped === "string" && mapped.trim() ? mapped.trim() : level;
-    return { value, label: value, level };
-  });
-  const adaptive = adaptiveAnthropicEfforts(model);
-  if (!adaptive) {
-    return base;
+  const capability = catalogReasoningCapabilityForModel(model);
+  if (capability?.type === "options") {
+    return capability.options;
   }
 
-  const off = base.find((option) => option.level === "off");
-  return [
-    ...(off ? [off] : []),
-    ...adaptive.map((value) => ({
+  const map = thinkingLevelMapForModel(model, config);
+  return levels.map((level) => {
+    const mapped = map?.[level];
+    const value = typeof mapped === "string" && mapped.trim() ? mapped.trim() : level;
+    return {
       value,
       label: value,
-      level: value === "max" ? "xhigh" : (value as ThinkingLevel),
-    })),
-  ];
+      level,
+      ...(value !== level ? { wireValue: value } : {}),
+    };
+  });
+}
+
+function thinkingBudgetForModel(model: Model<Api> | undefined) {
+  const capability = catalogReasoningCapabilityForModel(model);
+  return capability?.type === "budget"
+    ? {
+        ...(capability.min !== undefined ? { min: capability.min } : {}),
+        ...(capability.max !== undefined ? { max: capability.max } : {}),
+      }
+    : undefined;
+}
+
+function budgetThinkingOption(
+  value: string | null | undefined,
+  budget: { min?: number; max?: number },
+): ThinkingOption | undefined {
+  if (value === "off") return { value: "off", label: "Off", level: "off" as const };
+  const tokens = Number(value);
+  if (
+    !Number.isSafeInteger(tokens) ||
+    tokens < 0 ||
+    (budget.min !== undefined && tokens < budget.min) ||
+    (budget.max !== undefined && tokens > budget.max)
+  ) {
+    return undefined;
+  }
+  return {
+    value: String(tokens),
+    label: `${tokens.toLocaleString()} tokens`,
+    level: "high" as const,
+  };
 }
 
 function clampThinkingVariant(
@@ -509,6 +664,14 @@ function thinkingLevelsForModel(
     return ["off"];
   }
 
+  const capability = catalogReasoningCapabilityForModel(model);
+  if (capability?.type === "options") {
+    return [...new Set(capability.options.map((option) => option.level))];
+  }
+  if (capability?.type === "budget") {
+    return ["off", "high"];
+  }
+
   const map = thinkingLevelMapForModel(model, config);
   if (map) {
     return THINKING_LEVELS.filter((level) => {
@@ -532,13 +695,26 @@ function clampThinkingLevel(value: ThinkingLevel, levels: ThinkingLevel[]): Thin
 
 function thinkingStateForModel(model: Model<Api> | undefined, config: ModelConfigRow | undefined) {
   const levels = thinkingLevelsForModel(model, config);
+  const budget = thinkingBudgetForModel(model);
+  if (budget) {
+    const selected =
+      config?.thinking_level === "off"
+        ? budgetThinkingOption("off", budget)
+        : budgetThinkingOption(config?.thinking_variant, budget);
+    return {
+      levels,
+      options: [{ value: "off", label: "Off", level: "off" as const }],
+      budget,
+      selected: selected ?? { value: "off", label: "Off", level: "off" as const },
+    };
+  }
   const options = thinkingOptionsForModel(model, config, levels);
   const selected = selectedThinkingOption(
     config?.thinking_variant,
     clampThinkingLevel(config?.thinking_level ?? "off", levels),
     options,
   );
-  return { levels, options, selected };
+  return { levels, options, selected, budget: undefined };
 }
 
 function modelToInfo(model: Model<Api>, available: boolean, config?: ModelConfigRow): ModelInfo {
@@ -563,6 +739,7 @@ function modelToInfo(model: Model<Api>, available: boolean, config?: ModelConfig
     thinkingLevels: thinking.levels,
     thinkingVariant: thinking.selected.value,
     thinkingOptions: thinking.options,
+    ...(thinking.budget ? { thinkingBudget: thinking.budget } : {}),
   };
 }
 
@@ -586,6 +763,7 @@ function configToInfo(config: ModelConfigRow, available: boolean): ModelInfo {
     thinkingLevels: thinking.levels,
     thinkingVariant: thinking.selected.value,
     thinkingOptions: thinking.options,
+    ...(thinking.budget ? { thinkingBudget: thinking.budget } : {}),
   };
 }
 
@@ -639,6 +817,7 @@ export function listAllProviderModels(provider: string): ProviderModelConfig[] {
       thinkingLevels: thinking.levels,
       thinkingVariant: thinking.selected.value,
       thinkingOptions: thinking.options,
+      ...(thinking.budget ? { thinkingBudget: thinking.budget } : {}),
     });
   }
 
@@ -660,6 +839,7 @@ export function listAllProviderModels(provider: string): ProviderModelConfig[] {
       thinkingLevels: thinking.levels,
       thinkingVariant: thinking.selected.value,
       thinkingOptions: thinking.options,
+      ...(thinking.budget ? { thinkingBudget: thinking.budget } : {}),
     });
   }
 
@@ -687,16 +867,25 @@ function listProvidersFromRegistry(modelRegistry: ModelRegistry): ModelProviderI
     const providerModels = modelRegistry.getAll().filter((model) => model.provider === provider);
     const configuredModels = modelConfigs.filter((config) => config.provider_id === provider);
     const authStatus = modelRegistry.getProviderAuthStatus(provider);
-    const credential = authStatus.source === "stored" ? modelRegistry.authStorage.get(provider) : undefined;
+    const credential =
+      authStatus.source === "stored" ? modelRegistry.authStorage.get(provider) : undefined;
     const authKind =
-      credential?.type === "oauth" ? "oauth" : credential?.type === "api_key" ? "api-key" : undefined;
+      credential?.type === "oauth"
+        ? "oauth"
+        : credential?.type === "api_key"
+          ? "api-key"
+          : undefined;
     const oauthProvider =
       authKind === "oauth"
         ? modelRegistry.authStorage.getOAuthProviders().find((item) => item.id === provider)
         : undefined;
     const authLabel =
       authStatus.label ??
-      (authKind === "oauth" ? oauthProvider?.name ?? "OAuth" : authKind === "api-key" ? "API key" : undefined);
+      (authKind === "oauth"
+        ? (oauthProvider?.name ?? "OAuth")
+        : authKind === "api-key"
+          ? "API key"
+          : undefined);
     const configured =
       authStatus.configured || (row?.source === "custom" && configuredModels.length > 0);
     const enabledModelCount = configured
@@ -927,7 +1116,10 @@ export function startProviderAuth(
     })
     .catch((error: unknown) => {
       if (operation.cancelled || operation.controller.signal.aborted) {
-        updateProviderAuthOperation(operation, { status: "cancelled", message: "Sign-in cancelled." });
+        updateProviderAuthOperation(operation, {
+          status: "cancelled",
+          message: "Sign-in cancelled.",
+        });
         return;
       }
       updateProviderAuthOperation(operation, {
@@ -1525,7 +1717,9 @@ export function updateModelConfig(input: UpdateModelConfigInput): ModelInfo {
   const thinking = thinkingStateForModel(model, existing);
   const selected =
     input.thinkingVariant !== undefined
-      ? clampThinkingVariant(input.thinkingVariant, thinking.options)
+      ? thinking.budget
+        ? (budgetThinkingOption(input.thinkingVariant, thinking.budget) ?? thinking.selected)
+        : clampThinkingVariant(input.thinkingVariant, thinking.options)
       : input.thinkingLevel
         ? selectedThinkingOption(undefined, input.thinkingLevel, thinking.options)
         : thinking.selected;
@@ -1625,14 +1819,30 @@ export function getModelThinkingVariant(modelId: string | undefined): string | u
 export function resolveModelThinking(
   model: Model<Api>,
   thinkingVariant?: string,
-): { model: Model<Api>; thinkingLevel: ModelThinkingLevel; variant: string } {
+): {
+  model: Model<Api>;
+  thinkingLevel: ModelThinkingLevel;
+  variant: string;
+  thinkingBudget?: number;
+} {
   const config = getModelConfig(modelToId(model));
   const thinking = thinkingStateForModel(model, config);
   const selected = thinkingVariant
-    ? clampThinkingVariant(thinkingVariant, thinking.options)
+    ? thinking.budget
+      ? (budgetThinkingOption(thinkingVariant, thinking.budget) ?? thinking.selected)
+      : clampThinkingVariant(thinkingVariant, thinking.options)
     : thinking.selected;
 
-  if (selected.level === "off" || selected.value === selected.level) {
+  if (thinking.budget && selected.level !== "off") {
+    return {
+      model,
+      thinkingLevel: "high",
+      variant: selected.value,
+      thinkingBudget: Number(selected.value),
+    };
+  }
+
+  if (!selected.wireValue) {
     return { model, thinkingLevel: toPiThinkingLevel(selected.level), variant: selected.value };
   }
 
@@ -1641,7 +1851,7 @@ export function resolveModelThinking(
       ...model,
       thinkingLevelMap: {
         ...(model.thinkingLevelMap ?? {}),
-        [selected.level]: selected.value,
+        [selected.level]: selected.wireValue,
       },
     },
     thinkingLevel: toPiThinkingLevel(selected.level),

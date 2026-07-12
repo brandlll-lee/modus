@@ -229,6 +229,10 @@ export function App() {
     applyModelSettings(settings);
   }, [applyModelSettings]);
 
+  const refreshModelCatalog = useCallback(async (): Promise<void> => {
+    applyModelSettings(await window.modus.model.refreshCatalog());
+  }, [applyModelSettings]);
+
   useEffect(() => {
     const idleCallback = window.requestIdleCallback(() => {
       void Promise.allSettled([loadChatPane(), loadInspector(), loadSettingsPanel()]);
@@ -303,6 +307,11 @@ export function App() {
       active = false;
     };
   }, [applyModelSettings]);
+
+  useEffect(
+    () => window.modus?.model.onCatalogChanged(() => void refreshModelSettings()),
+    [refreshModelSettings],
+  );
 
   /* ── Global event intake: one IPC listener feeds the active chat + sidebar ── */
   useEffect(() => {
@@ -791,6 +800,7 @@ export function App() {
                     <SettingsPanel
                       onClose={() => setSettingsOpen(false)}
                       onRefresh={refreshModelSettings}
+                      onRefreshCatalog={refreshModelCatalog}
                       state={modelSettings}
                       workspaces={workspaces}
                       workspaceCwd={activeWorkspace?.rootPath}

@@ -1,4 +1,6 @@
 import { app, BrowserWindow, type BrowserWindow as BrowserWindowType } from "electron";
+import { startRemoteModelCatalog, stopRemoteModelCatalog } from "./agent/model-service";
+import { IPC_CHANNELS } from "./ipc/channels";
 import { registerAppIpc } from "./ipc/register-app-ipc";
 import { disposeAllMcp } from "./mcp/mcp-service";
 import { createStartupTimeline } from "./startup/startup-timeline";
@@ -38,6 +40,11 @@ if (!app.requestSingleInstanceLock()) {
     .whenReady()
     .then(() => {
       startupTimeline.mark("main.electron-ready");
+      startRemoteModelCatalog(() => {
+        for (const window of BrowserWindow.getAllWindows()) {
+          window.webContents.send(IPC_CHANNELS.modelCatalogChanged);
+        }
+      });
       boot();
     })
     .catch((error: unknown) => {
@@ -59,6 +66,7 @@ if (!app.requestSingleInstanceLock()) {
 
   // Close MCP transports on quit so stdio servers never outlive the app.
   app.on("before-quit", () => {
+    stopRemoteModelCatalog();
     void disposeAllMcp();
   });
 }

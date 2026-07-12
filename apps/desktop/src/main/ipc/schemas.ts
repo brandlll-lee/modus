@@ -4,7 +4,7 @@ import { STARTUP_RENDERER_MILESTONES } from "../../shared/startup";
 
 const nonEmptyString = z.string().trim().min(1);
 const optionalNonEmptyString = nonEmptyString.optional();
-const thinkingLevelSchema = z.enum(["off", "minimal", "low", "medium", "high", "xhigh"]);
+const thinkingLevelSchema = z.enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 const jsonObjectSchema = z.record(z.string(), z.unknown());
 const optionalHeadersSchema = z.record(z.string(), z.string()).optional();
 export const startupMetricSchema = z.object({

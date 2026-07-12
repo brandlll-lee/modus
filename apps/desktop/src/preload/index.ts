@@ -158,6 +158,12 @@ const api: ModusApi = {
     list: () => ipcRenderer.invoke("model:list"),
     setDefault: (model) => ipcRenderer.invoke("model:set-default", model),
     settings: () => ipcRenderer.invoke("model:settings"),
+    refreshCatalog: () => ipcRenderer.invoke("model:refresh-catalog"),
+    onCatalogChanged: (callback) => {
+      const listener = () => callback();
+      ipcRenderer.on("model:catalog-changed", listener);
+      return () => ipcRenderer.removeListener("model:catalog-changed", listener);
+    },
     providerDetail: (provider) => ipcRenderer.invoke("model:provider-detail", provider),
     connectionMethods: (provider) =>
       ipcRenderer.invoke("model:provider-connection-methods", provider),

@@ -138,6 +138,14 @@ const TOOL_DELTA_THROTTLE_MS = 100;
 const MAX_SUBAGENTS_PER_SESSION = 6;
 const DEFAULT_SUBAGENT_WAIT_MS = 300_000;
 
+function setSessionThinkingBudget(session: AgentSession, budget: number | undefined): void {
+  if (budget === undefined) {
+    delete session.agent.thinkingBudgets;
+  } else {
+    session.agent.thinkingBudgets = { high: budget };
+  }
+}
+
 /** Dedupe tool definitions by name (chat + plan custom-tool sets overlap). */
 function dedupeToolsByName<T extends { name: string }>(tools: T[]): T[] {
   const byName = new Map<string, T>();
@@ -390,6 +398,7 @@ export class PiSdkRuntime implements AgentRuntime {
     sessionManager: SessionManager;
     model: NonNullable<Parameters<typeof createAgentSession>[0]>["model"];
     thinkingLevel: NonNullable<Parameters<typeof createAgentSession>[0]>["thinkingLevel"];
+    thinkingBudget?: number;
   }): Promise<SdkRuntimeSession> {
     const sessionOptions: Parameters<typeof createAgentSession>[0] = {
       cwd: params.info.cwd,
@@ -426,6 +435,7 @@ export class PiSdkRuntime implements AgentRuntime {
     }
 
     const { session } = await createAgentSession(sessionOptions);
+    setSessionThinkingBudget(session, params.thinkingBudget);
     const normalizePiEvent = createPiEventNormalizer(params.info.id);
     const publishContextUsage = () => {
       const event = createContextUsageEvent(params.info.id, session);
@@ -537,6 +547,9 @@ export class PiSdkRuntime implements AgentRuntime {
         sessionManager: SessionManager.create(input.cwd, sessionDir),
         model: selectedThinking?.model ?? selectedModel,
         thinkingLevel: selectedThinking?.thinkingLevel,
+        ...(selectedThinking?.thinkingBudget !== undefined
+          ? { thinkingBudget: selectedThinking.thinkingBudget }
+          : {}),
       });
     })().finally(() => {
       this.resumePromises.delete(info.id);
@@ -598,6 +611,9 @@ export class PiSdkRuntime implements AgentRuntime {
       sessionManager,
       model: selectedThinking?.model ?? selectedModel,
       thinkingLevel: selectedThinking?.thinkingLevel,
+      ...(selectedThinking?.thinkingBudget !== undefined
+        ? { thinkingBudget: selectedThinking.thinkingBudget }
+        : {}),
     });
   }
 
@@ -1281,6 +1297,7 @@ export class PiSdkRuntime implements AgentRuntime {
     );
     await runtimeSession.session.setModel(resolved.model);
     runtimeSession.session.setThinkingLevel(resolved.thinkingLevel);
+    setSessionThinkingBudget(runtimeSession.session, resolved.thinkingBudget);
     const updated = updateAgentSessionMetadata(runtimeSession.info.id, {
       model: modelToId(model),
     });
@@ -1331,6 +1348,7 @@ export class PiSdkRuntime implements AgentRuntime {
     const resolved = resolveModelThinking(model, next.thinkingVariant);
     await runtimeSession.session.setModel(resolved.model);
     runtimeSession.session.setThinkingLevel(resolved.thinkingLevel);
+    setSessionThinkingBudget(runtimeSession.session, resolved.thinkingBudget);
     updateAgentSessionMetadata(sessionId, { model: modelToId(model) });
     this.emitContextUsage(runtimeSession);
     return next;

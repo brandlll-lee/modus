@@ -931,14 +931,17 @@ export type ModelInfo = {
   thinkingLevels: ThinkingLevel[];
   thinkingVariant?: string;
   thinkingOptions?: ThinkingOption[];
+  thinkingBudget?: ThinkingBudget;
 };
 
-export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type ThinkingOption = {
   value: string;
   label: string;
   level: ThinkingLevel;
+  wireValue?: string | undefined;
 };
+export type ThinkingBudget = { min?: number; max?: number };
 export type ModelInputKind = "text" | "image";
 
 export type JsonObject = Record<string, unknown>;
@@ -976,6 +979,7 @@ export type ProviderModelConfig = {
   thinkingLevels: ThinkingLevel[];
   thinkingVariant?: string;
   thinkingOptions?: ThinkingOption[];
+  thinkingBudget?: ThinkingBudget;
 };
 
 export type ModelProviderDetail = ModelProviderInfo & {

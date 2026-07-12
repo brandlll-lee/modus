@@ -119,6 +119,8 @@ export const IPC_CHANNELS = {
   modelList: "model:list",
   modelSetDefault: "model:set-default",
   modelSettings: "model:settings",
+  modelRefreshCatalog: "model:refresh-catalog",
+  modelCatalogChanged: "model:catalog-changed",
   modelProviderDetail: "model:provider-detail",
   modelProviderConnectionMethods: "model:provider-connection-methods",
   modelProviderAuthStart: "model:provider-auth-start",

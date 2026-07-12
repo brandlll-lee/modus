@@ -32,6 +32,7 @@ import {
   getProviderDetail,
   listProviderConnectionMethods,
   listModels,
+  refreshRemoteModelCatalog,
   respondProviderAuth,
   setDefaultModel,
   startProviderAuth,
@@ -1180,6 +1181,11 @@ export function registerAppIpc({
   ipcMain.handle(IPC_CHANNELS.modelSettings, (event) => {
     assertTrustedSender(event);
     return getModelSettings();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.modelRefreshCatalog, (event) => {
+    assertTrustedSender(event);
+    return refreshRemoteModelCatalog();
   });
 
   ipcMain.handle(IPC_CHANNELS.modelProviderDetail, (event, provider: string) => {

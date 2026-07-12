@@ -321,6 +321,8 @@ export type ModusApi = {
     list(): Promise<ModelInfo[]>;
     setDefault(model: string): Promise<void>;
     settings(): Promise<ModelSettingsState>;
+    refreshCatalog(): Promise<ModelSettingsState>;
+    onCatalogChanged(callback: () => void): () => void;
     providerDetail(provider: string): Promise<ModelProviderDetail | undefined>;
     connectionMethods(provider: string): Promise<ProviderConnectionMethod[]>;
     startProviderAuth(input: { provider: string }): Promise<ProviderAuthOperationState>;

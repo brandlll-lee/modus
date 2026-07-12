@@ -71,6 +71,7 @@ type SettingsPanelProps = {
   state: ModelSettingsState | null;
   onClose(): void;
   onRefresh(): void;
+  onRefreshCatalog(): void;
   /** Active workspace root — enables the MCP section's config + sync actions. */
   workspaceCwd?: string | undefined;
   /** Recent workspaces — used as project MCP scopes. */
@@ -96,6 +97,7 @@ export function SettingsPanel({
   state,
   onClose,
   onRefresh,
+  onRefreshCatalog,
   workspaceCwd,
   workspaces = [],
 }: SettingsPanelProps) {
@@ -539,7 +541,7 @@ export function SettingsPanel({
               onProviderConnectionClose={() => setConnectionProvider(undefined)}
               onOpenProviderConnection={(provider) => void openProviderConnection(provider)}
               onProviderAuthRespond={(value) => void respondProviderAuth(value)}
-              onRefresh={onRefresh}
+              onRefreshCatalog={onRefreshCatalog}
               onSelectProvider={(provider) => void selectProvider(provider)}
               onToggleModel={(model, enabled) => void toggleModel(model, enabled)}
               popular={popular}
@@ -726,7 +728,7 @@ function ModelProviderSettingsPanel({
   onProviderConnectionClose,
   onProviderAuthRespond,
   onOpenProviderConnection,
-  onRefresh,
+  onRefreshCatalog,
   onSelectProvider,
   onToggleModel,
 }: {
@@ -762,7 +764,7 @@ function ModelProviderSettingsPanel({
   onProviderConnectionClose(): void;
   onProviderAuthRespond(value: string | undefined): void;
   onOpenProviderConnection(provider: ModelProviderInfo): void;
-  onRefresh(): void;
+  onRefreshCatalog(): void;
   onSelectProvider(provider: ModelProviderInfo): void;
   onToggleModel(model: ProviderModelConfig, enabled: boolean): void;
 }) {
@@ -782,7 +784,7 @@ function ModelProviderSettingsPanel({
               <button
                 aria-label="Refresh providers"
                 className="flex size-8 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-hover hover:text-fg"
-                onClick={onRefresh}
+                onClick={onRefreshCatalog}
                 type="button"
               >
                 <IconRefresh size={15} stroke={1.7} />
@@ -3564,7 +3566,7 @@ function ProviderCredentials({
   const connectionLabel = !detail.configured
     ? "Not connected"
     : canDisconnect
-      ? detail.authLabel ?? "Connected locally"
+      ? (detail.authLabel ?? "Connected locally")
       : detail.authSource
         ? `Managed by ${detail.authLabel ?? detail.authSource}`
         : "Saved in Modus";
@@ -3732,14 +3734,31 @@ function ModelRow({
   const [open, setOpen] = useState(false);
   const thinkingOptions = useMemo(() => modelThinkingOptions(model), [model]);
   const thinkingSelection = selectedThinkingOption(model);
-  const canEditThinking = thinkingOptions.length > 1;
+  const thinkingLabel = selectedThinkingLabel(model);
+  const canEditThinking = thinkingOptions.length > 1 || Boolean(model.thinkingBudget);
   const expandable = canEditThinking || editableLimits;
+  const [budgetDraft, setBudgetDraft] = useState(
+    model.thinkingLevel !== "off" && model.thinkingVariant
+      ? model.thinkingVariant
+      : model.thinkingBudget?.min !== undefined
+        ? String(model.thinkingBudget.min)
+        : "",
+  );
   const [contextDraft, setContextDraft] = useState(
     model.contextWindow ? String(model.contextWindow) : "",
   );
   const [maxTokensDraft, setMaxTokensDraft] = useState(
     model.maxTokens ? String(model.maxTokens) : "",
   );
+  useEffect(() => {
+    setBudgetDraft(
+      model.thinkingLevel !== "off" && model.thinkingVariant
+        ? model.thinkingVariant
+        : model.thinkingBudget?.min !== undefined
+          ? String(model.thinkingBudget.min)
+          : "",
+    );
+  }, [model.thinkingBudget?.min, model.thinkingLevel, model.thinkingVariant]);
 
   function saveLimits(): void {
     const patch: { contextWindow?: number; maxTokens?: number } = {};
@@ -3754,6 +3773,21 @@ function ModelRow({
     if (patch.contextWindow !== undefined || patch.maxTokens !== undefined) {
       onEditModel(model, patch);
     }
+  }
+
+  function saveBudget(): void {
+    const tokens = Number(budgetDraft);
+    const budget = model.thinkingBudget;
+    if (
+      !budget ||
+      !Number.isSafeInteger(tokens) ||
+      tokens < 0 ||
+      (budget.min !== undefined && tokens < budget.min) ||
+      (budget.max !== undefined && tokens > budget.max)
+    ) {
+      return;
+    }
+    onEditModel(model, { thinkingVariant: String(tokens) });
   }
 
   return (
@@ -3780,7 +3814,7 @@ function ModelRow({
               <span>{`${model.contextWindow.toLocaleString()} ctx`}</span>
             ) : null}
             {model.maxTokens ? <span>{`${model.maxTokens.toLocaleString()} out`}</span> : null}
-            {thinkingSelection.value !== "off" ? <span>{thinkingSelection.label}</span> : null}
+            {model.thinkingLevel !== "off" ? <span>{thinkingLabel}</span> : null}
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -3806,7 +3840,32 @@ function ModelRow({
 
       <CollapsibleMotion open={open && expandable} preset="default">
         <div className="mt-3 grid gap-4 border-hairline-soft border-t pt-4">
-          {canEditThinking ? (
+          {model.thinkingBudget ? (
+            <div className="grid max-w-sm grid-cols-[minmax(0,1fr)_auto_auto] items-end gap-2">
+              <Field
+                label="Thinking budget (tokens)"
+                onChange={setBudgetDraft}
+                placeholder={model.thinkingBudget.min?.toString() ?? "Tokens"}
+                value={budgetDraft}
+              />
+              <button
+                className="flex h-10 items-center justify-center rounded-md bg-fg px-3 text-sm text-canvas transition-colors hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={busy}
+                onClick={saveBudget}
+                type="button"
+              >
+                Apply
+              </button>
+              <button
+                className="flex h-10 items-center justify-center rounded-md px-3 text-fg-muted text-sm transition-colors hover:bg-hover hover:text-fg"
+                disabled={busy || model.thinkingLevel === "off"}
+                onClick={() => onEditModel(model, { thinkingVariant: "off" })}
+                type="button"
+              >
+                Off
+              </button>
+            </div>
+          ) : canEditThinking ? (
             <div className="grid max-w-xs gap-2">
               <SelectField
                 label="Default thinking level"

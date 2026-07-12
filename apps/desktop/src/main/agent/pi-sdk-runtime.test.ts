@@ -142,6 +142,7 @@ const { setAgentToolContext } = await import("./tools/tool-context");
 function createMockPiSession(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     abort: vi.fn(async () => undefined),
+    agent: { thinkingBudgets: undefined },
     cycleModel: vi.fn(async () => ({ model: mocks.model })),
     dispose: vi.fn(),
     getContextUsage: vi.fn(() => ({

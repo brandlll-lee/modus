@@ -1,6 +1,7 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 let userData: string;
@@ -11,9 +12,12 @@ let findModel: typeof import("./model-service").findModel;
 let getCustomProviderConfig: typeof import("./model-service").getCustomProviderConfig;
 let getModelRegistry: typeof import("./model-service").getModelRegistry;
 let getModelSettings: typeof import("./model-service").getModelSettings;
+let getProviderDetail: typeof import("./model-service").getProviderDetail;
 let listProviderConnectionMethods: typeof import("./model-service").listProviderConnectionMethods;
 let listModels: typeof import("./model-service").listModels;
 let resolveModelThinking: typeof import("./model-service").resolveModelThinking;
+let startRemoteModelCatalog: typeof import("./model-service").startRemoteModelCatalog;
+let stopRemoteModelCatalog: typeof import("./model-service").stopRemoteModelCatalog;
 let updateModelConfig: typeof import("./model-service").updateModelConfig;
 let upsertCustomProvider: typeof import("./model-service").upsertCustomProvider;
 
@@ -33,9 +37,12 @@ beforeAll(async () => {
     getCustomProviderConfig,
     getModelRegistry,
     getModelSettings,
+    getProviderDetail,
     listProviderConnectionMethods,
     listModels,
     resolveModelThinking,
+    startRemoteModelCatalog,
+    stopRemoteModelCatalog,
     updateModelConfig,
     upsertCustomProvider,
   } = await import("./model-service"));
@@ -223,6 +230,7 @@ describe("model-service custom provider config", () => {
             medium: "medium",
             high: "high",
             xhigh: "xhigh",
+            max: "max",
           },
         },
       ],
@@ -244,6 +252,7 @@ describe("model-service custom provider config", () => {
       medium: "medium",
       high: "high",
       xhigh: "xhigh",
+      max: "max",
     });
     expect(detail.models[0]?.thinkingOptions?.map((option) => option.value)).toEqual([
       "off",
@@ -260,11 +269,14 @@ describe("model-service custom provider config", () => {
       forceAdaptiveThinking: true,
       allowEmptySignature: true,
     });
-    expect(roundTrip?.models[0]?.thinkingLevelMap).toMatchObject({ xhigh: "xhigh" });
+    expect(roundTrip?.models[0]?.thinkingLevelMap).toMatchObject({
+      xhigh: "xhigh",
+      max: "max",
+    });
     const modelId = `${provider}/claude-opus-4-7`;
     const updated = updateModelConfig({ model: modelId, thinkingVariant: "max" });
     expect(updated.thinkingVariant).toBe("max");
-    expect(updated.thinkingLevel).toBe("xhigh");
+    expect(updated.thinkingLevel).toBe("max");
 
     const model = findModel(modelId);
     if (!model) {
@@ -272,8 +284,8 @@ describe("model-service custom provider config", () => {
     }
     const resolved = resolveModelThinking(model, "max");
     expect(resolved.variant).toBe("max");
-    expect(resolved.thinkingLevel).toBe("xhigh");
-    expect(resolved.model.thinkingLevelMap?.xhigh).toBe("max");
+    expect(resolved.thinkingLevel).toBe("max");
+    expect(resolved.model.thinkingLevelMap?.max).toBe("max");
   });
 
   it("accepts the string-thinking format for OpenAI-compatible relays", async () => {
@@ -504,5 +516,90 @@ describe("provider disconnection", () => {
       configured: false,
       enabledModelCount: 0,
     });
+  });
+});
+
+describe("runtime model catalog", () => {
+  it("adds compatible models without enabling them or replacing a custom provider", async () => {
+    const shippedPath = fileURLToPath(
+      new URL("../../../../../catalog/models.json", import.meta.url),
+    );
+    const catalog = JSON.parse(await readFile(shippedPath, "utf8")) as {
+      providers: Record<string, Array<Record<string, unknown>>>;
+    };
+    const anthropicModels = catalog.providers.anthropic;
+    const anthropicModel = anthropicModels?.[0];
+    if (!anthropicModel) throw new Error("expected an Anthropic model in the shipped catalog");
+    catalog.providers.anthropic = [
+      ...anthropicModels,
+      {
+        ...anthropicModel,
+        id: "future-model",
+        name: "Future Model",
+        reasoningCapability: {
+          type: "options",
+          source: "models.dev",
+          options: [
+            { value: "low", label: "Low", level: "low", wireValue: "low" },
+            { value: "high", label: "High", level: "high", wireValue: "high" },
+          ],
+        },
+      },
+      {
+        ...anthropicModel,
+        id: "budget-model",
+        name: "Budget Model",
+        reasoningCapability: {
+          type: "budget",
+          source: "models.dev",
+          min: 128,
+          max: 32_768,
+        },
+      },
+    ];
+
+    await upsertCustomProvider({
+      provider: "openai",
+      name: "Local OpenAI",
+      baseUrl: "https://local.example.test/v1",
+      apiKey: "sk-local",
+      models: [{ id: "local-model", name: "Local Model" }],
+    });
+    await configureProvider({
+      provider: "anthropic",
+      apiKey: "sk-relay",
+      baseUrl: "https://relay.example.test/anthropic",
+    });
+    const cachePath = join(userData, "pi-agent", "model-catalog.json");
+    await writeFile(cachePath, JSON.stringify(catalog), "utf8");
+
+    try {
+      startRemoteModelCatalog(() => undefined);
+
+      expect(findModel("anthropic/future-model")).toBeDefined();
+      expect(findModel("anthropic/future-model")?.baseUrl).toBe(
+        "https://relay.example.test/anthropic",
+      );
+      expect(getProviderDetail("anthropic")?.models).toContainEqual(
+        expect.objectContaining({ id: "future-model", enabled: false }),
+      );
+      expect(
+        getProviderDetail("anthropic")?.models.find((model) => model.id === "future-model")
+          ?.thinkingOptions,
+      ).toEqual([
+        { value: "low", label: "Low", level: "low", wireValue: "low" },
+        { value: "high", label: "High", level: "high", wireValue: "high" },
+      ]);
+      const futureModel = findModel("anthropic/future-model");
+      if (!futureModel) throw new Error("expected the catalog model to be registered");
+      expect(resolveModelThinking(futureModel, "high").model.thinkingLevelMap?.high).toBe("high");
+      expect(
+        getProviderDetail("anthropic")?.models.find((model) => model.id === "budget-model")
+          ?.thinkingBudget,
+      ).toEqual({ min: 128, max: 32_768 });
+      expect(findModel("openai/local-model")).toBeDefined();
+    } finally {
+      stopRemoteModelCatalog();
+    }
   });
 });

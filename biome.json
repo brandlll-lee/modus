@@ -34,6 +34,7 @@
       "!**/dist",
       "!**/.modus-cache",
       "!package-lock.json",
+      "!catalog",
       "!.cursor",
       "!MODUS_V0.1.0_EXECUTION_PLAN.md",
       "!reference"
