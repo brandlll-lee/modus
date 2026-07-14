@@ -22,6 +22,7 @@ export type GitErrorCode =
   | "merge-conflict"
   | "non-fast-forward"
   | "nothing-to-commit"
+  | "output-too-large"
   | "diverged"
   | "unknown";
 
@@ -50,6 +51,7 @@ const MESSAGE: Record<GitErrorCode, string> = {
   "non-fast-forward":
     "The remote has commits you do not have locally. Pull (or fetch + rebase) before pushing.",
   "nothing-to-commit": "There are no staged changes to commit.",
+  "output-too-large": "Git output exceeded the safe preview limit.",
   diverged: "Local and remote branches have diverged; a fast-forward pull is not possible.",
   unknown: "Git command failed.",
 };

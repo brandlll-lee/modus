@@ -82,8 +82,8 @@ export type CheckpointInfo = {
   userMessageId?: string;
   cwd: string;
   commitHash: string;
-  /** "auto" before a run; "restore-backup" taken right before a restore. */
-  kind: "auto" | "restore-backup";
+  /** Run boundary or restore safety snapshot. */
+  kind: "auto" | "turn-end" | "restore-backup";
   createdAt: string;
 };
 
@@ -433,7 +433,21 @@ export type FileChange = {
   renamedFrom?: string;
 };
 
+export type ReviewFile = FileChange & {
+  added: number;
+  removed: number;
+  binary: boolean;
+};
+
 export type DiffMode = "unstaged" | "staged" | "working-state";
+
+/** Authoritative comparison selected by the Git review panel. */
+export type DiffTarget =
+  | { type: "unstaged" }
+  | { type: "staged" }
+  | { type: "commit"; commit: string }
+  | { type: "branch"; base?: string }
+  | { type: "last-turn"; sessionId: string };
 
 /** Per-file line counters for change summaries (turn cards / composer strip). */
 export type FileChangeStat = {
@@ -463,25 +477,48 @@ export type WorkingChangeStats = {
   truncated: boolean;
 };
 
+export type DiffTotals = {
+  added: number;
+  removed: number;
+  fileCount: number;
+};
+
+export type DiffReviewReady = {
+  state: "ready";
+  files: ReviewFile[];
+  totals: DiffTotals;
+  /** Branch ref chosen by Git when the caller omitted an explicit base. */
+  resolvedBase?: string;
+  /** Present for Last Turn so the UI can distinguish live and frozen comparisons. */
+  turn?: {
+    runId: string;
+    status: AgentRunStatus;
+    live: boolean;
+  };
+};
+
+export type DiffReview =
+  | DiffReviewReady
+  | {
+      state: "unavailable";
+      reason: "no-turn" | "missing-start" | "missing-end" | "worktree-mismatch";
+      message: string;
+    }
+  | { state: "superseded" };
+
 export type FileDiff = {
   path: string;
   diff: string;
   mode?: DiffMode;
 };
 
-/**
- * Full before/after contents of one changed file, powering the rich diff
- * viewer. Sides mirror `git diff` semantics for the requested mode.
- */
-export type DiffFileVersions = {
-  path: string;
-  mode: "unstaged" | "staged";
-  original: string;
-  modified: string;
-  /** Either side contains NUL bytes — render a notice instead of text. */
+/** Compact single-file patch for the read-only Git review renderer. */
+export type DiffFilePatch = {
+  patch: string;
   binary: boolean;
-  /** A side was cut at the byte cap to keep IPC payloads bounded. */
   truncated: boolean;
+  bytes: number;
+  maxLineLength: number;
 };
 
 export type PermissionAction =
@@ -597,8 +634,7 @@ export type GitChangeEvent = {
 
 /**
  * One commit in the Source Control "All commits" scope. Files are fetched
- * lazily per commit (on expand) via `diff.commitChanges`, mirroring how the
- * working tree loads file versions on demand — keeps the log payload bounded.
+ * lazily per commit through `diff.review`, keeping the log payload bounded.
  */
 export type GitCommit = {
   /** Full 40-char object id (used as the authoritative diff base). */

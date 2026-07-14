@@ -1350,6 +1350,7 @@ describe("PiSdkRuntime", () => {
   });
 
   it("keeps an aborted in-flight run cancelled instead of failed", async () => {
+    await initGitRepo();
     const sessionId = `session-${crypto.randomUUID()}`;
     const workspaceId = `workspace-${crypto.randomUUID()}`;
     insertSession(sessionId, workspaceId, join(userData, "missing.jsonl"), "New chat");
@@ -1387,7 +1388,7 @@ describe("PiSdkRuntime", () => {
           .get(sessionId),
       ).toEqual({ count: 1 });
     });
-    await vi.waitFor(() => expect(prompt).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(prompt).toHaveBeenCalledOnce(), { timeout: 10_000 });
     await runtime.abort(sessionId);
     await promptTask;
 
@@ -1407,5 +1408,12 @@ describe("PiSdkRuntime", () => {
     expect(events.map((event) => event.type)).toContain("run.cancelled");
     expect(events.map((event) => event.type)).not.toContain("run.failed");
     expect(events.map((event) => event.type)).not.toContain("runtime.error");
+    expect(
+      getDatabase()
+        .prepare(
+          "select count(*) as count from agent_checkpoints where run_id = (select id from agent_runs where session_id = ?) and kind = 'turn-end'",
+        )
+        .get(sessionId),
+    ).toEqual({ count: 1 });
   });
 });

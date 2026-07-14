@@ -7,6 +7,7 @@ import {
   ipcMain,
   shell,
 } from "electron";
+import type { DiffReview, DiffReviewReady, DiffTarget } from "../../shared/contracts";
 import { listAgentEvents, recordAgentEvent } from "../agent/agent-event-store";
 import { listAgentRuns } from "../agent/agent-run-store";
 import {
@@ -17,6 +18,7 @@ import {
   updateAgentSessionWorktree,
 } from "../agent/agent-store";
 import {
+  getLastTurnComparison,
   getSessionBaseCheckpoint,
   listCheckpoints,
   restoreCheckpoint,
@@ -26,12 +28,12 @@ import {
   configureProvider,
   deleteCustomProvider,
   disconnectProvider,
-  getProviderAuthState,
   getCustomProviderConfig,
   getModelSettings,
+  getProviderAuthState,
   getProviderDetail,
-  listProviderConnectionMethods,
   listModels,
+  listProviderConnectionMethods,
   refreshRemoteModelCatalog,
   respondProviderAuth,
   setDefaultModel,
@@ -80,18 +82,20 @@ import {
   checkoutBranch,
   cleanupSubagentWorktree,
   commitOrPush,
-  discardFile,
+  discardUnstagedFile,
+  type GitDiffTarget,
   getChangeStatsSince,
   getStatusSummary,
   getWorkingChangeStats,
   initRepository,
   isGitRepository,
   listBranches,
-  listChanges,
-  listCommitChanges,
   listCommitLog,
   readDiff,
-  readFileVersions,
+  readFilePatch,
+  reviewChanges,
+  stageFile,
+  unstageFile,
 } from "../git/git-service";
 import { emitGitEvent, unwatchRepo, watchRepo } from "../git/git-watcher";
 import {
@@ -169,11 +173,11 @@ import {
   contextResolveSchema,
   contextSearchSchema,
   cwdSchema,
-  diffCommitChangesSchema,
   diffCommitOrPushSchema,
-  diffFileVersionsSchema,
+  diffFilePatchSchema,
   diffPathSchema,
   diffReadSchema,
+  diffReviewSchema,
   diffStatsSinceSchema,
   docsAddSchema,
   docsSearchSchema,
@@ -188,11 +192,11 @@ import {
   parseIpcInput,
   permissionDecideSchema,
   personalizationSaveSchema,
+  processKillSchema,
+  processListSchema,
   providerAuthOperationSchema,
   providerAuthResponseSchema,
   providerAuthStartSchema,
-  processKillSchema,
-  processListSchema,
   questionRespondSchema,
   reviewStartSchema,
   sessionIdSchema,
@@ -215,6 +219,39 @@ import {
   workspacePinSchema,
   workspaceRenameSchema,
 } from "./schemas";
+
+function resolveReviewTarget(
+  cwd: string,
+  target: Exclude<DiffTarget, { type: "branch" }> | { type: "branch"; base?: string | undefined },
+):
+  | { state: "ready"; target: GitDiffTarget; turn?: DiffReviewReady["turn"] }
+  | Extract<DiffReview, { state: "unavailable" }> {
+  if (target.type === "branch") {
+    return {
+      state: "ready",
+      target: target.base ? { type: "branch", base: target.base } : { type: "branch" },
+    };
+  }
+  if (target.type !== "last-turn") return { state: "ready", target };
+  const resolution = getLastTurnComparison(target.sessionId, cwd);
+  if (resolution.state === "unavailable") return resolution;
+  const { comparison } = resolution;
+  return {
+    state: "ready",
+    target: {
+      type: "snapshot",
+      from: comparison.from,
+      ...(comparison.to ? { to: comparison.to } : {}),
+    },
+    turn: {
+      runId: comparison.runId,
+      status: comparison.status,
+      live: comparison.live,
+    },
+  };
+}
+
+const reviewControllers = new Map<number, AbortController>();
 
 const TRUSTED_DEV_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
@@ -744,9 +781,26 @@ export function registerAppIpc({
     deleteBrowserRecent(parsed.id);
   });
 
-  ipcMain.handle(IPC_CHANNELS.diffList, async (event, cwd: string) => {
+  ipcMain.handle(IPC_CHANNELS.diffReview, async (event, input) => {
     assertTrustedSender(event);
-    return await listChanges(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.diffList));
+    const parsed = parseIpcInput(diffReviewSchema, input, IPC_CHANNELS.diffReview);
+    const resolved = resolveReviewTarget(parsed.cwd, parsed.target);
+    if (resolved.state === "unavailable") return resolved;
+
+    const senderId = event.sender.id;
+    reviewControllers.get(senderId)?.abort();
+    const controller = new AbortController();
+    reviewControllers.set(senderId, controller);
+    try {
+      const review = await reviewChanges(parsed.cwd, resolved.target, controller.signal);
+      if (controller.signal.aborted) return { state: "superseded" } satisfies DiffReview;
+      return resolved.turn ? { ...review, turn: resolved.turn } : review;
+    } catch (cause) {
+      if (controller.signal.aborted) return { state: "superseded" } satisfies DiffReview;
+      throw cause;
+    } finally {
+      if (reviewControllers.get(senderId) === controller) reviewControllers.delete(senderId);
+    }
   });
 
   ipcMain.handle(IPC_CHANNELS.diffRead, async (event, input) => {
@@ -755,28 +809,34 @@ export function registerAppIpc({
     return await readDiff(parsed.cwd, parsed.path, parsed.mode);
   });
 
-  ipcMain.handle(IPC_CHANNELS.diffFileVersions, async (event, input) => {
+  ipcMain.handle(IPC_CHANNELS.diffFilePatch, async (event, input) => {
     assertTrustedSender(event);
-    const parsed = parseIpcInput(diffFileVersionsSchema, input, IPC_CHANNELS.diffFileVersions);
-    return await readFileVersions(
-      parsed.cwd,
-      parsed.path,
-      parsed.mode,
-      parsed.originalPath,
-      parsed.commit,
-    );
+    const parsed = parseIpcInput(diffFilePatchSchema, input, IPC_CHANNELS.diffFilePatch);
+    const resolved = resolveReviewTarget(parsed.cwd, parsed.target);
+    if (resolved.state === "unavailable") throw new Error(resolved.message);
+    return await readFilePatch(parsed.cwd, parsed.path, resolved.target, {
+      originalPath: parsed.originalPath,
+      untracked: parsed.untracked,
+      ignoreWhitespace: parsed.ignoreWhitespace,
+    });
   });
 
-  ipcMain.handle(IPC_CHANNELS.diffCommitChanges, async (event, input) => {
+  ipcMain.handle(IPC_CHANNELS.diffStage, async (event, input) => {
     assertTrustedSender(event);
-    const parsed = parseIpcInput(diffCommitChangesSchema, input, IPC_CHANNELS.diffCommitChanges);
-    return await listCommitChanges(parsed.cwd, parsed.commit);
+    const parsed = parseIpcInput(diffPathSchema, input, IPC_CHANNELS.diffStage);
+    await stageFile(parsed.cwd, parsed.path);
   });
 
-  ipcMain.handle(IPC_CHANNELS.diffDiscard, async (event, input) => {
+  ipcMain.handle(IPC_CHANNELS.diffUnstage, async (event, input) => {
     assertTrustedSender(event);
-    const parsed = parseIpcInput(diffPathSchema, input, IPC_CHANNELS.diffDiscard);
-    await discardFile(parsed.cwd, parsed.path);
+    const parsed = parseIpcInput(diffPathSchema, input, IPC_CHANNELS.diffUnstage);
+    await unstageFile(parsed.cwd, parsed.path);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.diffDiscardUnstaged, async (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(diffPathSchema, input, IPC_CHANNELS.diffDiscardUnstaged);
+    await discardUnstagedFile(parsed.cwd, parsed.path);
   });
 
   ipcMain.handle(IPC_CHANNELS.diffStatus, async (event, cwd: string) => {
@@ -816,6 +876,7 @@ export function registerAppIpc({
       ...(parsed.message !== undefined ? { message: parsed.message } : {}),
       commit: parsed.commit,
       push: parsed.push,
+      ...(parsed.includeUnstaged !== undefined ? { includeUnstaged: parsed.includeUnstaged } : {}),
     });
   });
 

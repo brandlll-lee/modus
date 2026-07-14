@@ -12,7 +12,8 @@ import {
   cleanupSubagentWorktree,
   commitOrPush,
   createSubagentWorktree,
-  discardFile,
+  defaultBranch,
+  discardUnstagedFile,
   finishSubagentWorktree,
   getChangeStatsSince,
   getStatusSummary,
@@ -24,7 +25,10 @@ import {
   listCommitChanges,
   listCommitLog,
   readDiff,
-  readFileVersions,
+  readFilePatch,
+  reviewChanges,
+  stageFile,
+  unstageFile,
 } from "./git-service";
 
 const execFileAsync = promisify(execFile);
@@ -97,13 +101,15 @@ describe("git-service", () => {
   it("disables untracked discard", async () => {
     await writeFile(join(repo, "new.txt"), "new\n");
 
-    await expect(discardFile(repo, "new.txt")).rejects.toThrow("untracked files is disabled");
+    await expect(discardUnstagedFile(repo, "new.txt")).rejects.toThrow(
+      "untracked files is disabled",
+    );
   });
 
   it("discards tracked changes", async () => {
     await writeFile(join(repo, "tracked.txt"), "changed\n");
 
-    await discardFile(repo, "tracked.txt");
+    await discardUnstagedFile(repo, "tracked.txt");
 
     expect(await listChanges(repo)).toEqual([]);
   });
@@ -128,12 +134,13 @@ describe("git-service", () => {
     ).rejects.toThrow("No staged changes");
   });
 
-  it("stages all and commits via commitOrPush", async () => {
+  it("commits only the index by default", async () => {
     await writeFile(join(repo, "tracked.txt"), "changed\n");
     await writeFile(join(repo, "new.txt"), "new\n");
+    await stageFile(repo, "tracked.txt");
 
     const result = await commitOrPush(repo, {
-      message: "commit everything",
+      message: "commit staged",
       commit: true,
       push: false,
     });
@@ -141,6 +148,20 @@ describe("git-service", () => {
     expect(result.committed).toBe(true);
     expect(result.pushed).toBe(false);
     expect(result.commit).toMatch(/^[0-9a-f]{7,}$/);
+    expect((await listChanges(repo)).map((change) => change.path)).toEqual(["new.txt"]);
+  });
+
+  it("includes unstaged files only when explicitly requested", async () => {
+    await writeFile(join(repo, "tracked.txt"), "changed\n");
+    await writeFile(join(repo, "new.txt"), "new\n");
+
+    await commitOrPush(repo, {
+      message: "commit everything",
+      commit: true,
+      push: false,
+      includeUnstaged: true,
+    });
+
     expect(await listChanges(repo)).toEqual([]);
   });
 
@@ -151,6 +172,7 @@ describe("git-service", () => {
       await git(["remote", "add", "origin", remote]);
 
       await writeFile(join(repo, "tracked.txt"), "changed\n");
+      await stageFile(repo, "tracked.txt");
       const result = await commitOrPush(repo, {
         message: "push me",
         commit: true,
@@ -245,18 +267,23 @@ describe("git-service", () => {
     expect(files[0]?.status).toBe("A");
   });
 
-  it("diffs a commit against its parent via file versions", async () => {
+  it("reads a compact patch for one committed file", async () => {
     await writeFile(join(repo, "tracked.txt"), "second\n");
     await git(["commit", "-am", "second commit"]);
 
     const [head] = await listCommitLog(repo);
-    const versions = await readFileVersions(repo, "tracked.txt", "unstaged", undefined, head?.hash);
+    const preview = await readFilePatch(
+      repo,
+      "tracked.txt",
+      { type: "commit", commit: head?.hash ?? "" },
+      { untracked: false, ignoreWhitespace: false },
+    );
 
-    expect(versions.original).toBe("base\n");
-    expect(versions.modified).toBe("second\n");
+    expect(preview.patch).toContain("-base");
+    expect(preview.patch).toContain("+second");
   });
 
-  it("discards a staged new file on an unborn branch (no commits yet)", async () => {
+  it("unstages a new file on an unborn branch", async () => {
     // A brand-new repo with NO initial commit — `git restore` would fail here
     // (no HEAD), which was the silent "discard does nothing" bug.
     const fresh = await mkdtemp(join(process.cwd(), "modus-git-unborn-"));
@@ -267,13 +294,169 @@ describe("git-service", () => {
       await writeFile(join(fresh, "new.txt"), "hello\n");
       await execFileAsync("git", ["add", "new.txt"], { cwd: fresh, windowsHide: true });
 
-      await discardFile(fresh, "new.txt"); // must not throw on unborn HEAD
+      await unstageFile(fresh, "new.txt");
       const after = (await listChanges(fresh)).find((c) => c.path === "new.txt");
       expect(after?.staged).toBe(false);
       expect(after?.untracked).toBe(true);
     } finally {
       await rm(fresh, { recursive: true, force: true });
     }
+  });
+
+  it("keeps staged and unstaged halves of a partially staged file separate", async () => {
+    await writeFile(join(repo, "tracked.txt"), "staged\n");
+    await stageFile(repo, "tracked.txt");
+    await writeFile(join(repo, "tracked.txt"), "working\n");
+
+    const staged = await reviewChanges(repo, { type: "staged" });
+    const unstaged = await reviewChanges(repo, { type: "unstaged" });
+    expect(staged.files.map((change) => change.path)).toEqual(["tracked.txt"]);
+    expect(unstaged.files.map((change) => change.path)).toEqual(["tracked.txt"]);
+
+    const stagedPatch = await readFilePatch(
+      repo,
+      "tracked.txt",
+      { type: "staged" },
+      {
+        untracked: false,
+        ignoreWhitespace: false,
+      },
+    );
+    const unstagedPatch = await readFilePatch(
+      repo,
+      "tracked.txt",
+      { type: "unstaged" },
+      {
+        untracked: false,
+        ignoreWhitespace: false,
+      },
+    );
+    expect(stagedPatch.patch).toContain("-base");
+    expect(stagedPatch.patch).toContain("+staged");
+    expect(stagedPatch.patch).not.toContain("working");
+    expect(unstagedPatch.patch).toContain("-staged");
+    expect(unstagedPatch.patch).toContain("+working");
+
+    await discardUnstagedFile(repo, "tracked.txt");
+    expect((await readFile(join(repo, "tracked.txt"), "utf8")).replace(/\r\n/g, "\n")).toBe(
+      "staged\n",
+    );
+    await unstageFile(repo, "tracked.txt");
+    expect((await readFile(join(repo, "tracked.txt"), "utf8")).replace(/\r\n/g, "\n")).toBe(
+      "staged\n",
+    );
+  });
+
+  it("returns status and line counts from one staged review", async () => {
+    await writeFile(join(repo, "tracked.txt"), "first\nsecond\n");
+    await stageFile(repo, "tracked.txt");
+
+    const review = await reviewChanges(repo, { type: "staged" });
+
+    expect(review).toMatchObject({
+      state: "ready",
+      totals: { added: 2, removed: 1, fileCount: 1 },
+      files: [{ path: "tracked.txt", status: "M", added: 2, removed: 1, binary: false }],
+    });
+  });
+
+  it("keeps Git's rename identity while merging numstat", async () => {
+    await git(["mv", "tracked.txt", "renamed.txt"]);
+
+    const review = await reviewChanges(repo, { type: "staged" });
+
+    expect(review.files).toEqual([
+      expect.objectContaining({
+        path: "renamed.txt",
+        renamedFrom: "tracked.txt",
+        status: "R100",
+        added: 0,
+        removed: 0,
+      }),
+    ]);
+  });
+
+  it("does not load a working file beyond the inline preview cap", async () => {
+    await writeFile(join(repo, "tracked.txt"), "x".repeat(4 * 1024 * 1024 + 1));
+
+    const preview = await readFilePatch(
+      repo,
+      "tracked.txt",
+      { type: "unstaged" },
+      {
+        untracked: false,
+        ignoreWhitespace: false,
+      },
+    );
+
+    expect(preview).toMatchObject({ patch: "", truncated: true });
+    expect(preview.bytes).toBeGreaterThan(4 * 1024 * 1024);
+  });
+
+  it("builds a bounded patch for an untracked file", async () => {
+    await writeFile(join(repo, "new.txt"), "hello\n");
+
+    const preview = await readFilePatch(
+      repo,
+      "new.txt",
+      { type: "unstaged" },
+      {
+        untracked: true,
+        ignoreWhitespace: false,
+      },
+    );
+
+    expect(preview.patch).toContain("+hello");
+    expect(preview.truncated).toBe(false);
+  });
+
+  it("omits trailing-whitespace-only changes when requested", async () => {
+    await writeFile(join(repo, "tracked.txt"), "base  \n");
+
+    const preview = await readFilePatch(
+      repo,
+      "tracked.txt",
+      { type: "unstaged" },
+      {
+        untracked: false,
+        ignoreWhitespace: true,
+      },
+    );
+
+    expect(preview.patch).toBe("");
+  });
+
+  it("cancels a superseded review at the Git runner", async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(reviewChanges(repo, { type: "unstaged" }, controller.signal)).rejects.toThrow();
+  });
+
+  it("reviews an explicitly selected branch from its merge-base through the working tree", async () => {
+    await git(["branch", "release-base"]);
+    await writeFile(join(repo, "committed.txt"), "committed\n");
+    await git(["add", "committed.txt"]);
+    await git(["commit", "-m", "feature commit"]);
+    await writeFile(join(repo, "tracked.txt"), "staged\n");
+    await stageFile(repo, "tracked.txt");
+    await writeFile(join(repo, "tracked.txt"), "working\n");
+    await writeFile(join(repo, "untracked.txt"), "new\n");
+
+    const review = await reviewChanges(repo, { type: "branch", base: "release-base" });
+
+    expect(review.resolvedBase).toBe("release-base");
+    expect(review.files.map((change) => change.path).sort()).toEqual([
+      "committed.txt",
+      "tracked.txt",
+      "untracked.txt",
+    ]);
+  });
+
+  it("does not guess a conventional default branch name", async () => {
+    await git(["config", "init.defaultBranch", "missing-default"]);
+    expect(await defaultBranch(repo)).toBeUndefined();
+    await expect(reviewChanges(repo, { type: "branch" })).rejects.toThrow("Choose a base branch");
   });
 
   it("creates, finishes, applies, and cleans up a subagent worktree", async () => {

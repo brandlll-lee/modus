@@ -18,10 +18,11 @@ import type {
   ContextKind,
   ContextSuggestion,
   CustomProviderConfig,
-  DiffFileVersions,
+  DiffFilePatch,
+  DiffReview,
+  DiffTarget,
   DocHit,
   DocSource,
-  FileChange,
   FileDiff,
   FileEntry,
   FileReadResult,
@@ -36,8 +37,6 @@ import type {
   McpServerInfo,
   McpServerUpsertInput,
   ModelInfo,
-  ProviderAuthOperationState,
-  ProviderConnectionMethod,
   ModelProviderDetail,
   ModelSettingsState,
   PermissionAction,
@@ -45,6 +44,8 @@ import type {
   PersonalizationState,
   PromptDelivery,
   PromptImageAttachment,
+  ProviderAuthOperationState,
+  ProviderConnectionMethod,
   QuestionAnswer,
   QuestionResponse,
   RawMcpEntry,
@@ -234,19 +235,19 @@ export type ModusApi = {
     onEvent(callback: (event: BrowserEvent) => void): () => void;
   };
   diff: {
-    list(cwd: string): Promise<FileChange[]>;
+    review(input: { cwd: string; target: DiffTarget }): Promise<DiffReview>;
     read(input: { cwd: string; path?: string; mode?: FileDiff["mode"] }): Promise<FileDiff>;
-    fileVersions(input: {
+    filePatch(input: {
       cwd: string;
       path: string;
-      mode?: "unstaged" | "staged";
+      target: DiffTarget;
       originalPath?: string;
-      /** When set, diff the commit against its parent instead of the working tree. */
-      commit?: string;
-    }): Promise<DiffFileVersions>;
-    /** Files touched by a single commit (All commits scope). */
-    commitChanges(input: { cwd: string; commit: string }): Promise<FileChange[]>;
-    discard(input: { cwd: string; path: string }): Promise<void>;
+      untracked: boolean;
+      ignoreWhitespace: boolean;
+    }): Promise<DiffFilePatch>;
+    stage(input: { cwd: string; path: string }): Promise<void>;
+    unstage(input: { cwd: string; path: string }): Promise<void>;
+    discardUnstaged(input: { cwd: string; path: string }): Promise<void>;
     status(cwd: string): Promise<GitStatusSummary>;
     /** File list + ± line counters for the changes strip / apply review. */
     stats(cwd: string): Promise<WorkingChangeStats>;
@@ -263,6 +264,7 @@ export type ModusApi = {
       message?: string;
       commit: boolean;
       push: boolean;
+      includeUnstaged?: boolean;
     }): Promise<GitCommitResult>;
   };
   files: {

@@ -153,8 +153,11 @@ describe("rollbackToUserMessage", () => {
     const second = recordTurn(manager, sessionId, "second prompt");
     const third = recordTurn(manager, sessionId, "third prompt");
     insertCheckpoint(sessionId, first.runId, "auto");
+    insertCheckpoint(sessionId, first.runId, "turn-end");
     const secondCheckpoint = insertCheckpoint(sessionId, second.runId, "auto");
+    insertCheckpoint(sessionId, second.runId, "turn-end");
     insertCheckpoint(sessionId, third.runId, "auto");
+    insertCheckpoint(sessionId, third.runId, "turn-end");
     const backupId = insertCheckpoint(sessionId, null, "restore-backup");
 
     const runtime = fakeRuntime();
@@ -187,11 +190,15 @@ describe("rollbackToUserMessage", () => {
       .all(sessionId) as Array<{ id: string }>;
     expect(runRows.map((row) => row.id)).toEqual([first.runId]);
 
-    // Auto checkpoints of removed runs are gone; restore backups survive.
+    // Both turn boundaries of removed runs are gone; restore backups survive.
     const checkpointRows = getDatabase()
       .prepare("select id, kind from agent_checkpoints where session_id = ? order by rowid asc")
       .all(sessionId) as Array<{ id: string; kind: string }>;
-    expect(checkpointRows.map((row) => row.kind).sort()).toEqual(["auto", "restore-backup"]);
+    expect(checkpointRows.map((row) => row.kind).sort()).toEqual([
+      "auto",
+      "restore-backup",
+      "turn-end",
+    ]);
     expect(checkpointRows.some((row) => row.id === backupId)).toBe(true);
 
     // PI tree: reload from disk → leaf is the rollback marker, context is the

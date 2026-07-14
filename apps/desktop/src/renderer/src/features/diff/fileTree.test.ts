@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FileChange } from "../../../../shared/contracts";
-import { buildChangeTree, type ChangeTreeNode } from "./fileTree";
+import { buildChangeTree, type ChangeTreeNode, flattenChangeTree } from "./fileTree";
 
 function file(path: string): FileChange {
   return { path, status: "M", staged: false, unstaged: true, untracked: false };
@@ -43,5 +43,14 @@ describe("buildChangeTree", () => {
   it("normalizes backslash paths for folder grouping (git emits forward slashes)", () => {
     const tree = buildChangeTree([file("win\\dir\\file.ts")]);
     expect(tree.map(shape)).toEqual([{ dir: "win/dir", children: ["win\\dir\\file.ts"] }]);
+  });
+
+  it("flattens only expanded folders for viewport rendering", () => {
+    const tree = buildChangeTree([file("src/a.ts"), file("tests/a.test.ts")]);
+    expect(flattenChangeTree(tree, new Set(["src"]))).toMatchObject([
+      { kind: "dir", path: "src", depth: 0 },
+      { kind: "dir", path: "tests", depth: 0 },
+      { kind: "file", change: { path: "tests/a.test.ts" }, depth: 1 },
+    ]);
   });
 });

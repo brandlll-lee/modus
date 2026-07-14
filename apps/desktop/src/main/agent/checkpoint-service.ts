@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import type { CheckpointInfo } from "../../shared/contracts";
+import { resolve } from "node:path";
+import type { AgentRunStatus, CheckpointInfo } from "../../shared/contracts";
 import { getDatabase } from "../db/database";
 import {
   captureCheckoutSnapshot,
@@ -40,7 +41,12 @@ function toInfo(row: CheckpointRow): CheckpointInfo {
     ...(row.user_message_id !== null ? { userMessageId: row.user_message_id } : {}),
     cwd: row.cwd,
     commitHash: row.commit_hash,
-    kind: row.kind === "restore-backup" ? "restore-backup" : "auto",
+    kind:
+      row.kind === "restore-backup"
+        ? "restore-backup"
+        : row.kind === "turn-end"
+          ? "turn-end"
+          : "auto",
     createdAt: row.created_at,
   };
 }
@@ -68,12 +74,102 @@ export function getSessionBaseCheckpoint(sessionId: string): CheckpointInfo | un
   const row = getDatabase()
     .prepare(
       `select * from agent_checkpoints
-       where session_id = ? and kind != 'restore-backup'
+       where session_id = ? and kind = 'auto'
        order by created_at asc, rowid asc
        limit 1`,
     )
     .get(sessionId) as CheckpointRow | undefined;
   return row ? toInfo(row) : undefined;
+}
+
+export type LastTurnResolution =
+  | {
+      state: "ready";
+      comparison: {
+        cwd: string;
+        from: string;
+        to?: string;
+        runId: string;
+        status: AgentRunStatus;
+        live: boolean;
+      };
+    }
+  | {
+      state: "unavailable";
+      reason: "no-turn" | "missing-start" | "missing-end" | "worktree-mismatch";
+      message: string;
+    };
+
+function samePath(left: string, right: string): boolean {
+  const a = resolve(left);
+  const b = resolve(right);
+  return process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b;
+}
+
+/** Resolve the latest run's authoritative start/end snapshots for Git review. */
+export function getLastTurnComparison(sessionId: string, cwd: string): LastTurnResolution {
+  const run = getDatabase()
+    .prepare(
+      `select id, status from agent_runs
+       where session_id = ?
+       order by rowid desc
+       limit 1`,
+    )
+    .get(sessionId) as { id: string; status: AgentRunStatus } | undefined;
+  if (!run) {
+    return { state: "unavailable", reason: "no-turn", message: "No agent turn is available." };
+  }
+
+  const rows = getDatabase()
+    .prepare(
+      `select * from agent_checkpoints
+       where session_id = ? and run_id = ? and kind in ('auto', 'turn-end')
+       order by rowid asc`,
+    )
+    .all(sessionId, run.id) as CheckpointRow[];
+  const start = rows.find((row) => row.kind === "auto");
+  if (!start) {
+    return {
+      state: "unavailable",
+      reason: "missing-start",
+      message: "This turn has no starting snapshot.",
+    };
+  }
+  if (!samePath(start.cwd, cwd)) {
+    return {
+      state: "unavailable",
+      reason: "worktree-mismatch",
+      message: "This turn belongs to a different worktree.",
+    };
+  }
+
+  const live = run.status === "running" || run.status === "blocked";
+  const end = rows.findLast((row) => row.kind === "turn-end");
+  if (end && !samePath(end.cwd, cwd)) {
+    return {
+      state: "unavailable",
+      reason: "worktree-mismatch",
+      message: "This turn belongs to a different worktree.",
+    };
+  }
+  if (!live && !end) {
+    return {
+      state: "unavailable",
+      reason: "missing-end",
+      message: "Available after the next completed turn.",
+    };
+  }
+  return {
+    state: "ready",
+    comparison: {
+      cwd: start.cwd,
+      from: start.commit_hash,
+      ...(end ? { to: end.commit_hash } : {}),
+      runId: run.id,
+      status: run.status,
+      live,
+    },
+  };
 }
 
 export type CreateCheckpointInput = {

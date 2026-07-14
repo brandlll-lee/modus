@@ -267,6 +267,19 @@ export const diffPathSchema = z.object({
   path: nonEmptyString,
 });
 
+export const diffTargetSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("unstaged") }),
+  z.object({ type: z.literal("staged") }),
+  z.object({ type: z.literal("commit"), commit: nonEmptyString }),
+  z.object({ type: z.literal("branch"), base: optionalNonEmptyString }),
+  z.object({ type: z.literal("last-turn"), sessionId: nonEmptyString }),
+]);
+
+export const diffReviewSchema = z.object({
+  cwd: nonEmptyString,
+  target: diffTargetSchema,
+});
+
 export const diffStatsSinceSchema = z.object({
   cwd: nonEmptyString,
   base: nonEmptyString,
@@ -281,19 +294,13 @@ export const fileOpenSchema = z.object({
   path: nonEmptyString,
 });
 
-export const diffFileVersionsSchema = z.object({
+export const diffFilePatchSchema = z.object({
   cwd: nonEmptyString,
   path: nonEmptyString,
-  mode: z.enum(["unstaged", "staged"]).optional(),
+  target: diffTargetSchema,
   originalPath: optionalNonEmptyString,
-  /** When set, diff the commit against its parent instead of the working tree. */
-  commit: optionalNonEmptyString,
-});
-
-/** List the files touched by a single commit (All commits scope). */
-export const diffCommitChangesSchema = z.object({
-  cwd: nonEmptyString,
-  commit: nonEmptyString,
+  untracked: z.boolean(),
+  ignoreWhitespace: z.boolean(),
 });
 
 /** Recent commit history for the All commits scope. */
@@ -308,6 +315,7 @@ export const diffCommitOrPushSchema = z
     message: optionalNonEmptyString,
     commit: z.boolean(),
     push: z.boolean(),
+    includeUnstaged: z.boolean().optional(),
   })
   .refine((value) => value.commit || value.push, {
     message: "At least one of commit or push must be requested.",

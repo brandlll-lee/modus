@@ -229,7 +229,7 @@ function truncateSessionHistory(sessionId: string, target: RunRow): number {
       const placeholders = runIds.map(() => "?").join(", ");
       db.prepare(
         `delete from agent_checkpoints
-         where session_id = ? and kind = 'auto' and run_id in (${placeholders})`,
+         where session_id = ? and kind != 'restore-backup' and run_id in (${placeholders})`,
       ).run(sessionId, ...runIds);
     }
 

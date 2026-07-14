@@ -776,6 +776,21 @@ export class PiSdkRuntime implements AgentRuntime {
     } catch (error) {
       console.warn("[modus] checkpoint failed:", error);
     }
+    let turnEndAttempted = false;
+    const captureTurnEnd = async (): Promise<void> => {
+      if (!runCheckpoint || turnEndAttempted || !getAgentRun(run.id)) return;
+      turnEndAttempted = true;
+      await createCheckpoint({
+        sessionId: input.sessionId,
+        cwd: runtimeSession.info.cwd,
+        runId: run.id,
+        userMessageId,
+        kind: "turn-end",
+      }).catch((error) => {
+        console.warn("[modus] turn-end checkpoint failed:", error);
+        return undefined;
+      });
+    };
     try {
       const message = await this.composeTurnMessage(runtimeSession, input);
       console.info(
@@ -802,6 +817,7 @@ export class PiSdkRuntime implements AgentRuntime {
         // never paint red and the final error is never doubled.
         const turnError = lastAssistantTurnError(runtimeSession.session);
         if (turnError) {
+          await captureTurnEnd();
           updateAgentRunStatus(run.id, "failed", turnError);
           updateAgentSessionStatus(input.sessionId, "error");
           runtimeSession.emit({
@@ -814,7 +830,6 @@ export class PiSdkRuntime implements AgentRuntime {
             this.transitionPlanBuild(runtimeSession, input.planId, "not_built");
           }
         } else if (outputTracker.hasVisibleOutput) {
-          updateAgentRunStatus(run.id, "completed");
           // Per-turn change summary (Codex-style "N files changed" card):
           // diff the checkout against the pre-run snapshot. Never blocks or
           // fails the run; sessions without a checkpoint just omit it.
@@ -828,6 +843,8 @@ export class PiSdkRuntime implements AgentRuntime {
           console.info(
             `[modus-timing] getChangeStatsSince +${Date.now() - outputTracker.startedAt}ms`,
           );
+          await captureTurnEnd();
+          updateAgentRunStatus(run.id, "completed");
           runtimeSession.emit({
             type: "run.completed",
             sessionId: input.sessionId,
@@ -841,6 +858,7 @@ export class PiSdkRuntime implements AgentRuntime {
         } else {
           const message =
             "The selected model finished without returning any assistant output. Check the custom provider URL, model id, API type, and reasoning compatibility settings.";
+          await captureTurnEnd();
           updateAgentRunStatus(run.id, "failed", message);
           updateAgentSessionStatus(input.sessionId, "error");
           runtimeSession.emit({
@@ -865,9 +883,16 @@ export class PiSdkRuntime implements AgentRuntime {
       // aborted — swallow the rejection instead of resurrecting ghost
       // run.failed / runtime.error events into the rolled-back timeline.
       const currentRun = getAgentRun(run.id);
-      if (this.cancellingRuns.has(run.id) || !currentRun || currentRun.status === "cancelled") {
+      if (!currentRun || currentRun.status === "cancelled") {
         return;
       }
+      if (this.cancellingRuns.has(run.id)) {
+        await captureTurnEnd();
+        updateAgentRunStatus(run.id, "cancelled");
+        runtimeSession.emit({ type: "run.cancelled", sessionId: input.sessionId, runId: run.id });
+        return;
+      }
+      await captureTurnEnd();
       updateAgentRunStatus(
         run.id,
         "failed",
@@ -887,6 +912,7 @@ export class PiSdkRuntime implements AgentRuntime {
       });
       throw error;
     } finally {
+      await captureTurnEnd();
       this.runOutputTrackers.delete(input.sessionId);
       console.info(
         `[modus-timing] turn end (idle emit) +${Date.now() - outputTracker.startedAt}ms`,
@@ -1206,10 +1232,6 @@ export class PiSdkRuntime implements AgentRuntime {
     } finally {
       if (activeRun) {
         this.cancellingRuns.delete(activeRun.id);
-        if (getAgentRun(activeRun.id)?.status !== "cancelled") {
-          updateAgentRunStatus(activeRun.id, "cancelled");
-          runtimeSession.emit({ type: "run.cancelled", sessionId, runId: activeRun.id });
-        }
       }
       updateAgentSessionStatus(sessionId, "idle");
     }

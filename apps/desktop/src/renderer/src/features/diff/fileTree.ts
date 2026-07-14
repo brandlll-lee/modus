@@ -11,6 +11,10 @@ export type ChangeTreeNode =
   | { kind: "file"; change: FileChange }
   | { kind: "dir"; name: string; path: string; children: ChangeTreeNode[] };
 
+export type FlatChangeTreeRow =
+  | { kind: "file"; change: FileChange; depth: number }
+  | { kind: "dir"; name: string; path: string; depth: number };
+
 type DirAccumulator = {
   dirs: Map<string, DirAccumulator>;
   files: FileChange[];
@@ -40,6 +44,25 @@ export function buildChangeTree(changes: FileChange[]): ChangeTreeNode[] {
   }
 
   return materialize(root, "");
+}
+
+export function flattenChangeTree(
+  nodes: ChangeTreeNode[],
+  collapsed: ReadonlySet<string>,
+  depth = 0,
+): FlatChangeTreeRow[] {
+  const rows: FlatChangeTreeRow[] = [];
+  for (const node of nodes) {
+    if (node.kind === "file") {
+      rows.push({ kind: "file", change: node.change, depth });
+      continue;
+    }
+    rows.push({ kind: "dir", name: node.name, path: node.path, depth });
+    if (!collapsed.has(node.path)) {
+      rows.push(...flattenChangeTree(node.children, collapsed, depth + 1));
+    }
+  }
+  return rows;
 }
 
 /** Turn the accumulator into sorted nodes (dirs first, then files), compacting chains. */

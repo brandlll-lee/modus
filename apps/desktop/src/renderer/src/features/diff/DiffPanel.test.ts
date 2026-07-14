@@ -30,17 +30,34 @@ describe("pruneRecordKeys", () => {
 
 describe("previewRequestKey", () => {
   it("stays stable across content refreshes for the same file preview", () => {
-    const input = { cwd: "repo", path: "src/app.ts", mode: "unstaged" as const };
+    const input = {
+      cwd: "repo",
+      path: "src/app.ts",
+      target: { type: "unstaged" } as const,
+      untracked: false,
+      ignoreWhitespace: false,
+    };
 
     expect(previewRequestKey(input)).toBe(previewRequestKey({ ...input }));
   });
 
   it("changes only when the preview identity changes", () => {
-    const input = { cwd: "repo", path: "src/app.ts", mode: "unstaged" as const };
+    const input = {
+      cwd: "repo",
+      path: "src/app.ts",
+      target: { type: "unstaged" } as const,
+      untracked: false,
+      ignoreWhitespace: false,
+    };
 
     expect(previewRequestKey({ ...input, path: "src/other.ts" })).not.toBe(
       previewRequestKey(input),
     );
-    expect(previewRequestKey({ ...input, mode: "staged" })).not.toBe(previewRequestKey(input));
+    expect(previewRequestKey({ ...input, target: { type: "staged" } })).not.toBe(
+      previewRequestKey(input),
+    );
+    expect(previewRequestKey({ ...input, ignoreWhitespace: true })).not.toBe(
+      previewRequestKey(input),
+    );
   });
 });

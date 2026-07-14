@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FileChange } from "../../../../shared/contracts";
-import { CHANGE_SCOPES, changeBadge, filterByScope, SCOPE_META, splitPath } from "./changeScopes";
+import { CHANGE_SCOPES, changeBadge, isChangeScope, SCOPE_META, splitPath } from "./changeScopes";
 
 /** Build a synthetic change; only the fields under test are overridden. */
 function change(over: Partial<FileChange> & { path: string; status: string }): FileChange {
@@ -8,29 +8,17 @@ function change(over: Partial<FileChange> & { path: string; status: string }): F
 }
 
 describe("changeScopes", () => {
-  // A deliberately mixed working tree, including a never-special-cased "partial"
-  // (staged AND re-edited) and a rename — to prove the predicates are generic.
-  const tree: FileChange[] = [
-    change({ path: "staged-only.ts", status: "M", staged: true }),
-    change({ path: "unstaged-only.ts", status: "M", unstaged: true }),
-    change({ path: "partial.ts", status: "MM", staged: true, unstaged: true }),
-    change({ path: "fresh.ts", status: "??", untracked: true }),
-    change({ path: "renamed.ts", status: "R100", staged: true, renamedFrom: "old.ts" }),
-  ];
-
-  it("uncommitted scope shows every working-tree change", () => {
-    expect(filterByScope(tree, "uncommitted").map((c) => c.path)).toEqual([
-      "staged-only.ts",
-      "unstaged-only.ts",
-      "partial.ts",
-      "fresh.ts",
-      "renamed.ts",
+  it("registers exactly the six review scopes in menu order", () => {
+    expect(CHANGE_SCOPES).toEqual([
+      "unstaged",
+      "staged",
+      "commit",
+      "branch",
+      "last-turn",
+      "all-commits",
     ]);
-  });
-
-  it("history scope is not a working-tree filter", () => {
-    expect(filterByScope(tree, "all-commits")).toEqual([]);
-    expect(SCOPE_META["all-commits"].commitHistory).toBe(true);
+    expect(isChangeScope("uncommitted")).toBe(false);
+    expect(isChangeScope("unstaged")).toBe(true);
   });
 
   it("every scope is registered with a label and noun", () => {

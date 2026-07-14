@@ -1,9 +1,12 @@
 import { existsSync } from "node:fs";
 import { appendFile, mkdir, readFile, rm } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
+import { createTwoFilesPatch } from "diff";
 import type {
-  DiffFileVersions,
+  DiffFilePatch,
   DiffMode,
+  DiffReviewReady,
+  DiffTarget,
   FileChange,
   FileChangeStat,
   FileDiff,
@@ -13,6 +16,7 @@ import type {
   GitCommit,
   GitCommitResult,
   GitStatusSummary,
+  ReviewFile,
   SubagentWorktreeInfo,
   WorkingChangeStats,
 } from "../../shared/contracts";
@@ -103,35 +107,63 @@ export async function readDiff(
   };
 }
 
-/** Byte cap per side of a file-versions read; keeps IPC payloads bounded. */
-const MAX_VERSION_BYTES = 4 * 1024 * 1024;
+/** Byte cap for one inline patch; larger changes stay outside the renderer. */
+const MAX_PATCH_BYTES = 4 * 1024 * 1024;
 
 /** Read a blob from the object database ("" when the spec doesn't resolve, e.g. new files). */
-async function gitShowBlob(cwd: string, spec: string): Promise<string> {
-  return await runGitSafeRaw(cwd, ["show", spec]);
+/**
+ * The repo's authoritative default branch: the configured/sole remote HEAD,
+ * then an existing `init.defaultBranch`. No branch-name guessing.
+ */
+export async function defaultBranch(
+  cwd: string,
+  signal?: AbortSignal,
+): Promise<string | undefined> {
+  const current = await runGitSafe(cwd, ["symbolic-ref", "--quiet", "--short", "HEAD"], {
+    signal,
+  });
+  const configuredRemote = current
+    ? await runGitSafe(cwd, ["config", "--get", `branch.${current}.remote`], { signal })
+    : "";
+  const remotes = (await runGitSafe(cwd, ["remote"], { signal })).split("\n").filter(Boolean);
+  const remote =
+    configuredRemote && configuredRemote !== "."
+      ? configuredRemote
+      : remotes.length === 1
+        ? remotes[0]
+        : undefined;
+  if (remote) {
+    const head = await runGitSafe(
+      cwd,
+      ["symbolic-ref", "--quiet", "--short", `refs/remotes/${remote}/HEAD`],
+      { signal },
+    );
+    if (head) return head;
+  }
+
+  const configured = await runGitSafe(cwd, ["config", "--get", "init.defaultBranch"], {
+    signal,
+  });
+  return configured &&
+    (await runGitSafe(cwd, ["rev-parse", "--verify", `${configured}^{commit}`], { signal }))
+    ? configured
+    : undefined;
 }
 
-/**
- * The repo's default branch — `origin/HEAD` when set, else a local `main`/
- * `master` that actually resolves. Returns undefined when none can be
- * determined (e.g. unborn branch with no conventional default).
- */
-async function defaultBranch(cwd: string): Promise<string | undefined> {
-  const head = await gitSafe(cwd, [
-    "symbolic-ref",
-    "--quiet",
-    "--short",
-    "refs/remotes/origin/HEAD",
-  ]);
-  if (head) {
-    return head.replace(/^origin\//, "");
+async function branchMergeBase(
+  cwd: string,
+  base?: string,
+  signal?: AbortSignal,
+): Promise<{ base: string; commit: string }> {
+  const resolvedBase = base ?? (await defaultBranch(cwd, signal));
+  if (!resolvedBase) {
+    throw new Error("Choose a base branch to review.");
   }
-  for (const name of ["main", "master"]) {
-    if (await gitSafe(cwd, ["rev-parse", "--verify", "--quiet", name])) {
-      return name;
-    }
+  const commit = await runGitSafe(cwd, ["merge-base", "HEAD", resolvedBase], { signal });
+  if (!commit) {
+    throw new Error(`Unable to find a merge base with ${resolvedBase}.`);
   }
-  return undefined;
+  return { base: resolvedBase, commit };
 }
 
 /**
@@ -141,72 +173,152 @@ async function defaultBranch(cwd: string): Promise<string | undefined> {
  * is empty when there is no divergence. Never throws (safe runner).
  */
 export async function readBranchDiff(cwd: string): Promise<{ base?: string; diff: string }> {
-  const base = await defaultBranch(cwd);
-  if (!base) {
+  try {
+    const { base, commit } = await branchMergeBase(cwd);
+    return { base, diff: await runGitSafeRaw(cwd, ["diff", commit, "HEAD"]) };
+  } catch {
     return { diff: "" };
   }
-  const diff = await runGitSafeRaw(cwd, ["diff", `${base}...HEAD`]);
-  return { base, diff };
 }
 
-function capVersion(text: string): { text: string; truncated: boolean } {
-  if (Buffer.byteLength(text, "utf8") <= MAX_VERSION_BYTES) {
-    return { text, truncated: false };
+export type GitDiffTarget =
+  | Exclude<DiffTarget, { type: "last-turn" }>
+  | { type: "snapshot"; from: string; to?: string };
+
+type VersionSide = {
+  text: string;
+  bytes: number;
+  binary: boolean;
+  truncated: boolean;
+  maxLineLength: number;
+};
+
+const EMPTY_VERSION_SIDE: VersionSide = {
+  text: "",
+  bytes: 0,
+  binary: false,
+  truncated: false,
+  maxLineLength: 0,
+};
+
+function inspectVersion(buffer: Buffer, bytes: number, truncated: boolean): VersionSide {
+  const binary = buffer.includes(0);
+  let lineLength = 0;
+  let maxLineLength = 0;
+  for (const byte of buffer) {
+    if (byte === 10) {
+      maxLineLength = Math.max(maxLineLength, lineLength);
+      lineLength = 0;
+    } else {
+      lineLength += 1;
+    }
   }
+  maxLineLength = Math.max(maxLineLength, lineLength);
   return {
-    text: Buffer.from(text, "utf8").subarray(0, MAX_VERSION_BYTES).toString("utf8"),
-    truncated: true,
+    text: binary ? "" : buffer.toString("utf8"),
+    bytes,
+    binary,
+    truncated,
+    maxLineLength,
   };
 }
 
-/**
- * Full before/after contents of one changed file for the side-by-side viewer.
- *
- * The two sides mirror what `git diff` compares in each mode:
- * - `unstaged`: index (`:0:path`) vs the working tree file
- * - `staged`:   `HEAD:path` vs the index (`:0:path`)
- * Untracked files resolve to an empty original; deleted files to an empty
- * modified side. `originalPath` supports renames (status R) where the old
- * content lives under the previous path.
- */
-export async function readFileVersions(
+async function readWorkingVersion(path: string): Promise<VersionSide> {
+  const { open } = await import("node:fs/promises");
+  const handle = await open(path, "r").catch(() => undefined);
+  if (!handle) return EMPTY_VERSION_SIDE;
+  try {
+    const { size } = await handle.stat();
+    if (Number(size) > MAX_PATCH_BYTES) {
+      return { ...EMPTY_VERSION_SIDE, bytes: Number(size), truncated: true };
+    }
+    const length = Number(size);
+    const buffer = Buffer.alloc(length);
+    const { bytesRead } = await handle.read(buffer, 0, length, 0);
+    return inspectVersion(buffer.subarray(0, bytesRead), Number(size), false);
+  } finally {
+    await handle.close();
+  }
+}
+
+function inspectPatch(patch: string): DiffFilePatch {
+  const buffer = Buffer.from(patch, "utf8");
+  const inspected = inspectVersion(buffer, buffer.byteLength, false);
+  return {
+    patch,
+    bytes: buffer.byteLength,
+    binary: /^(?:Binary files .* differ|GIT binary patch)$/m.test(patch),
+    truncated: false,
+    maxLineLength: inspected.maxLineLength,
+  };
+}
+
+/** One bounded Git patch for the read-only inline reviewer. */
+export async function readFilePatch(
   cwd: string,
   filePath: string,
-  mode: "unstaged" | "staged" = "unstaged",
-  originalPath?: string,
-  commit?: string,
-): Promise<DiffFileVersions> {
+  target: GitDiffTarget,
+  options: {
+    originalPath?: string | undefined;
+    untracked: boolean;
+    ignoreWhitespace: boolean;
+  },
+): Promise<DiffFilePatch> {
   assertSafeRelativePath(filePath);
-  const fromPath = originalPath ?? filePath;
+  if (options.originalPath) assertSafeRelativePath(options.originalPath);
 
-  let original: string;
-  let modified: string;
-  if (commit) {
-    // Commit scope: compare the commit's parent snapshot against the commit
-    // itself — the authoritative "what this commit changed". `commit^` is empty
-    // for the root commit, so the original side resolves to "" (all-added).
-    original = await gitShowBlob(cwd, `${commit}^:${fromPath}`);
-    modified = await gitShowBlob(cwd, `${commit}:${filePath}`);
-  } else if (mode === "staged") {
-    original = await gitShowBlob(cwd, `HEAD:${fromPath}`);
-    modified = await gitShowBlob(cwd, `:0:${filePath}`);
-  } else {
-    original = await gitShowBlob(cwd, `:0:${fromPath}`);
-    modified = await readFile(join(cwd, filePath), "utf8").catch(() => "");
+  if (options.untracked) {
+    const source = await readWorkingVersion(join(cwd, filePath));
+    if (source.binary || source.truncated) {
+      return {
+        patch: "",
+        bytes: source.bytes,
+        binary: source.binary,
+        truncated: source.truncated,
+        maxLineLength: source.maxLineLength,
+      };
+    }
+    return inspectPatch(
+      createTwoFilesPatch(filePath, filePath, "", source.text, "", "", {
+        context: 3,
+      }),
+    );
   }
 
-  const binary = original.includes("\u0000") || modified.includes("\u0000");
-  const cappedOriginal = capVersion(binary ? "" : original);
-  const cappedModified = capVersion(binary ? "" : modified);
+  const flags = ["--no-ext-diff", "--no-color", "--unified=3", "-M"];
+  if (options.ignoreWhitespace) flags.push("--ignore-space-at-eol");
+  const paths = options.originalPath
+    ? [options.originalPath, ...(options.originalPath === filePath ? [] : [filePath])]
+    : [filePath];
 
-  return {
-    path: filePath,
-    mode,
-    original: cappedOriginal.text,
-    modified: cappedModified.text,
-    binary,
-    truncated: cappedOriginal.truncated || cappedModified.truncated,
-  };
+  let args: string[];
+  if (target.type === "commit") {
+    args = ["show", "--format=", "--root", ...flags, target.commit, "--", ...paths];
+  } else if (target.type === "staged") {
+    args = ["diff", "--cached", ...flags, "--", ...paths];
+  } else if (target.type === "unstaged") {
+    args = ["diff", ...flags, "--", ...paths];
+  } else if (target.type === "branch") {
+    const { commit } = await branchMergeBase(cwd, target.base);
+    args = ["diff", ...flags, commit, "--", ...paths];
+  } else {
+    args = ["diff", ...flags, target.from, ...(target.to ? [target.to] : []), "--", ...paths];
+  }
+
+  try {
+    return inspectPatch(await runGit(cwd, args, { maxBuffer: MAX_PATCH_BYTES + 1 }));
+  } catch (error) {
+    if (error instanceof GitError && error.code === "output-too-large") {
+      return {
+        patch: "",
+        bytes: MAX_PATCH_BYTES + 1,
+        binary: false,
+        truncated: true,
+        maxLineLength: 0,
+      };
+    }
+    throw error;
+  }
 }
 
 /** Field separator unlikely to appear in commit metadata; record-terminated by NUL. */
@@ -256,6 +368,10 @@ export async function listCommitChanges(cwd: string, commit: string): Promise<Fi
     "-z",
     commit,
   ]);
+  return parseNameStatus(output, false, false);
+}
+
+function parseNameStatus(output: string, staged: boolean, unstaged: boolean): FileChange[] {
   const parts = output.split("\0").filter(Boolean);
   const changes: FileChange[] = [];
   for (let index = 0; index < parts.length; index += 1) {
@@ -271,8 +387,8 @@ export async function listCommitChanges(cwd: string, commit: string): Promise<Fi
       changes.push({
         path,
         status: status.trim(),
-        staged: false,
-        unstaged: false,
+        staged,
+        unstaged,
         untracked: false,
         ...(renamedFrom !== undefined ? { renamedFrom } : {}),
       });
@@ -283,13 +399,66 @@ export async function listCommitChanges(cwd: string, commit: string): Promise<Fi
       changes.push({
         path,
         status: status.trim(),
-        staged: false,
-        unstaged: false,
+        staged,
+        unstaged,
         untracked: false,
       });
     }
   }
   return changes;
+}
+
+function parseReviewDiff(output: string, staged: boolean, unstaged: boolean): ReviewFile[] {
+  const parts = output.split("\0");
+  const changes: FileChange[] = [];
+  let index = 0;
+  while (parts[index]?.startsWith(":")) {
+    const header = parts[index++] ?? "";
+    const status = header.trim().split(/\s+/).at(-1) ?? "M";
+    const renamed = status.startsWith("R") || status.startsWith("C");
+    const firstPath = parts[index++] ?? "";
+    const path = renamed ? (parts[index++] ?? "") : firstPath;
+    if (!path) continue;
+    changes.push({
+      path,
+      status,
+      staged,
+      unstaged,
+      untracked: false,
+      ...(renamed ? { renamedFrom: firstPath } : {}),
+    });
+  }
+
+  const stats = new Map<string, Pick<ReviewFile, "added" | "removed" | "binary">>();
+  while (index < parts.length) {
+    const record = parts[index++] ?? "";
+    if (!record) continue;
+    const [addedRaw, removedRaw, inlinePath] = record.split("\t");
+    const path = inlinePath || parts[index + 1] || parts[index] || "";
+    if (!inlinePath) index += 2;
+    if (!path) continue;
+    const binary = addedRaw === "-" || removedRaw === "-";
+    stats.set(path, {
+      added: binary ? 0 : Number.parseInt(addedRaw ?? "0", 10) || 0,
+      removed: binary ? 0 : Number.parseInt(removedRaw ?? "0", 10) || 0,
+      binary,
+    });
+  }
+
+  return changes.map((change) => ({
+    ...change,
+    ...(stats.get(change.path) ?? { added: 0, removed: 0, binary: false }),
+  }));
+}
+
+async function readTrackedReview(
+  cwd: string,
+  args: string[],
+  staged: boolean,
+  unstaged: boolean,
+  signal?: AbortSignal,
+): Promise<ReviewFile[]> {
+  return parseReviewDiff(await runGit(cwd, args, { signal }), staged, unstaged);
 }
 
 /** True when the repo has at least one commit (HEAD resolves); false on an unborn branch. */
@@ -313,7 +482,23 @@ function assertSafeRelativePath(filePath: string): void {
   }
 }
 
-export async function discardFile(cwd: string, filePath: string): Promise<void> {
+export async function stageFile(cwd: string, filePath: string): Promise<void> {
+  assertSafeRelativePath(filePath);
+  assertWritable(cwd);
+  await git(cwd, ["add", "-A", "--", filePath]);
+}
+
+export async function unstageFile(cwd: string, filePath: string): Promise<void> {
+  assertSafeRelativePath(filePath);
+  assertWritable(cwd);
+  if (await hasHead(cwd)) {
+    await git(cwd, ["restore", "--staged", "--", filePath]);
+  } else {
+    await git(cwd, ["rm", "--cached", "--quiet", "--", filePath]);
+  }
+}
+
+export async function discardUnstagedFile(cwd: string, filePath: string): Promise<void> {
   assertSafeRelativePath(filePath);
   assertWritable(cwd);
   const change = (await listChanges(cwd)).find((item) => item.path === filePath);
@@ -325,18 +510,13 @@ export async function discardFile(cwd: string, filePath: string): Promise<void> 
       "Discarding untracked files is disabled. Delete the file manually after review.",
     );
   }
-
-  if (await hasHead(cwd)) {
-    await git(cwd, ["restore", "--staged", "--worktree", "--", filePath]);
-  } else {
-    // Unborn branch: no HEAD to restore to. The only changes possible are staged
-    // new files — unstage them (working contents kept), don't fail.
-    await git(cwd, ["rm", "--cached", "--quiet", "--", filePath]);
+  if (!change.unstaged) {
+    throw new Error(`No unstaged change found for ${filePath}.`);
   }
+  await git(cwd, ["restore", "--worktree", "--", filePath]);
 }
 
-/** Stage every working-tree change. Internal — `commitOrPush` always stages all
- * before committing (there is no per-file staging UI). */
+/** Stage every working-tree change when the user explicitly includes unstaged files. */
 async function stageAll(cwd: string): Promise<void> {
   assertWritable(cwd);
   await git(cwd, ["add", "-A"]);
@@ -387,6 +567,19 @@ function parseNumstat(output: string): FileChangeStat[] {
   return stats;
 }
 
+function summarizeStats(files: FileChangeStat[]): WorkingChangeStats {
+  const added = files.reduce((total, file) => total + file.added, 0);
+  const removed = files.reduce((total, file) => total + file.removed, 0);
+  const truncated = files.length > MAX_STAT_FILES;
+  return {
+    files: truncated ? files.slice(0, MAX_STAT_FILES) : files,
+    added,
+    removed,
+    fileCount: files.length,
+    truncated,
+  };
+}
+
 /** Count a new file's lines for +N display; binary (NUL) counts as 0/binary. */
 async function countNewFileLines(
   cwd: string,
@@ -420,6 +613,37 @@ async function countNewFileLines(
   } catch {
     return { lines: 0, binary: false };
   }
+}
+
+async function listUntrackedReviewFiles(cwd: string, signal?: AbortSignal): Promise<ReviewFile[]> {
+  const changes = (
+    await runGitSafe(cwd, ["ls-files", "--others", "--exclude-standard", "-z"], { signal })
+  )
+    .split("\0")
+    .filter(Boolean);
+  const files: ReviewFile[] = [];
+  for (let index = 0; index < changes.length; index += 8) {
+    signal?.throwIfAborted();
+    const batch = changes.slice(index, index + 8);
+    files.push(
+      ...(await Promise.all(
+        batch.map(async (path) => {
+          const { lines, binary } = await countNewFileLines(cwd, path);
+          return {
+            path,
+            status: "??",
+            staged: false,
+            unstaged: true,
+            untracked: true,
+            added: lines,
+            removed: 0,
+            binary,
+          } satisfies ReviewFile;
+        }),
+      )),
+    );
+  }
+  return files;
 }
 
 /**
@@ -456,21 +680,94 @@ export async function getChangeStatsSince(cwd: string, base: string): Promise<Wo
   }
 
   files.sort((a, b) => a.path.localeCompare(b.path));
-  const added = files.reduce((total, file) => total + file.added, 0);
-  const removed = files.reduce((total, file) => total + file.removed, 0);
-  const truncated = files.length > MAX_STAT_FILES;
-  return {
-    files: truncated ? files.slice(0, MAX_STAT_FILES) : files,
-    added,
-    removed,
-    fileCount: files.length,
-    truncated,
-  };
+  return summarizeStats(files);
 }
 
 /** Working-tree change summary vs HEAD — the composer strip / apply review payload. */
 export async function getWorkingChangeStats(cwd: string): Promise<WorkingChangeStats> {
   return await getChangeStatsSince(cwd, "HEAD");
+}
+
+function readyReview(files: ReviewFile[], resolvedBase?: string): DiffReviewReady {
+  files.sort((left, right) => left.path.localeCompare(right.path));
+  return {
+    state: "ready",
+    files,
+    totals: {
+      added: files.reduce((total, file) => total + file.added, 0),
+      removed: files.reduce((total, file) => total + file.removed, 0),
+      fileCount: files.length,
+    },
+    ...(resolvedBase ? { resolvedBase } : {}),
+  };
+}
+
+export async function reviewChanges(
+  cwd: string,
+  target: GitDiffTarget,
+  signal?: AbortSignal,
+): Promise<DiffReviewReady> {
+  if (target.type === "unstaged") {
+    const [tracked, untracked] = await Promise.all([
+      readTrackedReview(cwd, ["diff", "-M", "--raw", "--numstat", "-z", "--"], false, true, signal),
+      listUntrackedReviewFiles(cwd, signal),
+    ]);
+    return readyReview([...tracked, ...untracked]);
+  }
+  if (target.type === "staged") {
+    return readyReview(
+      await readTrackedReview(
+        cwd,
+        ["diff", "--cached", "-M", "--raw", "--numstat", "-z", "--"],
+        true,
+        false,
+        signal,
+      ),
+    );
+  }
+  if (target.type === "commit") {
+    return readyReview(
+      await readTrackedReview(
+        cwd,
+        [
+          "diff-tree",
+          "--root",
+          "--no-commit-id",
+          "-r",
+          "-M",
+          "--raw",
+          "--numstat",
+          "-z",
+          target.commit,
+          "--",
+        ],
+        false,
+        false,
+        signal,
+      ),
+    );
+  }
+  if (target.type === "branch") {
+    const { base, commit } = await branchMergeBase(cwd, target.base, signal);
+    const [tracked, untracked] = await Promise.all([
+      readTrackedReview(
+        cwd,
+        ["diff", "-M", "--raw", "--numstat", "-z", commit, "--"],
+        false,
+        false,
+        signal,
+      ),
+      listUntrackedReviewFiles(cwd, signal),
+    ]);
+    return readyReview([...tracked, ...untracked], base);
+  }
+  const args = ["diff", "-M", "--raw", "--numstat", "-z", target.from];
+  if (target.to) args.push(target.to);
+  args.push("--");
+  const tracked = await readTrackedReview(cwd, args, false, false, signal);
+  return readyReview(
+    target.to ? tracked : [...tracked, ...(await listUntrackedReviewFiles(cwd, signal))],
+  );
 }
 
 /**
@@ -559,21 +856,19 @@ export async function pushCurrentBranch(cwd: string): Promise<string> {
 }
 
 /**
- * High-level entry for the commit dialog. When committing, always stages the
- * whole working tree first (there is no per-file staging UI), commits, then
- * optionally pushes. Any sub-step may be a no-op so callers can request
- * push-only, commit-only, or commit-and-push from one place.
+ * High-level entry for the commit dialog. The index is the commit boundary;
+ * unstaged files are included only when the user explicitly requests it.
  */
 export async function commitOrPush(
   cwd: string,
-  options: { message?: string; commit: boolean; push: boolean },
+  options: { message?: string; commit: boolean; push: boolean; includeUnstaged?: boolean },
 ): Promise<GitCommitResult> {
   const outputs: string[] = [];
   let committed = false;
   let commitHash: string | undefined;
 
   if (options.commit) {
-    await stageAll(cwd);
+    if (options.includeUnstaged) await stageAll(cwd);
     const message = options.message?.trim();
     if (!message) {
       throw new Error("Commit message is required.");

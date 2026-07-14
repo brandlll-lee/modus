@@ -1,4 +1,4 @@
-import { type FSWatcher, watch } from "node:fs";
+import { existsSync, type FSWatcher, watch } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { BrowserWindow } from "electron";
 import type { GitChangeEvent } from "../../shared/contracts";
@@ -26,6 +26,7 @@ type WatchEntry = {
   timer: ReturnType<typeof setTimeout> | undefined;
   /** Coalesced kind for the pending burst (most-specific wins). */
   pendingKind: GitChangeEvent["kind"] | undefined;
+  locked: boolean;
   gitDir: string;
   commonGitDir: string;
   root: string;
@@ -93,6 +94,7 @@ function mergeKind(
 }
 
 function scheduleFlush(cwd: string, entry: WatchEntry): void {
+  if (entry.locked) return;
   if (entry.timer) clearTimeout(entry.timer);
   entry.timer = setTimeout(() => {
     entry.timer = undefined;
@@ -108,6 +110,22 @@ function makeHandler(cwd: string, watchedDir: string, entry: WatchEntry) {
     const absPath = name ? join(watchedDir, name) : watchedDir;
     const kind = classify(entry, absPath);
     if (!kind) return;
+    const locked = existsSync(join(entry.gitDir, "index.lock"));
+    if (locked) {
+      entry.locked = true;
+      if (kind !== "lock") entry.pendingKind = mergeKind(entry.pendingKind, kind);
+      if (entry.timer) clearTimeout(entry.timer);
+      entry.timer = undefined;
+      return;
+    }
+    if (entry.locked) {
+      entry.locked = false;
+      entry.pendingKind = mergeKind(entry.pendingKind, "index");
+    }
+    if (kind === "lock") {
+      scheduleFlush(cwd, entry);
+      return;
+    }
     entry.pendingKind = mergeKind(entry.pendingKind, kind);
     scheduleFlush(cwd, entry);
   };
@@ -146,6 +164,7 @@ export function watchRepo(cwd: string): string | undefined {
     watchers: [],
     timer: undefined,
     pendingKind: undefined,
+    locked: false,
     gitDir: repo.gitDir,
     commonGitDir: repo.commonGitDir,
     root: repo.root,
@@ -154,7 +173,9 @@ export function watchRepo(cwd: string): string | undefined {
   // Working tree (catches agent/terminal/external edits). The git dir lives
   // under root for normal repos; for linked worktrees it is elsewhere, so watch
   // it (and the common dir) explicitly too.
-  const dirs = new Set<string>([repo.root, repo.gitDir, repo.commonGitDir]);
+  const dirs = new Set<string>([repo.root]);
+  if (!isUnder(repo.gitDir, repo.root)) dirs.add(repo.gitDir);
+  if (!isUnder(repo.commonGitDir, repo.root)) dirs.add(repo.commonGitDir);
   for (const dir of dirs) {
     const watcher = tryWatch(dir, makeHandler(repo.root, dir, entry));
     if (watcher) entry.watchers.push(watcher);

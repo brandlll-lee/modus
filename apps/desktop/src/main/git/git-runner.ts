@@ -79,6 +79,8 @@ export type RunGitOptions = {
    * the user's shell PATH, which is why push/commit must pass it explicitly.
    */
   hookPath?: string | undefined;
+  signal?: AbortSignal | undefined;
+  maxBuffer?: number | undefined;
 };
 
 function buildEnv(options: RunGitOptions): NodeJS.ProcessEnv {
@@ -91,6 +93,14 @@ function buildEnv(options: RunGitOptions): NodeJS.ProcessEnv {
 }
 
 function toGitError(error: unknown): GitError {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"
+  ) {
+    return new GitError("output-too-large", "Git output exceeded the safe preview limit.");
+  }
   const stderr =
     typeof error === "object" && error !== null && "stderr" in error
       ? String((error as { stderr?: unknown }).stderr ?? "").trim()
@@ -106,12 +116,14 @@ export async function runGit(
   args: string[],
   options: RunGitOptions = {},
 ): Promise<string> {
+  options.signal?.throwIfAborted();
   try {
     const { stdout } = await execFileAsync(resolveGitBinary(), [...GLOBAL_ARGS, ...args], {
       cwd,
       windowsHide: true,
-      maxBuffer: MAX_BUFFER,
+      maxBuffer: options.maxBuffer ?? MAX_BUFFER,
       env: buildEnv(options),
+      signal: options.signal,
     });
     return stdout;
   } catch (error) {
@@ -120,18 +132,26 @@ export async function runGit(
 }
 
 /** Run git tolerantly: never throws, returns trimmed stdout ("" on failure). */
-export async function runGitSafe(cwd: string, args: string[]): Promise<string> {
+export async function runGitSafe(
+  cwd: string,
+  args: string[],
+  options: RunGitOptions = {},
+): Promise<string> {
   try {
-    return (await runGit(cwd, args)).trim();
+    return (await runGit(cwd, args, options)).trim();
   } catch {
     return "";
   }
 }
 
 /** Like {@link runGitSafe} but preserves trailing whitespace (blob contents are not trimmed). */
-export async function runGitSafeRaw(cwd: string, args: string[]): Promise<string> {
+export async function runGitSafeRaw(
+  cwd: string,
+  args: string[],
+  options: RunGitOptions = {},
+): Promise<string> {
   try {
-    return await runGit(cwd, args);
+    return await runGit(cwd, args, options);
   } catch {
     return "";
   }

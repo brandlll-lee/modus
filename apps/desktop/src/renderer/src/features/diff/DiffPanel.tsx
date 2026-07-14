@@ -12,19 +12,35 @@ import {
   IconGitCommit,
   IconList,
   IconListTree,
+  IconLoader2,
+  IconMinus,
+  IconPlus,
   IconRefresh,
   IconReportSearch,
   IconRotateClockwise,
 } from "@tabler/icons-react";
-import { memo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import {
+  memo,
+  type ReactNode,
+  type RefObject,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type {
+  DiffReview,
+  DiffReviewReady,
+  DiffTarget,
   FileChange,
-  FileChangeStat,
+  GitBranchSummary,
   GitChangeEvent,
   GitCommit,
   GitStatusSummary,
+  ReviewFile,
 } from "../../../../shared/contracts";
-import { triggerFindInActiveDiff } from "../../components/code/DiffViewer";
 import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
 import { EmptyState } from "../../components/ui/Panel";
 import { Tooltip } from "../../components/ui/Tooltip";
@@ -33,16 +49,21 @@ import { materialIconForFile } from "../files/fileIcons";
 import { BranchSwitcher } from "../git/BranchSwitcher";
 import { CommitDialog } from "./CommitDialog";
 import {
-  CHANGE_SCOPES,
   type ChangeBadge,
   type ChangeScope,
   changeBadge,
-  filterByScope,
+  isChangeScope,
   SCOPE_META,
   splitPath,
 } from "./changeScopes";
-import { FileDiffPreview } from "./FileDiffPreview";
-import { buildChangeTree, type ChangeTreeNode } from "./fileTree";
+import {
+  clearDiffPreviewCache,
+  type DiffPreviewRequest,
+  FileDiffPreview,
+  preloadInlineDiffRenderer,
+  prepareDiffPreview,
+} from "./FileDiffPreview";
+import { buildChangeTree, type FlatChangeTreeRow, flattenChangeTree } from "./fileTree";
 
 type DiffPanelProps = {
   cwd?: string | undefined;
@@ -50,7 +71,7 @@ type DiffPanelProps = {
   workspaceId?: string | undefined;
 };
 
-type LineStat = { added: number; removed: number };
+type LineStat = Pick<ReviewFile, "added" | "removed" | "binary">;
 
 /** Sticky string/boolean preference shared across sessions. */
 function usePersistentState<T extends string | boolean>(
@@ -72,8 +93,28 @@ function usePersistentState<T extends string | boolean>(
   return [value, set];
 }
 
+const EMPTY_REVIEW: DiffReviewReady = {
+  state: "ready",
+  files: [],
+  totals: { added: 0, removed: 0, fileCount: 0 },
+};
+
+function targetForScope(
+  scope: ChangeScope,
+  sessionId: string | undefined,
+  commit: string | undefined,
+  base: string | undefined,
+): DiffTarget | undefined {
+  if (scope === "unstaged" || scope === "staged") return { type: scope };
+  if (scope === "commit") return commit ? { type: "commit", commit } : undefined;
+  if (scope === "branch") return { type: "branch", ...(base ? { base } : {}) };
+  if (scope === "last-turn") return sessionId ? { type: "last-turn", sessionId } : undefined;
+  return undefined;
+}
+
 export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
-  const [scope, setScope] = usePersistentState<ChangeScope>("modus.changes.scope", "uncommitted");
+  const [storedScope, setScope] = usePersistentState<string>("modus.changes.scope", "unstaged");
+  const scope: ChangeScope = isChangeScope(storedScope) ? storedScope : "unstaged";
   const [layout, setLayout] = usePersistentState<"split" | "unified">(
     "modus.changes.layout",
     "unified",
@@ -85,18 +126,28 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
   );
   const sideBySide = layout === "split";
 
-  const [changes, setChanges] = useState<FileChange[]>([]);
-  const [statsByPath, setStatsByPath] = useState<Map<string, LineStat>>(new Map());
+  const [review, setReview] = useState<DiffReviewReady>(EMPTY_REVIEW);
+  const [reviewUnavailable, setReviewUnavailable] = useState<string | undefined>();
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const [reviewTarget, setReviewTarget] = useState<DiffTarget>({ type: "unstaged" });
   const [status, setStatus] = useState<GitStatusSummary | undefined>();
   const [isRepository, setIsRepository] = useState<boolean | undefined>();
   const [initializingRepository, setInitializingRepository] = useState(false);
   const [commits, setCommits] = useState<GitCommit[]>([]);
-  const [commitFiles, setCommitFiles] = useState<Record<string, FileChange[]>>({});
+  const [branches, setBranches] = useState<GitBranchSummary>({ local: [], remote: [] });
+  const [selectedCommit, setSelectedCommit] = useState<string | undefined>();
+  const [selectedBase, setSelectedBase] = useState<string | undefined>();
+  const [commitFiles, setCommitFiles] = useState<Record<string, ReviewFile[]>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(new Set());
   const [expandedCommits, setExpandedCommits] = useState<Set<string>>(new Set());
   // Surfaces a failed stage/unstage/discard/revert so it is never a silent no-op.
   const [actionError, setActionError] = useState<string | undefined>();
-  const [refreshToken, setRefreshToken] = useState(0);
+  const reviewGeneration = useRef(0);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const commitsCwd = useRef<string | undefined>(undefined);
+  const commitsRef = useRef<GitCommit[]>([]);
+  const branchesCwd = useRef<string | undefined>(undefined);
   const [linkedWorktree, setLinkedWorktree] = useState<
     { rootCwd: string | undefined; cwd: string; branch: string } | undefined
   >();
@@ -104,68 +155,150 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
     normalizePath(linkedWorktree?.rootCwd) === normalizePath(cwd) ? linkedWorktree : undefined;
   const activeCwd = visibleLinkedWorktree?.cwd ?? cwd;
 
-  const refresh = useCallback(async (targetCwd: string | undefined): Promise<void> => {
-    if (!targetCwd) {
-      setChanges([]);
-      setStatsByPath(new Map());
-      setStatus(undefined);
-      setIsRepository(undefined);
-      setCommits([]);
-      setCommitFiles({});
-      setExpanded(new Set());
-      setExpandedCommits(new Set());
-      return;
-    }
-    const repository = await window.modus.git.isRepository(targetCwd);
-    setIsRepository(repository);
-    if (!repository) {
-      setChanges([]);
-      setStatsByPath(new Map());
-      setStatus(undefined);
-      setCommits([]);
-      setCommitFiles({});
-      setExpanded(new Set());
-      setExpandedCommits(new Set());
-      return;
-    }
-    const [list, stats, st, log] = await Promise.all([
-      window.modus.diff.list(targetCwd),
-      window.modus.diff.stats(targetCwd),
-      window.modus.diff.status(targetCwd).catch(() => undefined),
-      window.modus.git.log({ cwd: targetCwd }).catch(() => [] as GitCommit[]),
-    ]);
-    setExpanded((prev) =>
-      pruneExpandedKeys(
-        prev,
-        list.map((change: FileChange) => change.path),
-      ),
-    );
+  const reset = useCallback((): void => {
+    reviewGeneration.current += 1;
+    commitsCwd.current = undefined;
+    commitsRef.current = [];
+    branchesCwd.current = undefined;
+    setReview(EMPTY_REVIEW);
+    setReviewUnavailable(undefined);
+    setReviewTarget({ type: "unstaged" });
+    setStatus(undefined);
+    setCommits([]);
+    setBranches({ local: [], remote: [] });
+    setCommitFiles({});
+    setExpanded(new Set());
+    setCollapsedDirs(new Set());
+    setExpandedCommits(new Set());
+    clearDiffPreviewCache();
+  }, []);
+
+  const loadStatus = useCallback(async (targetCwd: string): Promise<void> => {
+    const next = await window.modus.diff.status(targetCwd).catch(() => undefined);
+    setStatus(next);
+  }, []);
+
+  const loadCommits = useCallback(async (targetCwd: string): Promise<GitCommit[]> => {
+    const next: GitCommit[] = await window.modus.git
+      .log({ cwd: targetCwd })
+      .catch(() => [] as GitCommit[]);
+    commitsCwd.current = targetCwd;
+    commitsRef.current = next;
+    setCommits(next);
     setExpandedCommits((prev) =>
       pruneExpandedKeys(
         prev,
-        log.map((commit: GitCommit) => commit.hash),
+        next.map((commit) => commit.hash),
       ),
     );
     setCommitFiles((prev) =>
       pruneRecordKeys(
         prev,
-        log.map((commit: GitCommit) => commit.hash),
+        next.map((commit) => commit.hash),
       ),
     );
-    setChanges(list);
-    setStatsByPath(
-      new Map(
-        stats.files.map((f: FileChangeStat) => [f.path, { added: f.added, removed: f.removed }]),
-      ),
-    );
-    setStatus(st);
-    setCommits(log);
-    setRefreshToken((token) => token + 1);
+    return next;
   }, []);
+
+  const loadBranches = useCallback(async (targetCwd: string): Promise<void> => {
+    const next = await window.modus.git
+      .branches(targetCwd)
+      .catch(() => ({ local: [], remote: [] }) as GitBranchSummary);
+    branchesCwd.current = targetCwd;
+    setBranches(next);
+  }, []);
+
+  const loadReview = useCallback(
+    async (targetCwd: string): Promise<void> => {
+      if (scope === "all-commits") {
+        setReview(EMPTY_REVIEW);
+        setReviewUnavailable(undefined);
+        return;
+      }
+      let commit = selectedCommit;
+      if (scope === "commit" && !commit) {
+        const log =
+          commitsCwd.current === targetCwd ? commitsRef.current : await loadCommits(targetCwd);
+        commit = log[0]?.hash;
+      }
+      const target = targetForScope(scope, sessionId, commit, selectedBase);
+      if (!target) {
+        setReview(EMPTY_REVIEW);
+        setReviewUnavailable(undefined);
+        return;
+      }
+
+      const generation = ++reviewGeneration.current;
+      setReviewLoading(true);
+      setActionError(undefined);
+      try {
+        const next: DiffReview = await window.modus.diff.review({ cwd: targetCwd, target });
+        if (generation !== reviewGeneration.current || next.state === "superseded") return;
+        if (next.state === "unavailable") {
+          setReview(EMPTY_REVIEW);
+          setReviewUnavailable(next.message);
+          setReviewTarget(target);
+          setExpanded(new Set());
+          return;
+        }
+        clearDiffPreviewCache();
+        setReview(next);
+        setReviewUnavailable(undefined);
+        setExpanded(new Set());
+        setReviewTarget(
+          target.type === "branch" && next.resolvedBase
+            ? { type: "branch", base: next.resolvedBase }
+            : target,
+        );
+      } catch (cause) {
+        if (generation === reviewGeneration.current) {
+          setActionError(cause instanceof Error ? cause.message : String(cause));
+        }
+      } finally {
+        if (generation === reviewGeneration.current) setReviewLoading(false);
+      }
+    },
+    [loadCommits, scope, selectedBase, selectedCommit, sessionId],
+  );
+
+  const refresh = useCallback(
+    async (targetCwd: string | undefined): Promise<void> => {
+      if (!targetCwd) {
+        setIsRepository(undefined);
+        reset();
+        return;
+      }
+      const repository = await window.modus.git.isRepository(targetCwd);
+      setIsRepository(repository);
+      if (!repository) {
+        reset();
+        return;
+      }
+      await Promise.all([
+        loadStatus(targetCwd),
+        scope === "all-commits" ? loadCommits(targetCwd) : loadReview(targetCwd),
+      ]);
+    },
+    [loadCommits, loadReview, loadStatus, reset, scope],
+  );
 
   useEffect(() => {
     void refresh(activeCwd);
   }, [activeCwd, refresh]);
+
+  useEffect(() => {
+    if (!activeCwd || !isRepository) return;
+    const idle = window.requestIdleCallback(() => void preloadInlineDiffRenderer(), {
+      timeout: 1500,
+    });
+    return () => window.cancelIdleCallback(idle);
+  }, [activeCwd, isRepository]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: selections are repository-scoped and reset when the active checkout changes.
+  useEffect(() => {
+    setSelectedCommit(undefined);
+    setSelectedBase(undefined);
+  }, [activeCwd]);
 
   // Live refresh: watch the repo and refresh on debounced on-disk changes
   // (agent edits, terminal commits, external git ops) — no manual refresh.
@@ -176,52 +309,56 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
       watchedRoot = root ?? undefined;
     });
     const off = window.modus.git.onChanged((event: GitChangeEvent) => {
-      if (!watchedRoot || event.cwd === watchedRoot) {
-        void refresh(activeCwd);
+      if (watchedRoot && event.cwd !== watchedRoot) return;
+      if (event.kind === "lock") return;
+      void loadStatus(activeCwd);
+      if (scope === "all-commits") void loadCommits(activeCwd);
+      else void loadReview(activeCwd);
+      if (scope !== "all-commits" && commitsCwd.current === activeCwd && event.kind !== "working") {
+        void loadCommits(activeCwd);
+      }
+      if (
+        branchesCwd.current === activeCwd &&
+        ["head", "refs", "remote-refs", "config"].includes(event.kind)
+      ) {
+        void loadBranches(activeCwd);
       }
     });
     return () => {
       off();
       void window.modus.git.unwatch(activeCwd);
     };
-  }, [activeCwd, isRepository, refresh]);
+  }, [activeCwd, isRepository, loadBranches, loadCommits, loadReview, loadStatus, scope]);
 
-  const meta = SCOPE_META[scope];
-  const scopeFiles = useMemo(
-    () => (meta.commitHistory ? [] : filterByScope(changes, scope)),
-    [changes, scope, meta.commitHistory],
+  const history = scope === "all-commits";
+  const scopeFiles = review.files;
+  const statsByPath = useMemo(
+    () => new Map(review.files.map((file) => [file.path, file])),
+    [review.files],
   );
 
   // Build the tree once per change set — not on every expand/collapse (which
   // only flips a Set in state and would otherwise re-run this in render).
   const changeTree = useMemo(
-    () => (treeView && !meta.commitHistory ? buildChangeTree(scopeFiles) : []),
-    [treeView, meta.commitHistory, scopeFiles],
+    () => (treeView && !history ? buildChangeTree(scopeFiles) : []),
+    [treeView, history, scopeFiles],
+  );
+  const treeRows = useMemo(
+    () => (treeView && !history ? flattenChangeTree(changeTree, collapsedDirs) : []),
+    [changeTree, collapsedDirs, history, treeView],
   );
 
-  const totals = useMemo(
-    () =>
-      scopeFiles.reduce(
-        (acc, change) => {
-          const stat = statsByPath.get(change.path);
-          return {
-            added: acc.added + (stat?.added ?? 0),
-            removed: acc.removed + (stat?.removed ?? 0),
-          };
-        },
-        { added: 0, removed: 0 },
-      ),
-    [scopeFiles, statsByPath],
-  );
+  const totals = review.totals;
+  const count = history ? commits.length : scopeFiles.length;
 
-  const count = meta.commitHistory ? commits.length : scopeFiles.length;
-
-  const discardChange = useCallback(
-    async (path: string): Promise<void> => {
+  const runFileAction = useCallback(
+    async (action: "stage" | "unstage" | "discard", path: string): Promise<void> => {
       if (!activeCwd) return;
       setActionError(undefined);
       try {
-        await window.modus.diff.discard({ cwd: activeCwd, path });
+        if (action === "stage") await window.modus.diff.stage({ cwd: activeCwd, path });
+        else if (action === "unstage") await window.modus.diff.unstage({ cwd: activeCwd, path });
+        else await window.modus.diff.discardUnstaged({ cwd: activeCwd, path });
       } catch (cause) {
         setActionError(cause instanceof Error ? cause.message : String(cause));
       } finally {
@@ -236,8 +373,12 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
     if (!activeCwd || commitFiles[hash]) return;
     setActionError(undefined);
     try {
-      const files = await window.modus.diff.commitChanges({ cwd: activeCwd, commit: hash });
-      setCommitFiles((prev) => ({ ...prev, [hash]: files }));
+      const commitReview = await window.modus.diff.review({
+        cwd: activeCwd,
+        target: { type: "commit", commit: hash },
+      });
+      if (commitReview.state !== "ready") return;
+      setCommitFiles((prev) => ({ ...prev, [hash]: commitReview.files }));
     } catch (cause) {
       setActionError(cause instanceof Error ? cause.message : String(cause));
       setExpandedCommits((prev) => {
@@ -269,7 +410,7 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
     }
   }
 
-  // Panel-scoped Ctrl+R / Ctrl+F. Bound on the section node (events bubble up
+  // Panel-scoped Ctrl+R. Bound on the section node (events bubble up
   // from the focused child), so it only fires when the user is inside the
   // Changes panel — never hijacks the keys globally.
   const sectionRef = useRef<HTMLElement | null>(null);
@@ -282,8 +423,6 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
       if (key === "r") {
         event.preventDefault();
         void refresh(activeCwd);
-      } else if (key === "f" && triggerFindInActiveDiff()) {
-        event.preventDefault();
       }
     };
     node.addEventListener("keydown", handler);
@@ -296,13 +435,30 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
         <ReviewToolbar
           added={totals.added}
           branch={status?.branch}
+          branches={branches}
+          commits={commits}
           count={count}
           cwd={activeCwd}
           linkedWorktree={visibleLinkedWorktree}
           onBackToMain={() => setLinkedWorktree(undefined)}
           onError={setActionError}
+          onLoadBranches={() => void loadBranches(activeCwd)}
+          onLoadCommits={() => void loadCommits(activeCwd)}
           onRefresh={onCommitRefresh}
-          onScope={setScope}
+          onScope={(nextScope) => {
+            setActionError(undefined);
+            setScope(nextScope);
+          }}
+          onSelectBase={(base) => {
+            setActionError(undefined);
+            setSelectedBase(base);
+            setScope("branch");
+          }}
+          onSelectCommit={(commit) => {
+            setActionError(undefined);
+            setSelectedCommit(commit);
+            setScope("commit");
+          }}
           onToggleTree={() => setTreeView(!treeView)}
           onWorktreeBranch={(worktreeCwd, branch) => {
             setActionError(undefined);
@@ -313,8 +469,12 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
             );
           }}
           removed={totals.removed}
+          reviewTurn={review.turn}
+          loading={reviewLoading}
           scope={scope}
-          showStats={!meta.commitHistory}
+          selectedBase={selectedBase ?? review.resolvedBase}
+          selectedCommit={selectedCommit ?? commits[0]?.hash}
+          showStats={!history}
           status={status}
           treeView={treeView}
         >
@@ -325,7 +485,6 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
               setExpanded(new Set());
               setExpandedCommits(new Set());
             }}
-            onFind={() => triggerFindInActiveDiff()}
             onRefresh={() => void refresh(activeCwd)}
             onReview={() => void startReview(activeCwd, sessionId, workspaceId)}
             onSetLayout={setLayout}
@@ -334,7 +493,7 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
         </ReviewToolbar>
       ) : null}
 
-      <div className="scroll-thin min-h-0 flex-1 overflow-y-auto py-1">
+      <div className="scroll-thin min-h-0 flex-1 overflow-y-auto py-1" ref={scrollRef}>
         {actionError ? (
           <button
             className="mb-1.5 flex w-full items-start gap-2 rounded-lg bg-danger/8 px-3 py-2 text-left text-danger text-xs"
@@ -377,14 +536,14 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
             className={activeCwd ? "min-h-[220px]" : "h-full"}
             hint={
               activeCwd
-                ? meta.commitHistory
+                ? history
                   ? `No commits in ${cwdLabel}`
-                  : `No ${meta.noun} Changes in ${cwdLabel}`
+                  : (reviewUnavailable ?? `No ${SCOPE_META[scope].noun} changes in ${cwdLabel}`)
                 : "Open a workspace to review changes."
             }
             icon={<IconFileDiff size={22} stroke={1.4} />}
           />
-        ) : meta.commitHistory ? (
+        ) : history ? (
           commits.map((commit) => (
             <CommitRow
               commit={commit}
@@ -396,43 +555,219 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
               key={commit.hash}
               onToggle={() => void toggleCommit(commit.hash)}
               onToggleFile={toggleFile}
-              refreshToken={refreshToken}
               sideBySide={sideBySide}
             />
           ))
         ) : treeView ? (
-          <TreeRows
+          <VirtualTreeList
+            collapsed={collapsedDirs}
             cwd={activeCwd ?? ""}
-            depth={0}
             expanded={expanded}
             ignoreWhitespace={ignoreWhitespace}
-            nodes={changeTree}
-            onDiscard={discardChange}
+            onDiscard={
+              scope === "unstaged" ? (path) => void runFileAction("discard", path) : undefined
+            }
+            onToggleDir={(path) => setCollapsedDirs((prev) => toggleKey(prev, path))}
+            onStage={scope === "unstaged" ? (path) => void runFileAction("stage", path) : undefined}
+            onUnstage={
+              scope === "staged" ? (path) => void runFileAction("unstage", path) : undefined
+            }
             onToggleFile={toggleFile}
-            refreshToken={refreshToken}
+            rows={treeRows}
+            scrollRef={scrollRef}
             sideBySide={sideBySide}
             statsByPath={statsByPath}
+            target={reviewTarget}
           />
         ) : (
-          scopeFiles.map((change) => (
-            <ChangeRow
-              change={change}
-              cwd={activeCwd ?? ""}
-              display="full"
-              expanded={expanded.has(change.path)}
-              ignoreWhitespace={ignoreWhitespace}
-              key={`${change.status}:${change.path}`}
-              onDiscard={discardChange}
-              onToggle={toggleFile}
-              refreshToken={refreshToken}
-              rowKey={change.path}
-              sideBySide={sideBySide}
-              stat={statsByPath.get(change.path)}
-            />
-          ))
+          <VirtualChangeList
+            cwd={activeCwd ?? ""}
+            expanded={expanded}
+            files={scopeFiles}
+            ignoreWhitespace={ignoreWhitespace}
+            onDiscard={
+              scope === "unstaged" ? (path) => void runFileAction("discard", path) : undefined
+            }
+            onStage={scope === "unstaged" ? (path) => void runFileAction("stage", path) : undefined}
+            onToggle={toggleFile}
+            onUnstage={
+              scope === "staged" ? (path) => void runFileAction("unstage", path) : undefined
+            }
+            scrollRef={scrollRef}
+            sideBySide={sideBySide}
+            target={reviewTarget}
+          />
         )}
       </div>
     </section>
+  );
+}
+
+function VirtualChangeList({
+  files,
+  scrollRef,
+  cwd,
+  expanded,
+  onToggle,
+  onStage,
+  onUnstage,
+  onDiscard,
+  target,
+  sideBySide,
+  ignoreWhitespace,
+}: {
+  files: ReviewFile[];
+  scrollRef: RefObject<HTMLDivElement | null>;
+  cwd: string;
+  expanded: Set<string>;
+  onToggle(key: string): void;
+  onStage?: ((path: string) => void) | undefined;
+  onUnstage?: ((path: string) => void) | undefined;
+  onDiscard?: ((path: string) => void) | undefined;
+  target: DiffTarget;
+  sideBySide: boolean;
+  ignoreWhitespace: boolean;
+}) {
+  const virtualizer = useVirtualizer({
+    count: files.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: (index) => (expanded.has(files[index]?.path ?? "") ? 440 : 40),
+    getItemKey: (index) => files[index]?.path ?? index,
+    overscan: 6,
+  });
+
+  return (
+    <div className="relative" style={{ height: virtualizer.getTotalSize() }}>
+      {virtualizer.getVirtualItems().map((row) => {
+        const change = files[row.index];
+        if (!change) return null;
+        return (
+          <div
+            className="absolute top-0 left-0 w-full"
+            data-index={row.index}
+            key={change.path}
+            ref={virtualizer.measureElement}
+            style={{ transform: `translateY(${row.start}px)` }}
+          >
+            <ChangeRow
+              change={change}
+              cwd={cwd}
+              display="full"
+              expanded={expanded.has(change.path)}
+              ignoreWhitespace={ignoreWhitespace}
+              onDiscard={onDiscard}
+              onStage={onStage}
+              onToggle={onToggle}
+              onUnstage={onUnstage}
+              rowKey={change.path}
+              sideBySide={sideBySide}
+              stat={change}
+              target={target}
+            />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function VirtualTreeList({
+  rows,
+  scrollRef,
+  collapsed,
+  cwd,
+  expanded,
+  onToggleDir,
+  onToggleFile,
+  onStage,
+  onUnstage,
+  onDiscard,
+  statsByPath,
+  target,
+  sideBySide,
+  ignoreWhitespace,
+}: {
+  rows: FlatChangeTreeRow[];
+  scrollRef: RefObject<HTMLDivElement | null>;
+  collapsed: Set<string>;
+  cwd: string;
+  expanded: Set<string>;
+  onToggleDir(path: string): void;
+  onToggleFile(key: string): void;
+  onStage?: ((path: string) => void) | undefined;
+  onUnstage?: ((path: string) => void) | undefined;
+  onDiscard?: ((path: string) => void) | undefined;
+  statsByPath: Map<string, LineStat>;
+  target: DiffTarget;
+  sideBySide: boolean;
+  ignoreWhitespace: boolean;
+}) {
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: (index) => {
+      const row = rows[index];
+      return row?.kind === "file" && expanded.has(row.change.path) ? 440 : 40;
+    },
+    getItemKey: (index) => {
+      const row = rows[index];
+      return row?.kind === "dir" ? `dir:${row.path}` : (row?.change.path ?? index);
+    },
+    overscan: 6,
+  });
+
+  return (
+    <div className="relative" style={{ height: virtualizer.getTotalSize() }}>
+      {virtualizer.getVirtualItems().map((item) => {
+        const row = rows[item.index];
+        if (!row) return null;
+        return (
+          <div
+            className="absolute top-0 left-0 w-full"
+            data-index={item.index}
+            key={item.key}
+            ref={virtualizer.measureElement}
+            style={{ transform: `translateY(${item.start}px)` }}
+          >
+            {row.kind === "dir" ? (
+              <button
+                className="group flex h-10 w-full items-center gap-2 pr-3 text-left text-fg-muted text-sm transition-colors hover:bg-hover hover:text-fg"
+                onClick={() => onToggleDir(row.path)}
+                style={{ paddingLeft: 12 + row.depth * 16 }}
+                type="button"
+              >
+                <span className="flex size-4 shrink-0 items-center justify-center text-fg-faint">
+                  {collapsed.has(row.path) ? (
+                    <IconChevronRight size={13} stroke={1.7} />
+                  ) : (
+                    <IconChevronDown size={13} stroke={1.7} />
+                  )}
+                </span>
+                <IconFolderOpen className="toolbar-icon shrink-0" size={18} stroke={1.7} />
+                <span className="min-w-0 truncate">{row.name}</span>
+              </button>
+            ) : (
+              <ChangeRow
+                change={row.change}
+                cwd={cwd}
+                depth={row.depth}
+                display="name"
+                expanded={expanded.has(row.change.path)}
+                ignoreWhitespace={ignoreWhitespace}
+                onDiscard={onDiscard}
+                onStage={onStage}
+                onToggle={onToggleFile}
+                onUnstage={onUnstage}
+                rowKey={row.change.path}
+                sideBySide={sideBySide}
+                stat={statsByPath.get(row.change.path)}
+                target={target}
+              />
+            )}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -470,6 +805,12 @@ function normalizePath(path: string | undefined): string {
 
 function ReviewToolbar({
   scope,
+  commits,
+  branches,
+  selectedCommit,
+  selectedBase,
+  reviewTurn,
+  loading,
   count,
   added,
   removed,
@@ -480,14 +821,24 @@ function ReviewToolbar({
   treeView,
   linkedWorktree,
   onScope,
+  onSelectCommit,
+  onSelectBase,
   onToggleTree,
   onRefresh,
   onError,
+  onLoadBranches,
+  onLoadCommits,
   onWorktreeBranch,
   onBackToMain,
   children,
 }: {
   scope: ChangeScope;
+  commits: GitCommit[];
+  branches: GitBranchSummary;
+  selectedCommit: string | undefined;
+  selectedBase: string | undefined;
+  reviewTurn: DiffReviewReady["turn"] | undefined;
+  loading: boolean;
   count: number;
   added: number;
   removed: number;
@@ -498,13 +849,19 @@ function ReviewToolbar({
   treeView: boolean;
   linkedWorktree: { cwd: string; branch: string } | undefined;
   onScope(scope: ChangeScope): void;
+  onSelectCommit(commit: string): void;
+  onSelectBase(base: string): void;
   onToggleTree(): void;
   onRefresh(): void;
   onError(message: string): void;
+  onLoadBranches(): void;
+  onLoadCommits(): void;
   onWorktreeBranch(path: string, branch: string): void;
   onBackToMain(): void;
   children: ReactNode;
 }) {
+  const availableBranches = [...branches.local, ...branches.remote].filter((item) => !item.current);
+  const selectedCommitLabel = commits.find((item) => item.hash === selectedCommit)?.shortHash;
   return (
     <div
       aria-label="Git review toolbar"
@@ -518,15 +875,63 @@ function ReviewToolbar({
             {count}
           </span>
           <IconChevronDown className="text-fg-faint" size={13} stroke={1.8} />
+          {loading ? <span className="size-1.5 animate-pulse rounded-full bg-accent" /> : null}
         </Menu.Trigger>
         <Menu.Portal>
           <Menu.Positioner align="start" side="bottom" sideOffset={6}>
             <Menu.Popup className="origin-(--transform-origin) min-w-[170px] rounded-lg border border-hairline bg-elevated p-1 shadow-popup">
-              {CHANGE_SCOPES.map((value) => (
-                <MenuChoice checked={scope === value} key={value} onClick={() => onScope(value)}>
-                  {SCOPE_META[value].label}
-                </MenuChoice>
-              ))}
+              <MenuChoice checked={scope === "unstaged"} onClick={() => onScope("unstaged")}>
+                Unstaged
+              </MenuChoice>
+              <MenuChoice checked={scope === "staged"} onClick={() => onScope("staged")}>
+                Staged
+              </MenuChoice>
+              <ScopeSubmenu
+                label="Commit"
+                onOpen={onLoadCommits}
+                selected={scope === "commit"}
+                value={selectedCommitLabel}
+              >
+                {commits.length ? (
+                  commits.map((commit) => (
+                    <MenuChoice
+                      checked={scope === "commit" && selectedCommit === commit.hash}
+                      key={commit.hash}
+                      onClick={() => onSelectCommit(commit.hash)}
+                    >
+                      <span className="flex min-w-0 flex-col">
+                        <span className="max-w-[280px] truncate">{commit.subject}</span>
+                        <span className="font-mono text-2xs text-fg-faint">{commit.shortHash}</span>
+                      </span>
+                    </MenuChoice>
+                  ))
+                ) : (
+                  <MenuEmpty>No commits</MenuEmpty>
+                )}
+              </ScopeSubmenu>
+              <ScopeSubmenu
+                label="Branch"
+                onOpen={onLoadBranches}
+                selected={scope === "branch"}
+                value={selectedBase}
+              >
+                {availableBranches.length ? (
+                  <VirtualBranchChoices
+                    branches={availableBranches}
+                    onSelect={onSelectBase}
+                    selected={scope === "branch" ? selectedBase : undefined}
+                  />
+                ) : (
+                  <MenuEmpty>No other branches</MenuEmpty>
+                )}
+              </ScopeSubmenu>
+              <MenuChoice checked={scope === "last-turn"} onClick={() => onScope("last-turn")}>
+                Last Turn
+              </MenuChoice>
+              <div className="my-1 h-px bg-hairline" />
+              <MenuChoice checked={scope === "all-commits"} onClick={() => onScope("all-commits")}>
+                All commits
+              </MenuChoice>
             </Menu.Popup>
           </Menu.Positioner>
         </Menu.Portal>
@@ -536,6 +941,9 @@ function ReviewToolbar({
           <span className="text-success">+{added}</span>
           <span className="text-danger">-{removed}</span>
         </span>
+      ) : null}
+      {scope === "last-turn" && reviewTurn ? (
+        <span className="text-2xs text-fg-faint capitalize">{reviewTurn.status}</span>
       ) : null}
       <BranchSwitcher
         cwd={cwd}
@@ -630,14 +1038,13 @@ const CommitLauncher = memo(function CommitLauncher({
   );
 });
 
-/* ── The "⋯" menu (Figure 5): layout · whitespace · find · collapse · refresh ─ */
+/* ── The "⋯" menu: layout · whitespace · collapse · refresh ─ */
 
 function OverflowMenu({
   layout,
   ignoreWhitespace,
   onSetLayout,
   onToggleWhitespace,
-  onFind,
   onCollapseAll,
   onRefresh,
   onReview,
@@ -646,7 +1053,6 @@ function OverflowMenu({
   ignoreWhitespace: boolean;
   onSetLayout(layout: "split" | "unified"): void;
   onToggleWhitespace(): void;
-  onFind(): void;
   onCollapseAll(): void;
   onRefresh(): void;
   onReview(): void;
@@ -710,9 +1116,6 @@ function OverflowMenu({
 
             <div className="my-1 h-px bg-hairline" />
 
-            <MenuAction onClick={onFind} shortcut="Ctrl+F">
-              Find in Diff
-            </MenuAction>
             <MenuAction onClick={onCollapseAll}>Collapse All</MenuAction>
             <MenuAction onClick={onRefresh} shortcut="Ctrl+R">
               Refresh Changes
@@ -775,6 +1178,108 @@ function MenuChoice({
   );
 }
 
+function MenuEmpty({ children }: { children: ReactNode }) {
+  return <div className="px-2.5 py-1.5 text-fg-faint text-xs">{children}</div>;
+}
+
+function ScopeSubmenu({
+  label,
+  selected,
+  value,
+  onOpen,
+  children,
+}: {
+  label: string;
+  selected: boolean;
+  value: string | undefined;
+  onOpen?(): void;
+  children: ReactNode;
+}) {
+  return (
+    <Menu.SubmenuRoot onOpenChange={(open) => open && onOpen?.()}>
+      <Menu.SubmenuTrigger className="flex cursor-default items-center gap-2 rounded-md px-2.5 py-1.5 text-fg text-sm outline-none select-none data-highlighted:bg-hover data-popup-open:bg-hover">
+        <span className="flex size-4 items-center justify-center text-accent">
+          {selected ? <IconCheck size={14} stroke={2} /> : null}
+        </span>
+        <span className="flex-1">{label}</span>
+        {value ? <span className="max-w-24 truncate text-2xs text-fg-faint">{value}</span> : null}
+        <IconChevronRight size={13} stroke={1.7} />
+      </Menu.SubmenuTrigger>
+      <Menu.Portal>
+        <Menu.Positioner align="start" side="right" sideOffset={4}>
+          <Menu.Popup className="scroll-thin max-h-[360px] min-w-[240px] overflow-y-auto rounded-lg border border-hairline bg-elevated p-1 shadow-popup">
+            {children}
+          </Menu.Popup>
+        </Menu.Positioner>
+      </Menu.Portal>
+    </Menu.SubmenuRoot>
+  );
+}
+
+function VirtualBranchChoices({
+  branches,
+  selected,
+  onSelect,
+}: {
+  branches: GitBranchSummary["local"];
+  selected: string | undefined;
+  onSelect(name: string): void;
+}) {
+  const [query, setQuery] = useState("");
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const filtered = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return needle
+      ? branches.filter((branch) => branch.name.toLowerCase().includes(needle))
+      : branches;
+  }, [branches, query]);
+  const virtualizer = useVirtualizer({
+    count: filtered.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 34,
+    overscan: 8,
+  });
+
+  return (
+    <div className="w-[360px] max-w-[70vw]">
+      <div className="p-1">
+        <input
+          aria-label="Search branches"
+          className="h-8 w-full rounded-md bg-input px-2.5 text-fg text-sm outline-none placeholder:text-fg-faint"
+          onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={(event) => event.stopPropagation()}
+          placeholder="Search branches…"
+          value={query}
+        />
+      </div>
+      <div className="scroll-thin max-h-[320px] overflow-y-auto" ref={scrollRef}>
+        <div className="relative" style={{ height: virtualizer.getTotalSize() }}>
+          {virtualizer.getVirtualItems().map((row) => {
+            const branch = filtered[row.index];
+            if (!branch) return null;
+            return (
+              <div
+                className="absolute top-0 left-0 w-full"
+                data-index={row.index}
+                key={`${branch.remote ? "remote" : "local"}:${branch.name}`}
+                ref={virtualizer.measureElement}
+                style={{ transform: `translateY(${row.start}px)` }}
+              >
+                <MenuChoice
+                  checked={selected === branch.name}
+                  onClick={() => onSelect(branch.name)}
+                >
+                  <span className="truncate">{branch.name}</span>
+                </MenuChoice>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ── File row: icon · path · badge/±  · hover copy + discard ── */
 
 const ChangeRow = memo(function ChangeRow({
@@ -785,12 +1290,13 @@ const ChangeRow = memo(function ChangeRow({
   expanded,
   rowKey,
   onToggle,
+  onStage,
+  onUnstage,
   onDiscard,
   stat,
-  commit,
+  target,
   sideBySide,
   ignoreWhitespace,
-  refreshToken,
 }: {
   change: FileChange;
   cwd: string;
@@ -801,16 +1307,46 @@ const ChangeRow = memo(function ChangeRow({
   /** Stable expand key: the path, or `${hash}:${path}` under a commit. */
   rowKey: string;
   onToggle(key: string): void;
-  /** Discard a working-tree change. Absent for commit-history rows (read-only). */
-  onDiscard?: (path: string) => void;
+  onStage?: ((path: string) => void) | undefined;
+  onUnstage?: ((path: string) => void) | undefined;
+  onDiscard?: ((path: string) => void) | undefined;
   stat?: LineStat | undefined;
-  commit?: string | undefined;
+  target: DiffTarget;
   sideBySide: boolean;
   ignoreWhitespace: boolean;
-  refreshToken: number;
 }) {
   const { dir, name } = splitPath(change.path);
   const badge = changeBadge(change);
+  const changedLines = (stat?.added ?? 0) + (stat?.removed ?? 0);
+  const [opening, setOpening] = useState(false);
+  const previewRequest: DiffPreviewRequest = {
+    cwd,
+    path: change.path,
+    target,
+    ...(change.renamedFrom !== undefined ? { originalPath: change.renamedFrom } : {}),
+    untracked: Boolean(change.untracked),
+    ignoreWhitespace,
+  };
+
+  const prepare = (): void => {
+    if (expanded || opening || stat?.binary || changedLines > 500) return;
+    void prepareDiffPreview(previewRequest);
+  };
+
+  const toggle = async (): Promise<void> => {
+    if (opening) return;
+    if (expanded || stat?.binary || changedLines > 500) {
+      onToggle(rowKey);
+      return;
+    }
+    setOpening(true);
+    try {
+      await prepareDiffPreview(previewRequest);
+      onToggle(rowKey);
+    } finally {
+      setOpening(false);
+    }
+  };
 
   return (
     <div className="border-hairline-soft border-b">
@@ -823,11 +1359,15 @@ const ChangeRow = memo(function ChangeRow({
       >
         <button
           className="flex min-w-0 flex-1 items-center gap-2 text-left"
-          onClick={() => onToggle(rowKey)}
+          onClick={() => void toggle()}
+          onFocus={prepare}
+          onPointerEnter={prepare}
           type="button"
         >
           <span className="flex size-4 shrink-0 items-center justify-center text-fg-faint">
-            {expanded ? (
+            {opening ? (
+              <IconLoader2 className="animate-spin" size={13} stroke={1.7} />
+            ) : expanded ? (
               <IconChevronDown size={13} stroke={1.7} />
             ) : (
               <IconChevronRight size={13} stroke={1.7} />
@@ -848,6 +1388,16 @@ const ChangeRow = memo(function ChangeRow({
           >
             <IconCopy size={13} stroke={1.7} />
           </IconBtn>
+          {onStage ? (
+            <IconBtn label="Stage file" onClick={() => onStage(change.path)}>
+              <IconPlus size={13} stroke={1.7} />
+            </IconBtn>
+          ) : null}
+          {onUnstage ? (
+            <IconBtn label="Unstage file" onClick={() => onUnstage(change.path)}>
+              <IconMinus size={13} stroke={1.7} />
+            </IconBtn>
+          ) : null}
           {onDiscard ? (
             <Tooltip
               content={change.untracked ? "New file — delete manually" : "Discard changes"}
@@ -869,11 +1419,9 @@ const ChangeRow = memo(function ChangeRow({
       </div>
       {expanded ? (
         <FileDiffPreview
-          change={change}
-          commit={commit}
-          cwd={cwd}
-          ignoreWhitespace={ignoreWhitespace}
-          refreshToken={refreshToken}
+          binary={Boolean(stat?.binary)}
+          changedLines={changedLines}
+          request={previewRequest}
           sideBySide={sideBySide}
         />
       ) : null}
@@ -925,18 +1473,16 @@ function CommitRow({
   onToggleFile,
   sideBySide,
   ignoreWhitespace,
-  refreshToken,
 }: {
   commit: GitCommit;
   cwd: string;
   expanded: boolean;
-  files: FileChange[] | undefined;
+  files: ReviewFile[] | undefined;
   expandedFiles: Set<string>;
   onToggle(): void;
   onToggleFile(key: string): void;
   sideBySide: boolean;
   ignoreWhitespace: boolean;
-  refreshToken: number;
 }) {
   return (
     <div className="border-hairline-soft border-b">
@@ -977,7 +1523,6 @@ function CommitRow({
             return (
               <ChangeRow
                 change={file}
-                commit={commit.hash}
                 cwd={cwd}
                 depth={1}
                 display="full"
@@ -985,9 +1530,10 @@ function CommitRow({
                 ignoreWhitespace={ignoreWhitespace}
                 key={key}
                 onToggle={onToggleFile}
-                refreshToken={refreshToken}
                 rowKey={key}
                 sideBySide={sideBySide}
+                stat={file}
+                target={{ type: "commit", commit: commit.hash }}
               />
             );
           })
@@ -998,128 +1544,6 @@ function CommitRow({
 }
 
 /* ── Tree mode: recursive folder/file rows over the compacted change tree ── */
-
-function TreeRows({
-  nodes,
-  cwd,
-  depth,
-  expanded,
-  onToggleFile,
-  onDiscard,
-  statsByPath,
-  sideBySide,
-  ignoreWhitespace,
-  refreshToken,
-}: {
-  nodes: ChangeTreeNode[];
-  cwd: string;
-  depth: number;
-  expanded: Set<string>;
-  onToggleFile(key: string): void;
-  onDiscard(path: string): void;
-  statsByPath: Map<string, LineStat>;
-  sideBySide: boolean;
-  ignoreWhitespace: boolean;
-  refreshToken: number;
-}) {
-  return (
-    <>
-      {nodes.map((node) =>
-        node.kind === "dir" ? (
-          <TreeFolder
-            cwd={cwd}
-            depth={depth}
-            expanded={expanded}
-            ignoreWhitespace={ignoreWhitespace}
-            key={`dir:${node.path}`}
-            node={node}
-            onDiscard={onDiscard}
-            onToggleFile={onToggleFile}
-            refreshToken={refreshToken}
-            sideBySide={sideBySide}
-            statsByPath={statsByPath}
-          />
-        ) : (
-          <ChangeRow
-            change={node.change}
-            cwd={cwd}
-            depth={depth}
-            display="name"
-            expanded={expanded.has(node.change.path)}
-            ignoreWhitespace={ignoreWhitespace}
-            key={`${node.change.status}:${node.change.path}`}
-            onDiscard={onDiscard}
-            onToggle={onToggleFile}
-            refreshToken={refreshToken}
-            rowKey={node.change.path}
-            sideBySide={sideBySide}
-            stat={statsByPath.get(node.change.path)}
-          />
-        ),
-      )}
-    </>
-  );
-}
-
-function TreeFolder({
-  node,
-  cwd,
-  depth,
-  expanded,
-  onToggleFile,
-  onDiscard,
-  statsByPath,
-  sideBySide,
-  ignoreWhitespace,
-  refreshToken,
-}: {
-  node: Extract<ChangeTreeNode, { kind: "dir" }>;
-  cwd: string;
-  depth: number;
-  expanded: Set<string>;
-  onToggleFile(key: string): void;
-  onDiscard(path: string): void;
-  statsByPath: Map<string, LineStat>;
-  sideBySide: boolean;
-  ignoreWhitespace: boolean;
-  refreshToken: number;
-}) {
-  const [open, setOpen] = useState(true);
-  return (
-    <div>
-      <button
-        className="group flex h-9 w-full items-center gap-2 pr-3 text-left text-fg-muted text-sm transition-colors hover:bg-hover hover:text-fg"
-        onClick={() => setOpen((value) => !value)}
-        style={{ paddingLeft: 12 + depth * 16 }}
-        type="button"
-      >
-        <span className="flex size-4 shrink-0 items-center justify-center text-fg-faint">
-          {open ? (
-            <IconChevronDown size={13} stroke={1.7} />
-          ) : (
-            <IconChevronRight size={13} stroke={1.7} />
-          )}
-        </span>
-        <IconFolderOpen className="toolbar-icon shrink-0" size={18} stroke={1.7} />
-        <span className="min-w-0 truncate">{node.name}</span>
-      </button>
-      <CollapsibleMotion open={open} preset="default">
-        <TreeRows
-          cwd={cwd}
-          depth={depth + 1}
-          expanded={expanded}
-          ignoreWhitespace={ignoreWhitespace}
-          nodes={node.children}
-          onDiscard={onDiscard}
-          onToggleFile={onToggleFile}
-          refreshToken={refreshToken}
-          sideBySide={sideBySide}
-          statsByPath={statsByPath}
-        />
-      </CollapsibleMotion>
-    </div>
-  );
-}
 
 function IconBtn({
   children,

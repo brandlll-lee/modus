@@ -82,7 +82,6 @@ export function BranchSwitcher({
           onWorktreeBranch?.(result.worktreePath, result.branch ?? name);
           return;
         }
-        void refreshBranches(cwd);
         onAfterSwitch?.();
       } catch (cause) {
         onError?.(cause instanceof Error ? cause.message : String(cause));
@@ -90,7 +89,7 @@ export function BranchSwitcher({
         setBusy(undefined);
       }
     },
-    [cwd, onAfterSwitch, onError, onWorktreeBranch, refreshBranches],
+    [cwd, onAfterSwitch, onError, onWorktreeBranch],
   );
 
   const locals = branches?.local ?? [];

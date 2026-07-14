@@ -1,154 +1,240 @@
 import { IconFileUnknown } from "@tabler/icons-react";
-import { useEffect, useRef, useState } from "react";
-import type { DiffFileVersions, FileChange } from "../../../../shared/contracts";
-import { CodeViewer } from "../../components/code/CodeViewer";
-import { DiffViewer } from "../../components/code/DiffViewer";
+import { type CSSProperties, useState } from "react";
+import type { DiffFilePatch, DiffTarget } from "../../../../shared/contracts";
+import { useTheme } from "../../lib/theme";
 
-type FileDiffPreviewProps = {
+export type DiffPreviewRequest = {
   cwd: string;
-  change: FileChange;
-  /** Bumped by the parent after stage/unstage/discard so contents refetch. */
-  refreshToken?: number;
-  /** When set, diff this commit against its parent instead of the working tree. */
-  commit?: string | undefined;
-  /** Layout + whitespace come from the panel-level "…" menu (shared by all rows). */
-  sideBySide: boolean;
+  path: string;
+  target: DiffTarget;
+  originalPath?: string | undefined;
+  untracked: boolean;
   ignoreWhitespace: boolean;
 };
 
-/**
- * The expanded body of one changed file: a real (monaco) diff that sizes itself
- * to its (collapsed) content, stacked inline like Cursor's Source Control. View
- * preferences (layout / ignore-whitespace) are owned by the panel and shared by
- * every row, so the menu controls them all at once.
- */
+type FileDiffPreviewProps = {
+  request: DiffPreviewRequest;
+  sideBySide: boolean;
+  changedLines: number;
+  binary: boolean;
+};
+
+type PatchDiffComponent = typeof import("@pierre/diffs/react").PatchDiff;
+type PreviewEntry = {
+  promise: Promise<void>;
+  value?: DiffFilePatch | undefined;
+  error?: string | undefined;
+};
+
+const LARGE_CHANGED_LINES = 500;
+const LARGE_PREVIEW_BYTES = 2_187_500;
+const MAX_LINE_LENGTH = 5_000;
+const previewCache = new Map<string, PreviewEntry>();
+let PatchDiffView: PatchDiffComponent | undefined;
+let rendererPromise: Promise<void> | undefined;
+let rendererError: string | undefined;
+
+export function clearDiffPreviewCache(): void {
+  previewCache.clear();
+}
+
+export async function preloadInlineDiffRenderer(): Promise<void> {
+  if (PatchDiffView) return;
+  rendererPromise ??= import("@pierre/diffs/react")
+    .then((module) => {
+      PatchDiffView = module.PatchDiff;
+      rendererError = undefined;
+    })
+    .catch((cause: unknown) => {
+      rendererError = messageFrom(cause);
+      rendererPromise = undefined;
+    });
+  await rendererPromise;
+}
+
+export async function prepareDiffPreview(request: DiffPreviewRequest): Promise<void> {
+  await Promise.all([ensurePreview(request).promise, preloadInlineDiffRenderer()]);
+}
+
 export function FileDiffPreview({
-  cwd,
-  change,
-  refreshToken = 0,
-  commit,
+  request,
   sideBySide,
-  ignoreWhitespace,
+  changedLines,
+  binary,
 }: FileDiffPreviewProps) {
-  const [versions, setVersions] = useState<DiffFileVersions | undefined>();
-  const [error, setError] = useState<string | undefined>();
+  const [theme] = useTheme();
+  const [allowLarge, setAllowLarge] = useState(false);
+  const [preparingLarge, setPreparingLarge] = useState(false);
 
-  // Working-tree pair: show the staged version only when nothing remains unstaged.
-  const mode = change.staged && !change.unstaged ? "staged" : "unstaged";
-  const requestKey = previewRequestKey({
-    cwd,
-    path: change.path,
-    mode,
-    originalPath: change.renamedFrom,
-    commit,
-  });
-  const previousRequestKeyRef = useRef(requestKey);
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refreshToken is a deliberate refetch trigger bumped by the parent after stage/unstage/discard.
-  useEffect(() => {
-    let cancelled = false;
-    setError(undefined);
-    if (previousRequestKeyRef.current !== requestKey) {
-      setVersions(undefined);
-      previousRequestKeyRef.current = requestKey;
-    }
-    void window.modus.diff
-      .fileVersions({
-        cwd,
-        path: change.path,
-        mode,
-        ...(change.renamedFrom !== undefined ? { originalPath: change.renamedFrom } : {}),
-        ...(commit !== undefined ? { commit } : {}),
-      })
-      .then((next: DiffFileVersions) => {
-        if (!cancelled) setVersions(next);
-      })
-      .catch((cause: unknown) => {
-        if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [cwd, change.path, change.renamedFrom, mode, commit, refreshToken, requestKey]);
-
-  if (error) {
-    return <Notice>{error}</Notice>;
-  }
-  if (!versions) {
-    return <Notice>Loading diff…</Notice>;
-  }
-  if (versions.binary) {
+  if (binary) {
     return (
-      <Notice>
+      <Notice actions={<OpenFileButton cwd={request.cwd} path={request.path} />}>
         <IconFileUnknown className="mr-1.5 inline-block align-text-bottom" size={14} stroke={1.7} />
         Binary file — no text preview.
       </Notice>
     );
   }
 
-  // Whole-file add/delete: one side is empty, so there is nothing to *compare*.
-  // A diff editor would model the empty side as a lone empty line and render it
-  // as a phantom red (removed) line. Render the non-empty side in a plain editor
-  // washed entirely added/removed — the authoritative, phantom-free view.
-  const wholeAdd = versions.original === "" && versions.modified !== "";
-  const wholeDelete = versions.modified === "" && versions.original !== "";
-  if (wholeAdd || wholeDelete) {
+  if (changedLines > LARGE_CHANGED_LINES && !allowLarge) {
     return (
-      <div className="relative mx-1 mb-1 flex flex-col overflow-hidden rounded-lg bg-code-bg">
-        {versions.truncated ? (
-          <span className="pointer-events-none absolute top-1.5 right-2 z-10 rounded bg-elevated/90 px-1.5 py-0.5 text-2xs text-fg-faint shadow-popup">
-            Large file — preview truncated
-          </span>
-        ) : null}
-        <CodeViewer
-          autoHeight
-          content={wholeAdd ? versions.modified : versions.original}
-          maxHeight={560}
-          path={change.path}
-          tint={wholeAdd ? "added" : "removed"}
-        />
-      </div>
+      <LargeNotice
+        busy={preparingLarge}
+        detail={`${changedLines.toLocaleString()} changed lines`}
+        onOpen={() => void prepareLarge()}
+      />
+    );
+  }
+
+  const entry = previewCache.get(previewRequestKey(request));
+  if (entry?.error) return <Notice>{entry.error}</Notice>;
+  if (rendererError) return <Notice>{rendererError}</Notice>;
+  if (!entry?.value || !PatchDiffView) return <Notice>Preview unavailable.</Notice>;
+
+  const preview = entry.value;
+  if (preview.binary || preview.truncated) {
+    return (
+      <Notice actions={<OpenFileButton cwd={request.cwd} path={request.path} />}>
+        <IconFileUnknown className="mr-1.5 inline-block align-text-bottom" size={14} stroke={1.7} />
+        {preview.binary
+          ? "Binary file — no text preview."
+          : "File exceeds 4 MB — open it externally."}
+      </Notice>
+    );
+  }
+  if (!preview.patch) return <Notice>No visible line changes.</Notice>;
+
+  if (
+    !allowLarge &&
+    (preview.bytes > LARGE_PREVIEW_BYTES || preview.maxLineLength > MAX_LINE_LENGTH)
+  ) {
+    return (
+      <LargeNotice
+        busy={preparingLarge}
+        detail={
+          preview.maxLineLength > MAX_LINE_LENGTH
+            ? "Contains an exceptionally long line"
+            : `${(preview.bytes / 1_000_000).toFixed(1)} MB preview`
+        }
+        onOpen={() => void prepareLarge()}
+      />
     );
   }
 
   return (
-    <div className="relative mx-1 mb-1 flex flex-col overflow-hidden rounded-lg bg-code-bg">
-      {versions.truncated ? (
-        <span className="pointer-events-none absolute top-1.5 right-2 z-10 rounded bg-elevated/90 px-1.5 py-0.5 text-2xs text-fg-faint shadow-popup">
-          Large file — preview truncated
-        </span>
-      ) : null}
-      <DiffViewer
-        autoHeight
-        ignoreWhitespace={ignoreWhitespace}
-        maxHeight={560}
-        modified={versions.modified}
-        original={versions.original}
-        originalPath={change.renamedFrom}
-        path={change.path}
-        sideBySide={sideBySide}
-        wordWrap={false}
+    <div className="relative mx-1 mb-1 overflow-hidden rounded-lg bg-code-bg">
+      <PatchDiffView
+        options={{
+          theme: { dark: "pierre-dark", light: "pierre-light" },
+          themeType: theme === "light" ? "light" : "dark",
+          diffStyle: sideBySide ? "split" : "unified",
+          diffIndicators: "bars",
+          disableFileHeader: true,
+          overflow: "scroll",
+          hunkSeparators: "line-info-basic",
+          lineDiffType: sideBySide ? "word-alt" : "none",
+          maxLineDiffLength: 1_000,
+          tokenizeMaxLineLength: MAX_LINE_LENGTH,
+        }}
+        patch={preview.patch}
+        style={
+          {
+            "--diffs-font-family": "var(--font-mono)",
+            "--diffs-font-size": "13px",
+            "--diffs-line-height": "22px",
+            "--diffs-tab-size": 2,
+          } as CSSProperties
+        }
       />
     </div>
   );
+
+  async function prepareLarge(): Promise<void> {
+    setPreparingLarge(true);
+    try {
+      await prepareDiffPreview(request);
+      setAllowLarge(true);
+    } finally {
+      setPreparingLarge(false);
+    }
+  }
 }
 
-export function previewRequestKey(input: {
-  cwd: string;
-  path: string;
-  mode: "unstaged" | "staged";
-  originalPath?: string | undefined;
-  commit?: string | undefined;
-}): string {
-  return [input.cwd, input.path, input.mode, input.originalPath ?? "", input.commit ?? ""].join(
-    "\0",
+function ensurePreview(request: DiffPreviewRequest): PreviewEntry {
+  const key = previewRequestKey(request);
+  const cached = previewCache.get(key);
+  if (cached) return cached;
+
+  const entry: PreviewEntry = { promise: Promise.resolve() };
+  entry.promise = window.modus.diff
+    .filePatch({
+      cwd: request.cwd,
+      path: request.path,
+      target: request.target,
+      ...(request.originalPath !== undefined ? { originalPath: request.originalPath } : {}),
+      untracked: request.untracked,
+      ignoreWhitespace: request.ignoreWhitespace,
+    })
+    .then((value: DiffFilePatch) => {
+      entry.value = value;
+    })
+    .catch((cause: unknown) => {
+      entry.error = messageFrom(cause);
+    });
+  previewCache.set(key, entry);
+  return entry;
+}
+
+export function previewRequestKey(input: DiffPreviewRequest): string {
+  return [
+    input.cwd,
+    input.path,
+    JSON.stringify(input.target),
+    input.originalPath ?? "",
+    input.untracked,
+    input.ignoreWhitespace,
+  ].join("\0");
+}
+
+function LargeNotice({ busy, detail, onOpen }: { busy: boolean; detail: string; onOpen(): void }) {
+  return (
+    <Notice
+      actions={
+        <button
+          className="rounded-md bg-hover px-2 py-1 text-fg disabled:opacity-50"
+          disabled={busy}
+          onClick={onOpen}
+          type="button"
+        >
+          {busy ? "Preparing…" : "Render anyway"}
+        </button>
+      }
+    >
+      Large diff — {detail}.
+    </Notice>
   );
 }
 
-function Notice({ children }: { children: React.ReactNode }) {
+function OpenFileButton({ cwd, path }: { cwd: string; path: string }) {
   return (
-    <div className="mx-1 mb-1 rounded-lg bg-code-bg px-4 py-3 text-fg-faint text-xs">
-      {children}
+    <button
+      className="rounded-md bg-hover px-2 py-1 text-fg"
+      onClick={() => void window.modus.file.open({ cwd, path })}
+      type="button"
+    >
+      Open file
+    </button>
+  );
+}
+
+function Notice({ children, actions }: { children: React.ReactNode; actions?: React.ReactNode }) {
+  return (
+    <div className="mx-1 mb-1 flex items-center justify-between gap-3 rounded-lg bg-code-bg px-4 py-3 text-fg-faint text-xs">
+      <span>{children}</span>
+      {actions}
     </div>
   );
+}
+
+function messageFrom(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
 }

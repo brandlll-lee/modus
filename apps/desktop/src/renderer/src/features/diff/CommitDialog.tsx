@@ -21,13 +21,12 @@ function errorMessage(caught: unknown): string {
 }
 
 /**
- * Minimal commit/push modal: three explicit actions — Commit, Commit and push,
- * Push. There is no staging (every commit includes all changes), no pull/fetch,
- * and no branch switcher (branch viewing/switching lives in the panel header).
- * Each action calls the real `diff.commitOrPush` IPC.
+ * Minimal commit/push modal. Commits use the index by default; including
+ * unstaged changes is an explicit, one-shot choice.
  */
 export function CommitDialog({ open, onOpenChange, cwd, status, onRefresh }: CommitDialogProps) {
   const [message, setMessage] = useState("");
+  const [includeUnstaged, setIncludeUnstaged] = useState(false);
   const [busy, setBusy] = useState<CommitAction | undefined>();
   const [error, setError] = useState<string | undefined>();
   const messageRef = useRef<HTMLTextAreaElement>(null);
@@ -35,6 +34,7 @@ export function CommitDialog({ open, onOpenChange, cwd, status, onRefresh }: Com
   useEffect(() => {
     if (open) {
       setMessage("");
+      setIncludeUnstaged(false);
       setError(undefined);
       setBusy(undefined);
     }
@@ -43,8 +43,10 @@ export function CommitDialog({ open, onOpenChange, cwd, status, onRefresh }: Com
   const ahead = status?.ahead ?? 0;
   const hasUpstream = status?.hasUpstream ?? false;
   const hasRemote = status?.hasRemote ?? false;
-  const changeCount = (status?.stagedCount ?? 0) + (status?.unstagedCount ?? 0);
-  const canCommit = message.trim().length > 0 && changeCount > 0 && !busy;
+  const stagedCount = status?.stagedCount ?? 0;
+  const unstagedCount = status?.unstagedCount ?? 0;
+  const includedCount = stagedCount + (includeUnstaged ? unstagedCount : 0);
+  const canCommit = message.trim().length > 0 && includedCount > 0 && !busy;
   // Push alone is meaningful when there are local commits ahead, or no upstream yet.
   const canPushOnly = !busy && (ahead > 0 || !hasUpstream) && hasRemote;
 
@@ -57,6 +59,7 @@ export function CommitDialog({ open, onOpenChange, cwd, status, onRefresh }: Com
         cwd,
         ...(action === "push" ? {} : { message: message.trim() }),
         commit: action !== "push",
+        ...(action === "push" ? {} : { includeUnstaged }),
         push: action !== "commit",
       });
       await onRefresh();
@@ -123,9 +126,32 @@ export function CommitDialog({ open, onOpenChange, cwd, status, onRefresh }: Com
               ref={messageRef}
               value={message}
             />
-            <p className="mt-1.5 text-2xs text-fg-faint">
-              Commits all {changeCount} changed file{changeCount === 1 ? "" : "s"}.
-            </p>
+            <button
+              aria-pressed={includeUnstaged}
+              className="mt-2 flex w-full items-center justify-between rounded-md px-1 py-1 text-left text-xs"
+              onClick={() => setIncludeUnstaged((value) => !value)}
+              type="button"
+            >
+              <span>
+                <span className="block text-fg-muted">Include unstaged</span>
+                <span className="block text-2xs text-fg-faint">
+                  {includedCount} file{includedCount === 1 ? "" : "s"} will be committed
+                </span>
+              </span>
+              <span
+                className={cn(
+                  "flex h-4 w-7 items-center rounded-full p-0.5 transition-colors",
+                  includeUnstaged ? "bg-accent" : "bg-chip-strong",
+                )}
+              >
+                <span
+                  className={cn(
+                    "size-3 rounded-full bg-white transition-transform",
+                    includeUnstaged && "translate-x-3",
+                  )}
+                />
+              </span>
+            </button>
           </div>
 
           {error ? (
