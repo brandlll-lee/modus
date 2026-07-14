@@ -154,6 +154,7 @@ export function Composer({
     useState<ComposerDraft>(createEmptyComposerDraft);
   const activeDraft = draft ?? uncontrolledDraft;
   const [dragging, setDragging] = useState(false);
+  const [isComposing, setIsComposing] = useState(false);
   const [internalMode, setInternalMode] = useState<AgentMode>("build");
   const mode = controlledMode ?? internalMode;
   const setDraft = useCallback(
@@ -460,8 +461,12 @@ export function Composer({
         onDrop={handleDrop}
       >
         {isRunning ? <ShineBorder /> : null}
-        <div className="relative">
-          {!hasText && !hasInlineTokens ? (
+        <div
+          className="relative"
+          onCompositionEnd={() => setIsComposing(false)}
+          onCompositionStart={() => setIsComposing(true)}
+        >
+          {!hasText && !hasInlineTokens && !isComposing ? (
             <div
               aria-hidden
               className="pointer-events-none absolute inset-x-0 top-0 px-4 pt-4 text-md font-normal text-fg-subtle"
