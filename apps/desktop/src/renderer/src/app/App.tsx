@@ -982,7 +982,16 @@ export function App() {
                     </main>
 
                     {responsiveInspectorOpen ? (
-                      <Suspense fallback={<ModusLoadingFallback />}>
+                      <Suspense
+                        fallback={
+                          <div
+                            className="flex min-h-0 min-w-0 shrink-0"
+                            style={{ width: inspectorWidth }}
+                          >
+                            <ModusLoadingFallback />
+                          </div>
+                        }
+                      >
                         <Inspector
                           activeWorkspace={activeWorkspace}
                           contextUsageBySession={contextUsageBySession}
