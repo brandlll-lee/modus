@@ -17,11 +17,13 @@ export type CreateAgentRuntimeInput = {
   workspaceId: string;
   cwd: string;
   title: string;
+  branch?: string;
   model?: string;
   parentSessionId?: string;
   subagentTask?: string;
   subagentType?: string;
   subagentReadOnly?: boolean;
+  worktree?: AgentSessionInfo["worktree"];
   subagentWorktree?: AgentSessionInfo["subagentWorktree"];
 };
 

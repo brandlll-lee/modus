@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { isAbsolute, resolve, sep } from "node:path";
 import {
   app,
@@ -14,6 +15,7 @@ import {
   listAgentSessions,
   listArchivedAgentSessions,
   setAgentSessionPinned,
+  updateAgentSessionSubagentWorktree,
   updateAgentSessionWorktree,
 } from "../agent/agent-store";
 import {
@@ -26,12 +28,12 @@ import {
   configureProvider,
   deleteCustomProvider,
   disconnectProvider,
-  getProviderAuthState,
   getCustomProviderConfig,
   getModelSettings,
+  getProviderAuthState,
   getProviderDetail,
-  listProviderConnectionMethods,
   listModels,
+  listProviderConnectionMethods,
   refreshRemoteModelCatalog,
   respondProviderAuth,
   setDefaultModel,
@@ -78,8 +80,10 @@ import {
   abortSubagentWorktreeApply,
   applySubagentWorktree,
   checkoutBranch,
+  cleanupSessionWorktree,
   cleanupSubagentWorktree,
   commitOrPush,
+  createChatWorktree,
   discardFile,
   getChangeStatsSince,
   getStatusSummary,
@@ -148,6 +152,7 @@ import {
 import { upsertWorkspace } from "../workspace/workspace-store";
 import { IPC_CHANNELS } from "./channels";
 import {
+  agentCleanupSessionWorktreeSchema,
   agentCreateSchema,
   agentCycleModelSchema,
   agentListSchema,
@@ -188,11 +193,11 @@ import {
   parseIpcInput,
   permissionDecideSchema,
   personalizationSaveSchema,
+  processKillSchema,
+  processListSchema,
   providerAuthOperationSchema,
   providerAuthResponseSchema,
   providerAuthStartSchema,
-  processKillSchema,
-  processListSchema,
   questionRespondSchema,
   reviewStartSchema,
   sessionIdSchema,
@@ -351,12 +356,49 @@ export function registerAppIpc({
   ipcMain.handle(IPC_CHANNELS.agentCreate, async (event, input) => {
     assertTrustedSender(event);
     const parsed = parseIpcInput(agentCreateSchema, input, IPC_CHANNELS.agentCreate);
-    return await getAgentRuntime().create(getSenderWindow(event), {
+    const createInput = {
       workspaceId: parsed.workspaceId,
       cwd: parsed.cwd,
       title: parsed.title,
       ...(parsed.model !== undefined ? { model: parsed.model } : {}),
+    };
+    const baseBranch = parsed.baseBranch;
+    if (parsed.draftScope === "local") {
+      if (!baseBranch) {
+        throw new Error("Base branch is required for local sessions.");
+      }
+      const result = await checkoutBranch(parsed.cwd, baseBranch);
+      return await getAgentRuntime().create(getSenderWindow(event), {
+        ...createInput,
+        branch: baseBranch,
+        ...(result.kind === "worktree" && result.worktreePath ? { cwd: result.worktreePath } : {}),
+      });
+    }
+    if (parsed.draftScope !== "worktree") {
+      return await getAgentRuntime().create(getSenderWindow(event), createInput);
+    }
+
+    const sessionId = randomUUID();
+    if (!baseBranch) {
+      throw new Error("Base branch is required for worktree sessions.");
+    }
+    const worktree = await createChatWorktree(parsed.cwd, {
+      sessionId,
+      baseBranch,
+      ...(parsed.baseBranchRemote ? { baseBranchRemote: true } : {}),
     });
+    try {
+      return await getAgentRuntime().create(getSenderWindow(event), {
+        ...createInput,
+        id: sessionId,
+        cwd: worktree.path,
+        branch: worktree.branch,
+        worktree,
+      });
+    } catch (error) {
+      await cleanupSessionWorktree(parsed.cwd, worktree).catch(() => undefined);
+      throw error;
+    }
   });
 
   ipcMain.handle(IPC_CHANNELS.agentList, (event, input) => {
@@ -462,7 +504,7 @@ export function registerAppIpc({
       throw new Error("Parent session not found.");
     }
     const worktree = await applySubagentWorktree(parent.cwd, child.subagentWorktree);
-    const updated = updateAgentSessionWorktree(child.id, worktree) ?? child;
+    const updated = updateAgentSessionSubagentWorktree(child.id, worktree) ?? child;
     emitGitEvent({ cwd: parent.cwd, kind: "index" });
     return updated;
   });
@@ -486,7 +528,7 @@ export function registerAppIpc({
       throw new Error("Parent session not found.");
     }
     const worktree = await abortSubagentWorktreeApply(parent.cwd, child.subagentWorktree);
-    const updated = updateAgentSessionWorktree(child.id, worktree) ?? child;
+    const updated = updateAgentSessionSubagentWorktree(child.id, worktree) ?? child;
     emitGitEvent({ cwd: parent.cwd, kind: "index" });
     return updated;
   });
@@ -506,8 +548,25 @@ export function registerAppIpc({
       throw new Error("Parent session not found.");
     }
     const worktree = await cleanupSubagentWorktree(parent.cwd, child.subagentWorktree);
-    const updated = updateAgentSessionWorktree(child.id, worktree) ?? child;
+    const updated = updateAgentSessionSubagentWorktree(child.id, worktree) ?? child;
     emitGitEvent({ cwd: parent.cwd, kind: "refs" });
+    return updated;
+  });
+
+  ipcMain.handle(IPC_CHANNELS.agentCleanupSessionWorktree, async (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(
+      agentCleanupSessionWorktreeSchema,
+      input,
+      IPC_CHANNELS.agentCleanupSessionWorktree,
+    );
+    const session = getAgentSession(parsed.sessionId);
+    if (!session?.worktree) {
+      throw new Error("Session worktree not found.");
+    }
+    const worktree = await cleanupSessionWorktree(parsed.cwd, session.worktree);
+    const updated = updateAgentSessionWorktree(session.id, worktree) ?? session;
+    emitGitEvent({ cwd: parsed.cwd, kind: "refs" });
     return updated;
   });
 

@@ -1,3 +1,4 @@
+import { Dialog } from "@base-ui/react/dialog";
 import { Menu } from "@base-ui/react/menu";
 import {
   IconArchive,
@@ -9,8 +10,10 @@ import {
   IconFolder,
   IconFolderOpen,
   IconFolderPlus,
+  IconGitBranch,
   IconGridDots,
   IconLayoutSidebar,
+  IconMessage,
   IconPencil,
   IconPin,
   IconPinnedOff,
@@ -23,6 +26,7 @@ import { animate, m, useMotionValue } from "motion/react";
 import {
   type MouseEvent,
   type PointerEvent,
+  type ReactElement,
   type ReactNode,
   useEffect,
   useRef,
@@ -32,6 +36,7 @@ import type { AgentSessionInfo, WorkspaceInfo } from "../../../shared/contracts"
 import type { SessionActivity } from "../features/agent/agentEventHub";
 import { SessionStatusDot } from "../features/agent/SessionStatusDot";
 import { cn } from "../lib/cn";
+import { Tooltip } from "./ui/Tooltip";
 import { CollapsibleMotion } from "./ui/CollapsibleMotion";
 import { ToolbarButton } from "./ui/ToolbarButton";
 
@@ -56,7 +61,7 @@ type SidebarProps = {
   onPinSession(session: AgentSessionInfo, pinned: boolean): void;
   onArchiveSession(session: AgentSessionInfo): void;
   onRestoreSession(session: AgentSessionInfo): void;
-  onDeleteSession(session: AgentSessionInfo): void;
+  onDeleteSession(session: AgentSessionInfo, cleanupWorktree?: boolean): void;
   onListArchivedSessions(workspaceId: string): Promise<AgentSessionInfo[]>;
   onPinProject(id: string, pinned: boolean): void;
   onRenameProject(id: string, displayName: string): void;
@@ -306,7 +311,7 @@ function WorkspaceItem({
   onPinSession(session: AgentSessionInfo, pinned: boolean): void;
   onArchiveSession(session: AgentSessionInfo): void;
   onRestoreSession(session: AgentSessionInfo): void;
-  onDeleteSession(session: AgentSessionInfo): void;
+  onDeleteSession(session: AgentSessionInfo, cleanupWorktree?: boolean): void;
   onListArchivedSessions(workspaceId: string): Promise<AgentSessionInfo[]>;
   renaming: boolean;
   onStartRename(): void;
@@ -367,18 +372,13 @@ function WorkspaceItem({
               event.stopPropagation();
               onArchiveSession(session);
             }}
-            onDelete={(event) => {
-              event.stopPropagation();
-              onDeleteSession(session);
-            }}
+            onDelete={(cleanupWorktree) => onDeleteSession(session, cleanupWorktree)}
             onPin={(event) => {
               event.stopPropagation();
               onPinSession(session, !session.pinnedAt);
             }}
             onSelect={() => onSelectSession(session)}
-            pinned={Boolean(session.pinnedAt)}
-            title={session.title}
-            updatedAt={session.updatedAt}
+            session={session}
           />
         ))}
         <CollapsibleMotion open={archivedOpen} preset="default">
@@ -409,31 +409,76 @@ function WorkspaceItem({
   );
 }
 
+function SessionRowTooltip({
+  session,
+  children,
+}: {
+  session: AgentSessionInfo;
+  children: ReactElement;
+}) {
+  return (
+    <Tooltip
+      content={<SessionHoverDetails session={session} />}
+      motion="fade"
+      side="right"
+      sideOffset={8}
+    >
+      {children}
+    </Tooltip>
+  );
+}
+
+function SessionHoverDetails({ session }: { session: AgentSessionInfo }) {
+  const worktree = session.worktree;
+  const branch = session.branch ?? worktree?.branch;
+  const folder = worktree?.path ?? session.cwd;
+  return (
+    <div className="w-[280px] space-y-1.5 py-0.5">
+      <div className="flex min-w-0 items-center gap-2 text-fg">
+        <IconMessage className="shrink-0 text-fg-muted" size={13} stroke={1.8} />
+        <span className="min-w-0 truncate" title={session.title}>
+          {session.title}
+        </span>
+      </div>
+      <div className="flex min-w-0 items-center gap-2 text-fg-muted">
+        <IconGitBranch className="shrink-0 text-fg-faint" size={13} stroke={1.8} />
+        <span className="min-w-0 truncate font-mono text-2xs" title={branch}>
+          {branch ?? "Unknown branch"}
+        </span>
+      </div>
+      <div className="flex min-w-0 items-center gap-2 text-fg-muted">
+        <IconFolder className="shrink-0 text-fg-faint" size={13} stroke={1.8} />
+        <span className="min-w-0 truncate font-mono text-2xs" title={folder}>
+          {folder}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function SessionRow({
-  title,
-  updatedAt,
+  session,
   isActive,
-  pinned,
   activity,
   onSelect,
   onPin,
   onArchive,
   onDelete,
 }: {
-  title: string;
-  updatedAt: string;
+  session: AgentSessionInfo;
   isActive: boolean;
-  pinned: boolean;
   activity: SessionActivity | undefined;
   onSelect(): void;
   onPin(event: MouseEvent<HTMLButtonElement>): void;
   onArchive(event: MouseEvent<HTMLButtonElement>): void;
-  onDelete(event: MouseEvent<HTMLButtonElement>): void;
+  onDelete(cleanupWorktree?: boolean): void;
 }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [worktreeDeleteOpen, setWorktreeDeleteOpen] = useState(false);
   const hasStatus = Boolean(
     activity && (activity.running || activity.needsInput || activity.unread || activity.failed),
   );
+  const worktree = session.worktree;
   useEffect(() => {
     if (!confirmDelete) {
       return;
@@ -442,68 +487,141 @@ function SessionRow({
     return () => window.clearTimeout(timeout);
   }, [confirmDelete]);
 
+  function confirmSessionDelete(): void {
+    setConfirmDelete(false);
+    if (worktree) {
+      setWorktreeDeleteOpen(true);
+      return;
+    }
+    onDelete();
+  }
+
   return (
-    <m.div
-      className={cn(
-        "group flex h-[34px] w-full items-center rounded-lg pr-1 pl-[30px] text-sm font-normal transition-colors hover:bg-hover",
-        isActive ? "bg-active text-fg" : "text-fg-muted hover:text-fg",
-      )}
-      layout
-      onBlurCapture={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget)) {
-          setConfirmDelete(false);
-        }
-      }}
-      onMouseLeave={() => setConfirmDelete(false)}
-      transition={{ duration: 0.14, ease: "easeOut" }}
-    >
-      <button
-        className="flex min-w-0 flex-1 items-center gap-2 py-2 pr-1 pl-3 text-left"
-        onClick={onSelect}
-        title="Open"
-        type="button"
+    <>
+      <SessionRowTooltip session={session}>
+        <m.div
+        className={cn(
+          "group flex h-[34px] w-full items-center rounded-lg pr-1 pl-[30px] text-sm font-normal transition-colors hover:bg-hover",
+          isActive ? "bg-active text-fg" : "text-fg-muted hover:text-fg",
+        )}
+        layout
+        onBlurCapture={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget)) {
+            setConfirmDelete(false);
+          }
+        }}
+        onMouseLeave={() => setConfirmDelete(false)}
+        transition={{ duration: 0.14, ease: "easeOut" }}
       >
-        <span className="min-w-0 flex-1 truncate">{title}</span>
-        <span
-          className={cn(
-            "shrink-0 text-xs font-normal text-fg-faint group-hover:hidden",
-            hasStatus ? "ml-1" : "ml-2",
-          )}
-        >
-          {formatRelativeTime(updatedAt)}
-        </span>
-        {hasStatus ? (
-          <SessionStatusDot activity={activity} className="ml-1 group-hover:hidden" />
-        ) : null}
-      </button>
-      <span className="ml-1 hidden shrink-0 items-center group-hover:flex group-focus-within:flex">
-        <IconButton label={pinned ? "Unpin chat" : "Pin chat"} onClick={onPin}>
-          {pinned ? <IconPinnedOff size={14} stroke={1.8} /> : <IconPin size={14} stroke={1.8} />}
-        </IconButton>
-        <IconButton label="Archive" onClick={onArchive}>
-          <IconArchive size={14} stroke={1.8} />
-        </IconButton>
-        {confirmDelete ? (
-          <button
-            className="ml-0.5 h-6 rounded-md px-1.5 text-2xs text-danger transition-colors hover:bg-active"
-            onClick={onDelete}
+        <button
+            className="flex min-w-0 flex-1 items-center gap-2 py-2 pr-1 pl-3 text-left"
+            onClick={onSelect}
+            title="Open"
             type="button"
           >
-            Confirm
-          </button>
-        ) : (
-          <IconButton
-            label="Delete"
-            onClick={(event) => {
-              event.stopPropagation();
-              setConfirmDelete(true);
-            }}
-          >
-            <IconTrash size={14} stroke={1.8} />
+            <span className="min-w-0 flex-1 truncate">{session.title}</span>
+            {worktree ? (
+              <span className="flex min-w-0 shrink items-center gap-1 text-2xs text-accent">
+                <IconGitBranch className="shrink-0" size={12} stroke={1.8} />
+                <span className="rounded bg-accent/10 px-1 py-0.5">worktree</span>
+              </span>
+            ) : null}
+            <span
+              className={cn(
+                "shrink-0 text-xs font-normal text-fg-faint group-hover:hidden",
+                hasStatus ? "ml-1" : "ml-2",
+              )}
+            >
+              {formatRelativeTime(session.updatedAt)}
+            </span>
+            {hasStatus ? (
+              <SessionStatusDot activity={activity} className="ml-1 group-hover:hidden" />
+            ) : null}
+        </button>
+        <span className="ml-1 hidden shrink-0 items-center group-hover:flex group-focus-within:flex">
+          <IconButton label={session.pinnedAt ? "Unpin chat" : "Pin chat"} onClick={onPin}>
+            {session.pinnedAt ? (
+              <IconPinnedOff size={14} stroke={1.8} />
+            ) : (
+              <IconPin size={14} stroke={1.8} />
+            )}
           </IconButton>
-        )}
-      </span>
-    </m.div>
+          <IconButton label="Archive" onClick={onArchive}>
+            <IconArchive size={14} stroke={1.8} />
+          </IconButton>
+          {confirmDelete ? (
+            <button
+              className="ml-0.5 h-6 rounded-md px-1.5 text-2xs text-danger transition-colors hover:bg-active"
+              onClick={confirmSessionDelete}
+              type="button"
+            >
+              Confirm
+            </button>
+          ) : (
+            <IconButton
+              label="Delete"
+              onClick={(event) => {
+                event.stopPropagation();
+                setConfirmDelete(true);
+              }}
+            >
+              <IconTrash size={14} stroke={1.8} />
+            </IconButton>
+          )}
+        </span>
+        </m.div>
+      </SessionRowTooltip>
+      {worktree ? (
+        <Dialog.Root onOpenChange={setWorktreeDeleteOpen} open={worktreeDeleteOpen}>
+          <Dialog.Portal>
+            <Dialog.Backdrop className="fixed inset-0 z-50 bg-black/50" />
+            <Dialog.Popup className="-translate-x-1/2 -translate-y-1/2 fixed top-1/2 left-1/2 z-50 w-[min(420px,calc(100vw-2rem))] rounded-xl border border-hairline bg-elevated p-4 shadow-popup outline-none">
+              <Dialog.Title className="text-sm font-medium text-fg">
+                Delete worktree chat?
+              </Dialog.Title>
+              <Dialog.Description className="mt-2 text-sm text-fg-muted">
+                <span className="block truncate font-mono text-xs text-fg">{worktree.branch}</span>
+                <span className="mt-1 block truncate font-mono text-2xs text-fg-faint">
+                  {worktree.path}
+                </span>
+              </Dialog.Description>
+              <p className="mt-3 text-xs text-fg-faint">
+                Clean up removes this worktree, its branch, and uncommitted changes.
+              </p>
+              <div className="mt-4 flex justify-end gap-2">
+                <button
+                  className="rounded-md px-3 py-1.5 text-sm text-fg-muted hover:bg-hover"
+                  onClick={() => setWorktreeDeleteOpen(false)}
+                  type="button"
+                >
+                  Cancel
+                </button>
+                <button
+                  className="rounded-md border border-hairline px-3 py-1.5 text-sm text-fg hover:bg-hover"
+                  onClick={() => {
+                    setWorktreeDeleteOpen(false);
+                    onDelete(false);
+                  }}
+                  type="button"
+                >
+                  Keep worktree
+                </button>
+                <button
+                  className="rounded-md bg-danger px-3 py-1.5 text-sm text-white hover:bg-danger/90"
+                  onClick={() => {
+                    setWorktreeDeleteOpen(false);
+                    onDelete(true);
+                  }}
+                  type="button"
+                >
+                  Clean up
+                </button>
+              </div>
+            </Dialog.Popup>
+          </Dialog.Portal>
+        </Dialog.Root>
+      ) : null}
+    </>
   );
 }
 

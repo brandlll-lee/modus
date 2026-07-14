@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
-import type { AgentSessionInfo, SubagentWorktreeInfo } from "../../shared/contracts";
+import type {
+  AgentSessionInfo,
+  SessionWorktreeInfo,
+  SubagentWorktreeInfo,
+} from "../../shared/contracts";
 import { getDatabase } from "../db/database";
 
 type AgentSessionRow = {
@@ -7,6 +11,7 @@ type AgentSessionRow = {
   workspace_id: string;
   title: string;
   cwd: string;
+  branch: string | null;
   status: AgentSessionInfo["status"];
   runtime: "pi-sdk" | "pi-rpc";
   model: string | null;
@@ -16,6 +21,11 @@ type AgentSessionRow = {
   subagent_task: string | null;
   subagent_type: string | null;
   subagent_readonly: number;
+  worktree_path: string | null;
+  worktree_branch: string | null;
+  worktree_base_branch: string | null;
+  worktree_base_sha: string | null;
+  worktree_status: string | null;
   subagent_worktree_path: string | null;
   subagent_worktree_branch: string | null;
   subagent_worktree_base_sha: string | null;
@@ -28,8 +38,9 @@ type AgentSessionRow = {
   updated_at: string;
 };
 
-const SESSION_COLUMNS = `id, workspace_id, title, cwd, status, runtime, model, pi_session_id,
+const SESSION_COLUMNS = `id, workspace_id, title, cwd, branch, status, runtime, model, pi_session_id,
   pi_session_file, parent_session_id, subagent_task, subagent_type, subagent_readonly,
+  worktree_path, worktree_branch, worktree_base_branch, worktree_base_sha, worktree_status,
   subagent_worktree_path, subagent_worktree_branch, subagent_worktree_base_sha,
   subagent_integration_status, subagent_changed_files_json, subagent_conflict_files_json,
   pinned_at, archived_at, created_at, updated_at`;
@@ -58,6 +69,9 @@ function toSession(row: AgentSessionRow): AgentSessionInfo {
     updatedAt: row.updated_at,
   };
 
+  if (row.branch !== null) {
+    session.branch = row.branch;
+  }
   if (row.model !== null) {
     session.model = row.model;
   }
@@ -86,6 +100,21 @@ function toSession(row: AgentSessionRow): AgentSessionInfo {
     session.subagentReadOnly = true;
   }
   if (
+    row.worktree_path !== null &&
+    row.worktree_branch !== null &&
+    row.worktree_base_branch !== null &&
+    row.worktree_base_sha !== null
+  ) {
+    const status = row.worktree_status as SessionWorktreeInfo["status"] | null;
+    session.worktree = {
+      path: row.worktree_path,
+      branch: row.worktree_branch,
+      baseBranch: row.worktree_base_branch,
+      baseSha: row.worktree_base_sha,
+      status: status ?? "active",
+    };
+  }
+  if (
     row.subagent_worktree_path !== null &&
     row.subagent_worktree_branch !== null &&
     row.subagent_worktree_base_sha !== null
@@ -112,6 +141,7 @@ export function createAgentSessionRecord(input: {
   workspaceId: string;
   title: string;
   cwd: string;
+  branch?: string;
   runtime?: "pi-sdk" | "pi-rpc";
   model?: string;
   piSessionId?: string;
@@ -120,6 +150,7 @@ export function createAgentSessionRecord(input: {
   subagentTask?: string;
   subagentType?: string;
   subagentReadOnly?: boolean;
+  worktree?: SessionWorktreeInfo;
   subagentWorktree?: SubagentWorktreeInfo;
 }): AgentSessionInfo {
   const now = new Date().toISOString();
@@ -135,6 +166,9 @@ export function createAgentSessionRecord(input: {
     updatedAt: now,
   };
 
+  if (input.branch !== undefined) {
+    session.branch = input.branch;
+  }
   if (input.model !== undefined) {
     session.model = input.model;
   }
@@ -156,25 +190,30 @@ export function createAgentSessionRecord(input: {
   if (input.subagentReadOnly !== undefined) {
     session.subagentReadOnly = input.subagentReadOnly;
   }
+  if (input.worktree !== undefined) {
+    session.worktree = input.worktree;
+  }
   if (input.subagentWorktree !== undefined) {
     session.subagentWorktree = input.subagentWorktree;
   }
   getDatabase()
     .prepare(
       `insert into agent_sessions (
-        id, workspace_id, title, cwd, status, runtime, model, pi_session_id, pi_session_file,
+        id, workspace_id, title, cwd, branch, status, runtime, model, pi_session_id, pi_session_file,
         parent_session_id, subagent_task, subagent_type, subagent_readonly,
+        worktree_path, worktree_branch, worktree_base_branch, worktree_base_sha, worktree_status,
         subagent_worktree_path, subagent_worktree_branch, subagent_worktree_base_sha,
         subagent_integration_status, subagent_changed_files_json, subagent_conflict_files_json,
         created_at, updated_at
        )
-       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       session.id,
       session.workspaceId,
       session.title,
       session.cwd,
+      session.branch ?? null,
       session.status,
       runtime,
       session.model ?? null,
@@ -184,6 +223,11 @@ export function createAgentSessionRecord(input: {
       session.subagentTask ?? null,
       session.subagentType ?? null,
       session.subagentReadOnly ? 1 : 0,
+      session.worktree?.path ?? null,
+      session.worktree?.branch ?? null,
+      session.worktree?.baseBranch ?? null,
+      session.worktree?.baseSha ?? null,
+      session.worktree?.status ?? null,
       session.subagentWorktree?.path ?? null,
       session.subagentWorktree?.branch ?? null,
       session.subagentWorktree?.baseSha ?? null,
@@ -202,6 +246,39 @@ export function createAgentSessionRecord(input: {
 }
 
 export function updateAgentSessionWorktree(
+  sessionId: string,
+  worktree: SessionWorktreeInfo | undefined,
+): AgentSessionInfo | undefined {
+  const existing = getAgentSession(sessionId);
+  if (!existing) {
+    return undefined;
+  }
+
+  getDatabase()
+    .prepare(
+      `update agent_sessions
+       set worktree_path = ?,
+           worktree_branch = ?,
+           worktree_base_branch = ?,
+           worktree_base_sha = ?,
+           worktree_status = ?,
+           updated_at = ?
+       where id = ?`,
+    )
+    .run(
+      worktree?.path ?? null,
+      worktree?.branch ?? null,
+      worktree?.baseBranch ?? null,
+      worktree?.baseSha ?? null,
+      worktree?.status ?? null,
+      new Date().toISOString(),
+      sessionId,
+    );
+
+  return getAgentSession(sessionId);
+}
+
+export function updateAgentSessionSubagentWorktree(
   sessionId: string,
   worktree: SubagentWorktreeInfo | undefined,
 ): AgentSessionInfo | undefined {

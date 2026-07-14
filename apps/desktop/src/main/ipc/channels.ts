@@ -27,6 +27,7 @@ export const IPC_CHANNELS = {
   agentApplySubagentWorktree: "agent:apply-subagent-worktree",
   agentAbortSubagentWorktreeApply: "agent:abort-subagent-worktree-apply",
   agentCleanupSubagentWorktree: "agent:cleanup-subagent-worktree",
+  agentCleanupSessionWorktree: "agent:cleanup-session-worktree",
   agentSetModel: "agent:set-model",
   agentCycleModel: "agent:cycle-model",
   agentEvent: "agent:event",

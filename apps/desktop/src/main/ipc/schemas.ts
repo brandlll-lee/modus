@@ -20,11 +20,28 @@ const modelCostSchema = z
   })
   .optional();
 
-export const agentCreateSchema = z.object({
-  workspaceId: nonEmptyString,
+export const agentCreateSchema = z
+  .object({
+    workspaceId: nonEmptyString,
+    cwd: nonEmptyString,
+    title: nonEmptyString,
+    model: optionalNonEmptyString,
+    draftScope: z.enum(["local", "worktree"]).optional(),
+    baseBranch: optionalNonEmptyString,
+    baseBranchRemote: z.boolean().optional(),
+  })
+  .refine((input) => input.draftScope === undefined || input.baseBranch !== undefined, {
+    message: "baseBranch is required when selecting a chat branch.",
+    path: ["baseBranch"],
+  })
+  .refine((input) => input.draftScope !== "local" || !input.baseBranchRemote, {
+    message: "Local sessions require a local branch.",
+    path: ["baseBranchRemote"],
+  });
+
+export const agentCleanupSessionWorktreeSchema = z.object({
+  sessionId: nonEmptyString,
   cwd: nonEmptyString,
-  title: nonEmptyString,
-  model: optionalNonEmptyString,
 });
 
 export const workspacePinSchema = z.object({
