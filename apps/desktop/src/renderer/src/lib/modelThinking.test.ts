@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { modelThinkingOptions, selectedThinkingLabel } from "./modelThinking";
+import {
+  modelThinkingOptions,
+  selectedThinkingLabel,
+  selectedThinkingOption,
+} from "./modelThinking";
 
 describe("modelThinkingOptions", () => {
   it("prefers explicit provider-facing thinking options", () => {
@@ -8,9 +12,9 @@ describe("modelThinkingOptions", () => {
       thinkingLevels: ["off", "xhigh"],
       thinkingVariant: "max",
       thinkingOptions: [
-        { value: "off", label: "off", level: "off" },
-        { value: "xhigh", label: "xhigh", level: "xhigh" },
-        { value: "max", label: "max", level: "xhigh" },
+        { value: "off", label: "Off", level: "off" },
+        { value: "xhigh", label: "Extra High", level: "xhigh" },
+        { value: "max", label: "Maximum", level: "xhigh" },
       ],
     } as const;
 
@@ -19,7 +23,22 @@ describe("modelThinkingOptions", () => {
       "xhigh",
       "max",
     ]);
-    expect(selectedThinkingLabel(model)).toBe("max");
+    expect(selectedThinkingLabel(model)).toBe("Maximum");
+    expect(selectedThinkingOption(model).value).toBe("max");
+  });
+
+  it("preserves the provider order for any number of discrete levels", () => {
+    const model = {
+      thinkingLevel: "high",
+      thinkingLevels: ["off", "low", "high"],
+    } as const;
+
+    expect(modelThinkingOptions(model).map((option) => option.value)).toEqual([
+      "off",
+      "low",
+      "high",
+    ]);
+    expect(selectedThinkingOption(model).value).toBe("high");
   });
 
   it("labels token-budget selections without inventing named levels", () => {

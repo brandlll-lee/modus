@@ -1,6 +1,8 @@
 import { Menu } from "@base-ui/react/menu";
 import { Popover } from "@base-ui/react/popover";
+import { Slider } from "@base-ui/react/slider";
 import {
+  IconAdjustmentsHorizontal,
   IconArrowUp,
   IconCheck,
   IconChevronDown,
@@ -13,6 +15,7 @@ import {
 import { AnimatePresence, m } from "motion/react";
 import {
   type ClipboardEvent,
+  type CSSProperties,
   type DragEvent,
   type KeyboardEvent,
   type ReactNode,
@@ -29,6 +32,7 @@ import type {
   PromptDelivery,
   PromptImageAttachment,
   SkillSelection,
+  ThinkingOption,
 } from "../../../../shared/contracts";
 import { ImageThumb } from "../../components/ui/ImageViewer";
 import { ShineBorder } from "../../components/ui/ShineBorder";
@@ -469,7 +473,7 @@ export function Composer({
           {!hasText && !hasInlineTokens && !isComposing ? (
             <div
               aria-hidden
-              className="pointer-events-none absolute inset-x-0 top-0 px-4 pt-4 text-md font-normal text-fg-subtle"
+              className="pointer-events-none absolute inset-x-0 top-0 px-4 pt-4 text-md font-normal text-fg-faint"
             >
               {COMPOSER_PLACEHOLDER}
             </div>
@@ -644,6 +648,12 @@ function ModelSelect({
   const current = models.find((item) => item.id === model) ?? models[0];
   const thinkingOptions = current ? modelThinkingOptions(current) : [];
   const thinkingSelection = current ? selectedThinkingOption(current) : undefined;
+  const effortAvailable = Boolean(
+    current?.supportsThinking && (current.thinkingBudget || thinkingOptions.length > 0),
+  );
+  const discreteEffortOptions = current?.thinkingBudget ? [] : thinkingOptions;
+  const effortLabel = effortAvailable && current ? selectedThinkingLabel(current) : "Not supported";
+  const sliderLabel = current?.thinkingBudget ? "Custom budget" : effortLabel;
   const [budgetDraft, setBudgetDraft] = useState("");
   useEffect(() => {
     if (!current?.id) {
@@ -710,64 +720,7 @@ function ModelSelect({
       </Menu.Trigger>
       <Menu.Portal>
         <Menu.Positioner align="start" side="bottom" sideOffset={4}>
-          <Menu.Popup className="origin-(--transform-origin) w-[260px] max-w-[calc(100vw-24px)] rounded-lg border border-hairline bg-elevated p-1 shadow-popup">
-            <div className="px-2.5 pt-1.5 pb-1 text-fg-faint text-xs">Reasoning</div>
-            {current.thinkingBudget ? (
-              <>
-                <Menu.Item
-                  className="flex h-8 cursor-default items-center justify-between gap-3 rounded-md px-2.5 text-fg-subtle text-sm outline-none select-none data-highlighted:bg-hover"
-                  disabled={!onModelConfigChange}
-                  onClick={() => void onModelConfigChange?.(current.id, "off")}
-                >
-                  <span>Off</span>
-                  {current.thinkingLevel === "off" ? (
-                    <IconCheck className="text-fg-muted" size={15} stroke={1.8} />
-                  ) : null}
-                </Menu.Item>
-                <div className="grid grid-cols-[minmax(0,1fr)_28px] gap-1 px-1.5 py-1">
-                  <input
-                    aria-label="Thinking token budget"
-                    className="h-8 min-w-0 rounded-md border border-hairline bg-canvas px-2.5 text-fg-subtle text-sm outline-none focus:border-fg-faint"
-                    max={current.thinkingBudget.max}
-                    min={current.thinkingBudget.min ?? 0}
-                    onChange={(event) => setBudgetDraft(event.target.value)}
-                    onKeyDown={(event) => {
-                      event.stopPropagation();
-                      if (event.key === "Enter") applyBudget();
-                    }}
-                    placeholder="Tokens"
-                    type="number"
-                    value={budgetDraft}
-                  />
-                  <button
-                    aria-label="Apply thinking token budget"
-                    className="flex size-7 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-hover hover:text-fg"
-                    disabled={!onModelConfigChange}
-                    onClick={applyBudget}
-                    type="button"
-                  >
-                    <IconCheck size={14} stroke={1.8} />
-                  </button>
-                </div>
-              </>
-            ) : (
-              thinkingOptions.map((option) => (
-                <Menu.Item
-                  className="flex h-8 cursor-default items-center justify-between gap-3 rounded-md px-2.5 text-fg-subtle text-sm outline-none select-none data-highlighted:bg-hover"
-                  disabled={!onModelConfigChange}
-                  key={option.value}
-                  onClick={() => void onModelConfigChange?.(current.id, option.value)}
-                >
-                  <span>{option.label}</span>
-                  {thinkingSelection?.value === option.value ? (
-                    <IconCheck className="text-fg-muted" size={15} stroke={1.8} />
-                  ) : null}
-                </Menu.Item>
-              ))
-            )}
-
-            <div className="my-1 h-px bg-hairline" />
-
+          <Menu.Popup className="origin-(--transform-origin) w-[280px] max-w-[calc(100vw-24px)] rounded-lg border border-hairline bg-elevated p-1 shadow-popup">
             <Menu.SubmenuRoot>
               <Menu.SubmenuTrigger className="flex h-8 cursor-default items-center justify-between gap-3 rounded-md px-2.5 text-sm outline-none select-none data-highlighted:bg-hover data-popup-open:bg-hover">
                 <span className="text-fg-subtle">Model</span>
@@ -819,6 +772,86 @@ function ModelSelect({
                 </Menu.Positioner>
               </Menu.Portal>
             </Menu.SubmenuRoot>
+
+            <Menu.SubmenuRoot>
+              <Menu.SubmenuTrigger
+                className="flex h-8 cursor-default items-center justify-between gap-3 rounded-md px-2.5 text-sm outline-none select-none data-disabled:opacity-45 data-highlighted:bg-hover data-popup-open:bg-hover"
+                disabled={!effortAvailable || !onModelConfigChange}
+              >
+                <span className="text-fg-subtle">Effort</span>
+                <span className="flex min-w-0 items-center gap-1 text-fg-faint text-xs">
+                  <span className="max-w-[150px] truncate">{effortLabel}</span>
+                  <IconChevronRight size={13} stroke={1.8} />
+                </span>
+              </Menu.SubmenuTrigger>
+              <Menu.Portal>
+                <Menu.Positioner align="start" side="right" sideOffset={5}>
+                  <Menu.Popup className="origin-(--transform-origin) w-[220px] max-w-[calc(100vw-24px)] rounded-lg border border-hairline bg-elevated p-1 shadow-popup">
+                    <div className="px-2.5 pt-1.5 pb-1 text-fg-faint text-xs">Effort</div>
+                    {current.thinkingBudget ? (
+                      <>
+                        <Menu.Item
+                          className="flex h-8 cursor-default items-center justify-between gap-3 rounded-md px-2.5 text-fg-subtle text-sm outline-none select-none data-highlighted:bg-hover"
+                          onClick={() => void onModelConfigChange?.(current.id, "off")}
+                        >
+                          <span>Off</span>
+                          {current.thinkingLevel === "off" ? (
+                            <IconCheck className="text-fg-muted" size={15} stroke={1.8} />
+                          ) : null}
+                        </Menu.Item>
+                        <div className="grid grid-cols-[minmax(0,1fr)_28px] gap-1 px-1.5 py-1">
+                          <input
+                            aria-label="Thinking token budget"
+                            className="h-8 min-w-0 rounded-md border border-hairline bg-canvas px-2.5 text-fg-subtle text-sm outline-none focus:border-fg-faint"
+                            max={current.thinkingBudget.max}
+                            min={current.thinkingBudget.min ?? 0}
+                            onChange={(event) => setBudgetDraft(event.target.value)}
+                            onKeyDown={(event) => {
+                              event.stopPropagation();
+                              if (event.key === "Enter") applyBudget();
+                            }}
+                            placeholder="Tokens"
+                            type="number"
+                            value={budgetDraft}
+                          />
+                          <button
+                            aria-label="Apply thinking token budget"
+                            className="flex size-7 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-hover hover:text-fg"
+                            onClick={applyBudget}
+                            type="button"
+                          >
+                            <IconCheck size={14} stroke={1.8} />
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      thinkingOptions.map((option) => (
+                        <Menu.Item
+                          className="flex h-8 cursor-default items-center justify-between gap-3 rounded-md px-2.5 text-fg-subtle text-sm outline-none select-none data-highlighted:bg-hover"
+                          key={option.value}
+                          onClick={() => void onModelConfigChange?.(current.id, option.value)}
+                        >
+                          <span>{option.label}</span>
+                          {thinkingSelection?.value === option.value ? (
+                            <IconCheck className="text-fg-muted" size={15} stroke={1.8} />
+                          ) : null}
+                        </Menu.Item>
+                      ))
+                    )}
+                  </Menu.Popup>
+                </Menu.Positioner>
+              </Menu.Portal>
+            </Menu.SubmenuRoot>
+
+            <div className="my-1 h-px bg-hairline" />
+            <EffortEnergySlider
+              disabled={!onModelConfigChange || discreteEffortOptions.length < 2}
+              label={sliderLabel}
+              options={discreteEffortOptions}
+              selectedValue={thinkingSelection?.value}
+              syncKey={`${current.id}:${thinkingSelection?.value ?? ""}`}
+              onCommit={(value) => void onModelConfigChange?.(current.id, value)}
+            />
           </Menu.Popup>
         </Menu.Positioner>
       </Menu.Portal>
@@ -830,6 +863,89 @@ function ModelSelect({
     >
       No model configured
     </button>
+  );
+}
+
+function EffortEnergySlider({
+  disabled,
+  label,
+  options,
+  selectedValue,
+  syncKey,
+  onCommit,
+}: {
+  disabled: boolean;
+  label: string;
+  options: ThinkingOption[];
+  selectedValue: string | undefined;
+  syncKey: string;
+  onCommit(value: string): void;
+}) {
+  const selectedIndex = Math.max(
+    0,
+    options.findIndex((option) => option.value === selectedValue),
+  );
+  const [preview, setPreview] = useState({ index: selectedIndex, syncKey });
+  const max = Math.max(1, options.length - 1);
+  const index = Math.min(preview.syncKey === syncKey ? preview.index : selectedIndex, max);
+  const energy = options.length > 1 ? index / (options.length - 1) : 0;
+  const previewOption = options[index];
+
+  return (
+    <div
+      className="effort-energy flex h-10 items-center gap-3 rounded-md px-2.5"
+      data-maximum={!disabled && options.length > 1 && index === options.length - 1}
+      style={
+        {
+          "--effort-glow": `${2 + energy * 8}px`,
+          "--effort-opacity": 0.38 + energy * 0.62,
+        } as CSSProperties
+      }
+    >
+      <div className="flex min-w-0 flex-1 items-center gap-2 text-xs">
+        <IconAdjustmentsHorizontal className="shrink-0 text-fg-faint" size={15} stroke={1.7} />
+        <span className="min-w-0 truncate text-fg-subtle">
+          Effort <span className="text-fg-faint">({previewOption?.label ?? label})</span>
+        </span>
+      </div>
+      <Slider.Root
+        aria-label="Effort"
+        className="relative w-[102px] shrink-0"
+        disabled={disabled}
+        max={max}
+        min={0}
+        step={1}
+        thumbAlignment="edge"
+        value={index}
+        onValueChange={(nextIndex) => setPreview({ index: nextIndex, syncKey })}
+        onValueCommitted={(nextIndex) => {
+          const option = options[nextIndex];
+          if (option && option.value !== selectedValue) onCommit(option.value);
+        }}
+      >
+        <Slider.Control className="effort-energy-control relative flex h-[18px] touch-none items-center select-none data-disabled:opacity-35">
+          <Slider.Track className="effort-energy-track relative h-[18px] w-full overflow-hidden rounded-full">
+            <Slider.Indicator className="effort-energy-fill absolute inset-y-0 rounded-full" />
+            {options.map((option, optionIndex) => (
+              <span
+                aria-hidden="true"
+                className="effort-energy-stop absolute top-1/2 size-1 -translate-x-1/2 -translate-y-1/2 rounded-full"
+                data-unfilled={optionIndex > index}
+                key={option.value}
+                style={{
+                  left: `calc(${(optionIndex / max) * 100}% + ${8 - (optionIndex / max) * 16}px)`,
+                }}
+              />
+            ))}
+          </Slider.Track>
+          <Slider.Thumb
+            className="effort-energy-thumb size-4 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-focus-ring-soft"
+            getAriaLabel={() => "Effort"}
+            getAriaValueText={(_, value) => options[value]?.label ?? label}
+          />
+        </Slider.Control>
+      </Slider.Root>
+    </div>
   );
 }
 

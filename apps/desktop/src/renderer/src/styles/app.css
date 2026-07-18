@@ -556,6 +556,37 @@ input {
   }
 }
 
+@keyframes effort-energy-flow {
+  0% {
+    opacity: 0;
+    transform: translate3d(28%, 0, 0) scaleX(0.72);
+  }
+  18% {
+    opacity: 1;
+  }
+  82% {
+    opacity: 0.9;
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(-28%, 0, 0) scaleX(1.08);
+  }
+}
+
+@keyframes effort-energy-particles {
+  0% {
+    opacity: 0;
+    transform: translate3d(30%, 0, 0) scaleX(0.55);
+  }
+  22% {
+    opacity: 0.9;
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(-38%, 0, 0) scaleX(1.15);
+  }
+}
+
 @keyframes modus-stream-tail-fade-a {
   from {
     opacity: 0.62;
@@ -616,6 +647,119 @@ input {
       transparent 45%
     );
   }
+
+  .effort-energy-track {
+    isolation: isolate;
+    background: color-mix(in srgb, var(--color-fg) 18%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-fg) 7%, transparent);
+  }
+
+  .effort-energy-fill {
+    z-index: 1;
+    overflow: hidden;
+    background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--color-focus-ring) 84%, var(--color-canvas)),
+      var(--color-focus-ring-soft)
+    );
+    opacity: var(--effort-opacity);
+    box-shadow: 0 0 var(--effort-glow) color-mix(in srgb, var(--color-focus-ring) 68%, transparent);
+    transition:
+      width 210ms var(--ease-out-quint),
+      opacity 180ms var(--ease-out-quint),
+      box-shadow 180ms var(--ease-out-quint);
+  }
+
+  .effort-energy-stop {
+    z-index: 2;
+    background: color-mix(in srgb, var(--color-fg) 48%, transparent);
+    opacity: 0;
+    transition: opacity 120ms var(--ease-out-quint);
+  }
+
+  .effort-energy-stop[data-unfilled="true"] {
+    opacity: 1;
+  }
+
+  .effort-energy-thumb {
+    z-index: 3;
+    background: color-mix(in srgb, #f6f8ff 82%, var(--color-focus-ring-soft));
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, #f6f8ff 68%, transparent),
+      0 0 var(--effort-glow) color-mix(in srgb, var(--color-focus-ring) 72%, transparent);
+    scale: 1;
+    transition:
+      inset-inline-start 210ms var(--ease-out-quint),
+      scale 160ms var(--ease-out-quint),
+      background-color 180ms var(--ease-out-quint),
+      box-shadow 180ms var(--ease-out-quint);
+  }
+
+  .effort-energy-control:hover:not(:active) .effort-energy-thumb {
+    scale: 1.06;
+  }
+
+  .effort-energy-control:active .effort-energy-fill,
+  .effort-energy-control:active .effort-energy-thumb {
+    transition-duration: 65ms;
+    transition-timing-function: linear;
+  }
+
+  .effort-energy-control:active .effort-energy-thumb {
+    scale: 0.9;
+  }
+
+  .effort-energy[data-maximum="true"] .effort-energy-thumb {
+    background: #f6f8ff;
+  }
+
+  .effort-energy[data-maximum="true"] .effort-energy-track {
+    background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--color-focus-ring) 84%, var(--color-canvas)),
+      var(--color-focus-ring-soft)
+    );
+  }
+
+  .effort-energy[data-maximum="true"] .effort-energy-fill::before,
+  .effort-energy[data-maximum="true"] .effort-energy-fill::after {
+    position: absolute;
+    inset: -3px -30%;
+    content: "";
+    pointer-events: none;
+    will-change: transform, opacity;
+  }
+
+  .effort-energy[data-maximum="true"] .effort-energy-fill::before {
+    background:
+      radial-gradient(
+        ellipse at 62% 50%,
+        color-mix(in srgb, #f6f8ff 94%, var(--color-focus-ring-soft)) 0%,
+        color-mix(in srgb, var(--color-focus-ring-soft) 68%, transparent) 12%,
+        transparent 34%
+      ),
+      linear-gradient(
+        90deg,
+        transparent 24%,
+        color-mix(in srgb, var(--color-focus-ring-soft) 42%, transparent) 48%,
+        color-mix(in srgb, #f6f8ff 86%, transparent) 60%,
+        transparent 76%
+      );
+    filter: blur(1px);
+    mix-blend-mode: screen;
+    animation: effort-energy-flow 1.35s linear infinite;
+  }
+
+  .effort-energy[data-maximum="true"] .effort-energy-fill::after {
+    inset: 1px -30%;
+    background:
+      radial-gradient(circle at 82% 24%, #f6f8ff 0 1px, transparent 1.5px),
+      radial-gradient(circle at 70% 72%, var(--color-focus-ring-soft) 0 1px, transparent 1.6px),
+      radial-gradient(circle at 55% 38%, #f6f8ff 0 0.75px, transparent 1.35px),
+      radial-gradient(circle at 38% 68%, var(--color-focus-ring-soft) 0 0.75px, transparent 1.4px);
+    mask-image: linear-gradient(90deg, transparent, #000 22%, #000 78%, transparent);
+    animation: effort-energy-particles 820ms var(--ease-out-quint) infinite;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -625,6 +769,19 @@ input {
 
   .visual-glare-loading::before {
     animation: none;
+  }
+
+  .effort-energy[data-maximum="true"] .effort-energy-fill::before,
+  .effort-energy[data-maximum="true"] .effort-energy-fill::after {
+    opacity: 0.6;
+    transform: none;
+    animation: none;
+  }
+
+  .effort-energy-fill,
+  .effort-energy-stop,
+  .effort-energy-thumb {
+    transition: none;
   }
 
   .modus-markdown [data-sd-animate] {
