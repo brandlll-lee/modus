@@ -1249,12 +1249,11 @@ describe("PiSdkRuntime", () => {
     const plansRoot = join(userData, "plans");
     const plan = writePlan(plansRoot, {
       workspaceId,
-      slug: "feat",
+      sessionId,
       title: "Feat",
       overview: "Build the thing.",
-      content: "# Feat\n",
+      blocks: [{ type: "markdown", content: "# Feat\n" }],
       todos: [{ content: "Step one" }, { content: "Step two" }],
-      sessionId,
     });
     expect(plan.buildStatus).toBe("not_built");
 
@@ -1310,12 +1309,11 @@ describe("PiSdkRuntime", () => {
     const plansRoot = join(userData, "plans");
     const plan = writePlan(plansRoot, {
       workspaceId,
-      slug: "feat",
+      sessionId,
       title: "Feat",
       overview: "o",
-      content: "# Feat\n",
+      blocks: [{ type: "markdown", content: "# Feat\n" }],
       todos: [{ content: "Step one" }],
-      sessionId,
     });
 
     // The build turn ends in error (last assistant stopReason = error).

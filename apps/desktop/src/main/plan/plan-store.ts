@@ -1,47 +1,22 @@
-/**
- * Plan persistence for Plan Mode. A plan is a single markdown artifact — the
- * durable, human- and agent-editable source of truth that survives the chat
- * window (the v1 interface validated by Cursor/Windsurf/Devin) and later feeds
- * single-agent or fusion execution.
- *
- * Storage policy (mirrors Cursor): plans live OUTSIDE the repo by default (under
- * the app's user-data dir, never committed); "save to workspace" copies the
- * active plan into `<repo>/.modus/specs/<slug>/` when the user opts in.
- *
- * This module is pure I/O over an explicit `rootDir`, so it is unit-testable
- * with a real temp directory and no Electron/mocks.
- */
+/** Session-scoped Plan Mode persistence. */
 
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { PlanBuildStatus, PlanRef, PlanTodo } from "../../shared/contracts";
+import type { PlanBlock, PlanBuildStatus, PlanRef, PlanTodo } from "../../shared/contracts";
 
 const PLAN_FILE = "plan.md";
 const META_FILE = "plan.json";
 
-/** Kebab-case slug from a plan title; stable, filesystem-safe, never empty. */
-export function slugify(title: string): string {
-  const base = title
-    .toLowerCase()
-    .normalize("NFKD")
-    .replace(/[^\p{Letter}\p{Number}]+/gu, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 60);
-  return base || "plan";
-}
-
-/** Content fingerprint, so callers can detect tampering / no-op rewrites. */
 export function hashContent(content: string): string {
   return createHash("sha256").update(content, "utf8").digest("hex").slice(0, 16);
 }
 
-/** Directory holding a plan's artifacts: `<rootDir>/<workspaceId>/<slug>/`. */
-export function planDir(rootDir: string, workspaceId: string, slug: string): string {
-  return join(rootDir, sanitizeSegment(workspaceId), slug);
+/** One temporary plan per session; rewrites update this directory in place. */
+export function planDir(rootDir: string, sessionId: string): string {
+  return join(rootDir, sanitizeSegment(sessionId));
 }
 
-/** A path segment safe to use as a folder name. */
 function sanitizeSegment(value: string): string {
   const cleaned = value.replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "");
   return cleaned || "default";
@@ -49,143 +24,147 @@ function sanitizeSegment(value: string): string {
 
 type PlanMeta = Omit<PlanRef, "content">;
 
-/** Stable, unique ids for a plan's todos, derived from their content + index. */
 function buildTodos(items: ReadonlyArray<{ content: string }>): PlanTodo[] {
   return items.map((item, index) => ({
-    id: `${slugify(item.content).slice(0, 40)}-${index}`,
+    id: hashContent(`${index}:${item.content}`),
     content: item.content,
     status: "pending",
   }));
 }
 
-/**
- * Read meta, tolerating plans written before `overview`/`todos`/`buildStatus`
- * existed by defaulting them — so old plans load instead of crashing.
- */
-function readMeta(dir: string): PlanMeta | undefined {
+function blocksToMarkdown(blocks: readonly PlanBlock[]): string {
+  return blocks
+    .map((block) =>
+      block.type === "markdown"
+        ? block.content.trim()
+        : `### ${block.title}\n\n${block.fallback.trim()}`,
+    )
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function readMeta(dir: string): Partial<PlanMeta> | undefined {
   const metaPath = join(dir, META_FILE);
-  if (!existsSync(metaPath)) {
-    return undefined;
-  }
+  if (!existsSync(metaPath)) return undefined;
   try {
-    const raw = JSON.parse(readFileSync(metaPath, "utf8")) as Partial<PlanMeta>;
-    return {
-      ...(raw as PlanMeta),
-      overview: raw.overview ?? "",
-      todos: raw.todos ?? [],
-      buildStatus: raw.buildStatus ?? "not_built",
-    };
+    return JSON.parse(readFileSync(metaPath, "utf8")) as Partial<PlanMeta>;
   } catch {
     return undefined;
   }
 }
 
-/**
- * Write (create or update) a plan. A given `slug` always maps to the same file,
- * so repeated calls from one planning session update one artifact rather than
- * forking new ones. Returns the durable reference.
- */
+function readPlanDir(dir: string): PlanRef | undefined {
+  const raw = readMeta(dir);
+  const path = typeof raw?.path === "string" ? raw.path : join(dir, PLAN_FILE);
+  if (!raw || !existsSync(path)) return undefined;
+  const content = readFileSync(path, "utf8");
+  const blocks =
+    Array.isArray(raw.blocks) && raw.blocks.length > 0
+      ? raw.blocks
+      : [{ type: "markdown" as const, content }];
+  return {
+    id: raw.id ?? raw.sessionId ?? "legacy-plan",
+    title: raw.title ?? "Plan",
+    overview: raw.overview ?? "",
+    path,
+    hash: raw.hash ?? hashContent(JSON.stringify(blocks)),
+    workspaceId: raw.workspaceId ?? "",
+    sessionId: raw.sessionId ?? raw.id ?? "legacy-plan",
+    blocks,
+    content,
+    todos: raw.todos ?? [],
+    buildStatus: raw.buildStatus ?? "not_built",
+    createdAt: raw.createdAt ?? "",
+    updatedAt: raw.updatedAt ?? "",
+  };
+}
+
+function resolvePlanDir(rootDir: string, id: string): string | undefined {
+  const current = planDir(rootDir, id);
+  if (existsSync(join(current, META_FILE))) return current;
+
+  // Historical plans used `<workspaceId>/<slug>` and ids shaped as
+  // `${workspaceId}:${slug}`. Keep them readable without preserving that layout
+  // for new writes.
+  const separator = id.indexOf(":");
+  if (separator < 0) return undefined;
+  const legacy = join(rootDir, sanitizeSegment(id.slice(0, separator)), id.slice(separator + 1));
+  return existsSync(join(legacy, META_FILE)) ? legacy : undefined;
+}
+
 export function writePlan(
   rootDir: string,
   input: {
     workspaceId: string;
-    slug: string;
+    sessionId: string;
     title: string;
     overview: string;
-    content: string;
+    blocks: readonly PlanBlock[];
     todos: ReadonlyArray<{ content: string }>;
-    sessionId?: string;
   },
 ): PlanRef {
-  const dir = planDir(rootDir, input.workspaceId, input.slug);
+  const dir = planDir(rootDir, input.sessionId);
   mkdirSync(dir, { recursive: true });
   const path = join(dir, PLAN_FILE);
-  writeFileSync(path, input.content, "utf8");
+  const content = blocksToMarkdown(input.blocks);
+  writeFileSync(path, content, "utf8");
 
   const now = new Date().toISOString();
   const existing = readMeta(dir);
   const meta: PlanMeta = {
-    id: existing?.id ?? `${input.workspaceId}:${input.slug}`,
-    slug: input.slug,
+    id: input.sessionId,
     title: input.title,
     overview: input.overview,
     path,
-    hash: hashContent(input.content),
+    hash: hashContent(JSON.stringify(input.blocks)),
     workspaceId: input.workspaceId,
+    sessionId: input.sessionId,
+    blocks: [...input.blocks],
     todos: buildTodos(input.todos),
-    // A (re)written plan is always unbuilt — editing a plan re-opens it for review.
     buildStatus: "not_built",
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
-    savedToWorkspace: existing?.savedToWorkspace ?? false,
-    ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
   };
   writeFileSync(join(dir, META_FILE), JSON.stringify(meta, null, 2), "utf8");
-  return { ...meta, content: input.content };
+  return { ...meta, content };
 }
 
-/**
- * Transition a plan's build status by its `${workspaceId}:${slug}` id (the
- * authoritative state the Review card and Plan panel read). Returns the updated
- * reference, or undefined if the id is malformed or the plan is gone.
- */
 export function setPlanBuildStatusById(
   rootDir: string,
   id: string,
   buildStatus: PlanBuildStatus,
 ): PlanRef | undefined {
-  const sep = id.indexOf(":");
-  if (sep < 0) {
-    return undefined;
-  }
-  const dir = planDir(rootDir, id.slice(0, sep), id.slice(sep + 1));
-  const meta = readMeta(dir);
-  if (!meta || !existsSync(meta.path)) {
-    return undefined;
-  }
+  const dir = resolvePlanDir(rootDir, id);
+  if (!dir) return undefined;
+  const plan = readPlanDir(dir);
+  if (!plan) return undefined;
+  const { content: _content, ...meta } = plan;
   const next: PlanMeta = { ...meta, buildStatus, updatedAt: new Date().toISOString() };
   writeFileSync(join(dir, META_FILE), JSON.stringify(next, null, 2), "utf8");
-  return { ...next, content: readFileSync(meta.path, "utf8") };
+  return { ...next, content: plan.content };
 }
 
-/** Read a plan's current markdown + reference, or undefined if it is gone. */
-export function readPlan(rootDir: string, workspaceId: string, slug: string): PlanRef | undefined {
-  const dir = planDir(rootDir, workspaceId, slug);
-  const meta = readMeta(dir);
-  if (!meta || !existsSync(meta.path)) {
-    return undefined;
-  }
-  return { ...meta, content: readFileSync(meta.path, "utf8") };
+export function readPlan(rootDir: string, sessionId: string): PlanRef | undefined {
+  return readPlanDir(planDir(rootDir, sessionId));
 }
 
-/** Read a plan by its `${workspaceId}:${slug}` id. */
 export function readPlanById(rootDir: string, id: string): PlanRef | undefined {
-  const sep = id.indexOf(":");
-  if (sep < 0) {
-    return undefined;
-  }
-  return readPlan(rootDir, id.slice(0, sep), id.slice(sep + 1));
+  const dir = resolvePlanDir(rootDir, id);
+  return dir ? readPlanDir(dir) : undefined;
 }
 
-/**
- * Copy the active plan into the repository at `<repoCwd>/.modus/specs/<slug>/`
- * so it can be committed and shared. Returns the in-repo path. The user opts
- * into this — plans are not version-controlled by default.
- */
-export function saveToWorkspace(rootDir: string, plan: PlanRef, repoCwd: string): string {
-  const targetDir = join(repoCwd, ".modus", "specs", plan.slug);
-  mkdirSync(targetDir, { recursive: true });
-  const targetPath = join(targetDir, PLAN_FILE);
-  writeFileSync(targetPath, plan.content, "utf8");
-
-  const dir = planDir(rootDir, plan.workspaceId, plan.slug);
-  const meta = readMeta(dir);
-  if (meta) {
-    writeFileSync(
-      join(dir, META_FILE),
-      JSON.stringify({ ...meta, savedToWorkspace: true }, null, 2),
-      "utf8",
-    );
+export function deleteSessionPlan(rootDir: string, sessionId: string): void {
+  rmSync(planDir(rootDir, sessionId), { recursive: true, force: true });
+  if (!existsSync(rootDir)) return;
+  for (const owner of readdirSync(rootDir, { withFileTypes: true })) {
+    if (!owner.isDirectory()) continue;
+    const ownerDir = join(rootDir, owner.name);
+    for (const entry of readdirSync(ownerDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const legacyDir = join(ownerDir, entry.name);
+      if (readMeta(legacyDir)?.sessionId === sessionId) {
+        rmSync(legacyDir, { recursive: true, force: true });
+      }
+    }
   }
-  return targetPath;
 }

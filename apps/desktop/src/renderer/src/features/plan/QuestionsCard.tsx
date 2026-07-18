@@ -14,7 +14,7 @@ import { cn } from "../../lib/cn";
  * `ask_user` (Figure 4): numbered options with a moveable keyboard cursor, an
  * always-present free-text row, and a Dismiss/Submit footer. It paginates across
  * questions and resolves the blocked run via onSubmit (answers) or onSkip. The
- * accent is the shared blue action token (same as the Review Plan card).
+ * accent is the shared blue action token (same as the plan decision card).
  */
 
 type Draft = { selected: string[]; custom: string };

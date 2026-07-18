@@ -329,7 +329,7 @@ export type AgentEvent =
   | { type: "review.started"; sessionId: string; reviewId: string }
   | { type: "review.completed"; sessionId: string; review: AgentReviewResult }
   | { type: "review.failed"; sessionId: string; reviewId: string; message: string }
-  | { type: "plan.updated"; sessionId: string; plan: PlanRef }
+  | { type: "plan.updated"; sessionId: string; plan: PlanRef; toolCallId?: string }
   | { type: "checkpoint.created"; sessionId: string; checkpoint: CheckpointInfo }
   | { type: "checkpoint.restored"; sessionId: string; checkpointId: string }
   | { type: "todos.updated"; sessionId: string; todos: TodoItem[] }
@@ -1306,16 +1306,13 @@ export type FileReadResult = {
 /* ── Plan Mode ─────────────────────────────────────────────────────────── */
 
 /**
- * A plan produced by Plan Mode — a single markdown artifact that is the durable
- * source of truth for a feature, editable by both human and agent, and the
- * shared input to single-agent or fusion execution. Stored outside the repo by
- * default (not version-controlled); `savedToWorkspace` flips when the user
- * copies it into `<repo>/.modus/specs/<slug>/`.
+ * A Plan Mode review artifact. It is scoped to one session, survives an app
+ * restart, and is deleted with that session.
  */
 /**
  * A single plan task. Authored by the planner via `plan_write` (structured, not
- * parsed from markdown), so it is the authoritative source for the Build card's
- * "N To-dos" and the Plan panel's checklist. `status` is `pending` until the
+ * parsed from markdown), so it is the authoritative source for execution's
+ * ordered steps. `status` is `pending` until the
  * v2 runtime binds live `todo_write` progress; v1 never fakes completion.
  */
 export type PlanTodo = { id: string; content: string; status: "pending" | "completed" };
@@ -1327,10 +1324,20 @@ export type PlanTodo = { id: string; content: string; status: "pending" | "compl
  */
 export type PlanBuildStatus = "not_built" | "building" | "built";
 
+export type PlanBlock =
+  | { type: "markdown"; content: string }
+  | {
+      type: "visual";
+      title: string;
+      kind: "html" | "svg";
+      content: string;
+      /** Textual source of truth used by the executor when the visual is not rendered. */
+      fallback: string;
+    };
+
 export type PlanRef = {
-  /** Stable id `${workspaceId}:${slug}`. */
+  /** Stable id of the owning session. */
   id: string;
-  slug: string;
   title: string;
   /** One-paragraph summary (Review card subtitle). */
   overview: string;
@@ -1339,17 +1346,17 @@ export type PlanRef = {
   /** Content fingerprint. */
   hash: string;
   workspaceId: string;
-  sessionId?: string;
-  /** Current markdown body. */
+  sessionId: string;
+  /** Ordered presentation blocks shown in the timeline and Plan panel. */
+  blocks: PlanBlock[];
+  /** Markdown projection used as the executor's non-visual source of truth. */
   content: string;
-  /** Structured task list — the source of the Build card count + Plan checklist. */
+  /** Structured task list used by the approval/build flow. */
   todos: PlanTodo[];
   /** Build lifecycle state (see PlanBuildStatus). */
   buildStatus: PlanBuildStatus;
   createdAt: string;
   updatedAt: string;
-  /** True once copied into the repository for version control. */
-  savedToWorkspace: boolean;
 };
 
 /* ── Skills (Agent Skills, 2026 SKILL.md standard) ─────────────────────── */

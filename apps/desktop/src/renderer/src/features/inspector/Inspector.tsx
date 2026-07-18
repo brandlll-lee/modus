@@ -29,8 +29,8 @@ import type {
   PlanRef,
   WorkspaceInfo,
 } from "../../../../shared/contracts";
-import { PanelHeader } from "../../components/ui/Panel";
 import { ModusLoadingFallback } from "../../components/ui/ModusLoadingMark";
+import { PanelHeader } from "../../components/ui/Panel";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
 import type { AgentEventHub } from "../agent/agentEventHub";
@@ -54,10 +54,6 @@ type InspectorProps = {
   onTabChange?(tab: string): void;
   /** The session's active plan, shown in the Plan tab (not the file tree). */
   plan?: PlanRef | undefined;
-  /** Whether the session is currently working — reconciles a stale "building". */
-  sessionWorking: boolean;
-  /** Build the active plan (runs the same path as the composer's Review card). */
-  onBuildPlan(): void;
   sessions: AgentSessionInfo[];
   selectedSubagentId?: string | undefined;
   hub: AgentEventHub;
@@ -111,8 +107,6 @@ export function Inspector({
   tab: controlledTab,
   onTabChange,
   plan,
-  sessionWorking,
-  onBuildPlan,
   sessions,
   selectedSubagentId,
   hub,
@@ -307,7 +301,7 @@ export function Inspector({
                   <DiffPanel cwd={cwd} sessionId={sessionId} workspaceId={activeWorkspace?.id} />
                 </Tabs.Panel>
                 <Tabs.Panel className="min-h-0 flex-1 outline-none" value="plan">
-                  <PlanPanel plan={plan} sessionWorking={sessionWorking} onBuild={onBuildPlan} />
+                  <PlanPanel plan={plan} />
                 </Tabs.Panel>
                 <Tabs.Panel className="min-h-0 flex-1 outline-none" value="files">
                   <FilesPanel cwd={cwd} />
@@ -321,6 +315,10 @@ export function Inspector({
                     onModelChange={onModelChange}
                     onModelConfigChange={onModelConfigChange}
                     onOpenReview={onOpenReview}
+                    onOpenPlan={(nextPlan) => {
+                      onPlanUpdated(nextPlan);
+                      onTabChange?.("plan");
+                    }}
                     onOpenSubagent={onOpenSubagent}
                     onPlanUpdated={onPlanUpdated}
                     onSelect={onSelectSubagent}

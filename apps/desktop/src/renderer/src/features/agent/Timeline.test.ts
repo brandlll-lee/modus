@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
-import type { AgentEvent } from "../../../../shared/contracts";
-import { FAST_CODEBASE_TOOL_NAME, VISUAL_TOOL_NAME } from "../../../../shared/tools";
+import type { AgentEvent, PlanRef } from "../../../../shared/contracts";
+import {
+  FAST_CODEBASE_TOOL_NAME,
+  PLAN_TOOL_NAME,
+  VISUAL_TOOL_NAME,
+} from "../../../../shared/tools";
 import { optimisticUserPromptEvents } from "./agentEventHub";
 import { subagentColor } from "./subagentUi";
 import {
@@ -113,6 +117,59 @@ describe("buildBlocks", () => {
     expect(blocks[0]).toEqual(
       expect.objectContaining({ type: "tool", output: "hello", isError: false }),
     );
+  });
+
+  it("binds persisted plans to current and legacy plan tool events", () => {
+    const plan: PlanRef = {
+      id: "s",
+      title: "Feature plan",
+      overview: "Build the feature safely.",
+      path: "C:/plans/feature/plan.md",
+      hash: "hash",
+      workspaceId: "workspace",
+      sessionId: "s",
+      blocks: [{ type: "markdown", content: "# Feature plan" }],
+      content: "# Feature plan",
+      todos: [{ id: "todo-1", content: "Implement it", status: "pending" }],
+      buildStatus: "not_built",
+      createdAt: "2026-07-18T00:00:00.000Z",
+      updatedAt: "2026-07-18T00:00:00.000Z",
+    };
+    const blocks = buildBlocks([
+      item("1", {
+        type: "tool.delta",
+        sessionId: "s",
+        toolCallId: "plan-call",
+        toolName: PLAN_TOOL_NAME,
+        args: { title: "Feature plan" },
+      }),
+      item("2", {
+        type: "tool.started",
+        sessionId: "s",
+        toolCallId: "plan-call",
+        toolName: PLAN_TOOL_NAME,
+        args: { title: "Feature plan", content: "# Feature plan" },
+      }),
+      // Historical plan.updated events did not carry toolCallId; the active
+      // plan tool lifecycle remains an unambiguous association.
+      item("3", { type: "plan.updated", sessionId: "s", plan }),
+      item("4", {
+        type: "tool.ended",
+        sessionId: "s",
+        toolCallId: "plan-call",
+        isError: false,
+      }),
+    ]);
+
+    expect(blocks).toEqual([
+      expect.objectContaining({
+        type: "tool",
+        name: PLAN_TOOL_NAME,
+        isComplete: true,
+        isError: false,
+        plan,
+      }),
+    ]);
   });
 
   it("updates the first visual block when a later visual reuses its visualId", () => {

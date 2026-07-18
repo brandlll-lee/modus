@@ -1,6 +1,6 @@
 import type { ToolCallEvent } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
-import type { ToolCatalogEntry } from "../../../shared/tools";
+import { PLAN_TOOL_UI, type ToolCatalogEntry } from "../../../shared/tools";
 import { registerBrowserTools } from "./browser-tools";
 import { detectDetachedLaunch, ToolRegistry, toolRegistry } from "./registry";
 
@@ -41,7 +41,7 @@ describe("ToolRegistry profiles", () => {
         name: "plan_write",
         profiles: ["plan"],
         permission: { danger: "safe" },
-        ui: { iconName: "file-plus", verb: "Wrote plan", render: "diff", diffSource: "newFile" },
+        ui: PLAN_TOOL_UI,
       },
       definition,
     });

@@ -55,7 +55,19 @@ describe("plan_write", () => {
           title: "Plan Tool",
           overview: "Use constrained write semantics.",
           todos: ["Update the schema", "Reuse the diff card"],
-          content: '# Plan Tool\n\n```ts\nconst path = "C:\\\\Users\\\\ASUS";\n```\n',
+          blocks: [
+            {
+              type: "markdown",
+              content: '# Plan Tool\n\n```ts\nconst path = "C:\\\\Users\\\\ASUS";\n```\n',
+            },
+            {
+              type: "visual",
+              title: "Flow",
+              kind: "svg",
+              content: "<svg><path /></svg>",
+              fallback: "The renderer reads the plan, then shows the result.",
+            },
+          ],
         },
         new AbortController().signal,
         undefined,
@@ -64,7 +76,7 @@ describe("plan_write", () => {
     );
 
     expect(result.content[0]?.type).toBe("text");
-    const plan = readPlan(join(testState.userData, "plans"), "workspace", "plan-tool");
+    const plan = readPlan(join(testState.userData, "plans"), "session");
     expect(await readFile(plan?.path ?? "", "utf8")).toContain(
       'const path = "C:\\\\Users\\\\ASUS"',
     );
@@ -72,10 +84,12 @@ describe("plan_write", () => {
       "Update the schema",
       "Reuse the diff card",
     ]);
+    expect(plan?.blocks[1]).toMatchObject({ type: "visual", title: "Flow" });
     expect(events).toEqual([
       expect.objectContaining({
         type: "plan.updated",
         sessionId: "session",
+        toolCallId: "plan-call",
         plan: expect.objectContaining({ title: "Plan Tool" }),
       }),
     ]);
@@ -88,7 +102,7 @@ describe("plan_write", () => {
         title: "Plan Tool",
         overview: "Use constrained write semantics.",
         todos: ["Update the schema"],
-        content: "# Plan\n",
+        blocks: [{ type: "markdown", content: "# Plan\n" }],
       }),
     ).toBe(true);
     expect(
@@ -96,7 +110,7 @@ describe("plan_write", () => {
         title: "Plan Tool",
         overview: "Use constrained write semantics.",
         todos: ["Update the schema"],
-        content: "# Plan\n",
+        blocks: [{ type: "markdown", content: "# Plan\n" }],
         unexpected: "extra data",
       }),
     ).toBe(false);

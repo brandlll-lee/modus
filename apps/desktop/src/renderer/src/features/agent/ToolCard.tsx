@@ -1,11 +1,12 @@
 import { IconAlertCircle, IconChevronRight } from "@tabler/icons-react";
 import { memo, type ReactNode, useEffect, useRef, useState } from "react";
-import type { QuestionAnswer, QuestionRequest } from "../../../../shared/contracts";
+import type { PlanRef, QuestionAnswer, QuestionRequest } from "../../../../shared/contracts";
 import { getToolUiMeta, type ToolUiMeta, toolRenderKind } from "../../../../shared/tools";
 import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
 import { ShinyText } from "../../components/ui/ShinyText";
 import { cn } from "../../lib/cn";
 import { useSmoothStreamingText } from "../../lib/useSmoothStreamingText";
+import { PlanTimelineCard } from "../plan/PlanTimelineCard";
 import { DiffToolCard } from "./diff/DiffToolCard";
 import { QuestionToolCard } from "./QuestionToolCard";
 import { TerminalToolCard, type TerminalToolVariant } from "./terminal/TerminalToolCard";
@@ -24,6 +25,8 @@ type ToolCardProps = {
   questionRequest?: QuestionRequest;
   questionAnswers?: QuestionAnswer[];
   questionSkipped?: boolean;
+  plan?: PlanRef;
+  onOpenPlan?: (plan: PlanRef) => void;
 };
 
 /** Cap how much tool output we drop into the DOM at once. */
@@ -48,6 +51,8 @@ export const ToolCard = memo(
     questionRequest,
     questionAnswers,
     questionSkipped,
+    plan,
+    onOpenPlan,
   }: ToolCardProps) {
     // The catalog declares how each tool renders; route on that capability
     // instead of matching names, so a new tool is a catalog entry, not an edit
@@ -97,6 +102,18 @@ export const ToolCard = memo(
       );
     }
 
+    if (render === "plan") {
+      return (
+        <PlanTimelineCard
+          args={args}
+          isComplete={isComplete}
+          isError={isError}
+          {...(onOpenPlan ? { onOpen: onOpenPlan } : {})}
+          {...(plan ? { plan } : {})}
+        />
+      );
+    }
+
     if (render === "visual") {
       return <VisualToolCard args={args} isComplete={isComplete} isError={isError} />;
     }
@@ -121,6 +138,8 @@ export const ToolCard = memo(
     prev.questionRequest === next.questionRequest &&
     prev.questionAnswers === next.questionAnswers &&
     prev.questionSkipped === next.questionSkipped &&
+    prev.plan === next.plan &&
+    prev.onOpenPlan === next.onOpenPlan &&
     argsEqual(prev.args, next.args),
 );
 

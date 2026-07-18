@@ -1,126 +1,112 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  deleteSessionPlan,
   hashContent,
   readPlan,
   readPlanById,
-  saveToWorkspace,
   setPlanBuildStatusById,
-  slugify,
   writePlan,
 } from "./plan-store";
 
 let root: string;
-let repo: string;
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "modus-plan-root-"));
-  repo = mkdtempSync(join(tmpdir(), "modus-plan-repo-"));
 });
 afterEach(() => {
   rmSync(root, { recursive: true, force: true });
-  rmSync(repo, { recursive: true, force: true });
 });
 
-/** A complete writePlan input with sensible defaults the test can override. */
 function write(overrides: Partial<Parameters<typeof writePlan>[1]> = {}) {
   return writePlan(root, {
     workspaceId: "ws-1",
-    slug: "feat",
+    sessionId: "session-1",
     title: "Feat",
     overview: "Build the thing.",
-    content: "# Feat\n## Goal\nDo a thing.\n",
+    blocks: [{ type: "markdown", content: "# Feat\n\nDo a thing." }],
     todos: [{ content: "Scaffold the project" }, { content: "Wire it up" }],
     ...overrides,
   });
 }
 
-describe("slugify", () => {
-  it("produces a filesystem-safe kebab slug and never empty", () => {
-    expect(slugify("SleepNode MVP 计划")).toBe("sleepnode-mvp-计划");
-    expect(slugify("  Add JWT / Redis auth!  ")).toBe("add-jwt-redis-auth");
-    expect(slugify("***")).toBe("plan");
-  });
-});
+describe("session plan persistence", () => {
+  it("stores ordered visual blocks and writes their fallback into plan.md", () => {
+    const blocks = [
+      { type: "markdown" as const, content: "# Feature" },
+      {
+        type: "visual" as const,
+        title: "Request flow",
+        kind: "svg" as const,
+        content: "<svg><path /></svg>",
+        fallback: "Client calls the router, then the store.",
+      },
+    ];
+    const plan = write({ blocks });
 
-describe("writePlan / readPlan", () => {
-  it("writes plan.md and round-trips the reference with structured fields", () => {
-    const plan = write({ slug: slugify("My Feature"), title: "My Feature", sessionId: "s-1" });
-    expect(plan.path.endsWith("plan.md")).toBe(true);
-    expect(readFileSync(plan.path, "utf8")).toContain("## Goal");
-    expect(plan.hash).toBe(hashContent(plan.content));
-    expect(plan.overview).toBe("Build the thing.");
-    expect(plan.buildStatus).toBe("not_built");
-    expect(plan.savedToWorkspace).toBe(false);
-
-    const read = readPlan(root, "ws-1", plan.slug);
-    expect(read?.content).toBe(plan.content);
-    expect(read?.id).toBe(plan.id);
-    expect(read?.overview).toBe("Build the thing.");
+    expect(plan.id).toBe("session-1");
+    expect(plan.blocks).toEqual(blocks);
+    expect(plan.hash).toBe(hashContent(JSON.stringify(blocks)));
+    expect(readFileSync(plan.path, "utf8")).toContain("Client calls the router");
+    expect(readPlan(root, "session-1")?.blocks).toEqual(blocks);
   });
 
-  it("derives stable, unique todo ids from content + index, all pending", () => {
-    const plan = write({
-      todos: [{ content: "Same step" }, { content: "Same step" }, { content: "Other step" }],
+  it("isolates equal plan titles by session and rewrites only the owning session", () => {
+    const first = write();
+    const other = write({ sessionId: "session-2" });
+    const revised = write({
+      blocks: [{ type: "markdown", content: "# Revised" }],
     });
-    expect(plan.todos.map((todo) => todo.status)).toEqual(["pending", "pending", "pending"]);
-    const ids = plan.todos.map((todo) => todo.id);
-    expect(new Set(ids).size).toBe(3); // unique even when content repeats
-    expect(plan.todos[2]?.content).toBe("Other step");
+
+    expect(revised.path).toBe(first.path);
+    expect(other.path).not.toBe(first.path);
+    expect(readPlan(root, "session-1")?.content).toBe("# Revised");
+    expect(readPlan(root, "session-2")?.content).toContain("# Feat");
   });
 
-  it("updates the same file on repeated writes for one slug (no forking)", () => {
-    const first = write({ content: "v1" });
-    const second = write({ content: "v2 updated" });
-    expect(second.path).toBe(first.path);
-    expect(second.id).toBe(first.id);
-    expect(second.createdAt).toBe(first.createdAt);
-    expect(readPlan(root, "ws-1", "feat")?.content).toBe("v2 updated");
+  it("derives stable unique todo ids and resets build status on revision", () => {
+    const plan = write({
+      todos: [{ content: "Same step" }, { content: "Same step" }],
+    });
+    expect(new Set(plan.todos.map((todo) => todo.id)).size).toBe(2);
+    expect(setPlanBuildStatusById(root, plan.id, "built")?.buildStatus).toBe("built");
+    expect(write().buildStatus).toBe("not_built");
   });
 
-  it("resets buildStatus to not_built on every (re)write, so an edited plan re-opens for review", () => {
-    const plan = write();
-    setPlanBuildStatusById(root, plan.id, "built");
-    expect(readPlan(root, "ws-1", "feat")?.buildStatus).toBe("built");
-    // Editing the plan must drop it back to not_built.
-    const rewritten = write({ content: "edited" });
-    expect(rewritten.buildStatus).toBe("not_built");
+  it("deletes the plan with its session", () => {
+    write();
+    deleteSessionPlan(root, "session-1");
+    expect(readPlan(root, "session-1")).toBeUndefined();
   });
 
-  it("returns undefined for a missing plan", () => {
-    expect(readPlan(root, "ws-1", "nope")).toBeUndefined();
+  it("also removes a historical workspace-scoped plan owned by the session", () => {
+    const legacyDir = join(root, "workspace", "feature");
+    const path = join(legacyDir, "plan.md");
+    mkdirSync(legacyDir, { recursive: true });
+    writeFileSync(path, "# Legacy", "utf8");
+    writeFileSync(
+      join(legacyDir, "plan.json"),
+      JSON.stringify({ id: "workspace:feature", sessionId: "session-1", path }),
+      "utf8",
+    );
+
+    deleteSessionPlan(root, "session-1");
+    expect(existsSync(legacyDir)).toBe(false);
   });
 });
 
 describe("build status transitions", () => {
-  it("transitions through building → built and is readable by id", () => {
+  it("transitions through building and built by session id", () => {
     const plan = write();
     expect(setPlanBuildStatusById(root, plan.id, "building")?.buildStatus).toBe("building");
     expect(setPlanBuildStatusById(root, plan.id, "built")?.buildStatus).toBe("built");
     expect(readPlanById(root, plan.id)?.buildStatus).toBe("built");
   });
 
-  it("reverts to not_built", () => {
-    const plan = write();
-    expect(setPlanBuildStatusById(root, plan.id, "building")?.buildStatus).toBe("building");
-    expect(setPlanBuildStatusById(root, plan.id, "not_built")?.buildStatus).toBe("not_built");
-  });
-
-  it("returns undefined for a malformed id or missing plan", () => {
-    expect(setPlanBuildStatusById(root, "ws-1:nope", "built")).toBeUndefined();
-    expect(setPlanBuildStatusById(root, "malformed-id", "built")).toBeUndefined();
-    expect(readPlanById(root, "malformed-id")).toBeUndefined();
-  });
-});
-
-describe("saveToWorkspace", () => {
-  it("copies the plan into <repo>/.modus/specs/<slug>/ and flips the flag", () => {
-    const plan = write({ content: "# Feat\n" });
-    const target = saveToWorkspace(root, plan, repo);
-    expect(target).toBe(join(repo, ".modus", "specs", "feat", "plan.md"));
-    expect(readFileSync(target, "utf8")).toBe("# Feat\n");
-    expect(readPlan(root, "ws-1", "feat")?.savedToWorkspace).toBe(true);
+  it("returns undefined for a missing plan", () => {
+    expect(setPlanBuildStatusById(root, "missing", "built")).toBeUndefined();
+    expect(readPlanById(root, "missing")).toBeUndefined();
   });
 });

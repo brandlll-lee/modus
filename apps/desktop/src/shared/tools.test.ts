@@ -59,8 +59,8 @@ describe("tool render descriptor (single source of truth)", () => {
     expect(getToolUiMeta(FAST_CODEBASE_TOOL_NAME)?.render).toBe("live");
     expect(getToolUiMeta(FAST_CODEBASE_TOOL_NAME)?.activity).toBeUndefined();
     expect(getToolUiMeta(VISUAL_TOOL_NAME)?.render).toBe("visual");
-    expect(getToolUiMeta("plan_write")?.render).toBe("diff");
-    expect(getToolUiMeta("plan_write")?.diffSource).toBe("newFile");
+    expect(getToolUiMeta("plan_write")?.render).toBe("plan");
+    expect(getToolUiMeta("plan_write")?.diffSource).toBeUndefined();
   });
 
   it("defaults unknown, MCP, and plain tools to a flat row", () => {
@@ -80,7 +80,7 @@ describe("tool render descriptor (single source of truth)", () => {
     expect(toolRenderKind("todo_write")).toBe("todo");
     expect(toolRenderKind(FAST_CODEBASE_TOOL_NAME)).toBe("live");
     expect(toolRenderKind(VISUAL_TOOL_NAME)).toBe("visual");
-    expect(toolRenderKind("plan_write")).toBe("diff");
+    expect(toolRenderKind("plan_write")).toBe("plan");
   });
 
   it("renders task as the only subagent model-visible tool", () => {

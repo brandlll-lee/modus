@@ -35,6 +35,7 @@ type SubagentsPanelProps = {
   onModelConfigChange(model: string, thinkingVariant: string): Promise<void> | void;
   onOpenReview(cwd?: string): void;
   onOpenSubagent(childSessionId: string): void;
+  onOpenPlan(plan: PlanRef): void;
   onPlanUpdated(plan: PlanRef): void;
 };
 
@@ -53,6 +54,7 @@ export function SubagentsPanel({
   onModelConfigChange,
   onOpenReview,
   onOpenSubagent,
+  onOpenPlan,
   onPlanUpdated,
 }: SubagentsPanelProps) {
   const [view, setView] = useState<PanelView>("overview");
@@ -322,6 +324,7 @@ export function SubagentsPanel({
             onModelChange={onModelChange}
             onModelConfigChange={onModelConfigChange}
             onOpenReview={onOpenReview}
+            onOpenPlan={onOpenPlan}
             onOpenSubagent={onOpenSubagent}
             onPlanUpdated={onPlanUpdated}
             onSessionsChanged={onSessionsChanged}

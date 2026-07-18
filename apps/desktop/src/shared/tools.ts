@@ -59,6 +59,7 @@ export type ToolRenderKind =
   | "terminal"
   | "live"
   | "todo"
+  | "plan"
   | "question"
   | "subagent"
   | "visual";
@@ -271,17 +272,12 @@ export const TODO_TOOL_UI: ToolUiMeta = {
 
 /** Agent-facing Plan Mode tool — writes the single plan.md artifact. */
 export const PLAN_TOOL_NAME = "plan_write";
-/**
- * UI metadata for the plan tool. Plan Mode writes a constrained Markdown
- * artifact, so it reuses the same diff/new-file renderer as the ordinary
- * `write` tool without exposing free-form workspace writes.
- */
+/** UI metadata for the first-class plan artifact rendered in the conversation. */
 export const PLAN_TOOL_UI: ToolUiMeta = {
-  iconName: "file-plus",
-  verb: "Wrote plan",
+  iconName: "todo",
+  verb: "Plan",
   primaryArgKey: "title",
-  render: "diff",
-  diffSource: "newFile",
+  render: "plan",
 };
 
 /** Agent-facing interactive question tool — asks the user, blocks on the answer. */
@@ -289,7 +285,7 @@ export const ASK_USER_TOOL_NAME = "ask_user";
 /**
  * UI metadata for the ask_user tool. Its call renders as a minimal flat row
  * ("Asking …"); the real interaction is the QuestionsCard shown above the
- * composer (same slot as the Review Plan card).
+ * composer (the same interaction region used by the plan decision card).
  */
 export const ASK_USER_TOOL_UI: ToolUiMeta = {
   iconName: "tool",

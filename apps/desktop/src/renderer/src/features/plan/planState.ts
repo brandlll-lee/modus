@@ -1,10 +1,8 @@
 import type { PlanBuildStatus, PlanRef } from "../../../../shared/contracts";
 
 /**
- * The concise build instruction sent when the user authorizes building a plan
- * (from the Review card or the Plan panel). Points the agent at the full
- * plan.md as the source of truth + lists the to-dos — never pastes the whole
- * body. Shared so both build entry points stay byte-identical.
+ * The concise instruction sent when the user approves the session plan. The
+ * internal plan.md contains Markdown plus every visual block's textual fallback.
  */
 export function buildPlanMessage(plan: PlanRef): string {
   const todoLines = plan.todos.map((todo, index) => `${index + 1}. ${todo.content}`).join("\n");
@@ -19,17 +17,22 @@ export function buildPlanMessage(plan: PlanRef): string {
 }
 
 /**
- * Fill fields that plans/events written before `overview`/`todos`/`buildStatus`
- * existed are missing, so the rest of the UI can rely on the current PlanRef
+ * Fill fields that older plan events are missing, so the rest of the UI can rely on the PlanRef
  * contract. Mirrors the store's defaults; returns the same reference when the
  * plan is already complete (the common, new-plan case) so memo identity holds.
  */
 export function normalizePlan(plan: PlanRef): PlanRef {
-  if (plan.todos !== undefined && plan.buildStatus !== undefined && plan.overview !== undefined) {
+  if (
+    plan.blocks !== undefined &&
+    plan.todos !== undefined &&
+    plan.buildStatus !== undefined &&
+    plan.overview !== undefined
+  ) {
     return plan;
   }
   return {
     ...plan,
+    blocks: plan.blocks ?? [{ type: "markdown", content: plan.content }],
     overview: plan.overview ?? "",
     todos: plan.todos ?? [],
     buildStatus: plan.buildStatus ?? "not_built",

@@ -5,6 +5,7 @@ import type {
   AgentEvent,
   ContextItem,
   MessageContextChip,
+  PlanRef,
   PromptImageAttachment,
   QuestionAnswer,
   QuestionRequest,
@@ -57,6 +58,7 @@ type TimelineProps = {
     skills?: SkillSelection[],
   ): Promise<void>;
   onOpenSubagent?(childSessionId: string): void;
+  onOpenPlan?(plan: PlanRef): void;
   botColor?: string;
   workspaceId?: string | undefined;
 };
@@ -104,6 +106,7 @@ export type ToolBlockItem = {
   questionRequest?: QuestionRequest;
   questionAnswers?: QuestionAnswer[];
   questionSkipped?: boolean;
+  plan?: PlanRef;
 };
 
 export type ThoughtBlockItem = {
@@ -221,7 +224,9 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
   const subagentsByChild = new Map<string, SubagentBlockItem>();
   const questionToolByRequest = new Map<string, string>();
   const visualToolById = new Map<string, ToolBlockItem>();
+  const planToolByHash = new Map<string, ToolBlockItem>();
   let activeQuestionToolId: string | undefined;
+  let activePlanToolId: string | undefined;
   let latestTodosBlock: TodosBlockItem | undefined;
   let todoLifecycleOpen = false;
   let hasRenderedAnyTodoBlock = false;
@@ -583,6 +588,9 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
       if (toolRenderKind(event.toolName) === "question") {
         activeQuestionToolId = event.toolCallId;
       }
+      if (toolRenderKind(event.toolName) === "plan") {
+        activePlanToolId = event.toolCallId;
+      }
       upsertToolBlock(event.toolCallId, event.toolName, event.args);
       continue;
     }
@@ -603,6 +611,9 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
       }
       if (toolRenderKind(event.toolName) === "question") {
         activeQuestionToolId = event.toolCallId;
+      }
+      if (toolRenderKind(event.toolName) === "plan") {
+        activePlanToolId = event.toolCallId;
       }
       // Idempotent: a live `tool.delta` may have already created the block.
       // Refresh its args with the authoritative ones rather than forking a
@@ -645,6 +656,22 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
       }
       if (activeQuestionToolId === event.toolCallId) {
         activeQuestionToolId = undefined;
+      }
+      if (activePlanToolId === event.toolCallId) {
+        activePlanToolId = undefined;
+      }
+      continue;
+    }
+
+    if (event.type === "plan.updated") {
+      const source = blockById.get(event.toolCallId ?? activePlanToolId ?? "");
+      const block =
+        source?.type === "tool" && toolRenderKind(source.name) === "plan"
+          ? source
+          : planToolByHash.get(event.plan.hash);
+      if (block) {
+        block.plan = event.plan;
+        planToolByHash.set(event.plan.hash, block);
       }
       continue;
     }
@@ -1462,6 +1489,7 @@ export function Timeline({
   onRestoreCheckpoint,
   onEditResend,
   onOpenSubagent,
+  onOpenPlan,
   botColor,
 }: TimelineProps) {
   const visibleBlocks = useMemo(
@@ -1475,7 +1503,7 @@ export function Timeline({
   }
 
   return (
-    <div className="relative mx-auto min-w-0 w-full max-w-5xl px-6 pt-8 pb-24">
+    <div className="relative mx-auto min-w-0 w-[calc(100%-2rem)] max-w-5xl pt-8 pb-24">
       <div className="min-w-0 w-full max-w-full space-y-4">
         {visibleBlocks.map((block, index) => (
           <m.div
@@ -1517,7 +1545,9 @@ export function Timeline({
                 isComplete={block.isComplete ?? false}
                 isError={block.isError ?? false}
                 name={block.name}
+                {...(onOpenPlan ? { onOpenPlan } : {})}
                 output={block.output}
+                {...(block.plan ? { plan: block.plan } : {})}
                 {...(block.questionAnswers ? { questionAnswers: block.questionAnswers } : {})}
                 {...(block.questionRequest ? { questionRequest: block.questionRequest } : {})}
                 {...(block.questionSkipped !== undefined

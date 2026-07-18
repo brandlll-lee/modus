@@ -5,18 +5,18 @@ import { buildPlanMessage, effectiveBuildStatus, normalizePlan } from "./planSta
 /** A complete, current-shape plan. */
 const plan: PlanRef = {
   id: "ws:feat",
-  slug: "feat",
   title: "Feat",
   overview: "Build it.",
   path: "/p/plan.md",
   hash: "h",
   workspaceId: "ws",
+  sessionId: "session",
+  blocks: [{ type: "markdown", content: "# Feat" }],
   content: "# Feat",
   todos: [{ id: "t-0", content: "step", status: "pending" }],
   buildStatus: "not_built",
   createdAt: "now",
   updatedAt: "now",
-  savedToWorkspace: false,
 };
 
 describe("normalizePlan", () => {
@@ -25,15 +25,16 @@ describe("normalizePlan", () => {
   });
 
   it("fills fields missing on plans recorded before the feature existed", () => {
-    // A pre-feature plan.updated payload: no todos/overview/buildStatus. Reading
-    // plan.todos here used to crash <PlanPanel> (Cannot read 'filter' of undefined).
+    // A historical plan.updated payload with only Markdown content.
     const legacy = {
       ...plan,
+      blocks: undefined,
       overview: undefined,
       todos: undefined,
       buildStatus: undefined,
     } as unknown as PlanRef;
     expect(normalizePlan(legacy)).toMatchObject({
+      blocks: [{ type: "markdown", content: "# Feat" }],
       overview: "",
       todos: [],
       buildStatus: "not_built",

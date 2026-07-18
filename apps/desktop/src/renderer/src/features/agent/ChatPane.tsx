@@ -1,14 +1,5 @@
 import { IconArrowDown } from "@tabler/icons-react";
-import {
-  forwardRef,
-  type ReactNode,
-  useCallback,
-  useEffect,
-  useImperativeHandle,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   AgentMode,
   AgentSessionInfo,
@@ -84,14 +75,14 @@ type ChatPaneProps = {
   composerReplacement?: ReactNode;
   composerDraft?: ChatComposerDraft | undefined;
   onComposerDraftChange?(update: ChatComposerDraftUpdate): void;
-  /** A plan was (re)written in Plan Mode: open it in the file panel. */
+  /** A plan was (re)written in Plan Mode: keep the inspector's plan data current. */
   onPlanUpdated(plan: PlanRef): void;
+  /** Explicitly open a completed timeline plan in the inspector. */
+  onOpenPlan?(plan: PlanRef): void;
 };
 
 type DesignContextItem = Extract<ContextItem, { type: "design-element" }>;
 type DesignAnnotationContextItem = Extract<ContextItem, { type: "design-annotation" }>;
-
-export type ChatPaneHandle = { buildActivePlan(): void };
 
 export type ChatComposerDraft = ComposerDraft & {
   contextItems: ContextItem[];
@@ -232,8 +223,7 @@ export function addDesignAnnotationToDraft(
   };
   const exists = draft.contextItems.some(
     (contextItem) =>
-      contextItem.type === "design-annotation" &&
-      contextItem.annotation.id === event.annotation.id,
+      contextItem.type === "design-annotation" && contextItem.annotation.id === event.annotation.id,
   );
   const nextContextItems = exists ? draft.contextItems : [...draft.contextItems, item];
   const nextImages =
@@ -292,11 +282,12 @@ export function designEventToPromptInput(
   const hasInlineText = draft.parts?.some(
     (part) => part.type === "text" && part.text.trim().length > 0,
   );
-  const message = draft.value.trim() || hasInlineText
-    ? messageFromParts(draft.parts, draft.value.trim())
-    : draft.images.length > 0
-      ? "See the selected design context."
-      : "Use the selected design context.";
+  const message =
+    draft.value.trim() || hasInlineText
+      ? messageFromParts(draft.parts, draft.value.trim())
+      : draft.images.length > 0
+        ? "See the selected design context."
+        : "Use the selected design context.";
   const attachments = draft.images.map((image) => ({
     type: "image" as const,
     data: image.dataUrl.slice(image.dataUrl.indexOf(",") + 1),
@@ -311,29 +302,27 @@ export function designEventToPromptInput(
   };
 }
 
-export const ChatPane = forwardRef<ChatPaneHandle, ChatPaneProps>(function ChatPane(
-  {
-    session,
-    hub,
-    models,
-    defaultModel,
-    contextUsage,
-    workspace,
-    initialEvents,
-    onInitialEventsConsumed,
-    onSessionsChanged,
-    onModelChange,
-    onModelConfigChange,
-    onOpenReview,
-    onOpenSubagent,
-    botColor,
-    composerReplacement,
-    composerDraft,
-    onComposerDraftChange,
-    onPlanUpdated,
-  },
-  ref,
-) {
+export function ChatPane({
+  session,
+  hub,
+  models,
+  defaultModel,
+  contextUsage,
+  workspace,
+  initialEvents,
+  onInitialEventsConsumed,
+  onSessionsChanged,
+  onModelChange,
+  onModelConfigChange,
+  onOpenReview,
+  onOpenSubagent,
+  botColor,
+  composerReplacement,
+  composerDraft,
+  onComposerDraftChange,
+  onPlanUpdated,
+  onOpenPlan,
+}: ChatPaneProps) {
   const sessionId = session.id;
   const [agentEvents, setAgentEvents] = useState<AgentEventItem[]>([]);
   const [localComposerDraft, setLocalComposerDraft] = useState<ChatComposerDraft>(
@@ -432,9 +421,8 @@ export const ChatPane = forwardRef<ChatPaneHandle, ChatPaneProps>(function ChatP
     autoScroll.scrollToBottom();
   }, [agentEvents, autoScroll.scrollToBottom]);
 
-  // The latest plan written/updated in this session. Surfaced to the Plan panel
-  // (data) on every change; the panel auto-opens only on a new plan (App gates
-  // on hash). Build-status transitions re-emit plan.updated with the same hash.
+  // The latest plan written/updated in this session. Keep the inspector's data
+  // current without opening it; only the timeline card's expand action opens it.
   const latestPlan = useMemo<PlanRef | undefined>(() => {
     let latest: PlanRef | undefined;
     for (const item of agentEvents) {
@@ -452,18 +440,6 @@ export const ChatPane = forwardRef<ChatPaneHandle, ChatPaneProps>(function ChatP
       onPlanUpdated(latestPlan);
     }
   }, [latestPlan, onPlanUpdated]);
-
-  // The Plan panel (rendered in the Inspector, outside this pane) triggers a
-  // build through this handle, so it runs the SAME path as the Review card.
-  // No dep array: the handle stays fresh (always builds the current latestPlan
-  // with the current model/mode) without stale-closure risk.
-  useImperativeHandle(ref, () => ({
-    buildActivePlan() {
-      if (latestPlan) {
-        buildPlanLocally(latestPlan);
-      }
-    },
-  }));
 
   /**
    * Build Locally: the user's explicit authorization to execute the approved
@@ -605,11 +581,12 @@ export const ChatPane = forwardRef<ChatPaneHandle, ChatPaneProps>(function ChatP
   const paneModel = session.model ?? defaultModel;
   const activeCwd = session.cwd;
   const retryStatus = sessionStatus.type === "retry" ? sessionStatus : undefined;
-  // The Review card shows only while the plan is unbuilt and not dismissed.
+  // The decision card shows only while the plan is unbuilt and not dismissed.
   // Reading the plan's authoritative build status (not a remembered hash) is
   // what stops the card from re-appearing after a build on session re-open.
   const reviewPlan =
     latestPlan &&
+    !isRunning &&
     latestPlan.hash !== dismissedPlanHash &&
     effectiveBuildStatus(latestPlan, sessionStatus.type !== "idle") === "not_built"
       ? latestPlan
@@ -641,7 +618,7 @@ export const ChatPane = forwardRef<ChatPaneHandle, ChatPaneProps>(function ChatP
         ? { ...item, element: { ...item.element, screenshotDataUrl: undefined } }
         : item.type === "design-annotation"
           ? { ...item, annotation: { ...item.annotation, screenshotDataUrl: undefined } }
-        : item,
+          : item,
     );
     // Bind THIS turn's execution params to the prompt: the model the composer
     // currently shows + its provider-facing thinking variant. The runtime applies them at turn
@@ -823,6 +800,7 @@ export const ChatPane = forwardRef<ChatPaneHandle, ChatPaneProps>(function ChatP
               {...(botColor ? { botColor } : {})}
               cwd={activeCwd}
               onEditResend={editAndResend}
+              {...(onOpenPlan ? { onOpenPlan } : {})}
               {...(onOpenSubagent ? { onOpenSubagent } : {})}
               onRestoreCheckpoint={async (checkpointId) => {
                 await window.modus.checkpoint.restore({ checkpointId });
@@ -865,16 +843,17 @@ export const ChatPane = forwardRef<ChatPaneHandle, ChatPaneProps>(function ChatP
                   onSubmit={(answers) => void respondQuestion(answers, false)}
                   request={pendingQuestion}
                 />
-              ) : reviewPlan ? (
-                <ReviewPlanCard
-                  onBuildLocally={() => buildPlanLocally(reviewPlan)}
-                  onDismiss={() => setDismissedPlanHash(reviewPlan.hash)}
-                  onOpen={() => onPlanUpdated(reviewPlan)}
-                  plan={reviewPlan}
-                />
               ) : null}
               {composerReplacement ? (
                 composerReplacement
+              ) : reviewPlan ? (
+                <ReviewPlanCard
+                  onBuildLocally={() => buildPlanLocally(reviewPlan)}
+                  onContinuePlanning={() => {
+                    setComposerMode("plan");
+                    setDismissedPlanHash(reviewPlan.hash);
+                  }}
+                />
               ) : (
                 <>
                   <RunningProcessBar sessionId={sessionId} workspaceId={workspace?.id} />
@@ -922,7 +901,7 @@ export const ChatPane = forwardRef<ChatPaneHandle, ChatPaneProps>(function ChatP
       </div>
     </section>
   );
-});
+}
 
 function ChatViewport({
   children,

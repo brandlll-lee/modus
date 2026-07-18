@@ -1,5 +1,8 @@
+import { join } from "node:path";
+import { app } from "electron";
 import { denyPendingQuestionRequestsForSession } from "../interaction/question-broker";
 import { denyPendingPermissionRequestsForSession } from "../permissions/permission-broker";
+import { deleteSessionPlan } from "../plan/plan-store";
 import {
   deleteAgentSession,
   getAgentSession,
@@ -30,6 +33,7 @@ export async function deleteAgentSessionTree(sessionId: string): Promise<void> {
   }
   denyPendingPermissionRequestsForSession(sessionId, "Session deleted");
   denyPendingQuestionRequestsForSession(sessionId);
+  deleteSessionPlan(join(app.getPath("userData"), "plans"), sessionId);
   deleteAgentSession(sessionId);
 }
 

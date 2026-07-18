@@ -7,19 +7,18 @@ import {
 import { app } from "electron";
 import { Type } from "typebox";
 import { PLAN_TOOL_NAME, PLAN_TOOL_UI } from "../../../shared/tools";
-import { slugify, writePlan } from "../../plan/plan-store";
+import { writePlan } from "../../plan/plan-store";
 import { toolRegistry } from "./registry";
 import { resolveAgentToolContext } from "./tool-context";
 
 /**
  * Plan Mode tool. In Plan Mode the agent is read-only on the codebase
  * (read/grep/find/ls) and its single write channel is `plan_write`, which
- * materializes one durable `plan.md` artifact. Keeping the plan as the only
+ * materializes one session-scoped plan artifact. Keeping the plan as the only
  * writable target is what makes Plan Mode safe without guarding every path —
  * the profile simply doesn't include edit/write/bash.
  *
- * Plans live under the app's user-data dir by default (not in the repo); the
- * user opts into "save to workspace" separately.
+ * Plans live under the app's user-data dir and are removed with their session.
  */
 
 /** Shared plans root (`<userData>/plans`), reused by the runtime's build-state updates. */
@@ -35,7 +34,7 @@ const planParams = Type.Object(
   {
     title: Type.String({
       minLength: 1,
-      description: "Short feature title for this plan (also used to name the plan file).",
+      description: "Short title for this plan.",
     }),
     overview: Type.String({
       minLength: 1,
@@ -51,16 +50,44 @@ const planParams = Type.Object(
       {
         minItems: 1,
         description:
-          "Ordered implementation steps as plain strings. These drive the Build card count and " +
-          "the Plan panel checklist, so each step must be a self-contained unit of work.",
+          "Ordered implementation steps as plain strings. These drive execution, so each step " +
+          "must be a self-contained unit of work.",
       },
     ),
-    content: Type.String({
-      minLength: 1,
-      description:
-        "The full plan.md body as Markdown. Put the complete decision-ready plan here. Keep this " +
-        "as the final field so the long Markdown file content does not split the smaller metadata.",
-    }),
+    blocks: Type.Array(
+      Type.Union([
+        Type.Object(
+          {
+            type: Type.Literal("markdown"),
+            content: Type.String({ minLength: 1 }),
+          },
+          { additionalProperties: false },
+        ),
+        Type.Object(
+          {
+            type: Type.Literal("visual"),
+            title: Type.String({ minLength: 1 }),
+            kind: Type.Union([Type.Literal("svg"), Type.Literal("html")]),
+            content: Type.String({
+              minLength: 1,
+              description: "Complete self-contained SVG or HTML with inline CSS/JS.",
+            }),
+            fallback: Type.String({
+              minLength: 1,
+              description:
+                "Complete textual description used by the executor without rendering the visual.",
+            }),
+          },
+          { additionalProperties: false },
+        ),
+      ]),
+      {
+        minItems: 1,
+        description:
+          "Ordered plan body. Use markdown for prose and visual only when a diagram or interaction " +
+          "communicates the design materially better.",
+      },
+    ),
   },
   { additionalProperties: false },
 );
@@ -70,39 +97,38 @@ const planTool: ToolDefinition = defineTool({
   label: "Write plan",
   description:
     "Write or update the implementation plan for the current Plan Mode session. The plan is a " +
-    "single Markdown document — the durable source of truth a human reviews and edits, and the " +
-    "shared input to single-agent or fusion execution. Research the codebase (read/grep/find/ls) " +
+    "session-scoped sequence of Markdown and optional visual blocks. Its textual projection is the " +
+    "source of truth used for execution. Research the codebase (read/grep/find/ls) " +
     "and resolve open questions with the user BEFORE writing, then call this once with the " +
     "complete plan. After a successful call, stop; only a later user revision request should " +
     "write a new version. Do not implement anything in Plan Mode.",
   promptSnippet:
-    "plan_write(title, overview, todos, content) — write/update the single plan.md artifact for " +
-    "this session. `todos` is a plain string array; `content` is the full Markdown file body.",
+    "plan_write(title, overview, todos, blocks) — write/update this session's single plan. " +
+    "`blocks` is the ordered Markdown/Visual body and must be the final field.",
   promptGuidelines: [
     "Plan Mode is read-only on the codebase: research with read/grep/find/ls, never edit/run. Your only output is plan_write.",
     "Front-load clarifying questions so the plan is self-contained — a separate executor (or two parallel ones) must be able to build from it without asking the user again.",
     "Be decision-complete: pin the actual data shapes, signatures, algorithms (formula or precise steps), and config values an executor would otherwise have to invent — concrete and owned, never fabricated as fact.",
     "Keep the Markdown readable: use short sections, well-spaced lists, and diagrams/tables only when they clarify the plan.",
+    "Use a visual block instead of Mermaid when a diagram, simulation, or interactive explanation materially improves review. Prefer SVG for static diagrams and HTML only for real interaction.",
+    "Visual content must be self-contained and use Modus theme variables such as var(--color-fg), var(--color-fg-muted), var(--color-canvas), var(--color-surface), var(--color-hairline), and var(--color-link); never fetch external resources. Its fallback must preserve every implementation-relevant fact in text.",
     "Always include testable Acceptance Criteria: these are what verifies the work later, so phrase them as observable behavior.",
   ],
   parameters: planParams,
-  execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
+  execute: async (toolCallId, params, _signal, _onUpdate, ctx) => {
     const context = resolveAgentToolContext(ctx.cwd);
-    if (!context.workspaceId) {
+    if (!context.workspaceId || !context.sessionId) {
       throw new Error("No active Modus workspace for this plan.");
     }
     const plan = writePlan(plansRoot(), {
       workspaceId: context.workspaceId,
-      slug: slugify(params.title),
+      sessionId: context.sessionId,
       title: params.title,
       overview: params.overview,
-      content: params.content,
+      blocks: params.blocks,
       todos: params.todos.map((content) => ({ content })),
-      ...(context.sessionId ? { sessionId: context.sessionId } : {}),
     });
-    if (context.sessionId) {
-      context.emit?.({ type: "plan.updated", sessionId: context.sessionId, plan });
-    }
+    context.emit?.({ type: "plan.updated", sessionId: context.sessionId, plan, toolCallId });
     return toResult(`Plan "${plan.title}" written to ${plan.path}.`, plan);
   },
 });

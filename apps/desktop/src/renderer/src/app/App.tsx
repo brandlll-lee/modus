@@ -60,14 +60,11 @@ import {
   reduceActivity,
   type SessionActivity,
 } from "../features/agent/agentEventHub";
-import type {
-  ChatComposerDraft,
-  ChatComposerDraftUpdate,
-  ChatPaneHandle,
-} from "../features/agent/ChatPane";
+import type { ChatComposerDraft, ChatComposerDraftUpdate } from "../features/agent/ChatPane";
 import { Composer, createEmptyComposerDraft } from "../features/composer/Composer";
 import { BranchSwitcher } from "../features/git/BranchSwitcher";
 import { INSPECTOR_MIN_WIDTH } from "../features/inspector/inspector-layout";
+import { normalizePlan } from "../features/plan/planState";
 import { cn } from "../lib/cn";
 import { useGitBranch } from "../lib/useGitBranch";
 import { beginInitialAppHydration, type InitialAppHydration } from "./initial-hydration";
@@ -134,12 +131,6 @@ export function App() {
   // Plans are scoped per session (the authoritative key), so switching sessions
   // shows that session's own plan — never the last one any session emitted.
   const [activePlanBySession, setActivePlanBySession] = useState<Record<string, PlanRef>>({});
-  // Each distinct plan auto-opens the Plan tab exactly once (by content hash);
-  // re-opening a session or a build-status change never force-switches the tab.
-  const openedPlanHashesRef = useRef<Set<string>>(new Set());
-  // Imperative handle to the active pane so the Plan panel's Build button runs
-  // the same build path as the Review card.
-  const chatPaneRef = useRef<ChatPaneHandle>(null);
   const [environmentStats, setEnvironmentStats] = useState({ added: 0, removed: 0 });
   const [sessionCreateError, setSessionCreateError] = useState<string | undefined>();
   const [layoutWidth, setLayoutWidth] = useState(0);
@@ -475,26 +466,22 @@ export function App() {
     setInspectorOpen(true);
   }
 
-  const buildActivePlan = useCallback(() => {
-    chatPaneRef.current?.buildActivePlan();
-  }, []);
-
   const rememberActivePlan = useCallback(
     (plan: PlanRef) => {
-      const key = plan.sessionId ?? activeSessionId ?? plan.id;
-      setActivePlanBySession((current) => (current[key] === plan ? current : { [key]: plan }));
+      const normalized = normalizePlan(plan);
+      const key = normalized.sessionId ?? activeSessionId ?? normalized.id;
+      setActivePlanBySession((current) =>
+        current[key] === normalized ? current : { ...current, [key]: normalized },
+      );
     },
     [activeSessionId],
   );
 
-  const handleChatPlanUpdated = useCallback(
+  const openPlan = useCallback(
     (plan: PlanRef) => {
       rememberActivePlan(plan);
-      if (!openedPlanHashesRef.current.has(plan.hash)) {
-        openedPlanHashesRef.current.add(plan.hash);
-        setInspectorTab("plan");
-        setInspectorOpen(true);
-      }
+      setInspectorTab("plan");
+      setInspectorOpen(true);
     },
     [rememberActivePlan],
   );
@@ -916,8 +903,8 @@ export function App() {
                                     return next;
                                   });
                                 }}
-                                onPlanUpdated={handleChatPlanUpdated}
-                                ref={chatPaneRef}
+                                onOpenPlan={openPlan}
+                                onPlanUpdated={rememberActivePlan}
                                 onSessionsChanged={() => void refreshSessions()}
                                 session={activeSession}
                                 workspace={
@@ -1017,8 +1004,6 @@ export function App() {
                           {...(activeSession && activePlanBySession[activeSession.id]
                             ? { plan: activePlanBySession[activeSession.id] }
                             : {})}
-                          sessionWorking={activeRunning}
-                          onBuildPlan={buildActivePlan}
                           securityState={securityState}
                           selectedSubagentId={selectedSubagentId}
                           sessions={agentSessions}
