@@ -18,27 +18,28 @@ export const PlanPanel = memo(function PlanPanel({ plan }: { plan: PlanRef | und
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex h-10 shrink-0 items-center border-hairline border-b px-6">
-        <span className="min-w-0 flex-1 truncate font-medium text-fg text-sm" title={plan.title}>
-          {plan.title}
-        </span>
+      <div className="flex h-10 shrink-0 items-center border-hairline border-b px-[clamp(1.5rem,6%,4rem)]">
+        <div className="mx-auto flex w-full max-w-[920px] items-center">
+          <span className="min-w-0 flex-1 truncate font-medium text-fg text-sm" title={plan.title}>
+            {plan.title}
+          </span>
+        </div>
       </div>
 
-      <div className="scroll-thin min-h-0 flex-1 overflow-y-auto px-6 py-5">
-        <div className="space-y-5">
+      <div className="scroll-thin min-h-0 flex-1 overflow-y-auto px-[clamp(1.5rem,6%,4rem)] py-7">
+        <div className="mx-auto w-full max-w-[920px] space-y-8">
           {plan.blocks.map((block) =>
             block.type === "markdown" ? (
-              <MarkdownMessage
-                className="modus-plan-markdown"
-                content={block.content}
+              <div
+                className="mx-auto w-full max-w-[760px]"
                 key={`${plan.hash}:markdown:${block.content}`}
-              />
+              >
+                <MarkdownMessage className="modus-plan-markdown" content={block.content} />
+              </div>
             ) : (
-              <VisualToolCard
-                args={block}
-                isComplete
-                key={`${plan.hash}:visual:${block.title}:${block.content}`}
-              />
+              <div className="w-full" key={`${plan.hash}:visual:${block.title}:${block.content}`}>
+                <VisualToolCard args={block} isComplete />
+              </div>
             ),
           )}
         </div>

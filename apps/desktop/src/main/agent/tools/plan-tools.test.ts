@@ -62,10 +62,10 @@ describe("plan_write", () => {
             },
             {
               type: "visual",
-              title: "Flow",
+              title: "请求流程",
               kind: "svg",
               content: "<svg><path /></svg>",
-              fallback: "The renderer reads the plan, then shows the result.",
+              fallback: "浏览器请求 POST /api/realtime/token；server.ts 保留 OPENAI_API_KEY。",
             },
           ],
         },
@@ -84,7 +84,13 @@ describe("plan_write", () => {
       "Update the schema",
       "Reuse the diff card",
     ]);
-    expect(plan?.blocks[1]).toMatchObject({ type: "visual", title: "Flow" });
+    expect(plan?.blocks[1]).toEqual({
+      type: "visual",
+      title: "请求流程",
+      kind: "svg",
+      content: "<svg><path /></svg>",
+      fallback: "浏览器请求 POST /api/realtime/token；server.ts 保留 OPENAI_API_KEY。",
+    });
     expect(events).toEqual([
       expect.objectContaining({
         type: "plan.updated",
