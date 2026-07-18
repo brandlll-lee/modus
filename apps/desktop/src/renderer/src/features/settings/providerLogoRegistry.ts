@@ -1,6 +1,7 @@
 const PROVIDER_LOGO_ALIASES: Record<string, string> = {
   "amazon-bedrock": "amazon-bedrock",
   "aws-bedrock": "amazon-bedrock",
+  "azure-openai-responses": "azure",
   bedrock: "amazon-bedrock",
   cloudflare: "cloudflare-workers-ai",
   copilot: "github-copilot",
@@ -11,12 +12,20 @@ const PROVIDER_LOGO_ALIASES: Record<string, string> = {
   "google-gemini": "google",
   "hugging-face": "huggingface",
   huggingface: "huggingface",
+  "kimi-coding": "kimi-for-coding",
   llmstudio: "lmstudio",
   "lm-studio": "lmstudio",
   moonshot: "moonshotai",
   "open-code": "opencode",
   "open-code-go": "opencode-go",
+  "openai-codex": "openai",
+  together: "togetherai",
   "together-ai": "togetherai",
+  "vercel-ai-gateway": "vercel",
+  "xiaomi-token-plan-ams": "xiaomi",
+  "xiaomi-token-plan-cn": "xiaomi",
+  "xiaomi-token-plan-sgp": "xiaomi",
+  "zai-coding-cn": "zai-coding-plan",
   zhipu: "zhipuai",
 };
 
@@ -33,6 +42,7 @@ export const PROVIDER_LOGO_COLORS: Record<string, string> = {
   groq: "#ff5a1f",
   mistral: "#ff7000",
   openai: "#10a37f",
+  "openai-codex": "var(--color-fg)",
   openrouter: "#8b8cff",
   perplexity: "#20b8cd",
   vercel: "#f5f5f5",
@@ -64,6 +74,14 @@ export function createProviderLogoResolver(availableProviderLogos: ReadonlySet<s
 export function providerLogoFallbackLabel(provider: string, name?: string): string {
   const source = name?.trim() || provider.trim();
   return source.slice(0, 1).toUpperCase();
+}
+
+export function providerLogoColor(provider: string, logoKey: string): string {
+  return (
+    PROVIDER_LOGO_COLORS[normalizeProviderLogoKey(provider)] ??
+    PROVIDER_LOGO_COLORS[logoKey] ??
+    "currentColor"
+  );
 }
 
 export function normalizeProviderLogoKey(value: string): string {

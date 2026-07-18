@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { cn } from "../../lib/cn";
 import {
   createProviderLogoResolver,
-  PROVIDER_LOGO_COLORS,
+  providerLogoColor,
   providerLogoFallbackLabel,
 } from "./providerLogoRegistry";
 
@@ -113,7 +113,7 @@ export function ProviderLogo({ provider, name, size = "md", framed = true }: Pro
               WebkitMaskPosition: "center",
               WebkitMaskRepeat: "no-repeat",
               WebkitMaskSize: "contain",
-              backgroundColor: providerLogoColor(asset.key),
+              backgroundColor: providerLogoColor(provider, asset.key),
               maskImage: `url("${asset.url}")`,
               maskPosition: "center",
               maskRepeat: "no-repeat",
@@ -167,8 +167,4 @@ function loadProviderLogo(key: string): Promise<ProviderLogoAsset | undefined> {
   const promise = loader ? loader().then((url) => ({ key, url })) : Promise.resolve(undefined);
   providerLogoCache.set(key, promise);
   return promise;
-}
-
-function providerLogoColor(key: string): string {
-  return PROVIDER_LOGO_COLORS[key] ?? "currentColor";
 }
