@@ -18,8 +18,8 @@
       :root {
         color-scheme: dark;
         --startup-canvas: #131314;
-        --startup-mark: #e4e4e3;
-        --startup-sheen: #ffffff;
+        --startup-mark: rgb(228 228 227 / 44%);
+        --startup-sheen: rgb(255 255 255 / 18%);
       }
 
       :root[data-theme="dark-plus"] {
@@ -29,8 +29,8 @@
       :root[data-theme="light"] {
         color-scheme: light;
         --startup-canvas: #ffffff;
-        --startup-mark: #242424;
-        --startup-sheen: #000000;
+        --startup-mark: rgb(36 36 36 / 34%);
+        --startup-sheen: rgb(0 0 0 / 12%);
       }
 
       html,
@@ -64,13 +64,18 @@
 
       .modus-loading-mark::after {
         position: absolute;
-        inset: -25% auto -25% -65%;
-        inline-size: 55%;
+        inset: -65%;
         content: "";
-        background: linear-gradient(90deg, transparent, var(--startup-sheen), transparent);
+        pointer-events: none;
+        background: linear-gradient(
+          -35deg,
+          transparent 43%,
+          var(--startup-sheen) 50%,
+          transparent 57%
+        );
         opacity: 0;
-        transform: translateX(-40%) skewX(-18deg);
-        animation: startup-scan 3.2s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+        transform: translate3d(-32%, -32%, 0);
+        animation: startup-scan 4.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
         will-change: transform, opacity;
       }
 
@@ -80,23 +85,23 @@
 
       @keyframes startup-scan {
         0%,
-        64% {
+        52% {
           opacity: 0;
-          transform: translateX(-40%) skewX(-18deg);
+          transform: translate3d(-32%, -32%, 0);
         }
 
-        69% {
-          opacity: 0.42;
+        58% {
+          opacity: 1;
         }
 
-        92% {
-          opacity: 0.42;
-          transform: translateX(360%) skewX(-18deg);
+        88% {
+          opacity: 1;
+          transform: translate3d(32%, 32%, 0);
         }
 
         100% {
           opacity: 0;
-          transform: translateX(360%) skewX(-18deg);
+          transform: translate3d(32%, 32%, 0);
         }
       }
 
