@@ -277,6 +277,64 @@ describe("PiSdkRuntime", () => {
     expect(toolRegistry.resolveActiveTools("chat")).not.toContain("close_agent");
   });
 
+  it("keeps intermediate plan visuals out of the persisted timeline", async () => {
+    const sessionId = `session-${crypto.randomUUID()}`;
+    const workspaceId = `workspace-${crypto.randomUUID()}`;
+    insertSession(sessionId, workspaceId, join(userData, "missing.jsonl"), "New chat");
+    const session = createMockPiSession({
+      prompt: vi.fn(async () => {
+        mocks.emitPiEvent({
+          type: "tool_execution_start",
+          toolCallId: "visual-call",
+          toolName: "visual_write",
+          args: { title: "Flow", kind: "svg", content: "<svg />" },
+        });
+        mocks.emitPiEvent({
+          type: "tool_execution_update",
+          toolCallId: "visual-call",
+          toolName: "visual_write",
+          partialResult: { content: [{ type: "text", text: "visual ready" }] },
+        });
+        mocks.emitPiEvent({
+          type: "tool_execution_end",
+          toolCallId: "visual-call",
+          toolName: "visual_write",
+          isError: false,
+        });
+        mocks.emitPiEvent({ type: "message_start", message: { role: "assistant" } });
+        mocks.emitPiEvent({
+          type: "message_update",
+          message: { role: "assistant" },
+          assistantMessageEvent: { type: "text_delta", delta: "plan complete" },
+        });
+        mocks.emitPiEvent({ type: "message_end", message: { role: "assistant" } });
+      }),
+    });
+    mocks.createAgentSession.mockImplementationOnce(async () => ({ session }));
+    const runtime = new PiSdkRuntime();
+
+    await runtime.prompt(createWindowStub(), {
+      context: [],
+      delivery: "normal",
+      message: "plan this",
+      mode: "plan",
+      sessionId,
+      userMessageId: "local-user-plan-visual",
+    });
+
+    const types = (
+      getDatabase()
+        .prepare("select type from agent_events where session_id = ?")
+        .all(sessionId) as Array<{ type: string }>
+    ).map((event) => event.type);
+    expect(types).not.toContain("tool.started");
+    expect(types).not.toContain("tool.output");
+    expect(types).not.toContain("tool.ended");
+    expect(session.setActiveToolsByName).toHaveBeenCalledWith(
+      expect.arrayContaining(["visual_write", "plan_write"]),
+    );
+  });
+
   it("returns foreground subagent output from the task tool", async () => {
     const parentSessionId = `session-${crypto.randomUUID()}`;
     const workspaceId = `workspace-${crypto.randomUUID()}`;

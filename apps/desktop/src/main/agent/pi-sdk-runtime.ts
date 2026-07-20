@@ -118,6 +118,7 @@ Skip heavy formatting for one-line answers, greetings, or simple confirmations.
 type SdkRuntimeSession = {
   info: AgentSessionInfo;
   session: AgentSession;
+  profile: ToolProfileName;
   unsubscribe: () => void;
   emit: EmitAgentEvent;
   emitVolatile: EmitAgentEvent;
@@ -305,11 +306,13 @@ export class PiSdkRuntime implements AgentRuntime {
   private toolContextFor(
     runtimeSession: SdkRuntimeSession,
     window: BrowserWindowType,
+    profile: ToolProfileName,
   ): AgentToolContext {
     return {
       workspaceId: runtimeSession.info.workspaceId,
       cwd: runtimeSession.info.cwd,
       sessionId: runtimeSession.info.id,
+      profile,
       ...(runtimeSession.info.parentSessionId
         ? { parentSessionId: runtimeSession.info.parentSessionId }
         : {}),
@@ -447,8 +450,25 @@ export class PiSdkRuntime implements AgentRuntime {
     // the (growing) partial args, so we cap its rate to keep IPC light; the
     // durable `tool.started` at execution time always delivers the final args.
     let lastToolDeltaAt = 0;
+    const hiddenToolCallIds = new Set<string>();
+    let runtimeSession: SdkRuntimeSession | undefined;
     const unsubscribe = session.subscribe((event) => {
       for (const normalized of normalizePiEvent(event)) {
+        if (normalized.type === "tool.delta" || normalized.type === "tool.started") {
+          const hiddenProfiles = toolRegistry.getEntry(normalized.toolName)?.ui
+            .hiddenFromTimelineInProfiles;
+          if (hiddenProfiles?.includes(runtimeSession?.profile ?? "chat")) {
+            hiddenToolCallIds.add(normalized.toolCallId);
+            continue;
+          }
+        }
+        if (
+          (normalized.type === "tool.output" || normalized.type === "tool.ended") &&
+          hiddenToolCallIds.has(normalized.toolCallId)
+        ) {
+          if (normalized.type === "tool.ended") hiddenToolCallIds.delete(normalized.toolCallId);
+          continue;
+        }
         this.noteAssistantOutput(normalized);
         if (normalized.type === "tool.delta") {
           const now = Date.now();
@@ -482,9 +502,10 @@ export class PiSdkRuntime implements AgentRuntime {
     }
     const updated = updateAgentSessionMetadata(params.info.id, metadata) ?? params.info;
     updateAgentSessionStatus(params.info.id, "idle");
-    const runtimeSession: SdkRuntimeSession = {
+    runtimeSession = {
       info: updated,
       session,
+      profile: "chat",
       unsubscribe,
       emit: params.emit,
       emitVolatile: params.emitVolatile,
@@ -655,14 +676,15 @@ export class PiSdkRuntime implements AgentRuntime {
       throw failEarlyPrompt(`Agent session not running: ${input.sessionId}`);
     }
 
-    const toolContext = this.toolContextFor(runtimeSession, window);
+    const profile = profileForMode(input.mode);
+    runtimeSession.profile = profile;
+    const toolContext = this.toolContextFor(runtimeSession, window, profile);
     setAgentToolContext(toolContext);
 
     try {
       // Per-turn mode: switch the active tool set (plan = read-only research +
-      // plan_write; build = full chat tools). setActiveToolsByName also rebuilds
+      // plan artifacts; build = full chat tools). setActiveToolsByName also rebuilds
       // the system prompt for the new set, and takes effect on this turn.
-      const profile = profileForMode(input.mode);
       runtimeSession.session.setActiveToolsByName(
         activeToolNamesForSession(runtimeSession.info, profile),
       );

@@ -80,6 +80,8 @@ export type ToolUiMeta = {
   render?: ToolRenderKind;
   /** Which timeline activity fold this flat tool joins. Absent ⇒ standalone. */
   activity?: "explore" | "browser" | "shell";
+  /** Profiles where the tool is an intermediate artifact and should not create a timeline row. */
+  hiddenFromTimelineInProfiles?: ToolProfileName[];
   /** For `render: "diff"` — how to build the diff from the call's arguments. */
   diffSource?: DiffSource;
   /**
@@ -259,6 +261,7 @@ export const VISUAL_TOOL_UI: ToolUiMeta = {
   verb: "Visual",
   primaryArgKey: "title",
   render: "visual",
+  hiddenFromTimelineInProfiles: ["plan"],
 };
 
 /** Agent-facing to-do tool (custom tool registered at runtime). */

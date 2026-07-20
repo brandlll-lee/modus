@@ -44,7 +44,7 @@ export function PlanTimelineCard({
   const title = plan?.title ?? textArg(args, "title");
   const overview = plan?.overview ?? textArg(args, "overview");
   const content = plan?.content ?? previewArg(args);
-  const preview = content || [title ? `# ${title}` : "", overview].filter(Boolean).join("\n\n");
+  const preview = content || overview;
   const ready = isComplete && !isError && plan !== undefined;
 
   return (
@@ -84,13 +84,18 @@ export function PlanTimelineCard({
           maskImage: "linear-gradient(to bottom, #000 0%, #000 70%, transparent 100%)",
         }}
       >
+        {title ? (
+          <h2 className="mb-4 font-bold text-[1.75rem] text-fg leading-tight tracking-[-0.025em]">
+            {title}
+          </h2>
+        ) : null}
         {preview ? (
           <MarkdownMessage
             className="modus-plan-markdown"
             content={preview}
             streaming={!isComplete}
           />
-        ) : (
+        ) : title ? null : (
           <div className="h-20" />
         )}
       </div>

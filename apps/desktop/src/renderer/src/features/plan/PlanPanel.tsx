@@ -28,6 +28,9 @@ export const PlanPanel = memo(function PlanPanel({ plan }: { plan: PlanRef | und
 
       <div className="scroll-thin min-h-0 flex-1 overflow-y-auto px-[clamp(1.5rem,6%,4rem)] py-7">
         <div className="mx-auto w-full max-w-[920px] space-y-8">
+          <h1 className="mx-auto w-full max-w-[760px] font-bold text-[2rem] text-fg leading-tight tracking-[-0.03em]">
+            {plan.title}
+          </h1>
           {plan.blocks.map((block) =>
             block.type === "markdown" ? (
               <div

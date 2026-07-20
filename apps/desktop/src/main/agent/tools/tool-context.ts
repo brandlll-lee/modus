@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { BrowserWindow as BrowserWindowType } from "electron";
+import type { ToolProfileName } from "../../../shared/tools";
 import type { EmitAgentEvent } from "../runtime";
 
 /**
@@ -14,8 +15,15 @@ export type AgentToolContext = {
   workspaceId: string;
   cwd: string;
   sessionId: string;
+  profile?: ToolProfileName;
   parentSessionId?: string;
   window?: BrowserWindowType;
+  visualDraft?: {
+    ref: string;
+    title: string;
+    kind: "html" | "svg";
+    content: string;
+  };
   /** Persists + pushes an agent event (recordAgentEvent + webContents.send). */
   emit?: EmitAgentEvent;
 };
@@ -38,9 +46,13 @@ export function runWithAgentToolContext<T>(
 }
 
 export function resolveAgentToolContext(cwd: string): AgentToolContext {
-  return activeContext.getStore() ?? contextByCwd.get(cwd) ?? lastContext ?? {
-    workspaceId: "",
-    cwd,
-    sessionId: "",
-  };
+  return (
+    activeContext.getStore() ??
+    contextByCwd.get(cwd) ??
+    lastContext ?? {
+      workspaceId: "",
+      cwd,
+      sessionId: "",
+    }
+  );
 }

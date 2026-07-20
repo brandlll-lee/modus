@@ -59,6 +59,7 @@ describe("tool render descriptor (single source of truth)", () => {
     expect(getToolUiMeta(FAST_CODEBASE_TOOL_NAME)?.render).toBe("live");
     expect(getToolUiMeta(FAST_CODEBASE_TOOL_NAME)?.activity).toBeUndefined();
     expect(getToolUiMeta(VISUAL_TOOL_NAME)?.render).toBe("visual");
+    expect(getToolUiMeta(VISUAL_TOOL_NAME)?.hiddenFromTimelineInProfiles).toEqual(["plan"]);
     expect(getToolUiMeta("plan_write")?.render).toBe("plan");
     expect(getToolUiMeta("plan_write")?.diffSource).toBeUndefined();
   });
