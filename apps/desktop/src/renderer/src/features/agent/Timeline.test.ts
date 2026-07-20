@@ -10,10 +10,8 @@ import { subagentColor } from "./subagentUi";
 import {
   attachTurnActions,
   blockRenderKeys,
+  buildActivitySummary,
   buildBlocks,
-  buildBrowserSummary,
-  buildExploreSummary,
-  buildShellSummary,
   groupActivity,
   relocateRunFooters,
   runStatusLabel,
@@ -765,7 +763,7 @@ describe("groupActivity", () => {
     expect(result[0]).toEqual(
       expect.objectContaining({
         type: "activity-group",
-        summary: "Explored 1 file, 2 searches, 1 listing, 1 web lookup",
+        summary: "Explored 1 listing, 2 searches, 1 file, 1 web lookup",
       }),
     );
   });
@@ -782,13 +780,15 @@ describe("groupActivity", () => {
     expect((grouped[0] as { items: unknown[] }).items).toHaveLength(2);
   });
 
-  it("keeps web_fetch standalone but folds catalog terminal renderers", () => {
+  it("folds web_fetch into the explore group, apart from shell renderers", () => {
     const result = groupActivity([
       tool("1", "web_fetch"),
       tool("2", "terminal_read"),
       msg("m"),
     ] as Blocks);
-    expect(result[0]).toEqual(expect.objectContaining({ type: "tool", name: "web_fetch" }));
+    expect(result[0]).toEqual(
+      expect.objectContaining({ type: "activity-group", kind: "explore", summary: "Explored 1 page" }),
+    );
     expect(result[1]).toEqual(expect.objectContaining({ type: "activity-group", kind: "shell" }));
   });
 
@@ -814,7 +814,7 @@ describe("groupActivity", () => {
       expect.objectContaining({
         type: "activity-group",
         kind: "browser",
-        summary: "Browser used 1 CDP command, 1 tab action",
+        summary: "Browser used 1 tab action, 1 CDP command",
       }),
     );
   });
@@ -1081,22 +1081,25 @@ describe("groupActivity", () => {
 
   it("counts distinct read paths when args carry them", () => {
     expect(
-      buildExploreSummary([
+      buildActivitySummary("explore", [
         { ...tool("1", "read"), args: { path: "a.ts" } },
         { ...tool("2", "read"), args: { path: "a.ts" } },
         { ...tool("3", "read"), args: { path: "b.ts" } },
-      ] as Parameters<typeof buildExploreSummary>[0]),
+      ] as Parameters<typeof buildActivitySummary>[1]),
     ).toBe("Explored 2 files");
   });
 
   it("summarizes shell groups from completion state", () => {
     expect(
-      buildShellSummary([tool("1", "bash", false)] as Parameters<typeof buildShellSummary>[0]),
+      buildActivitySummary("shell", [tool("1", "bash", false)] as Parameters<
+        typeof buildActivitySummary
+      >[1]),
     ).toBe("Running command…");
     expect(
-      buildShellSummary([tool("1", "terminal_run"), tool("2", "terminal_read")] as Parameters<
-        typeof buildShellSummary
-      >[0]),
+      buildActivitySummary("shell", [
+        tool("1", "terminal_run"),
+        tool("2", "terminal_read"),
+      ] as Parameters<typeof buildActivitySummary>[1]),
     ).toBe("Ran 2 commands");
   });
 });
@@ -1252,17 +1255,17 @@ describe("subagentColor", () => {
   });
 });
 
-describe("buildBrowserSummary", () => {
-  it("summarizes browser actions by category", () => {
+describe("buildActivitySummary", () => {
+  it("summarizes browser actions by their declared nouns", () => {
     expect(
-      buildBrowserSummary([
+      buildActivitySummary("browser", [
         tool("1", "browser_tabs"),
         tool("2", "browser_cdp"),
         tool("3", "browser_cdp"),
         tool("4", "browser_screenshot"),
         tool("5", "browser_events"),
-      ] as Parameters<typeof buildBrowserSummary>[0]),
-    ).toBe("Browser used 2 CDP commands, 1 capture, 1 event drain, 1 tab action");
+      ] as Parameters<typeof buildActivitySummary>[1]),
+    ).toBe("Browser used 1 tab action, 2 CDP commands, 1 capture, 1 event drain");
   });
 });
 

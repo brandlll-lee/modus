@@ -880,116 +880,53 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
 }
 
 /**
- * Read-only exploration, shell, and browser tools fold into Cursor-style groups.
- * Side-effect file writes, first-class output, MCP, todo, and app tools stand
- * alone unless their catalog declares a foldable renderer.
+ * Which fold a tool joins, or undefined when it always stands alone. Purely
+ * catalog-declared: a tool folds by carrying `activity` in its ToolUiMeta, so
+ * a new foldable tool is a catalog entry, never an edit here.
  */
-const EXPLORE_TOOLS = new Set(["read", "grep", "find", "ls", "terminal_list", "web_search"]);
-const BROWSER_TOOLS = new Set<string>(BROWSER_TOOL_NAMES);
-
-/** Which fold a tool joins, or undefined when it always stands alone. */
 function activityKind(name: string): "explore" | "browser" | "shell" | undefined {
-  const activity = getToolUiMeta(name)?.activity;
-  if (activity) return activity;
-  if (toolRenderKind(name) === "terminal") return "shell";
-  if (BROWSER_TOOLS.has(name)) return "browser";
-  if (EXPLORE_TOOLS.has(name)) return "explore";
-  return undefined;
+  return getToolUiMeta(name)?.activity;
 }
 
-/** Build the folded run's digest from its members. Exported for tests. */
-export function buildExploreSummary(tools: ToolBlockItem[]): string {
-  const readPaths = new Set<string>();
-  let reads = 0;
-  let searches = 0;
-  let listings = 0;
-  let terminalChecks = 0;
-  let webLookups = 0;
+/** English plural for digest nouns ("file" → "files", "search" → "searches"). */
+function plural(count: number, noun: string): string {
+  return `${count} ${count === 1 ? noun : /(?:s|x|z|ch|sh)$/.test(noun) ? `${noun}es` : `${noun}s`}`;
+}
 
+/**
+ * Sealed digest of a folded activity run, e.g. "Explored 2 files, 1 search" or
+ * "Browser used 3 CDP commands". Catalog-driven: each member counts toward the
+ * `summaryNoun` its tool declares — distinct primary-arg targets count once,
+ * calls without one count individually. Shell wording tracks the run's
+ * lifecycle instead. Exported for tests.
+ */
+export function buildActivitySummary(
+  kind: "explore" | "browser" | "shell",
+  tools: ToolBlockItem[],
+): string {
+  if (kind === "shell") {
+    if (tools.some((tool) => !tool.isComplete)) {
+      return tools.length > 1 ? "Running commands…" : "Running command…";
+    }
+    return `Ran ${tools.length} ${tools.length === 1 ? "command" : "commands"}`;
+  }
+  const targetsByNoun = new Map<string, Set<string>>();
   for (const tool of tools) {
+    const meta = getToolUiMeta(tool.name);
+    if (!meta?.summaryNoun) continue;
     const args = (tool.args && typeof tool.args === "object" ? tool.args : {}) as Record<
       string,
       unknown
     >;
-    switch (tool.name) {
-      case "read": {
-        reads += 1;
-        const path = typeof args.path === "string" ? args.path : `#${reads}`;
-        readPaths.add(path);
-        break;
-      }
-      case "grep":
-      case "find":
-        searches += 1;
-        break;
-      case "ls":
-        listings += 1;
-        break;
-      case "terminal_list":
-        terminalChecks += 1;
-        break;
-      case "web_search":
-        webLookups += 1;
-        break;
-      default:
-        break;
-    }
+    const target = meta.primaryArgKey ? args[meta.primaryArgKey] : undefined;
+    const key = typeof target === "string" && target ? target : `call:${tool.id}`;
+    const targets = targetsByNoun.get(meta.summaryNoun) ?? new Set<string>();
+    targets.add(key);
+    targetsByNoun.set(meta.summaryNoun, targets);
   }
-
-  const plural = (count: number, singular: string, pluralForm = `${singular}s`): string =>
-    `${count} ${count === 1 ? singular : pluralForm}`;
-  const parts: string[] = [];
-  if (reads > 0) parts.push(plural(readPaths.size, "file"));
-  if (searches > 0) parts.push(plural(searches, "search", "searches"));
-  if (listings > 0) parts.push(plural(listings, "listing"));
-  if (terminalChecks > 0) parts.push(plural(terminalChecks, "terminal check"));
-  if (webLookups > 0) parts.push(plural(webLookups, "web lookup"));
-  return parts.length > 0 ? `Explored ${parts.join(", ")}` : `Explored ${tools.length} steps`;
-}
-
-/** Sealed digest for a browser-control run, e.g. "Browser used 2 pages, 3 clicks". */
-export function buildBrowserSummary(tools: ToolBlockItem[]): string {
-  let commands = 0;
-  let captures = 0;
-  let events = 0;
-  let tabs = 0;
-
-  for (const tool of tools) {
-    switch (tool.name) {
-      case "browser_cdp":
-        commands += 1;
-        break;
-      case "browser_screenshot":
-        captures += 1;
-        break;
-      case "browser_events":
-        events += 1;
-        break;
-      case "browser_tabs":
-        tabs += 1;
-        break;
-      default:
-        break;
-    }
-  }
-
-  const plural = (count: number, singular: string, pluralForm = `${singular}s`): string =>
-    `${count} ${count === 1 ? singular : pluralForm}`;
-  const parts: string[] = [];
-  if (commands > 0) parts.push(plural(commands, "CDP command"));
-  if (captures > 0) parts.push(plural(captures, "capture"));
-  if (events > 0) parts.push(plural(events, "event drain"));
-  if (tabs > 0) parts.push(plural(tabs, "tab action"));
-  return parts.length > 0
-    ? `Browser used ${parts.join(", ")}`
-    : `Browser used ${tools.length} steps`;
-}
-
-export function buildShellSummary(tools: ToolBlockItem[]): string {
-  if (tools.some((tool) => !tool.isComplete)) {
-    return tools.length > 1 ? "Running commands…" : "Running command…";
-  }
-  return `Ran ${tools.length} ${tools.length === 1 ? "command" : "commands"}`;
+  const parts = [...targetsByNoun].map(([noun, targets]) => plural(targets.size, noun));
+  const prefix = kind === "browser" ? "Browser used" : "Explored";
+  return parts.length > 0 ? `${prefix} ${parts.join(", ")}` : `${prefix} ${tools.length} steps`;
 }
 
 /**
@@ -1154,12 +1091,7 @@ export function groupActivity(blocks: TimelineBlock[]): TimelineBlock[] {
         type: "activity-group",
         kind: startKind,
         active: !sealed,
-        summary:
-          startKind === "browser"
-            ? buildBrowserSummary(tools)
-            : startKind === "shell"
-              ? buildShellSummary(tools)
-              : buildExploreSummary(tools),
+        summary: buildActivitySummary(startKind, tools),
         items: groupItems as ActivityItem[],
       });
     } else {

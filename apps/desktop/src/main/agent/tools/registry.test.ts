@@ -65,7 +65,7 @@ describe("ToolRegistry custom tools", () => {
       name: "demo",
       profiles: ["chat"],
       permission: { danger: "safe" },
-      ui: { iconName: "tool", verb: "Demo" },
+      ui: { verb: "Demo" },
     };
     const definition = { name: "demo" } as never;
     registry.registerTool({ entry, definition });
@@ -85,7 +85,7 @@ describe("ToolRegistry custom tools", () => {
         name: "slow",
         profiles: ["chat"],
         permission: { danger: "safe" },
-        ui: { iconName: "tool", verb: "Slow" },
+        ui: { verb: "Slow" },
       },
       definition: { name: "slow", execute: () => hang } as never,
     });
@@ -114,7 +114,7 @@ describe("ToolRegistry custom tools", () => {
         name: "deploy",
         profiles: ["chat"],
         permission: { danger: "dynamic" },
-        ui: { iconName: "tool", verb: "Deployed" },
+        ui: { verb: "Deployed" },
       },
       definition: { name: "deploy" } as never,
       classify: () => ({ action: "external.open", dangerous: true }),

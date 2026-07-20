@@ -1,4 +1,4 @@
-import { IconAlertCircle, IconCheck, IconChevronRight, IconTerminal2 } from "@tabler/icons-react";
+import { IconAlertCircle, IconCheck, IconChevronRight } from "@tabler/icons-react";
 import { memo, useMemo, useState } from "react";
 import { CollapsibleMotion } from "../../../components/ui/CollapsibleMotion";
 import { ShinyText } from "../../../components/ui/ShinyText";
@@ -145,13 +145,6 @@ export const TerminalToolCard = memo(
           onClick={() => setOpen((value) => !value)}
           type="button"
         >
-          <span className="flex shrink-0 items-center text-fg-faint">
-            {isError ? (
-              <IconAlertCircle className="text-danger" size={14} stroke={1.7} />
-            ) : (
-              <IconTerminal2 size={14} stroke={1.7} />
-            )}
-          </span>
           <span className="min-w-0 flex-1 truncate text-fg-muted text-sm" title={command}>
             {running ? <ShinyText>{headerLabel}</ShinyText> : headerLabel}
           </span>

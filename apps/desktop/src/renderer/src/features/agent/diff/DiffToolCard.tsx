@@ -1,4 +1,4 @@
-import { IconChevronRight, IconCopy } from "@tabler/icons-react";
+import { IconChevronRight, IconCopy, IconFilePlus } from "@tabler/icons-react";
 import { memo, useMemo, useState } from "react";
 import { getToolUiMeta, type ToolUiMeta } from "../../../../../shared/tools";
 import { CollapsibleMotion } from "../../../components/ui/CollapsibleMotion";
@@ -6,7 +6,6 @@ import { NumberTicker } from "../../../components/ui/NumberTicker";
 import { ShinyText } from "../../../components/ui/ShinyText";
 import { Tooltip } from "../../../components/ui/Tooltip";
 import { cn } from "../../../lib/cn";
-import { toolIcon } from "../toolIcons";
 import { type InlineDiff, inlineDiffFromToolArgs, toolTargetPath } from "./computeInlineDiff";
 import { InlineDiffView } from "./InlineDiff";
 
@@ -132,14 +131,14 @@ export const DiffToolCard = memo(
                   {glyph}
                 </span>
               ) : (
-                toolIcon(meta?.iconName ?? "file-plus")
+                <IconFilePlus size={14} stroke={1.7} />
               )}
             </span>
 
             {running ? (
               <ShinyText className="shrink-0">{operationLabel(meta)}</ShinyText>
             ) : (
-              <span className={cn("shrink-0", isError ? "text-danger" : "text-fg-subtle")}>
+              <span className={cn("shrink-0 font-semibold", isError ? "text-danger" : "text-fg")}>
                 {operationLabel(meta)}
               </span>
             )}

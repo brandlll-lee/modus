@@ -1,4 +1,4 @@
-import { IconAlertCircle, IconChevronRight } from "@tabler/icons-react";
+import { IconChevronRight } from "@tabler/icons-react";
 import { memo, type ReactNode, useEffect, useRef, useState } from "react";
 import type { PlanRef, QuestionAnswer, QuestionRequest } from "../../../../shared/contracts";
 import { getToolUiMeta, type ToolUiMeta, toolRenderKind } from "../../../../shared/tools";
@@ -33,7 +33,8 @@ type ToolCardProps = {
 const MAX_DETAIL_CHARS = 12_000;
 
 type ToolView = {
-  icon: ReactNode;
+  /** Leading icon — only when the tool's catalog entry declares one (web tools). */
+  icon?: ReactNode;
   verb: string;
   /** Main target shown after the verb. Always truncated so it can't widen chat. */
   target: string;
@@ -214,13 +215,11 @@ function LiveToolCard({
         onClick={() => setOpen((value) => !value)}
         type="button"
       >
-        <span className="shrink-0 text-fg-faint">
-          {isError ? <IconAlertCircle className="text-danger" size={14} stroke={1.7} /> : view.icon}
-        </span>
+        {view.icon ? <span className="shrink-0 text-fg-faint">{view.icon}</span> : null}
         {running ? (
           <ShinyText className="shrink-0 font-medium">{view.verb}</ShinyText>
         ) : (
-          <span className={cn("shrink-0 font-medium", isError ? "text-danger" : "text-fg")}>
+          <span className={cn("shrink-0 font-semibold", isError ? "text-danger" : "text-fg")}>
             {view.verb}
           </span>
         )}
@@ -278,9 +277,7 @@ function FlatToolRow({
 
   const body = (
     <>
-      <span className="shrink-0 text-fg-faint">
-        {isError ? <IconAlertCircle className="text-danger" size={14} stroke={1.7} /> : view.icon}
-      </span>
+      {view.icon ? <span className="shrink-0 text-fg-faint">{view.icon}</span> : null}
       {running ? (
         <>
           <ShinyText className="shrink-0">{view.verb}</ShinyText>
@@ -292,7 +289,7 @@ function FlatToolRow({
         </>
       ) : (
         <>
-          <span className={cn("shrink-0 font-medium", isError ? "text-danger" : "text-fg-subtle")}>
+          <span className={cn("shrink-0 font-semibold", isError ? "text-danger" : "text-fg")}>
             {view.verb}
           </span>
           <span className="min-w-0 flex-1 truncate text-fg-subtle" title={view.target}>
@@ -347,10 +344,12 @@ function describeTool(name: string, args: unknown): ToolView {
   const a = (args && typeof args === "object" ? args : {}) as Record<string, unknown>;
   const meta = getToolUiMeta(name);
   if (!meta) {
-    return { icon: toolIcon("tool"), verb: humanize(name), target: bestEffortArg(a) };
+    return { verb: humanize(name), target: bestEffortArg(a) };
   }
   const base: ToolView = {
-    icon: toolIcon(meta.iconName),
+    ...(meta.iconName
+      ? { icon: toolIcon(meta.iconName, meta.primaryArgKey ? str(a[meta.primaryArgKey]) : "") }
+      : {}),
     verb: meta.verb,
     target: primaryTarget(meta, a),
   };

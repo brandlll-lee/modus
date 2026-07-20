@@ -18,7 +18,6 @@ describe("MCP tool UI metadata", () => {
 
   it("uses the server name as the verb", () => {
     expect(getMcpToolUiMeta("mcp_linear_create_issue")).toEqual({
-      iconName: "mcp",
       verb: "linear",
     });
   });
@@ -85,9 +84,7 @@ describe("tool render descriptor (single source of truth)", () => {
   });
 
   it("renders task as the only subagent model-visible tool", () => {
-    expect(getToolUiMeta("task")).toEqual(
-      expect.objectContaining({ iconName: "tool", render: "subagent" }),
-    );
+    expect(getToolUiMeta("task")).toEqual(expect.objectContaining({ render: "subagent" }));
     expect(getToolUiMeta("wait_agent")).toBeUndefined();
     expect(getToolUiMeta("list_agents")).toBeUndefined();
   });

@@ -10,21 +10,12 @@ import type { PermissionAction } from "./contracts";
 /** Named tool sets. A session is created with one profile's active tools. */
 export type ToolProfileName = "chat" | "review" | "plan";
 
-/** Stable icon identifiers; the renderer maps these to concrete components. */
-export type ToolIconName =
-  | "file"
-  | "terminal"
-  | "pencil"
-  | "file-plus"
-  | "search"
-  | "file-search"
-  | "folder"
-  | "globe"
-  | "mcp"
-  | "modus"
-  | "todo"
-  | "hierarchy"
-  | "tool";
+/**
+ * Leading row icons are the exception, not the rule: only web tools declare
+ * one. `globe` is the generic web glyph; `favicon` derives the target site's
+ * icon from the tool's primary URL argument at render time.
+ */
+export type ToolIconName = "globe" | "favicon";
 
 /**
  * How a tool's permission requirement is determined.
@@ -72,7 +63,8 @@ export type ToolRenderKind =
 export type DiffSource = "edits" | "newFile";
 
 export type ToolUiMeta = {
-  iconName: ToolIconName;
+  /** Leading row icon. Absent ⇒ the row leads with its bold verb, no icon. */
+  iconName?: ToolIconName;
   verb: string;
   /** Argument key used to derive the default target label shown after the verb. */
   primaryArgKey?: string;
@@ -80,6 +72,11 @@ export type ToolUiMeta = {
   render?: ToolRenderKind;
   /** Which timeline activity fold this flat tool joins. Absent ⇒ standalone. */
   activity?: "explore" | "browser" | "shell";
+  /**
+   * Noun this call counts as in the sealed fold digest ("Explored 2 files,
+   * 1 search"). Distinct primary-arg targets count once. Absent ⇒ not counted.
+   */
+  summaryNoun?: string;
   /** Profiles where the tool is an intermediate artifact and should not create a timeline row. */
   hiddenFromTimelineInProfiles?: ToolProfileName[];
   /** For `render: "diff"` — how to build the diff from the call's arguments. */
@@ -118,7 +115,7 @@ export const BUILTIN_TOOL_CATALOG: ToolCatalogEntry[] = [
     profiles: ["chat", "review", "plan"],
     permission: { danger: "safe" },
     capabilities: ["read"],
-    ui: { iconName: "file", verb: "Read", primaryArgKey: "path" },
+    ui: { verb: "Read", primaryArgKey: "path", activity: "explore", summaryNoun: "file" },
   },
   {
     name: "bash",
@@ -127,11 +124,11 @@ export const BUILTIN_TOOL_CATALOG: ToolCatalogEntry[] = [
     permission: { danger: "dynamic" },
     capabilities: ["shell", "process"],
     ui: {
-      iconName: "terminal",
       verb: "Ran",
       primaryArgKey: "command",
       render: "terminal",
       terminalFramed: false,
+      activity: "shell",
     },
   },
   {
@@ -141,7 +138,6 @@ export const BUILTIN_TOOL_CATALOG: ToolCatalogEntry[] = [
     permission: { danger: "dangerous", action: "file.write" },
     capabilities: ["write"],
     ui: {
-      iconName: "pencil",
       verb: "Edited",
       primaryArgKey: "path",
       render: "diff",
@@ -155,7 +151,6 @@ export const BUILTIN_TOOL_CATALOG: ToolCatalogEntry[] = [
     permission: { danger: "dangerous", action: "file.write" },
     capabilities: ["write"],
     ui: {
-      iconName: "file-plus",
       verb: "Wrote",
       primaryArgKey: "path",
       render: "diff",
@@ -168,7 +163,7 @@ export const BUILTIN_TOOL_CATALOG: ToolCatalogEntry[] = [
     profiles: ["chat", "review", "plan"],
     permission: { danger: "safe" },
     capabilities: ["read"],
-    ui: { iconName: "search", verb: "Grepped", primaryArgKey: "pattern" },
+    ui: { verb: "Grepped", primaryArgKey: "pattern", activity: "explore", summaryNoun: "search" },
   },
   {
     name: "find",
@@ -176,7 +171,7 @@ export const BUILTIN_TOOL_CATALOG: ToolCatalogEntry[] = [
     profiles: ["chat", "review", "plan"],
     permission: { danger: "safe" },
     capabilities: ["read"],
-    ui: { iconName: "file-search", verb: "Searched", primaryArgKey: "pattern" },
+    ui: { verb: "Searched", primaryArgKey: "pattern", activity: "explore", summaryNoun: "search" },
   },
   {
     name: "ls",
@@ -184,7 +179,7 @@ export const BUILTIN_TOOL_CATALOG: ToolCatalogEntry[] = [
     profiles: ["chat", "review", "plan"],
     permission: { danger: "safe" },
     capabilities: ["read"],
-    ui: { iconName: "folder", verb: "Listed", primaryArgKey: "path" },
+    ui: { verb: "Listed", primaryArgKey: "path", activity: "explore", summaryNoun: "listing" },
   },
 ];
 
@@ -201,32 +196,34 @@ export type TerminalToolName = (typeof TERMINAL_TOOL_NAMES)[number];
 
 /**
  * UI metadata for the custom terminal tools. Lives in the shared catalog so the
- * renderer's ToolCard can render them with first-class icons/verbs even though
+ * renderer's ToolCard can render them with first-class verbs even though
  * their executable definitions live in the main process.
  */
 export const TERMINAL_TOOL_UI: Record<TerminalToolName, ToolUiMeta> = {
   terminal_run: {
-    iconName: "terminal",
     verb: "Terminal",
     primaryArgKey: "command",
     render: "terminal",
     terminalFramed: true,
+    activity: "shell",
   },
   terminal_read: {
-    iconName: "terminal",
     verb: "Read terminal",
     primaryArgKey: "terminal_id",
     render: "terminal",
     terminalFramed: true,
+    activity: "shell",
   },
-  terminal_list: { iconName: "terminal", verb: "Listed terminals" },
+  terminal_list: {
+    verb: "Listed terminals",
+    activity: "explore",
+    summaryNoun: "terminal check",
+  },
   terminal_write: {
-    iconName: "terminal",
     verb: "Sent input",
     primaryArgKey: "input",
   },
   terminal_kill: {
-    iconName: "terminal",
     verb: "Killed terminal",
     primaryArgKey: "terminal_id",
   },
@@ -239,7 +236,7 @@ export type AppToolName = (typeof APP_TOOL_NAMES)[number];
 
 /** UI metadata for the GUI app launch tool. */
 export const APP_TOOL_UI: Record<AppToolName, ToolUiMeta> = {
-  launch_app: { iconName: "terminal", verb: "Launched app", primaryArgKey: "path" },
+  launch_app: { verb: "Launched app", primaryArgKey: "path" },
 };
 
 /** Agent-facing local codebase index tool. */
@@ -247,7 +244,6 @@ export const FAST_CODEBASE_TOOL_NAME = "fast_codebase";
 
 /** UI metadata for Fast Codebase. */
 export const FAST_CODEBASE_TOOL_UI: ToolUiMeta = {
-  iconName: "hierarchy",
   verb: "Fast Codebase",
   primaryArgKey: "query",
   render: "live",
@@ -257,7 +253,6 @@ export const FAST_CODEBASE_TOOL_UI: ToolUiMeta = {
 export const VISUAL_TOOL_NAME = "visual_write";
 /** UI metadata for inline custom visuals (Claude-style temporary widgets). */
 export const VISUAL_TOOL_UI: ToolUiMeta = {
-  iconName: "tool",
   verb: "Visual",
   primaryArgKey: "title",
   render: "visual",
@@ -268,7 +263,6 @@ export const VISUAL_TOOL_UI: ToolUiMeta = {
 export const TODO_TOOL_NAME = "todo_write";
 /** UI metadata for the to-do tool (its calls render as the live TodosCard). */
 export const TODO_TOOL_UI: ToolUiMeta = {
-  iconName: "todo",
   verb: "Updated to-dos",
   render: "todo",
 };
@@ -277,7 +271,6 @@ export const TODO_TOOL_UI: ToolUiMeta = {
 export const PLAN_TOOL_NAME = "plan_write";
 /** UI metadata for the first-class plan artifact rendered in the conversation. */
 export const PLAN_TOOL_UI: ToolUiMeta = {
-  iconName: "todo",
   verb: "Plan",
   primaryArgKey: "title",
   render: "plan",
@@ -291,7 +284,6 @@ export const ASK_USER_TOOL_NAME = "ask_user";
  * composer (the same interaction region used by the plan decision card).
  */
 export const ASK_USER_TOOL_UI: ToolUiMeta = {
-  iconName: "tool",
   verb: "Asking",
   render: "question",
 };
@@ -303,7 +295,6 @@ export type SubagentToolName = (typeof SUBAGENT_TOOL_NAMES)[number];
 
 export const SUBAGENT_TOOL_UI: Record<SubagentToolName, ToolUiMeta> = {
   task: {
-    iconName: "tool",
     verb: "Started subagent",
     primaryArgKey: "description",
     render: "subagent",
@@ -316,13 +307,25 @@ export const WEB_TOOL_NAMES = ["web_search", "web_fetch"] as const;
 export type WebToolName = (typeof WEB_TOOL_NAMES)[number];
 
 /**
- * UI metadata for the built-in web tools. Lives in the shared catalog so the
- * renderer's ToolCard renders them with a globe icon and a readable verb even
- * though their executable definitions live in the main process.
+ * UI metadata for the built-in web tools — the only tools that keep a leading
+ * row icon: a globe for search, and the fetched site's favicon (derived from
+ * the `url` argument) for fetch. Both fold into the explore activity group.
  */
 export const WEB_TOOL_UI: Record<WebToolName, ToolUiMeta> = {
-  web_search: { iconName: "globe", verb: "Searched the web", primaryArgKey: "query" },
-  web_fetch: { iconName: "globe", verb: "Fetched", primaryArgKey: "url" },
+  web_search: {
+    iconName: "globe",
+    verb: "Searched the web",
+    primaryArgKey: "query",
+    activity: "explore",
+    summaryNoun: "web lookup",
+  },
+  web_fetch: {
+    iconName: "favicon",
+    verb: "Fetched",
+    primaryArgKey: "url",
+    activity: "explore",
+    summaryNoun: "page",
+  },
 };
 
 /** In-app browser primitives: tab ownership, raw CDP, recent events, snapshots, screenshots. */
@@ -338,20 +341,20 @@ export type BrowserToolName = (typeof BROWSER_TOOL_NAMES)[number];
 
 export const BROWSER_TOOL_UI: Record<BrowserToolName, ToolUiMeta> = {
   browser_tabs: {
-    iconName: "globe",
     verb: "Browser tabs",
     primaryArgKey: "action",
     activity: "browser",
+    summaryNoun: "tab action",
   },
   browser_cdp: {
-    iconName: "globe",
     verb: "Sent CDP",
     primaryArgKey: "method",
     activity: "browser",
+    summaryNoun: "CDP command",
   },
-  browser_events: { iconName: "globe", verb: "Read browser events", activity: "browser" },
-  browser_snapshot: { iconName: "globe", verb: "Captured snapshot", activity: "browser" },
-  browser_screenshot: { iconName: "globe", verb: "Captured page", activity: "browser" },
+  browser_events: { verb: "Read browser events", activity: "browser", summaryNoun: "event drain" },
+  browser_snapshot: { verb: "Captured snapshot", activity: "browser", summaryNoun: "snapshot" },
+  browser_screenshot: { verb: "Captured page", activity: "browser", summaryNoun: "capture" },
 };
 
 /** Tool names belonging to a profile, derived from a catalog. */
@@ -382,7 +385,7 @@ export function getMcpToolUiMeta(name: string): ToolUiMeta {
   const rest = name.slice(MCP_TOOL_PREFIX.length);
   const separator = rest.indexOf("_");
   const server = separator > 0 ? rest.slice(0, separator) : rest;
-  return { iconName: "mcp", verb: server };
+  return { verb: server };
 }
 
 /** UI metadata for any known tool (builtin, terminal, web, to-do, or MCP-bridged). */

@@ -1,12 +1,6 @@
-import {
-  IconBrain,
-  IconChevronRight,
-  IconFileSearch,
-  IconTerminal2,
-  IconWorld,
-} from "@tabler/icons-react";
+import { IconChevronRight } from "@tabler/icons-react";
 import { m } from "motion/react";
-import { memo, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
 import { ShinyText } from "../../components/ui/ShinyText";
 import { cn } from "../../lib/cn";
@@ -21,25 +15,24 @@ function estimateThinkingSeconds(text: string): number {
 
 type ActivityKind = "explore" | "browser" | "shell";
 
-const ACTIVITY_ICONS: Record<ActivityKind, ReactNode> = {
-  explore: <IconFileSearch size={14} stroke={1.7} />,
-  browser: <IconWorld size={14} stroke={1.7} />,
-  shell: <IconTerminal2 size={14} stroke={1.7} />,
-};
+/** Bold the leading verb ("Explored", "Thought") and keep the rest muted. */
+function splitLabel(label: string): [string, string] {
+  const space = label.indexOf(" ");
+  return space < 0 ? [label, ""] : [label.slice(0, space), label.slice(space + 1)];
+}
 
 function ActivityHeader({
   active = false,
-  icon,
   label,
   onToggle,
   open,
 }: {
   active?: boolean;
-  icon: ReactNode;
   label: string;
   onToggle(): void;
   open: boolean;
 }) {
+  const [verb, detail] = splitLabel(label);
   return (
     <button
       aria-expanded={open}
@@ -47,11 +40,13 @@ function ActivityHeader({
       onClick={onToggle}
       type="button"
     >
-      <span className="flex size-4 shrink-0 items-center justify-center text-fg-faint">{icon}</span>
       {active ? (
         <ShinyText>{label}</ShinyText>
       ) : (
-        <span className="min-w-0 truncate transition-colors">{label}</span>
+        <span className="min-w-0 truncate transition-colors">
+          <span className="font-semibold text-fg">{verb}</span>
+          {detail ? ` ${detail}` : null}
+        </span>
       )}
       <m.span
         animate={{ rotate: open ? 90 : 0 }}
@@ -102,7 +97,6 @@ export function ThoughtRow({ text, streaming = false }: { text: string; streamin
     <div className="min-w-0">
       <ActivityHeader
         active={streaming}
-        icon={<IconBrain size={14} stroke={1.7} />}
         label={label}
         onToggle={() => {
           interactedRef.current = true;
@@ -199,7 +193,6 @@ export const ActivityGroup = memo(function ActivityGroup({
     <div className="min-w-0 text-sm">
       <ActivityHeader
         active={active}
-        icon={ACTIVITY_ICONS[kind]}
         label={label}
         onToggle={() => {
           interactedRef.current = true;
