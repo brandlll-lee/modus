@@ -111,6 +111,7 @@ export const IPC_CHANNELS = {
   permissionList: "permission:list",
   permissionGetMode: "permission:get-mode",
   permissionSetMode: "permission:set-mode",
+  permissionClearProjectMode: "permission:clear-project-mode",
   questionsRespond: "questions:respond",
   contextSearch: "context:search",
   contextResolve: "context:resolve",

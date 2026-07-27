@@ -121,10 +121,12 @@ import {
   resolvePermissionRequest,
 } from "../permissions/permission-broker";
 import {
-  getApprovalMode,
+  clearProjectApprovalMode,
+  getApprovalModeState,
   listPermissionDecisions,
   recordPermissionDecision,
-  setApprovalMode,
+  setGlobalApprovalMode,
+  setProjectApprovalMode,
 } from "../permissions/permission-store";
 import { onManagedProcessChange } from "../process/managed-process-bus";
 import { killManagedProcess, listManagedProcesses } from "../process/managed-process-facade";
@@ -158,6 +160,8 @@ import {
   agentPromptSchema,
   agentRollbackSchema,
   agentSetModelSchema,
+  approvalModeClearProjectSchema,
+  approvalModeGetSchema,
   approvalModeSchema,
   browserBoundsSchema,
   browserCreateTabSchema,
@@ -949,15 +953,32 @@ export function registerAppIpc({
     return listPermissionDecisions();
   });
 
-  ipcMain.handle(IPC_CHANNELS.permissionGetMode, (event) => {
+  ipcMain.handle(IPC_CHANNELS.permissionGetMode, (event, input) => {
     assertTrustedSender(event);
-    return getApprovalMode();
+    const parsed = parseIpcInput(approvalModeGetSchema, input ?? {}, IPC_CHANNELS.permissionGetMode);
+    return getApprovalModeState(parsed.cwd);
   });
 
   ipcMain.handle(IPC_CHANNELS.permissionSetMode, (event, input) => {
     assertTrustedSender(event);
     const parsed = parseIpcInput(approvalModeSchema, input, IPC_CHANNELS.permissionSetMode);
-    return setApprovalMode(parsed.mode);
+    if (parsed.cwd) {
+      setProjectApprovalMode(parsed.cwd, parsed.mode);
+    } else {
+      setGlobalApprovalMode(parsed.mode);
+    }
+    return getApprovalModeState(parsed.cwd);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.permissionClearProjectMode, (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(
+      approvalModeClearProjectSchema,
+      input,
+      IPC_CHANNELS.permissionClearProjectMode,
+    );
+    clearProjectApprovalMode(parsed.cwd);
+    return getApprovalModeState(parsed.cwd);
   });
 
   ipcMain.handle(IPC_CHANNELS.questionsRespond, (event, input) => {

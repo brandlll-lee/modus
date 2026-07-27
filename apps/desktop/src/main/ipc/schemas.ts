@@ -348,6 +348,16 @@ export const permissionDecideSchema = z.object({
 
 export const approvalModeSchema = z.object({
   mode: z.enum(["request-approval", "auto", "full-access"]),
+  /** When set, writes a project override for this cwd instead of the global default. */
+  cwd: z.string().min(1).optional(),
+});
+
+export const approvalModeGetSchema = z.object({
+  cwd: z.string().min(1).optional(),
+});
+
+export const approvalModeClearProjectSchema = z.object({
+  cwd: z.string().min(1),
 });
 
 export const questionRespondSchema = z.object({

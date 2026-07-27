@@ -539,11 +539,20 @@ export type PermissionDecision = {
 };
 
 /**
- * Global approval mode chosen in the composer. Collapses Codex's
- * approval×sandbox preset into a single "when to prompt" axis (Modus has no OS
- * sandbox): the decision logic + per-mode metadata live in `shared/approval.ts`.
+ * Approval mode chosen in Settings (global default, optional per-project
+ * override). Collapses Codex's approval×sandbox preset into a single "when to
+ * prompt" axis (Modus has no OS sandbox): the decision logic + per-mode
+ * metadata live in `shared/approval.ts`.
  */
 export type ApprovalMode = "request-approval" | "auto" | "full-access";
+
+/** Settings / IPC snapshot of resolved approval mode layers. */
+export type ApprovalModeState = {
+  effective: ApprovalMode;
+  global: ApprovalMode;
+  /** `null` = project follows global (no override). Omitted cwd → always null. */
+  project: ApprovalMode | null;
+};
 
 /**
  * Composer execution mode. `build` is the normal coding agent. `plan` runs the

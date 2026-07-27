@@ -8,6 +8,7 @@ import type {
   AgentRunInfo,
   AgentSessionInfo,
   ApprovalMode,
+  ApprovalModeState,
   BrowserBounds,
   BrowserEvent,
   BrowserRecentInfo,
@@ -294,8 +295,9 @@ export type ModusApi = {
       decision: PermissionDecision["decision"];
     }): Promise<PermissionDecision>;
     list(): Promise<PermissionDecision[]>;
-    getMode(): Promise<ApprovalMode>;
-    setMode(mode: ApprovalMode): Promise<ApprovalMode>;
+    getMode(input?: { cwd?: string }): Promise<ApprovalModeState>;
+    setMode(input: { mode: ApprovalMode; cwd?: string }): Promise<ApprovalModeState>;
+    clearProjectMode(input: { cwd: string }): Promise<ApprovalModeState>;
   };
   questions: {
     /** Resolve a pending ask_user request with the user's answers (or a skip). */

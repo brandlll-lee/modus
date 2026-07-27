@@ -11,14 +11,14 @@ type PermissionEmitter = (event: AgentEvent) => void;
 export function createModusPermissionExtension(
   sessionId: string,
   emit: PermissionEmitter,
+  cwd?: string,
 ): ExtensionFactory {
   return (pi) => {
     pi.on("tool_call", async (event) => {
       const { action, dangerous } = toolRegistry.classify(event);
-      // The global approval mode decides whether a dangerous call pauses for the
-      // user (request-approval), only pauses for high-risk ones (auto), or never
-      // pauses (full-access). Non-dangerous calls always pass straight through.
-      if (!shouldPrompt(getApprovalMode(), action, dangerous)) {
+      // Resolved approval mode (project override → global → default) decides
+      // whether a dangerous call pauses for the user.
+      if (!shouldPrompt(getApprovalMode(cwd), action, dangerous)) {
         return undefined;
       }
 

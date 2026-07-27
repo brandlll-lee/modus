@@ -373,7 +373,7 @@ export class PiSdkRuntime implements AgentRuntime {
     const loader = new DefaultResourceLoader({
       cwd,
       agentDir,
-      extensionFactories: [createModusPermissionExtension(sessionId, emit)],
+      extensionFactories: [createModusPermissionExtension(sessionId, emit, cwd)],
       settingsManager,
       appendSystemPrompt: [
         describeAgentShellForPrompt(shell),

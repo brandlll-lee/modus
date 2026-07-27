@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { resolve as resolvePath } from "node:path";
 import { DEFAULT_APPROVAL_MODE, isApprovalMode } from "../../shared/approval";
-import type { ApprovalMode, PermissionAction, PermissionDecision } from "../../shared/contracts";
+import type { ApprovalMode, ApprovalModeState, PermissionAction, PermissionDecision } from "../../shared/contracts";
 import { getDatabase } from "../db/database";
 
 type PermissionRow = {
@@ -11,8 +12,15 @@ type PermissionRow = {
   created_at: string;
 };
 
+export type { ApprovalModeState };
+
 export function normalizePermissionTarget(target: string): string {
   return target.trim().replace(/\s+/g, " ");
+}
+
+/** Stable key fragment for project-scoped approval overrides. */
+export function normalizeApprovalCwd(cwd: string): string {
+  return resolvePath(cwd).replace(/\\/g, "/").replace(/\/+$/, "");
 }
 
 function toPermission(row: PermissionRow): PermissionDecision {
@@ -61,25 +69,80 @@ export function listPermissionDecisions(): PermissionDecision[] {
   return rows.map(toPermission);
 }
 
-/** Global approval mode (persisted in app_settings; defaults to the safe mode). */
+/** Global approval mode key (persisted in app_settings). */
 const APPROVAL_MODE_KEY = "approval_mode";
 
-export function getApprovalMode(): ApprovalMode {
-  const row = getDatabase()
-    .prepare("select value from app_settings where key = ?")
-    .get(APPROVAL_MODE_KEY) as { value: string | null } | undefined;
-  return isApprovalMode(row?.value) ? row.value : DEFAULT_APPROVAL_MODE;
+function projectApprovalModeKey(cwd: string): string {
+  return `approval_mode:cwd:${normalizeApprovalCwd(cwd)}`;
 }
 
-export function setApprovalMode(mode: ApprovalMode): ApprovalMode {
+function readSetting(key: string): string | undefined {
+  const row = getDatabase()
+    .prepare("select value from app_settings where key = ?")
+    .get(key) as { value: string | null } | undefined;
+  return row?.value ?? undefined;
+}
+
+function writeSetting(key: string, value: string): void {
   getDatabase()
     .prepare(
       `insert into app_settings (key, value, updated_at)
        values (?, ?, ?)
        on conflict(key) do update set value = excluded.value, updated_at = excluded.updated_at`,
     )
-    .run(APPROVAL_MODE_KEY, mode, new Date().toISOString());
+    .run(key, value, new Date().toISOString());
+}
+
+function deleteSetting(key: string): void {
+  getDatabase().prepare("delete from app_settings where key = ?").run(key);
+}
+
+export function getGlobalApprovalMode(): ApprovalMode {
+  const value = readSetting(APPROVAL_MODE_KEY);
+  return isApprovalMode(value) ? value : DEFAULT_APPROVAL_MODE;
+}
+
+export function setGlobalApprovalMode(mode: ApprovalMode): ApprovalMode {
+  writeSetting(APPROVAL_MODE_KEY, mode);
   return mode;
+}
+
+export function getProjectApprovalMode(cwd: string): ApprovalMode | undefined {
+  const value = readSetting(projectApprovalModeKey(cwd));
+  return isApprovalMode(value) ? value : undefined;
+}
+
+export function setProjectApprovalMode(cwd: string, mode: ApprovalMode): ApprovalMode {
+  writeSetting(projectApprovalModeKey(cwd), mode);
+  return mode;
+}
+
+export function clearProjectApprovalMode(cwd: string): void {
+  deleteSetting(projectApprovalModeKey(cwd));
+}
+
+/**
+ * Resolve the approval mode for a session cwd:
+ * project override → global → builtin default.
+ * Omit cwd to read the global default only.
+ */
+export function getApprovalMode(cwd?: string): ApprovalMode {
+  if (cwd) {
+    const project = getProjectApprovalMode(cwd);
+    if (project) return project;
+  }
+  return getGlobalApprovalMode();
+}
+
+/** Settings / IPC snapshot: effective + layers. */
+export function getApprovalModeState(cwd?: string): ApprovalModeState {
+  const global = getGlobalApprovalMode();
+  const project = cwd ? (getProjectApprovalMode(cwd) ?? null) : null;
+  return {
+    global,
+    project,
+    effective: project ?? global,
+  };
 }
 
 export function findWorkspaceAllowDecision(

@@ -140,8 +140,9 @@ const api: ModusApi = {
   permission: {
     decide: (input) => ipcRenderer.invoke("permission:decide", input),
     list: () => ipcRenderer.invoke("permission:list"),
-    getMode: () => ipcRenderer.invoke("permission:get-mode"),
-    setMode: (mode) => ipcRenderer.invoke("permission:set-mode", { mode }),
+    getMode: (input) => ipcRenderer.invoke("permission:get-mode", input ?? {}),
+    setMode: (input) => ipcRenderer.invoke("permission:set-mode", input),
+    clearProjectMode: (input) => ipcRenderer.invoke("permission:clear-project-mode", input),
   },
   questions: {
     respond: (input) => ipcRenderer.invoke("questions:respond", input),

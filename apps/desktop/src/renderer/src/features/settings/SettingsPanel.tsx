@@ -63,6 +63,7 @@ import {
 } from "../../lib/modelThinking";
 import { type ThemeMode, useTheme } from "../../lib/theme";
 import { CustomProviderForm } from "./CustomProviderForm";
+import { ApprovalModeSettings } from "./ApprovalModeSettings";
 import { Field, parsePositiveInteger, SelectField, SwitchControl } from "./form-controls";
 import { groupProviderModels, modelResultLabel } from "./modelListUtils";
 import { ProviderLogo } from "./ProviderLogo";
@@ -453,7 +454,9 @@ export function SettingsPanel({
 
       <main className="scroll-thin min-w-0 flex-1 overflow-y-auto rounded-tl-xl border-hairline-strong border-t border-l bg-canvas">
         <div className="mx-auto flex w-full max-w-[1080px] flex-col gap-8 px-10 pt-16 pb-12">
-          {activeSection === "general" ? <GeneralSettingsPanel /> : null}
+          {activeSection === "general" ? (
+            <GeneralSettingsPanel cwd={workspaceCwd} workspaces={workspaces} />
+          ) : null}
           {activeSection === "appearance" ? <AppearanceSettingsPanel /> : null}
           {activeSection === "personalization" ? <PersonalizationSettingsPanel /> : null}
           {activeSection === "skills" ? <SkillsSettingsPanel cwd={workspaceCwd} /> : null}
@@ -993,7 +996,7 @@ function ProviderConfigDialogShell({
       <Dialog.Portal>
         <Dialog.Backdrop className="fixed inset-0 z-50 bg-fg/20 backdrop-blur-[1px] transition-opacity duration-150 data-ending-style:opacity-0 data-starting-style:opacity-0" />
         <Dialog.Viewport className="fixed inset-0 z-50 flex items-center justify-center overflow-hidden px-6 py-6">
-          <Dialog.Popup className="flex h-[min(820px,calc(100vh-48px))] w-full max-w-[760px] flex-col overflow-hidden rounded-lg border border-hairline-soft bg-canvas shadow-popup outline-none transition-[opacity,transform] duration-150 data-ending-style:translate-y-2 data-ending-style:opacity-0 data-starting-style:translate-y-2 data-starting-style:opacity-0">
+          <Dialog.Popup className="flex h-[min(820px,calc(100vh-48px))] w-full max-w-[760px] flex-col overflow-hidden rounded-lg border border-popup-border bg-canvas shadow-popup outline-none transition-[opacity,transform] duration-150 data-ending-style:translate-y-2 data-ending-style:opacity-0 data-starting-style:translate-y-2 data-starting-style:opacity-0">
             <div className="flex h-[52px] items-center justify-between gap-3 px-5">
               <Dialog.Close
                 aria-label={`Back from ${title}`}
@@ -1301,27 +1304,20 @@ function CustomProviderDialog({
   );
 }
 
-function GeneralSettingsPanel() {
+function GeneralSettingsPanel({
+  cwd,
+  workspaces = [],
+}: {
+  cwd?: string | undefined;
+  workspaces?: WorkspaceInfo[] | undefined;
+}) {
   return (
     <>
       <SettingsPageHeader
-        description="General Modus preferences and workspace defaults."
+        description="Choose when Modus asks before risky agent actions — globally or per project."
         title="General"
       />
-      <SettingsSection title="Workspace">
-        <SettingsList>
-          <SettingsRow
-            control={<ReadOnlyPill>Local-first</ReadOnlyPill>}
-            description="Modus runs agent work against your local workspace and filesystem context."
-            title="Execution mode"
-          />
-          <SettingsRow
-            control={<ReadOnlyPill>Managed by app</ReadOnlyPill>}
-            description="Session creation and model selection are synchronized with the active workspace."
-            title="Session defaults"
-          />
-        </SettingsList>
-      </SettingsSection>
+      <ApprovalModeSettings {...(cwd ? { cwd } : {})} workspaces={workspaces} />
     </>
   );
 }

@@ -1,9 +1,9 @@
 import type { ApprovalMode, PermissionAction } from "./contracts";
 
 /**
- * Single source of truth for the global approval-mode model (the composer's
- * permission picker). Shared by the main-process decision point
- * (`pi-permission-extension`), the renderer selector, and tests.
+ * Single source of truth for the approval-mode model (settings preference:
+ * when to prompt for dangerous tool calls). Shared by the main-process
+ * decision point (`pi-permission-extension`), the settings UI, and tests.
  *
  * Design note: Codex models permissions on two axes — `AskForApproval` (when to
  * prompt) and a sandbox `PermissionProfile` (what's allowed). Modus has no OS
@@ -37,7 +37,7 @@ export const APPROVAL_MODE_BY_ID: Record<ApprovalMode, ApprovalModeMeta> = {
   },
 };
 
-/** Picker order matches the composer (safest first). */
+/** Picker order matches settings (safest first). */
 export const APPROVAL_MODES: readonly ApprovalModeMeta[] = [
   APPROVAL_MODE_BY_ID["request-approval"],
   APPROVAL_MODE_BY_ID.auto,
