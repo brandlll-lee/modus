@@ -61,6 +61,7 @@
     "react-dom": "^19.2.6",
     "remark-breaks": "4.0.0",
     "streamdown": "^2.5.0",
+    "thinking-orbs": "^0.1.1",
     "turndown": "^7.2.4",
     "typebox": "1.1.38",
     "zod": "^4.4.3"

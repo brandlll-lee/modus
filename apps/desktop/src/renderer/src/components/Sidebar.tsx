@@ -321,6 +321,21 @@ function WorkspaceItem({
   const [expanded, setExpanded] = useState(true);
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [archivedSessions, setArchivedSessions] = useState<AgentSessionInfo[] | undefined>();
+  const [showAllSessions, setShowAllSessions] = useState(false);
+
+  const previewLimit = 2;
+  const visibleSessions = (() => {
+    if (showAllSessions || sessions.length <= previewLimit) {
+      return sessions;
+    }
+    const preview = sessions.slice(0, previewLimit);
+    if (!activeSessionId || preview.some((session) => session.id === activeSessionId)) {
+      return preview;
+    }
+    const active = sessions.find((session) => session.id === activeSessionId);
+    return active ? [...preview.slice(0, previewLimit - 1), active] : preview;
+  })();
+  const canToggleSessions = sessions.length > previewLimit;
 
   const toggleArchived = (): void => {
     const nextOpen = !archivedOpen;
@@ -358,7 +373,7 @@ function WorkspaceItem({
         {workspace.displayName}
       </ProjectRow>
       <CollapsibleMotion open={expanded} preset="default">
-        {sessions.map((session) => (
+        {visibleSessions.map((session) => (
           <SessionRow
             activity={activityBySession[session.id]}
             isActive={activeSessionId === session.id}
@@ -381,6 +396,16 @@ function WorkspaceItem({
             updatedAt={session.updatedAt}
           />
         ))}
+        {canToggleSessions ? (
+          <button
+            className="flex h-[30px] w-full items-center gap-2 pr-1 pl-2 text-left text-sm text-fg-faint transition-colors hover:text-fg-muted"
+            onClick={() => setShowAllSessions((value) => !value)}
+            type="button"
+          >
+            <span aria-hidden className="w-5 shrink-0" />
+            {showAllSessions ? "See less" : "See more"}
+          </button>
+        ) : null}
         <CollapsibleMotion open={archivedOpen} preset="default">
           <div className="mt-1 space-y-0.5 pl-[30px]">
             {archivedSessions === undefined ? (
@@ -431,9 +456,6 @@ function SessionRow({
   onDelete(event: MouseEvent<HTMLButtonElement>): void;
 }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const hasStatus = Boolean(
-    activity && (activity.running || activity.needsInput || activity.unread || activity.failed),
-  );
   useEffect(() => {
     if (!confirmDelete) {
       return;
@@ -445,7 +467,7 @@ function SessionRow({
   return (
     <m.div
       className={cn(
-        "group flex h-[34px] w-full items-center rounded-lg pr-1 pl-[30px] text-sm font-normal transition-colors hover:bg-hover",
+        "group flex h-[34px] w-full items-center gap-2 rounded-sm pr-1 pl-2 text-sm font-normal transition-colors hover:bg-hover",
         isActive ? "bg-active text-fg" : "text-fg-muted hover:text-fg",
       )}
       layout
@@ -457,24 +479,19 @@ function SessionRow({
       onMouseLeave={() => setConfirmDelete(false)}
       transition={{ duration: 0.14, ease: "easeOut" }}
     >
+      <span className="pointer-events-none flex w-5 shrink-0 items-center justify-center">
+        <SessionStatusDot activity={activity} />
+      </span>
       <button
-        className="flex min-w-0 flex-1 items-center gap-2 py-2 pr-1 pl-3 text-left"
+        className="flex min-w-0 flex-1 items-center gap-2 py-2 pr-1 text-left"
         onClick={onSelect}
         title="Open"
         type="button"
       >
         <span className="min-w-0 flex-1 truncate">{title}</span>
-        <span
-          className={cn(
-            "shrink-0 text-xs font-normal text-fg-faint group-hover:hidden",
-            hasStatus ? "ml-1" : "ml-2",
-          )}
-        >
+        <span className="ml-2 shrink-0 text-xs font-normal text-fg-faint group-hover:hidden">
           {formatRelativeTime(updatedAt)}
         </span>
-        {hasStatus ? (
-          <SessionStatusDot activity={activity} className="ml-1 group-hover:hidden" />
-        ) : null}
       </button>
       <span className="ml-1 hidden shrink-0 items-center group-hover:flex group-focus-within:flex">
         <IconButton label={pinned ? "Unpin chat" : "Pin chat"} onClick={onPin}>
@@ -517,7 +534,7 @@ function ArchivedSessionRow({
   onRestore(): void;
 }) {
   return (
-    <div className="group flex h-[30px] items-center rounded-lg pr-1 text-sm text-fg-faint transition-colors hover:bg-hover hover:text-fg-muted">
+    <div className="group flex h-[30px] items-center rounded-sm pr-1 text-sm text-fg-faint transition-colors hover:bg-hover hover:text-fg-muted">
       <button
         className="min-w-0 flex-1 truncate py-1.5 pr-1 pl-3 text-left"
         onClick={onOpen}
@@ -578,7 +595,7 @@ function ProjectRow({
 
   if (renaming) {
     return (
-      <div className="flex h-[36px] w-full items-center gap-3 rounded-lg px-2 text-sm">
+      <div className="flex h-[36px] w-full items-center gap-3 rounded-sm px-2 text-sm">
         <span className="shrink-0 text-fg-subtle">
           <FolderIcon size={17} stroke={1.6} />
         </span>
@@ -601,7 +618,7 @@ function ProjectRow({
       {(menuOpen, trigger) => (
         <m.div
           className={cn(
-            "group flex h-[36px] w-full items-center rounded-lg pr-1 text-sm font-normal transition-colors hover:bg-hover",
+            "group flex h-[36px] w-full items-center rounded-sm pr-1 text-sm font-normal transition-colors hover:bg-hover",
             menuOpen && "bg-hover",
             "text-fg",
           )}
@@ -805,7 +822,7 @@ function ProjectActions({
       {children(open, trigger)}
       <Menu.Portal>
         <Menu.Positioner align="start" side="bottom" sideOffset={4}>
-          <Menu.Popup className="origin-(--transform-origin) min-w-[184px] rounded-lg border border-hairline bg-elevated p-1 shadow-popup">
+          <Menu.Popup className="origin-(--transform-origin) min-w-[184px] popup-chrome p-1">
             <ProjectMenuItem
               icon={
                 pinned ? (

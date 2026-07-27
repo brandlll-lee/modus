@@ -1,10 +1,12 @@
+import { ThinkingOrb } from "thinking-orbs";
 import { cn } from "../../lib/cn";
+import { useTheme } from "../../lib/theme";
 import type { SessionActivity } from "./agentEventHub";
 
 /**
- * Tiny shared status glyph for parallel sessions: spinner while running,
- * danger dot when input is needed or the last run failed, success dot for
- * unread completions.
+ * Sidebar session glyph: ThinkingOrb while running (same package/preset as
+ * WorkFold — only size 20|64 are valid), danger/success for needs-input /
+ * failed / unread, soft secondary idle dot otherwise.
  */
 export function SessionStatusDot({
   activity,
@@ -13,10 +15,9 @@ export function SessionStatusDot({
   activity: SessionActivity | undefined;
   className?: string;
 }) {
-  if (!activity) {
-    return null;
-  }
-  if (activity.needsInput) {
+  const [mode] = useTheme();
+
+  if (activity?.needsInput) {
     return (
       <span className={cn("relative flex size-2 shrink-0", className)} title="Needs your input">
         <span className="absolute inset-0 animate-ping rounded-full bg-danger/50" />
@@ -24,20 +25,24 @@ export function SessionStatusDot({
       </span>
     );
   }
-  if (activity.running) {
+  if (activity?.running) {
     return (
       <span
-        className={cn(
-          "size-3 shrink-0 animate-spin rounded-full border border-fg-faint/40 border-t-fg-muted",
-          className,
-        )}
+        className={cn("flex size-5 shrink-0 items-center justify-center", className)}
         title="Agent running"
       >
+        <ThinkingOrb
+          aria-label="Working"
+          className="shrink-0"
+          size={20}
+          state="solving"
+          theme={mode === "light" ? "light" : "dark"}
+        />
         <span className="sr-only">Agent running</span>
       </span>
     );
   }
-  if (activity.failed) {
+  if (activity?.failed) {
     return (
       <span
         className={cn(
@@ -48,7 +53,7 @@ export function SessionStatusDot({
       />
     );
   }
-  if (activity.unread) {
+  if (activity?.unread) {
     return (
       <span
         className={cn("size-2 shrink-0 rounded-full bg-success", className)}
@@ -56,5 +61,10 @@ export function SessionStatusDot({
       />
     );
   }
-  return null;
+  return (
+    <span
+      className={cn("size-2 shrink-0 rounded-full bg-fg-faint/35", className)}
+      title="Idle"
+    />
+  );
 }
