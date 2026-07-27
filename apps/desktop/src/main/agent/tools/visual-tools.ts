@@ -15,7 +15,8 @@ const visualParams = Type.Object({
     description: "Short title for the inline visual.",
   }),
   kind: Type.Union([Type.Literal("html"), Type.Literal("svg")], {
-    description: "Use svg for static diagrams; use html for interactive widgets.",
+    description:
+      "Prefer html for operable widgets; use svg only for a small static relationship inset.",
   }),
   content: Type.String({
     description:
@@ -27,6 +28,7 @@ export const VISUAL_AUTHORING_GUIDELINES = [
   "Keep content self-contained: no external scripts, stylesheets, images, fonts, fetch, XHR, WebSocket, or persistent browser storage.",
   "Use Modus CSS variables for theme-dependent text, surfaces, controls, and borders: var(--color-fg), var(--color-fg-muted), var(--color-fg-subtle), var(--color-canvas), var(--color-surface), var(--color-elevated), var(--color-hairline), var(--color-chip), and var(--color-link). Do not hard-code light/dark text or surface colors; reserve fixed colors only for semantic data or status.",
   "Render content only: Modus owns the surrounding surface, title, menu, and fullscreen action. Do not add an outer card shell, page header, outer border, shadow, background, or duplicate fullscreen control.",
+  "Build a working model the user operates, not a document illustration, architecture poster, layered equal-box board, or phase deck that only swaps prose.",
   "Compose one dominant visual stage with clear hierarchy and generous space. When interactive, controls must manipulate that same model rather than become a settings form, equal-card dashboard, stat strip, or text-only page switcher.",
   "Use natural height and responsive width; avoid fixed-width page wrappers and overflow-hidden outer layouts. Animate only interaction feedback with transform and opacity, support keyboard focus and prefers-reduced-motion, and never run an idle animation loop.",
 ] as const;
@@ -42,7 +44,7 @@ const visualTool: ToolDefinition<typeof visualParams> = defineTool({
   promptGuidelines: [
     "Use visual_write for charts, diagrams, simulations, comparison widgets, and interactive explainers.",
     ...VISUAL_AUTHORING_GUIDELINES,
-    "Prefer SVG for static diagrams and HTML with inline CSS/JS for sliders, buttons, and live calculations.",
+    "Prefer HTML with inline CSS/JS for operable models (sliders, toggles, live calculations). Use SVG only for a small static relationship inset — never as a full-page architecture poster standing in for the primary visual.",
     "For charts, label axes, units, ticks, and legends clearly.",
     "When changing an existing visual in this session, reuse its visualId and send the full updated HTML/SVG.",
     "Return complete HTML/SVG in content. Chat renders it directly; Plan Mode passes the returned visualRef to plan_write.",
