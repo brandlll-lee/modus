@@ -1,14 +1,12 @@
-import { IconChevronRight } from "@tabler/icons-react";
 import { useState } from "react";
 import type { WorkingChangeStats } from "../../../../../shared/contracts";
-import { CollapsibleMotion } from "../../../components/ui/CollapsibleMotion";
-import { cn } from "../../../lib/cn";
-import { ChangeFileList, LineDelta } from "./ChangeStats";
+import { ComposerRail, ComposerRailReviewButton } from "../../composer/ComposerRail";
+import { ChangeFileList } from "./ChangeStats";
 
 /**
- * Cursor-style strip above the composer: a one-line "N files +A -R" summary
- * of the session's working tree that expands into the per-file list, with a
- * Review action that opens the diff panel. Hidden while the tree is clean.
+ * File-changes rail in the independent status card above the composer:
+ * "N Files" + Review. Expand shows the per-file list. Keep All / Undo All are
+ * intentionally absent (phase 2).
  */
 export function ChangesStrip({
   stats,
@@ -25,42 +23,16 @@ export function ChangesStrip({
     return null;
   }
 
+  const label = `${stats.fileCount} ${stats.fileCount === 1 ? "File" : "Files"}`;
+
   return (
-    <div className="-mb-3 overflow-hidden rounded-t-[14px] bg-panel px-2.5 pt-1.5 pb-4">
-      <div className="flex h-8 items-center gap-1">
-        <button
-          aria-expanded={expanded}
-          className="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-md px-1 text-left transition-colors hover:bg-hover"
-          onClick={() => setExpanded((value) => !value)}
-          type="button"
-        >
-          <IconChevronRight
-            className={cn(
-              "shrink-0 text-fg-faint transition-transform duration-150",
-              expanded && "rotate-90",
-            )}
-            size={13}
-            stroke={1.8}
-          />
-          <span className="shrink-0 text-sm text-fg-muted">
-            {stats.fileCount} {stats.fileCount === 1 ? "file" : "files"}
-          </span>
-          <LineDelta added={stats.added} removed={stats.removed} />
-        </button>
-        <button
-          className="flex h-6 shrink-0 items-center rounded-md bg-chip px-2 text-xs text-fg-muted transition-colors hover:bg-chip-strong hover:text-fg"
-          onClick={onReview}
-          title="Review the diff in the inspector"
-          type="button"
-        >
-          Review
-        </button>
-      </div>
-      <CollapsibleMotion open={expanded} preset="compact">
-        <div className="mt-1 border-hairline-soft border-t px-1 pt-1.5">
-          <ChangeFileList className="max-h-44" onOpenFile={onOpenFile} stats={stats} />
-        </div>
-      </CollapsibleMotion>
-    </div>
+    <ComposerRail
+      expanded={expanded}
+      label={label}
+      onExpandedChange={setExpanded}
+      trailing={<ComposerRailReviewButton onClick={onReview} />}
+    >
+      <ChangeFileList className="max-h-44" onOpenFile={onOpenFile} stats={stats} />
+    </ComposerRail>
   );
 }

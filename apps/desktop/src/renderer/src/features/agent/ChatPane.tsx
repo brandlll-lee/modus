@@ -25,11 +25,13 @@ import {
   createEmptyComposerDraft,
   messageFromParts,
 } from "../composer/Composer";
+import { ComposerDock } from "../composer/ComposerDock";
 import type { MentionEditorPart } from "../composer/MentionEditor";
 import { buildPlanMessage, effectiveBuildStatus, normalizePlan } from "../plan/planState";
 import { QuestionsCard } from "../plan/QuestionsCard";
 import { ReviewPlanCard } from "../plan/ReviewPlanCard";
 import { RunningProcessBar } from "../process/RunningProcessBar";
+import { useManagedProcesses } from "../process/useManagedProcesses";
 import { ApprovalPanel } from "./ApprovalPanel";
 import {
   type AgentEventHub,
@@ -71,7 +73,6 @@ type ChatPaneProps = {
   /** "Review" on the changes strip: focus this pane and open the diff panel. */
   onOpenReview(cwd?: string): void;
   onOpenSubagent?(childSessionId: string): void;
-  botColor?: string;
   composerReplacement?: ReactNode;
   composerDraft?: ChatComposerDraft | undefined;
   onComposerDraftChange?(update: ChatComposerDraftUpdate): void;
@@ -316,7 +317,6 @@ export function ChatPane({
   onModelConfigChange,
   onOpenReview,
   onOpenSubagent,
-  botColor,
   composerReplacement,
   composerDraft,
   onComposerDraftChange,
@@ -333,6 +333,17 @@ export function ChatPane({
   const [aborting, setAborting] = useState(false);
   const [workingStats, setWorkingStats] = useState<WorkingChangeStats | undefined>();
   const [dismissedPlanHash, setDismissedPlanHash] = useState<string | undefined>(undefined);
+  const managedProcesses = useManagedProcesses({
+    workspaceId: workspace?.id,
+    sessionId,
+    origin: "agent",
+  });
+  const runningProcesses = useMemo(
+    () => managedProcesses.processes.filter((process) => process.status === "running"),
+    [managedProcesses.processes],
+  );
+  const showChangesRail = Boolean(workingStats && workingStats.fileCount > 0);
+  const hasComposerRails = runningProcesses.length > 0 || showChangesRail;
   const activeComposerDraft = composerDraft ?? localComposerDraft;
   const contextItems = activeComposerDraft.contextItems;
   const composerMode = activeComposerDraft.mode;
@@ -797,8 +808,9 @@ export function ChatPane({
           >
             <Timeline
               agentEvents={agentEvents}
-              {...(botColor ? { botColor } : {})}
               cwd={activeCwd}
+              model={paneModel}
+              models={models}
               onEditResend={editAndResend}
               {...(onOpenPlan ? { onOpenPlan } : {})}
               {...(onOpenSubagent ? { onOpenSubagent } : {})}
@@ -819,7 +831,7 @@ export function ChatPane({
             <div className="pointer-events-none absolute bottom-full left-1/2 z-30 mb-2 -translate-x-1/2">
               <button
                 aria-label="Scroll to latest"
-                className="pointer-events-auto flex size-10 items-center justify-center rounded-full border border-hairline bg-elevated text-fg-muted shadow-popup outline-none transition-colors duration-100 hover:bg-hover hover:text-fg focus-visible:ring-2 focus-visible:ring-focus-ring/35"
+                className="pointer-events-auto flex size-10 items-center justify-center rounded-full border border-popup-border bg-elevated text-fg-muted shadow-popup outline-none transition-colors duration-100 hover:bg-hover hover:text-fg focus-visible:ring-2 focus-visible:ring-focus-ring/35"
                 onClick={autoScroll.scrollToLatest}
                 title="Scroll to latest"
                 type="button"
@@ -856,43 +868,60 @@ export function ChatPane({
                 />
               ) : (
                 <>
-                  <RunningProcessBar sessionId={sessionId} workspaceId={workspace?.id} />
-                  {workingStats && workingStats.fileCount > 0 ? (
-                    <ChangesStrip
-                      onOpenFile={(path) =>
-                        void window.modus.file.open({ cwd: activeCwd, path }).catch(() => {})
-                      }
-                      onReview={() => onOpenReview(activeCwd)}
-                      stats={workingStats}
-                    />
-                  ) : null}
                   {retryStatus ? <RetryStatusBar status={retryStatus} /> : null}
-                  <Composer
-                    canSubmit={Boolean(workspace) && Boolean(paneModel)}
-                    contextItems={contextItems}
-                    cwd={activeCwd}
-                    draft={{
-                      images: activeComposerDraft.images,
-                      parts: activeComposerDraft.parts,
-                      selectedSkills: activeComposerDraft.selectedSkills,
-                      value: activeComposerDraft.value,
-                    }}
-                    isRunning={isRunning}
-                    mode={composerMode}
-                    model={paneModel}
-                    models={models}
-                    {...(contextUsage ? { contextUsage } : {})}
-                    onAbort={() => void abortPrompt()}
-                    onContextChange={setContextItems}
-                    onDraftChange={setComposerFields}
-                    onModeChange={setComposerMode}
-                    onModelChange={(next) => void changeModel(next)}
-                    onModelConfigChange={onModelConfigChange}
-                    onSubmit={(message, context, delivery, attachments, skills, mode) =>
-                      submitPrompt(message, context, delivery, attachments, skills, mode)
+                  <ComposerDock
+                    rails={
+                      hasComposerRails ? (
+                        <>
+                          {runningProcesses.length > 0 ? (
+                            <RunningProcessBar
+                              nowMs={managedProcesses.nowMs}
+                              onStop={managedProcesses.kill}
+                              processes={runningProcesses}
+                            />
+                          ) : null}
+                          {showChangesRail && workingStats ? (
+                            <ChangesStrip
+                              onOpenFile={(path) =>
+                                void window.modus.file
+                                  .open({ cwd: activeCwd, path })
+                                  .catch(() => {})
+                              }
+                              onReview={() => onOpenReview(activeCwd)}
+                              stats={workingStats}
+                            />
+                          ) : null}
+                        </>
+                      ) : undefined
                     }
-                    workspaceId={workspace?.id}
-                  />
+                  >
+                    <Composer
+                      canSubmit={Boolean(workspace) && Boolean(paneModel)}
+                      contextItems={contextItems}
+                      cwd={activeCwd}
+                      draft={{
+                        images: activeComposerDraft.images,
+                        parts: activeComposerDraft.parts,
+                        selectedSkills: activeComposerDraft.selectedSkills,
+                        value: activeComposerDraft.value,
+                      }}
+                      isRunning={isRunning}
+                      mode={composerMode}
+                      model={paneModel}
+                      models={models}
+                      {...(contextUsage ? { contextUsage } : {})}
+                      onAbort={() => void abortPrompt()}
+                      onContextChange={setContextItems}
+                      onDraftChange={setComposerFields}
+                      onModeChange={setComposerMode}
+                      onModelChange={(next) => void changeModel(next)}
+                      onModelConfigChange={onModelConfigChange}
+                      onSubmit={(message, context, delivery, attachments, skills, mode) =>
+                        submitPrompt(message, context, delivery, attachments, skills, mode)
+                      }
+                      workspaceId={workspace?.id}
+                    />
+                  </ComposerDock>
                 </>
               )}
             </>

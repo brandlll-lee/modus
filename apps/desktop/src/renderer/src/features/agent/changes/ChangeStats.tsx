@@ -1,14 +1,10 @@
-import { IconArrowBackUp, IconCheck } from "@tabler/icons-react";
-import { useEffect, useRef, useState } from "react";
 import type { FileChangeStat, WorkingChangeStats } from "../../../../../shared/contracts";
-import { ShinyText } from "../../../components/ui/ShinyText";
 import { cn } from "../../../lib/cn";
 
 /**
- * Shared change-summary primitives (Codex-style): green/red ± line counters,
- * per-file rows that open the file on click, and the per-turn "N files
- * changed" card with an undoable footer. All colors come from Modus tokens so
- * light/dark themes just work.
+ * Shared change-summary primitives: green/red ± line counters and per-file
+ * rows that open the file on click. Used by the composer ChangesStrip (Review).
+ * All colors come from Modus tokens so light/dark themes just work.
  */
 
 export function LineDelta({
@@ -48,8 +44,10 @@ export function ChangeFileRow({
   const body = (
     <>
       <span className="min-w-0 flex-1 truncate text-left font-mono text-xs">
-        {dir ? <span className="text-fg-faint">{dir}</span> : null}
-        <span className="text-fg-muted">{name}</span>
+        {dir ? (
+          <span className="text-fg-faint transition-colors group-hover/file:text-fg-muted">{dir}</span>
+        ) : null}
+        <span className="text-fg-muted transition-colors group-hover/file:text-fg">{name}</span>
       </span>
       {file.binary ? (
         <span className="shrink-0 font-mono text-2xs text-fg-faint">binary</span>
@@ -60,11 +58,11 @@ export function ChangeFileRow({
   );
 
   if (!onOpen) {
-    return <div className="flex h-7 items-center gap-3 rounded-md px-2">{body}</div>;
+    return <div className="flex h-7 items-center gap-3 px-2">{body}</div>;
   }
   return (
     <button
-      className="flex h-7 w-full items-center gap-3 rounded-md px-2 transition-colors hover:bg-hover"
+      className="group/file flex h-7 w-full items-center gap-3 px-2 text-left"
       onClick={() => onOpen(file.path)}
       title={`Open ${file.path}`}
       type="button"
@@ -94,99 +92,5 @@ export function ChangeFileList({
         </div>
       ) : null}
     </div>
-  );
-}
-
-export function changeSummaryLabel(stats: WorkingChangeStats): string {
-  return `${stats.fileCount} file${stats.fileCount === 1 ? "" : "s"} changed`;
-}
-
-type UndoPhase = "idle" | "confirming" | "working" | "done";
-
-/**
- * Codex-style end-of-turn card: "N files changed" header with an inline-confirm
- * Undo (restores the pre-run snapshot), then one row per touched file.
- */
-export function TurnChangesCard({
-  stats,
-  checkpointId,
-  onUndo,
-  onOpenFile,
-}: {
-  stats: WorkingChangeStats;
-  /** Pre-run snapshot to restore when Undo is pressed (absent → no Undo). */
-  checkpointId?: string | undefined;
-  onUndo?: ((checkpointId: string) => Promise<void> | void) | undefined;
-  onOpenFile?: ((path: string) => void) | undefined;
-}) {
-  const [phase, setPhase] = useState<UndoPhase>("idle");
-  const disarmTimer = useRef<number | undefined>(undefined);
-
-  useEffect(() => () => window.clearTimeout(disarmTimer.current), []);
-
-  async function handleUndo(): Promise<void> {
-    if (!checkpointId || !onUndo || phase === "working") {
-      return;
-    }
-    if (phase !== "confirming") {
-      setPhase("confirming");
-      window.clearTimeout(disarmTimer.current);
-      disarmTimer.current = window.setTimeout(() => {
-        setPhase((current) => (current === "confirming" ? "idle" : current));
-      }, 4000);
-      return;
-    }
-    window.clearTimeout(disarmTimer.current);
-    setPhase("working");
-    try {
-      await onUndo(checkpointId);
-      setPhase("done");
-      disarmTimer.current = window.setTimeout(() => setPhase("idle"), 1800);
-    } catch {
-      setPhase("idle");
-    }
-  }
-
-  return (
-    <section className="overflow-hidden rounded-lg border border-hairline-soft bg-panel">
-      <div className="flex h-9 items-center gap-2 border-hairline-soft border-b px-3">
-        <span className="min-w-0 truncate text-sm text-fg-muted">{changeSummaryLabel(stats)}</span>
-        <LineDelta added={stats.added} muted removed={stats.removed} />
-        <div className="min-w-0 flex-1" />
-        {checkpointId && onUndo ? (
-          <button
-            className={cn(
-              "flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-xs transition-colors",
-              phase === "confirming"
-                ? "bg-danger/10 text-danger hover:bg-danger/20"
-                : "text-fg-subtle hover:bg-hover hover:text-fg",
-              phase === "working" && "cursor-wait",
-            )}
-            disabled={phase === "working"}
-            onClick={() => void handleUndo()}
-            title="Restore files to before this turn"
-            type="button"
-          >
-            {phase === "done" ? (
-              <IconCheck size={12} stroke={1.9} />
-            ) : (
-              <IconArrowBackUp size={12} stroke={1.8} />
-            )}
-            {phase === "working" ? (
-              <ShinyText>Restoring…</ShinyText>
-            ) : phase === "confirming" ? (
-              "Restore this turn?"
-            ) : phase === "done" ? (
-              "Restored"
-            ) : (
-              "Undo"
-            )}
-          </button>
-        ) : null}
-      </div>
-      <div className="px-1.5 py-1.5">
-        <ChangeFileList className="max-h-56" onOpenFile={onOpenFile} stats={stats} />
-      </div>
-    </section>
   );
 }
