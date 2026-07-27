@@ -29,8 +29,7 @@ export function Tooltip({
         <BaseTooltip.Positioner side={side} sideOffset={sideOffset}>
           <BaseTooltip.Popup
             className={
-              "origin-(--transform-origin) rounded-md border border-hairline bg-elevated px-2 py-1 " +
-              `text-fg text-xs shadow-popup ${motionClass}`
+              `origin-(--transform-origin) popup-chrome px-2 py-1 text-fg text-xs ${motionClass}`
             }
           >
             {content}

@@ -2,6 +2,9 @@ import type { ReactNode } from "react";
 import { cn } from "../../lib/cn";
 import { Tooltip } from "./Tooltip";
 
+/** Shared chrome toolbar glyph — one size for Inspector / App / sub-toolbars. */
+export const TOOLBAR_ICON = { size: 15, stroke: 1.5 } as const;
+
 type ToolbarButtonProps = {
   children: ReactNode;
   label: string;
@@ -11,10 +14,9 @@ type ToolbarButtonProps = {
 };
 
 /**
- * Shared 32px icon button for chrome toggles (header panel toggles, sidebar
- * collapse). One definition → identical look, hover, tooltip, and tokens
- * everywhere, so the left/right panel controls stay perfectly symmetric and
- * theme-adaptive (colors come from `--color-*` tokens, so dark/light just work).
+ * Shared toolbar icon button (hit area from `.toolbar-icon-button` in app.css).
+ * One definition → identical look, hover, tooltip, and tokens everywhere so
+ * left/right panel controls stay symmetric and theme-adaptive.
  */
 export function ToolbarButton({
   children,

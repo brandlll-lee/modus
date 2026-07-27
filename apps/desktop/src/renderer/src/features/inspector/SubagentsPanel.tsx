@@ -315,7 +315,6 @@ export function SubagentsPanel({
                 />
               ) : undefined
             }
-            botColor={subagentColor(selected.id)}
             contextUsage={contextUsageBySession[selected.id]}
             defaultModel={defaultModel}
             hub={hub}

@@ -81,7 +81,7 @@ export function ContextMentionMenu({
   }
 
   return (
-    <div className="scroll-thin absolute bottom-full left-1 z-20 mb-2 max-h-[336px] w-[340px] max-w-[calc(100%-0.5rem)] overflow-y-auto rounded-[10px] border border-hairline bg-elevated p-1 shadow-popup">
+    <div className="scroll-thin absolute bottom-full left-1 z-20 mb-2 max-h-[336px] w-[340px] max-w-[calc(100%-0.5rem)] overflow-y-auto popup-chrome p-1">
       {rows.map((row, index) => {
         if (row.row === "header") {
           return (

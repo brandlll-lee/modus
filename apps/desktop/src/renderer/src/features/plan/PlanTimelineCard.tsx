@@ -48,7 +48,7 @@ export function PlanTimelineCard({
   const ready = isComplete && !isError && plan !== undefined;
 
   return (
-    <article className="min-w-0 overflow-hidden rounded-xl border border-hairline-soft bg-panel px-4 py-3.5">
+    <article className="min-w-0 overflow-hidden rounded-xl border border-hairline-soft bg-card px-4 py-3.5">
       <header className="flex min-h-6 items-center gap-2 text-xs">
         <IconListCheck className="shrink-0 text-fg-faint" size={14} stroke={1.7} />
         {isComplete ? (

@@ -90,7 +90,7 @@ export function CommitDialog({ open, onOpenChange, cwd, status, onRefresh }: Com
         <Dialog.Popup
           className={cn(
             "-translate-x-1/2 -translate-y-1/2 fixed top-1/2 left-1/2 z-50 w-[min(440px,calc(100vw-2rem))]",
-            "origin-center overflow-hidden rounded-xl border border-hairline bg-elevated shadow-popup outline-none",
+            "origin-center overflow-hidden popup-chrome outline-none",
             "transition-[transform,opacity] duration-150 ease-out-quint",
             "data-ending-style:scale-[0.97] data-ending-style:opacity-0",
             "data-starting-style:scale-[0.97] data-starting-style:opacity-0",

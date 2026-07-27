@@ -15,7 +15,6 @@ import { animate, m, useMotionValue } from "motion/react";
 import {
   lazy,
   type PointerEvent,
-  type ReactNode,
   Suspense,
   useEffect,
   useRef,
@@ -31,6 +30,7 @@ import type {
 } from "../../../../shared/contracts";
 import { ModusLoadingFallback } from "../../components/ui/ModusLoadingMark";
 import { PanelHeader } from "../../components/ui/Panel";
+import { ToolbarButton, TOOLBAR_ICON } from "../../components/ui/ToolbarButton";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
 import type { AgentEventHub } from "../agent/agentEventHub";
@@ -87,13 +87,41 @@ const TerminalPanel = lazy(() =>
 );
 
 const TABS = [
-  { value: "changes", label: "Changes", icon: <IconGitBranch size={18} stroke={1.7} /> },
-  { value: "plan", label: "Plan", icon: <IconLayoutList size={18} stroke={1.7} /> },
-  { value: "files", label: "Files", icon: <IconFileText size={18} stroke={1.7} /> },
-  { value: "subagents", label: "Subagents", icon: <IconGridDots size={18} stroke={1.7} /> },
-  { value: "browser", label: "Browser", icon: <IconWorld size={18} stroke={1.7} /> },
-  { value: "terminal", label: "Terminal", icon: <IconTerminal2 size={18} stroke={1.7} /> },
-  { value: "security", label: "Security", icon: <IconShieldCheck size={18} stroke={1.7} /> },
+  {
+    value: "changes",
+    label: "Changes",
+    icon: <IconGitBranch size={TOOLBAR_ICON.size} stroke={TOOLBAR_ICON.stroke} />,
+  },
+  {
+    value: "plan",
+    label: "Plan",
+    icon: <IconLayoutList size={TOOLBAR_ICON.size} stroke={TOOLBAR_ICON.stroke} />,
+  },
+  {
+    value: "files",
+    label: "Files",
+    icon: <IconFileText size={TOOLBAR_ICON.size} stroke={TOOLBAR_ICON.stroke} />,
+  },
+  {
+    value: "subagents",
+    label: "Subagents",
+    icon: <IconGridDots size={TOOLBAR_ICON.size} stroke={TOOLBAR_ICON.stroke} />,
+  },
+  {
+    value: "browser",
+    label: "Browser",
+    icon: <IconWorld size={TOOLBAR_ICON.size} stroke={TOOLBAR_ICON.stroke} />,
+  },
+  {
+    value: "terminal",
+    label: "Terminal",
+    icon: <IconTerminal2 size={TOOLBAR_ICON.size} stroke={TOOLBAR_ICON.stroke} />,
+  },
+  {
+    value: "security",
+    label: "Security",
+    icon: <IconShieldCheck size={TOOLBAR_ICON.size} stroke={TOOLBAR_ICON.stroke} />,
+  },
 ];
 
 export function Inspector({
@@ -282,18 +310,21 @@ export function Inspector({
                         </Tabs.Tab>
                       </Tooltip>
                     ))}
-                    <Tabs.Indicator className="absolute top-1/2 left-0 z-0 h-8 w-(--active-tab-width) -translate-y-1/2 translate-x-(--active-tab-left) rounded-md bg-active transition-all duration-200 ease-out-quint" />
+                    <Tabs.Indicator className="absolute top-1/2 left-0 z-0 h-6.5 w-(--active-tab-width) -translate-y-1/2 translate-x-(--active-tab-left) rounded-md bg-active transition-all duration-200 ease-out-quint" />
                   </Tabs.List>
                   <div className="ml-1 flex shrink-0 items-center gap-0.5">
-                    <InspectorIconButton label="More">
-                      <IconDots size={18} stroke={1.7} />
-                    </InspectorIconButton>
-                    <InspectorIconButton
+                    <ToolbarButton label="More">
+                      <IconDots size={TOOLBAR_ICON.size} stroke={TOOLBAR_ICON.stroke} />
+                    </ToolbarButton>
+                    <ToolbarButton
                       label="Collapse right panel"
                       onClick={() => onOpenChange(false)}
                     >
-                      <IconLayoutSidebarRight size={18} stroke={1.7} />
-                    </InspectorIconButton>
+                      <IconLayoutSidebarRight
+                        size={TOOLBAR_ICON.size}
+                        stroke={TOOLBAR_ICON.stroke}
+                      />
+                    </ToolbarButton>
                   </div>
                 </div>
 
@@ -361,29 +392,6 @@ export function Inspector({
         </>
       ) : null}
     </m.aside>
-  );
-}
-
-function InspectorIconButton({
-  children,
-  label,
-  onClick,
-}: {
-  children: ReactNode;
-  label: string;
-  onClick?: () => void;
-}) {
-  return (
-    <Tooltip content={label} side="bottom">
-      <button
-        aria-label={label}
-        className="toolbar-icon-button flex items-center justify-center rounded-md transition-colors hover:bg-hover"
-        onClick={onClick}
-        type="button"
-      >
-        {children}
-      </button>
-    </Tooltip>
   );
 }
 

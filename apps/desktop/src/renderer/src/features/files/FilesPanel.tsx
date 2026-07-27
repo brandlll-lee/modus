@@ -380,7 +380,7 @@ function FileActions({
         </Menu.Trigger>
         <Menu.Portal>
           <Menu.Positioner align="end" side="bottom" sideOffset={6}>
-            <Menu.Popup className="origin-(--transform-origin) min-w-[190px] rounded-lg border border-hairline bg-elevated p-1 shadow-popup">
+            <Menu.Popup className="origin-(--transform-origin) min-w-[190px] popup-chrome p-1">
               <MenuAction
                 icon={<IconCopy size={16} stroke={1.75} />}
                 onClick={() => file && void navigator.clipboard.writeText(file.path)}

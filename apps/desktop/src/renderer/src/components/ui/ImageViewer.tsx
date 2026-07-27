@@ -284,7 +284,7 @@ function ImageViewerOverlay({ state, onClose }: { state: ViewerState; onClose():
       />
       <m.div
         animate={{ opacity: 1, scale: 1 }}
-        className="relative z-10 flex items-center justify-center overflow-hidden rounded-xl border border-hairline bg-elevated shadow-popup"
+        className="relative z-10 flex items-center justify-center overflow-hidden popup-chrome"
         exit={{ opacity: 0, scale: 0.98 }}
         initial={{ opacity: 0, scale: 0.98 }}
         style={{
@@ -335,7 +335,7 @@ function ImageViewerOverlay({ state, onClose }: { state: ViewerState; onClose():
         </div>
         <m.div
           animate={{ opacity: 1, y: 0 }}
-          className="app-no-drag absolute top-3 right-3 flex items-center gap-1.5 rounded-lg border border-hairline bg-elevated/95 p-1 shadow-popup"
+          className="app-no-drag absolute top-3 right-3 flex items-center gap-1.5 popup-chrome bg-elevated/95 p-1"
           exit={{ opacity: 0 }}
           initial={{ opacity: 0, y: -4 }}
           transition={{ duration: 0.16, ease: "easeOut", delay: 0.04 }}

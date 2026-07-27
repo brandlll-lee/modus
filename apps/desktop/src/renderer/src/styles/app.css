@@ -18,6 +18,8 @@
   --color-panel: #161617; /* 侧栏 / 菜单栏（一丝提亮） */
   --color-surface: #1c1c1d; /* 输入框（在主区上轻浮起，对比克制） */
   --color-elevated: #232325; /* 下拉 / 弹层 */
+  /* Chat 记录卡片从当前主题的画布与前景色相对派生，三套主题共享同一层级关系。 */
+  --color-card: color-mix(in oklab, var(--color-canvas) 97%, var(--color-fg) 3%);
   --color-composer-tray: var(--color-panel);
 
   /* Code surfaces: editor-specific tokens stay out of app UI semantic colours. */
@@ -35,12 +37,15 @@
 
   /* hairline 三级 —— 用途分层（明度对齐 Cursor 实测）：
      - soft (0.03)     内部 list 分隔、超细分割
-     - hairline (0.05) 浮起元素细描边（composer、popup、tooltip、pill）
+     - hairline (0.05) 面板/composer 等常驻描边
      - strong (0.065)  区域级分隔（menubar 底、sidebar 右、inspector 左）
-       —— 6.5% 白：在 #131314 上目测刚好"可见但不抢戏"，0.10 会过亮显脏 */
+       —— 6.5% 白：在 #131314 上目测刚好"可见但不抢戏"，0.10 会过亮显脏
+     浮层（menu/popover/tooltip）用 --color-popup-border，比 hairline 更淡，
+     靠多层 shadow-popup 抬升，避免"线框贴纸"感。 */
   --color-hairline: rgba(255, 255, 255, 0.05);
   --color-hairline-soft: rgba(255, 255, 255, 0.03);
   --color-hairline-strong: rgba(255, 255, 255, 0.065);
+  --color-popup-border: rgba(255, 255, 255, 0.08);
 
   /* Composer 专属描边：静息态保持克制（只比 hairline 略亮），靠 shadow-composer-edge
      的顶部内高光把输入框"浮起"，而不是用一圈深描边压住主区（图5 的轻盈观感）。 */
@@ -52,8 +57,8 @@
   --color-hover: rgba(255, 255, 255, 0.04);
   --color-active: rgba(255, 255, 255, 0.06);
 
-  /* 文本灰阶 —— 用颜色做层级，不靠字号 */
-  --color-fg: #e4e4e3;
+  /* 文本灰阶 —— 用颜色做层级，不靠字号。主色略软于纯近白，输入/正文更护眼。 */
+  --color-fg: #d8d8d7;
   --color-fg-muted: #b4b4b1;
   --color-fg-subtle: #8a8a87;
   --color-fg-faint: #5a5a5d;
@@ -163,7 +168,9 @@
   --shadow-composer-focus:
     0 1px 10px -6px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--color-focus-ring),
     0 0 16px -3px rgba(133, 63, 244, 0.4);
-  --shadow-popup: 0 1px 2px rgba(0, 0, 0, 0.28);
+  /* 浮层纵深：接触影 + 环境影。边界主要由光影暗示，描边只作极淡轮廓。 */
+  --shadow-popup:
+    0 1px 2px rgba(0, 0, 0, 0.28), 0 8px 24px -6px rgba(0, 0, 0, 0.55);
 
   --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
 }
@@ -190,7 +197,7 @@
  *   - editor/chat canvas is clean white (#fff);
  *   - chrome panels use neutral #f8f8f8 and lean on hairlines for depth;
  *   - hairlines / hover / active become black-alpha so they read on white;
- *   - text tiers are WCAG-checked dark-on-light (fg≈16:1, muted≈9:1, subtle≈5:1);
+ *   - text tiers are WCAG-checked dark-on-light (fg≈12:1, muted≈9:1, subtle≈5:1);
  *   - brand accent (orange) and focus purple are preserved across both themes.
  * Only the semantic CSS variables change; every component keeps its classes.
  */
@@ -218,6 +225,8 @@
   --color-hairline: rgba(0, 0, 0, 0.1);
   --color-hairline-soft: rgba(0, 0, 0, 0.06);
   --color-hairline-strong: rgba(0, 0, 0, 0.18);
+  /* 浮层描边比常驻 hairline 更淡 —— 避免白底上画出硬线框 */
+  --color-popup-border: rgba(0, 0, 0, 0.06);
 
   /* Composer border on white: a soft resting edge (图5) — the input is carried
      mainly by its shadow + white fill above the white canvas, not a heavy
@@ -230,12 +239,12 @@
   --color-hover: rgba(0, 0, 0, 0.04);
   --color-active: rgba(0, 0, 0, 0.06);
 
-  /* Text — dark-on-light, color carries hierarchy */
-  --color-fg: #242424;
+  /* Text — soft near-black (Cursor-like); still ~12:1 on white, not chalk-pale */
+  --color-fg: #2f2f2f;
   --color-fg-muted: #444444;
   --color-fg-subtle: #737373;
   --color-fg-faint: #9a9a9a;
-  --color-icon: #242424;
+  --color-icon: #2f2f2f;
   --color-icon-muted: #5f5f5f;
 
   /* Brand accent (send): orange fill works on both themes */
@@ -299,7 +308,10 @@
   --shadow-composer-focus:
     0 1px 3px rgba(0, 0, 0, 0.08), 0 0 0 1px var(--color-focus-ring),
     0 0 16px -4px rgba(133, 63, 244, 0.28);
-  --shadow-popup: 0 1px 2px rgba(0, 0, 0, 0.06);
+  /* 亮色浮层：软抬升，影 > 线 */
+  --shadow-popup:
+    0 1px 2px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.06),
+    0 12px 28px -8px rgba(0, 0, 0, 0.08);
 }
 
 :root[data-theme="dark-plus"] {
@@ -389,7 +401,9 @@
   --shadow-composer-focus:
     0 1px 10px -6px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--color-focus-ring),
     0 0 16px -3px rgba(133, 63, 244, 0.36);
-  --shadow-popup: 0 2px 8px rgba(0, 0, 0, 0.26);
+  --color-popup-border: rgba(255, 255, 255, 0.07);
+  --shadow-popup:
+    0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px -6px rgba(0, 0, 0, 0.5);
 }
 
 /*
@@ -401,6 +415,18 @@
  */
 ::selection {
   background-color: var(--color-selection);
+}
+
+/*
+ * Floating surface chrome — menus / popovers / tooltips.
+ * Soft popup-border + layered shadow-popup; prefer this over ad-hoc
+ * `rounded-lg border-hairline bg-elevated shadow-popup` (线框贴纸感).
+ */
+.popup-chrome {
+  border: 1px solid var(--color-popup-border);
+  border-radius: var(--radius-md); /* 8px — 比 lg 更方，贴近菜单质感 */
+  background: var(--color-elevated);
+  box-shadow: var(--shadow-popup);
 }
 
 /* 全局默认行高与字重，避免某些控件回退到浏览器默认（16px / bold） */
@@ -449,12 +475,16 @@ input {
     -webkit-app-region: no-drag;
   }
   .toolbar-row {
-    height: 48px;
+    height: 36px;
   }
   .toolbar-icon-button {
     color: var(--color-icon-muted);
-    width: 32px;
-    height: 32px;
+    width: 26px;
+    height: 26px;
+  }
+  .toolbar-icon-button svg {
+    width: 15px;
+    height: 15px;
   }
   .toolbar-icon-button[data-active="true"],
   .toolbar-icon-button:hover {
@@ -466,24 +496,6 @@ input {
   /* 明确保留给极少数标题使用；默认正文始终归零。 */
   .tracking-snug {
     letter-spacing: 0;
-  }
-  /* Activity fold live viewport: soft fade at top/bottom instead of a hard
-     clip/border, so the streaming exploration "bleeds" into the chat (图1). */
-  .activity-fade {
-    -webkit-mask-image: linear-gradient(
-      to bottom,
-      transparent 0,
-      #000 22px,
-      #000 calc(100% - 16px),
-      transparent 100%
-    );
-    mask-image: linear-gradient(
-      to bottom,
-      transparent 0,
-      #000 22px,
-      #000 calc(100% - 16px),
-      transparent 100%
-    );
   }
 }
 
@@ -523,12 +535,14 @@ input {
 }
 
 @layer utilities {
-  /* Off-screen timeline blocks skip layout/paint/compositing (browser-native),
+  /* Off-screen timeline turns skip layout/paint/compositing (browser-native),
      so a long transcript of heavy markdown (shiki code, mermaid) only pays the
      render cost for what's on screen — cuts scroll jank + render/layer memory.
-     Unlike virtualization the React tree stays mounted, so nothing re-parses on
-     scroll. `contain-intrinsic-size: auto` remembers each block's last height so
-     the scrollbar never jumps; 120px is only the never-yet-rendered fallback. */
+     Applied per turn (user bubble + its reply) so sticky user bubbles stick
+     inside their own turn and get pushed out by the next. Unlike virtualization
+     the React tree stays mounted, so nothing re-parses on scroll.
+     `contain-intrinsic-size: auto` remembers each turn's last height so the
+     scrollbar never jumps; 120px is only the never-yet-rendered fallback. */
   .timeline-block {
     content-visibility: auto;
     contain-intrinsic-size: auto 120px;
@@ -789,13 +803,23 @@ input {
   }
 }
 
-/* AI response Markdown. Capability comes from Streamdown; visuals stay inside Modus tokens. */
+/* AI response Markdown. Capability from Streamdown; hierarchy from tokens below.
+ * Body size is absolute (--text-md); heading sizes use em so they scale off body —
+ * never rem (rem is :root 13px and collapses h2/h3 against 14px body).
+ * Block rhythm is owned here: Streamdown dir="auto" uses display:contents wrappers
+ * that swallow its space-y utilities. */
 .modus-markdown {
   --markdown-fg: var(--color-fg);
-  --markdown-fg-strong: var(--color-fg);
-  --markdown-fg-muted: color-mix(in oklab, var(--color-fg-muted) 99%, var(--color-canvas));
-  --markdown-fg-subtle: color-mix(in oklab, var(--color-fg-subtle) 99%, var(--color-canvas));
-  --markdown-block-bg: color-mix(in oklab, var(--color-canvas) 90%, var(--color-fg) 10%);
+  --markdown-ink-mix: #fff;
+  --markdown-fg-strong: color-mix(in oklab, var(--color-fg) 84%, var(--markdown-ink-mix) 16%);
+  --markdown-fg-muted: var(--color-fg-muted);
+  --markdown-fg-subtle: var(--color-fg-subtle);
+  /* Soft lift only — was canvas 90%+fg 10% (reads as mid-gray cards). Reuse card. */
+  --markdown-block-bg: var(--color-card);
+  --md-space-block: 0.75em;
+  --md-space-heading-before: 1.55em;
+  --md-space-heading-after: 0.45em;
+  --md-space-list: 0.38em;
   --background: var(--color-canvas);
   --foreground: var(--markdown-fg);
   --border: var(--color-hairline);
@@ -805,55 +829,57 @@ input {
   --sdm-bg: transparent;
   color: var(--markdown-fg);
   font-size: var(--text-md);
-  font-weight: 425;
-  line-height: 1.72;
+  font-weight: 400;
+  line-height: 1.65;
   max-width: 100%;
   min-width: 0;
   overflow-wrap: anywhere;
 }
 
-.modus-markdown > :where(p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote, hr) {
-  max-width: 76ch;
+:root[data-theme="light"] .modus-markdown {
+  --markdown-ink-mix: #000;
 }
 
 .modus-markdown :where(p) {
-  margin: 0.78rem 0;
+  margin: var(--md-space-block) 0;
 }
 
 .modus-markdown :where(h1, h2, h3, h4, h5, h6) {
-  margin: 1.9rem 0 0.52rem;
+  margin: var(--md-space-heading-before) 0 var(--md-space-heading-after);
   color: var(--markdown-fg-strong);
-  line-height: 1.28;
-  letter-spacing: -0.012em;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.015em;
 }
 
 .modus-markdown :where(h1) {
-  font-size: 1.5rem;
-  font-weight: 680;
+  font-size: 1.4em;
+  font-weight: 650;
 }
 
 .modus-markdown :where(h2) {
-  font-size: 1.28rem;
-  font-weight: 660;
+  font-size: 1.22em;
+  font-weight: 650;
 }
 
 .modus-markdown :where(h3) {
-  font-size: 1.08rem;
-  font-weight: 640;
+  font-size: 1.1em;
 }
 
 .modus-markdown :where(h4, h5, h6) {
-  font-size: 1rem;
-  font-weight: 620;
-  color: var(--markdown-fg-muted);
+  font-size: 1.05em;
 }
 
-.modus-markdown > :where(h1, h2, h3, h4, h5, h6):first-child {
+/* Streamdown + dir="auto": first Block is display:contents — clear lead-in heading. */
+.modus-markdown > :first-child > :where(h1, h2, h3, h4, h5, h6):first-child {
   margin-top: 0;
 }
 
-.modus-markdown :where(h1, h2, h3, h4, h5, h6) + :where(p, ul, ol, blockquote) {
-  margin-top: 0.52rem;
+/* Heading after-gap is authoritative; don't double with the next block's top margin. */
+.modus-markdown
+  :where(h1, h2, h3, h4, h5, h6)
+  + :where(p, ul, ol, blockquote, [data-streamdown="code-block"], [data-streamdown="table-wrapper"], [data-streamdown="mermaid-block"]) {
+  margin-top: 0;
 }
 
 .modus-markdown :where(h1, h2) {
@@ -874,7 +900,7 @@ input {
 
 .modus-markdown :where(strong) {
   color: var(--markdown-fg-strong);
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .modus-markdown :where(em) {
@@ -882,8 +908,8 @@ input {
 }
 
 .modus-markdown :where(ul, ol) {
-  margin: 0.9rem 0;
-  padding-left: 1.25rem;
+  margin: var(--md-space-block) 0;
+  padding-left: 1.25em;
 }
 
 /* 恢复列表符号 —— Tailwind preflight 把 ul/ol 重置成 list-style:none，这里显式补回 */
@@ -897,12 +923,12 @@ input {
 
 .modus-markdown :where(ul ul) {
   list-style: circle;
-  margin-top: 0.38rem;
+  margin-top: var(--md-space-list);
 }
 
 .modus-markdown :where(li) {
-  margin: 0.46rem 0;
-  padding-left: 0.1rem;
+  margin: var(--md-space-list) 0;
+  padding-left: 0.1em;
 }
 
 .modus-markdown :where(li)::marker {
@@ -910,20 +936,20 @@ input {
 }
 
 .modus-markdown :where(li > p) {
-  margin: 0.22rem 0;
+  margin: 0.15em 0;
 }
 
 .modus-markdown :where(input[type="checkbox"]) {
   width: 13px;
   height: 13px;
-  margin: 0 0.45rem 0 0;
+  margin: 0 0.45em 0 0;
   vertical-align: -2px;
   accent-color: var(--color-accent);
 }
 
 .modus-markdown :where(blockquote) {
-  margin: 1rem 0;
-  padding: 0.08rem 0 0.08rem 0.85rem;
+  margin: var(--md-space-block) 0;
+  padding: 0.08em 0 0.08em 0.85em;
   border-left: 1px solid var(--color-hairline-strong);
   color: var(--markdown-fg-muted);
   font-style: normal;
@@ -931,7 +957,7 @@ input {
 
 .modus-markdown :where(hr) {
   height: 1px;
-  margin: 1.75rem 0;
+  margin: calc(var(--md-space-heading-before) + var(--md-space-heading-after)) 0;
   border: 0;
   background: var(--color-hairline-soft);
 }
@@ -949,60 +975,63 @@ input {
 }
 
 /*
- * ── Table — single frame, frameless wrapper (same shape as mermaid) ─────
+ * ── Table — single frame, horizontal rules only (Cursor chat parity) ────
  *
- * Streamdown nests TWO frames: the outer [data-streamdown="table-wrapper"]
- * (`flex flex-col gap-2 rounded-lg border border-border bg-sidebar p-2`) plus
- * an inner unlabeled `rounded-md border bg-background` div around the <table>.
- * The doubled border + `bg-sidebar` wrapper reads as a code-block / composer
- * input box around the table — the table looks "nested inside an input box".
- *
- * The original rules targeted [data-streamdown="table-container"] — an
- * attribute Streamdown never emits — so they never applied and the raw double
- * frame showed through. We flatten the outer wrapper to a bare column
- * (transparent, no border/padding), float the copy control into the corner,
- * and let the inner box be the ONE frame that holds the table.
- * Unlayered so these beat Streamdown's `utilities` cascade layer.
+ * Streamdown nests TWO frames (outer bg-sidebar + inner bordered box). Flatten
+ * the outer wrapper; ONE inner frame holds the table. Cells use bottom hairlines
+ * only — never a full grid. Header fill uses --color-panel so light theme stays
+ * visible (surface≈canvas on light washes out).
  */
 .modus-markdown [data-streamdown="table-wrapper"] {
   position: relative;
-  margin: 1rem 0;
+  margin: var(--md-space-block) 0;
   max-width: 100%;
   min-width: 0;
-  gap: 0.35rem;
+  gap: 0;
   padding: 0;
   border: 0;
   border-radius: 0;
   background: transparent;
 }
 
-/* Controls cluster (copy / download) — the child div with no table. Compact icon
-   row right-aligned above the table (in flow, so it never occludes the header). */
+/* Float copy onto the frame corner (in-flow toolbar left a giant heading→table gap). */
 .modus-markdown [data-streamdown="table-wrapper"] > div:not(:has(table)) {
+  position: absolute;
+  top: 0.35rem;
+  right: 0.35rem;
+  z-index: 2;
   margin: 0;
   padding: 0;
+  height: auto;
 }
 
-/* The ONE frame: the inner box that directly wraps the table. */
+.modus-markdown [data-streamdown="table-wrapper"] > div:not(:has(table)) button {
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--markdown-fg-subtle);
+}
+
+.modus-markdown [data-streamdown="table-wrapper"] > div:not(:has(table)) button:hover {
+  color: var(--markdown-fg-strong);
+  background: var(--color-hover);
+}
+
+/* The ONE frame. */
 .modus-markdown [data-streamdown="table-wrapper"] > div:has(> table) {
   margin: 0;
   max-width: 100%;
   min-width: 0;
   border: 1px solid var(--color-hairline);
-  border-radius: var(--radius-lg);
-  background: var(--markdown-block-bg);
+  border-radius: var(--radius-md);
+  background: var(--color-canvas);
   overflow-x: auto;
   overflow-y: hidden;
 }
 
 /*
  * Table copy menu (Markdown / CSV / TSV).
- *
- * Streamdown's "copy table" control is a dropdown whose menu relies on
- * un-compiled utilities (`min-w-[120px]`, `top-full`, `bg-background`, ...).
- * With none of them applied the popup collapses to a ~1ch column and every
- * label wraps one letter per line (图). Re-style it as a Modus elevated menu:
- * fixed min width, anchored under the trigger, horizontal labels.
+ * Streamdown's menu relies on un-compiled utilities; restyle as Modus popup-chrome.
  */
 .modus-markdown [data-streamdown="table-wrapper"] [class~="top-full"] {
   position: absolute;
@@ -1014,10 +1043,10 @@ input {
   min-width: 8.5rem;
   margin-top: 0.3rem;
   padding: 0.25rem;
-  border: 1px solid var(--color-hairline);
+  border: 1px solid var(--color-popup-border);
   border-radius: var(--radius-md);
   background: var(--color-elevated);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--shadow-popup);
   overflow: hidden;
 }
 
@@ -1039,21 +1068,32 @@ input {
   color: var(--markdown-fg-strong);
 }
 
+/* Kill Streamdown divide-y / full-grid leftovers; chat default = horizontal rules. */
+.modus-markdown :where(table, thead, tbody, tr) {
+  border: 0;
+  background: transparent;
+}
+
 .modus-markdown :where(th, td) {
-  padding: 0.5rem 0.75rem;
-  border: 1px solid var(--color-hairline-soft);
+  padding: 0.65em 0.9em;
+  border: 0;
+  border-bottom: 1px solid var(--color-hairline-soft);
   text-align: left;
   vertical-align: top;
 }
 
 .modus-markdown :where(th) {
-  background: color-mix(in oklab, var(--color-surface) 60%, var(--color-canvas));
+  background: var(--color-panel);
   color: var(--markdown-fg-strong);
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .modus-markdown :where(td) {
   color: var(--markdown-fg-muted);
+}
+
+.modus-markdown :where(tr:last-child > th, tr:last-child > td) {
+  border-bottom: 0;
 }
 
 /* ── Inline code ───────────────────────────────────────────────────── */
@@ -1071,22 +1111,12 @@ input {
 }
 
 /*
- * ── Code block (txt / env / plain fences) — single frame, no top bar ──
- *
- * Streamdown ships a Tailwind DOM: the outer [data-streamdown="code-block"]
- * is `border bg-sidebar rounded-xl p-2 flex-col gap-2`, with an EMPTY
- * `flex h-8` header (label hidden) that reads as a dead placeholder bar
- * (图4). We collapse that header and float the copy control into the
- * top-right corner — one clean frame, content starts immediately (图5/图6).
- *
- * These rules are intentionally UNLAYERED: Streamdown's utilities live in
- * Tailwind's `utilities` cascade layer, so any unlayered rule here wins the
- * cascade regardless of specificity. `:has()` targets the unlabeled wrapper
- * divs (Electron/Chromium supports it).
+ * ── Code block — soft bg + hairline only (no shadow card) ───────────────
+ * Collapse Streamdown's empty language header; float copy as a ghost icon.
  */
 .modus-markdown [data-streamdown="code-block"] {
   position: relative;
-  margin: 1rem 0;
+  margin: var(--md-space-block) 0;
   max-width: 100%;
   min-width: 0;
   padding: 0;
@@ -1095,24 +1125,20 @@ input {
   border-radius: var(--radius-lg);
   background: var(--markdown-block-bg);
   overflow: hidden;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
 }
 
-/* Collapse the empty language-label header — kills the top placeholder bar */
 .modus-markdown [data-streamdown="code-block-header"] {
   display: none;
 }
 
-/* Code body — content starts at top-left; copy button floats in the corner */
 .modus-markdown [data-streamdown="code-block-body"] {
   border: 0;
   border-radius: 0;
   background: transparent;
   max-width: 100%;
   min-width: 0;
-  padding: 0.8rem 1rem;
+  padding: 1rem 1.15rem;
   font-size: var(--text-xs);
-  line-height: 1.7;
   overflow-x: auto;
 }
 
@@ -1122,7 +1148,7 @@ input {
 
 .modus-markdown :where(pre) {
   margin: 0;
-  line-height: 1.55;
+  line-height: 1.6;
 }
 
 .modus-markdown [data-streamdown="code-block-body"] :where(pre, code) {
@@ -1176,12 +1202,11 @@ input {
 }
 
 .modus-markdown [data-streamdown="code-block-actions"] {
-  border: 1px solid var(--color-hairline-soft);
+  border: 0;
   border-radius: var(--radius-sm);
-  background: color-mix(in oklab, var(--color-surface) 80%, transparent);
-  padding: 2px;
+  background: transparent;
+  padding: 0;
   color: var(--markdown-fg-subtle);
-  backdrop-filter: blur(6px);
 }
 
 /*
@@ -1202,11 +1227,15 @@ input {
 
 .modus-markdown [data-streamdown="code-block-actions"] button {
   color: var(--markdown-fg-subtle);
-  transition: color 0.12s ease;
+  border-radius: var(--radius-sm);
+  transition:
+    color 0.12s ease,
+    background 0.12s ease;
 }
 
 .modus-markdown [data-streamdown="code-block-actions"] button:hover {
   color: var(--markdown-fg-strong);
+  background: var(--color-hover);
 }
 
 /* ── Global button resets inside markdown ───────────────────────────── */
@@ -1232,7 +1261,7 @@ input {
  */
 .modus-markdown [data-streamdown="mermaid-block"] {
   position: relative;
-  margin: 1rem 0;
+  margin: var(--md-space-block) 0;
   padding: 0;
   gap: 0.4rem;
   border: none;
@@ -1383,7 +1412,7 @@ input {
   line-height: 1.28;
 }
 
-.modus-plan-markdown > :where(h1, h2, h3, h4, h5, h6):first-child {
+.modus-plan-markdown > :first-child > :where(h1, h2, h3, h4, h5, h6):first-child {
   margin-top: 0;
 }
 
@@ -1406,18 +1435,8 @@ input {
   background: transparent;
 }
 
-.modus-plan-markdown :where(th, td) {
-  padding: 0.65rem 0.75rem;
-  border: 0;
-  border-bottom: 1px solid var(--color-hairline-soft);
-}
-
 .modus-plan-markdown :where(th) {
   background: transparent;
-}
-
-.modus-plan-markdown :where(tr:last-child > th, tr:last-child > td) {
-  border-bottom: 0;
 }
 
 /* Let KaTeX keep its native 1.21em scale (math glyphs read smaller than text at

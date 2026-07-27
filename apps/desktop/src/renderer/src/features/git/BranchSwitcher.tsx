@@ -101,7 +101,7 @@ export function BranchSwitcher({
       </Menu.Trigger>
       <Menu.Portal>
         <Menu.Positioner align={align} side="bottom" sideOffset={6}>
-          <Menu.Popup className="scroll-thin origin-(--transform-origin) max-h-[320px] min-w-[240px] overflow-y-auto rounded-lg border border-hairline bg-elevated p-1 shadow-popup">
+          <Menu.Popup className="scroll-thin origin-(--transform-origin) max-h-[320px] min-w-[240px] overflow-y-auto popup-chrome p-1">
             {locals.length === 0 ? (
               <div className="px-2.5 py-3 text-center text-2xs text-fg-faint">
                 {branches ? "No branches" : "Loading…"}
