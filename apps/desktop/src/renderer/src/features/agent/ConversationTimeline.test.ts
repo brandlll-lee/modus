@@ -29,7 +29,6 @@ describe("extractRailEntries", () => {
     expect(extractRailEntries(blocks)).toEqual([
       {
         key: "u1",
-        blockIndex: 0,
         userPreview: "make it smaller",
         assistantPreview: "Done.",
         userCreatedAt: 1000,
@@ -69,7 +68,7 @@ describe("extractRailEntries", () => {
     ];
 
     expect(extractRailEntries(blocks)).toEqual([
-      { key: "u1", blockIndex: 1, userPreview: "live turn" },
+      { key: "u1", userPreview: "live turn" },
     ]);
   });
 

@@ -9,7 +9,7 @@ import { useSmoothStreamingText } from "../../lib/useSmoothStreamingText";
 import { PlanTimelineCard } from "../plan/PlanTimelineCard";
 import { DiffToolCard } from "./diff/DiffToolCard";
 import { QuestionToolCard } from "./QuestionToolCard";
-import { TerminalToolCard, type TerminalToolVariant } from "./terminal/TerminalToolCard";
+import { TerminalToolCard } from "./terminal/TerminalToolCard";
 import { toolIcon } from "./toolIcons";
 import { VisualToolCard } from "./VisualToolCard";
 
@@ -19,7 +19,6 @@ type ToolCardProps = {
   output: string;
   isError?: boolean;
   isComplete?: boolean;
-  variant?: TerminalToolVariant;
   /** Session cwd, threaded to the diff card so it can open the edited file. */
   cwd?: string | undefined;
   questionRequest?: QuestionRequest;
@@ -47,7 +46,6 @@ export const ToolCard = memo(
     output,
     isComplete = false,
     isError = false,
-    variant,
     cwd,
     questionRequest,
     questionAnswers,
@@ -74,7 +72,6 @@ export const ToolCard = memo(
           isError={isError}
           name={name}
           output={output}
-          {...(variant ? { variant } : {})}
         />
       );
     }
@@ -134,7 +131,6 @@ export const ToolCard = memo(
     prev.output === next.output &&
     prev.isComplete === next.isComplete &&
     prev.isError === next.isError &&
-    prev.variant === next.variant &&
     prev.cwd === next.cwd &&
     prev.questionRequest === next.questionRequest &&
     prev.questionAnswers === next.questionAnswers &&
@@ -208,7 +204,7 @@ function LiveToolCard({
   }, [bodyOpen, detail]);
 
   return (
-    <div className="min-w-0 overflow-hidden rounded-lg border border-hairline bg-canvas text-sm">
+    <div className="min-w-0 overflow-hidden rounded-lg border border-hairline bg-card text-sm">
       <button
         aria-expanded={bodyOpen}
         className="flex w-full min-w-0 items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-hover"
@@ -217,9 +213,9 @@ function LiveToolCard({
       >
         {view.icon ? <span className="shrink-0 text-fg-faint">{view.icon}</span> : null}
         {running ? (
-          <ShinyText className="shrink-0 font-medium">{view.verb}</ShinyText>
+          <ShinyText className="shrink-0">{view.verb}</ShinyText>
         ) : (
-          <span className={cn("shrink-0 font-semibold", isError ? "text-danger" : "text-fg")}>
+          <span className={cn("shrink-0", isError ? "text-danger" : "text-fg-muted")}>
             {view.verb}
           </span>
         )}
@@ -248,7 +244,7 @@ function LiveToolCard({
       <CollapsibleMotion open={bodyOpen} preset="timeline">
         <pre
           className={cn(
-            "scroll-thin max-h-80 overflow-auto border-hairline border-t bg-code-bg px-3 py-2",
+            "scroll-thin max-h-80 overflow-auto border-hairline border-t bg-card px-3 py-2",
             "whitespace-pre-wrap wrap-break-word text-[12px] text-fg-faint leading-relaxed",
             isError && "text-danger/90",
           )}
@@ -289,7 +285,7 @@ function FlatToolRow({
         </>
       ) : (
         <>
-          <span className={cn("shrink-0 font-semibold", isError ? "text-danger" : "text-fg")}>
+          <span className={cn("shrink-0", isError ? "text-danger" : "text-fg-muted")}>
             {view.verb}
           </span>
           <span className="min-w-0 flex-1 truncate text-fg-subtle" title={view.target}>
@@ -315,20 +311,20 @@ function FlatToolRow({
       {expandable ? (
         <button
           aria-expanded={open}
-          className="flex w-full min-w-0 items-center gap-2 rounded-md py-0.5 text-left transition-colors hover:text-fg"
+          className="flex w-full min-w-0 items-center gap-2 rounded-md py-0.5 text-left text-fg-subtle transition-colors hover:text-fg-muted"
           onClick={() => setOpen((value) => !value)}
           type="button"
         >
           {body}
         </button>
       ) : (
-        <div className="flex w-full min-w-0 items-center gap-2 py-0.5">{body}</div>
+        <div className="flex w-full min-w-0 items-center gap-2 py-0.5 text-fg-subtle">{body}</div>
       )}
 
       <CollapsibleMotion open={open && expandable} preset="timeline">
         <pre
           className={cn(
-            "scroll-thin mt-1 max-h-72 overflow-auto rounded-md border border-hairline bg-canvas px-3 py-2",
+            "scroll-thin mt-1 max-h-72 overflow-auto rounded-md border border-hairline bg-card px-3 py-2",
             "whitespace-pre-wrap wrap-break-word text-[12px] text-fg-faint leading-relaxed",
             isError && "border-danger/25 text-danger/90",
           )}

@@ -63,7 +63,7 @@ export type ToolRenderKind =
 export type DiffSource = "edits" | "newFile";
 
 export type ToolUiMeta = {
-  /** Leading row icon. Absent ⇒ the row leads with its bold verb, no icon. */
+  /** Leading row icon. Absent ⇒ the row leads with its verb label, no icon. */
   iconName?: ToolIconName;
   verb: string;
   /** Argument key used to derive the default target label shown after the verb. */

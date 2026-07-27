@@ -202,7 +202,7 @@ export default function MarkdownMessageRenderer({
   return (
     <Streamdown
       BlockComponent={StreamingBlock}
-      className={cn("modus-markdown text-fg", className)}
+      className={cn("modus-markdown", className)}
       components={components}
       controls={controls}
       dir="auto"

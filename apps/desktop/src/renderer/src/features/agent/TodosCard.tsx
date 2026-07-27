@@ -24,7 +24,7 @@ export function TodosCard({ todos, updating }: { todos: TodoItem[]; updating: bo
   const headline = done > 0 ? `${done} of ${todos.length} Done` : `To-dos ${todos.length}`;
 
   return (
-    <section className="overflow-hidden rounded-lg border border-hairline-soft bg-panel">
+    <section className="overflow-hidden rounded-lg border border-hairline-soft bg-card">
       <button
         aria-expanded={open}
         className="flex h-9 w-full items-center gap-2 px-3 text-left transition-colors hover:bg-hover"

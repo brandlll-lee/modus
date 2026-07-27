@@ -379,7 +379,7 @@ function VisualLoading({ height }: { height: number }) {
   return (
     <div
       className={cn(
-        "relative overflow-hidden rounded-lg border border-hairline-soft bg-canvas",
+        "relative overflow-hidden rounded-lg border border-hairline-soft bg-card",
         "visual-glare-loading",
       )}
       style={{ height }}
@@ -412,7 +412,7 @@ function VisualMenu({
       </Menu.Trigger>
       <Menu.Portal>
         <Menu.Positioner align="end" side="bottom" sideOffset={6}>
-          <Menu.Popup className="origin-(--transform-origin) min-w-[190px] rounded-lg border border-hairline bg-elevated p-1 shadow-popup">
+          <Menu.Popup className="origin-(--transform-origin) min-w-[190px] popup-chrome p-1">
             <Menu.Item
               className="flex h-9 cursor-default items-center gap-2 rounded-md px-2.5 text-fg-subtle text-sm outline-none select-none data-highlighted:bg-hover data-highlighted:text-fg"
               onClick={copy}
@@ -538,7 +538,7 @@ function VisualFullscreen({
     <div className="fixed inset-0 z-[100] flex flex-col bg-canvas/95 backdrop-blur">
       <div className="flex h-12 shrink-0 items-center justify-between border-hairline border-b px-3">
         <div className="min-w-0 truncate text-fg-muted text-sm">{title}</div>
-        <div className="flex items-center gap-1 rounded-lg border border-hairline bg-elevated p-1 shadow-popup">
+        <div className="flex items-center gap-1 popup-chrome p-1">
           <VisualAction
             icon={<IconMinus size={14} stroke={1.8} />}
             label="Zoom out"

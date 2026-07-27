@@ -43,7 +43,6 @@ import {
   selectedThinkingOption,
 } from "../../lib/modelThinking";
 import { ProviderLogo } from "../settings/ProviderLogo";
-import { ApprovalModeSelect } from "./ApprovalModeSelect";
 import { ContextMentionMenu } from "./ContextMentionMenu";
 import { contextItemKey } from "./composerTokens";
 import { MentionEditor, type MentionEditorHandle, type MentionEditorPart } from "./MentionEditor";
@@ -57,6 +56,13 @@ import { type MentionRow, useComposerMentions } from "./useComposerMentions";
 import { type SlashItem, useComposerSlash } from "./useComposerSlash";
 
 const COMPOSER_PLACEHOLDER = "What will you build with Modus?";
+
+/** Shared with read-only user bubbles — single radius/chrome truth for the prompt shell. */
+export const COMPOSER_RADIUS_CLASS = "rounded-[14px]";
+export const COMPOSER_SHELL_CLASS = cn(
+  "border border-composer-border bg-surface shadow-composer-edge",
+  COMPOSER_RADIUS_CLASS,
+);
 
 type ComposerProps = {
   model: string;
@@ -78,8 +84,13 @@ type ComposerProps = {
     attachments?: PromptImageAttachment[],
     skills?: SkillSelection[],
     mode?: AgentMode,
-  ): void;
+  ): void | Promise<void>;
   onAbort?(): void;
+  /**
+   * When set, this instance is an inline edit-resend surface (same chrome as
+   * the dock). Esc / the X control cancel; dock-only mode/model chrome is omitted.
+   */
+  onCancel?(): void;
   /** Controlled composer mode (build/plan); falls back to internal state. */
   mode?: AgentMode;
   onModeChange?(mode: AgentMode): void;
@@ -149,16 +160,20 @@ export function Composer({
   onModelConfigChange,
   onContextChange,
   onSubmit,
+  onCancel,
   mode: controlledMode,
   onModeChange,
   draft,
   onDraftChange,
 }: ComposerProps) {
+  const isInlineEdit = Boolean(onCancel);
   const [uncontrolledDraft, setUncontrolledDraft] =
     useState<ComposerDraft>(createEmptyComposerDraft);
   const activeDraft = draft ?? uncontrolledDraft;
   const [dragging, setDragging] = useState(false);
   const [isComposing, setIsComposing] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | undefined>();
   const [internalMode, setInternalMode] = useState<AgentMode>("build");
   const mode = controlledMode ?? internalMode;
   const setDraft = useCallback(
@@ -233,7 +248,7 @@ export function Composer({
   const slash = useComposerSlash({ cwd, value: textBeforeCaret });
 
   function send(delivery: PromptDelivery = isRunning ? "follow-up" : "normal"): void {
-    if (!hasContent || !canSubmit || models.length === 0 || !model) {
+    if (!hasContent || !canSubmit || submitting || models.length === 0 || !model) {
       return;
     }
     // Providers reject empty text blocks, so image-only sends get a stub line.
@@ -245,13 +260,45 @@ export function Composer({
           ? "See the attached image(s)."
           : "Use the selected context.";
     const attachments = toAttachments();
-    onSubmit(
+    const payload = {
       message,
       contextItems,
       delivery,
-      attachments.length > 0 ? attachments : undefined,
-      selectedSkills.length > 0 ? selectedSkills : undefined,
+      attachments: attachments.length > 0 ? attachments : undefined,
+      skills: selectedSkills.length > 0 ? selectedSkills : undefined,
       mode,
+    } as const;
+
+    if (isInlineEdit) {
+      setSubmitError(undefined);
+      setSubmitting(true);
+      void Promise.resolve(
+        onSubmit(
+          payload.message,
+          payload.contextItems,
+          payload.delivery,
+          payload.attachments,
+          payload.skills,
+          payload.mode,
+        ),
+      )
+        .then(() => {
+          // Success unmounts this surface via timeline reload — skip clear flash.
+        })
+        .catch((cause: unknown) => {
+          setSubmitError(cause instanceof Error ? cause.message : String(cause));
+          setSubmitting(false);
+        });
+      return;
+    }
+
+    onSubmit(
+      payload.message,
+      payload.contextItems,
+      payload.delivery,
+      payload.attachments,
+      payload.skills,
+      payload.mode,
     );
     setValue("");
     clearImages();
@@ -408,6 +455,12 @@ export function Composer({
       }
     }
 
+    if (event.key === "Escape" && onCancel && !submitting) {
+      event.preventDefault();
+      onCancel();
+      return;
+    }
+
     if (event.key === "Escape" && isRunning && onAbort) {
       event.preventDefault();
       onAbort();
@@ -455,10 +508,11 @@ export function Composer({
       <div
         className={cn(
           "relative border border-composer-border bg-surface shadow-composer-edge transition-[border-color] duration-150",
-          footer ? "z-10 rounded-[20px]" : "rounded-[14px]",
+          footer ? "z-10 rounded-[20px]" : COMPOSER_RADIUS_CLASS,
           // No focus glow: only text focus or drag nudges the border one notch brighter.
           !isRunning && "focus-within:border-composer-border-strong",
           dragging && "border-composer-border-strong",
+          submitting && "pointer-events-none opacity-60",
         )}
         onDragLeave={() => setDragging(false)}
         onDragOver={handleDragOver}
@@ -554,23 +608,44 @@ export function Composer({
             type="file"
           />
 
-          <ApprovalModeSelect />
-
-          {mode === "plan" ? <PlanModePill onExit={() => setMode("build")} /> : null}
-
-          <ModelSelect
-            model={model}
-            models={models}
-            onModelChange={onModelChange}
-            {...(onModelConfigChange ? { onModelConfigChange } : {})}
-          />
+          {!isInlineEdit ? (
+            <>
+              {mode === "plan" ? <PlanModePill onExit={() => setMode("build")} /> : null}
+              <ModelSelect
+                model={model}
+                models={models}
+                onModelChange={onModelChange}
+                {...(onModelConfigChange ? { onModelConfigChange } : {})}
+              />
+            </>
+          ) : null}
 
           <div className="flex-1" />
 
-          <ContextUsageIndicator
-            {...(currentModel?.contextWindow ? { contextWindow: currentModel.contextWindow } : {})}
-            {...(contextUsage ? { usage: contextUsage } : {})}
-          />
+          {isInlineEdit && submitError ? (
+            <span className="min-w-0 truncate text-2xs text-danger" title={submitError}>
+              {submitError}
+            </span>
+          ) : null}
+
+          {!isInlineEdit ? (
+            <ContextUsageIndicator
+              {...(currentModel?.contextWindow ? { contextWindow: currentModel.contextWindow } : {})}
+              {...(contextUsage ? { usage: contextUsage } : {})}
+            />
+          ) : null}
+
+          {onCancel ? (
+            <button
+              aria-label="Cancel"
+              className="flex size-[26px] shrink-0 items-center justify-center rounded-md text-fg-subtle transition-colors hover:bg-hover hover:text-fg-muted"
+              disabled={submitting}
+              onClick={onCancel}
+              type="button"
+            >
+              <IconX size={16} stroke={1.8} />
+            </button>
+          ) : null}
 
           {/* Stop while running; otherwise the send button is always shown. */}
           <AnimatePresence initial={false} mode="popLayout">
@@ -593,7 +668,7 @@ export function Composer({
                 animate={{ opacity: 1 }}
                 aria-label="Send"
                 className="flex size-[26px] shrink-0 items-center justify-center rounded-full bg-fg text-canvas transition-colors hover:bg-fg-muted active:scale-[0.94] disabled:bg-chip-strong disabled:text-fg-faint"
-                disabled={!hasContent || !canSubmit || models.length === 0 || !model}
+                disabled={!hasContent || !canSubmit || submitting || models.length === 0 || !model}
                 exit={{ opacity: 0 }}
                 initial={{ opacity: 0 }}
                 key="send"
@@ -720,7 +795,7 @@ function ModelSelect({
       </Menu.Trigger>
       <Menu.Portal>
         <Menu.Positioner align="start" side="bottom" sideOffset={4}>
-          <Menu.Popup className="origin-(--transform-origin) w-[280px] max-w-[calc(100vw-24px)] rounded-lg border border-hairline bg-elevated p-1 shadow-popup">
+          <Menu.Popup className="origin-(--transform-origin) w-[280px] max-w-[calc(100vw-24px)] popup-chrome p-1">
             <Menu.SubmenuRoot>
               <Menu.SubmenuTrigger className="flex h-8 cursor-default items-center justify-between gap-3 rounded-md px-2.5 text-sm outline-none select-none data-highlighted:bg-hover data-popup-open:bg-hover">
                 <span className="text-fg-subtle">Model</span>
@@ -732,7 +807,7 @@ function ModelSelect({
               <Menu.Portal>
                 <Menu.Positioner align="start" side="right" sideOffset={5}>
                   <Menu.Popup
-                    className="scroll-thin origin-(--transform-origin) w-[280px] max-w-[calc(100vw-24px)] overflow-y-auto rounded-lg border border-hairline bg-elevated p-1 shadow-popup"
+                    className="scroll-thin origin-(--transform-origin) w-[280px] max-w-[calc(100vw-24px)] overflow-y-auto popup-chrome p-1"
                     style={{ maxHeight: "min(320px, var(--available-height))" }}
                   >
                     <div className="px-2.5 pt-1.5 pb-1 text-fg-faint text-xs">Model</div>
@@ -786,7 +861,7 @@ function ModelSelect({
               </Menu.SubmenuTrigger>
               <Menu.Portal>
                 <Menu.Positioner align="start" side="right" sideOffset={5}>
-                  <Menu.Popup className="origin-(--transform-origin) w-[220px] max-w-[calc(100vw-24px)] rounded-lg border border-hairline bg-elevated p-1 shadow-popup">
+                  <Menu.Popup className="origin-(--transform-origin) w-[220px] max-w-[calc(100vw-24px)] popup-chrome p-1">
                     <div className="px-2.5 pt-1.5 pb-1 text-fg-faint text-xs">Effort</div>
                     {current.thinkingBudget ? (
                       <>
@@ -1010,7 +1085,7 @@ function ContextUsageIndicator({
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Positioner align="end" side="top" sideOffset={8}>
-          <Popover.Popup className="origin-(--transform-origin) rounded-lg border border-hairline bg-elevated p-2 shadow-popup transition-[transform,opacity] duration-100 data-ending-style:opacity-0 data-starting-style:opacity-0">
+          <Popover.Popup className="origin-(--transform-origin) popup-chrome p-2 transition-[transform,opacity] duration-100 data-ending-style:opacity-0 data-starting-style:opacity-0">
             <ContextUsageTooltip
               {...(contextWindow ? { contextWindow } : {})}
               {...(usage ? { usage } : {})}

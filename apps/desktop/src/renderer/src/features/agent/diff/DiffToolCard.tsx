@@ -138,12 +138,12 @@ export const DiffToolCard = memo(
             {running ? (
               <ShinyText className="shrink-0">{operationLabel(meta)}</ShinyText>
             ) : (
-              <span className={cn("shrink-0 font-semibold", isError ? "text-danger" : "text-fg")}>
+              <span className={cn("shrink-0", isError ? "text-danger" : "text-fg-muted")}>
                 {operationLabel(meta)}
               </span>
             )}
 
-            <span className="min-w-0 truncate text-fg-muted text-sm" title={fileTitle}>
+            <span className="min-w-0 truncate text-fg-subtle text-sm" title={fileTitle}>
               {fileName}
             </span>
 
@@ -197,7 +197,7 @@ export const DiffToolCard = memo(
         <CollapsibleMotion open={bodyOpen} preset="timeline">
           <div
             className={cn(
-              "scroll-thin mt-1 max-h-96 overflow-auto rounded-md border border-hairline bg-code-bg",
+              "scroll-thin mt-1 max-h-96 overflow-auto rounded-md border border-hairline bg-card",
               isNewFileDiff && "bg-diff-add-bg",
             )}
           >

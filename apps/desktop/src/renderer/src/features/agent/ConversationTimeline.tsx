@@ -24,7 +24,6 @@ const TIMELINE_TICK_PITCH = 14;
 
 export type RailEntry = {
   key: string;
-  blockIndex: number;
   userPreview: string;
   assistantPreview?: string;
   userCreatedAt?: number;
@@ -79,7 +78,6 @@ export function extractRailEntries(blocks: TimelineBlock[]): RailEntry[] {
     if (block.role === "user") {
       const entry: RailEntry = {
         key: keys[blockIndex] ?? `${block.id}:${blockIndex}`,
-        blockIndex,
         userPreview: messagePreview(block.content),
       };
       if (block.createdAt !== undefined) {
@@ -239,7 +237,7 @@ export function ConversationTimeline({
       {previewTarget ? (
         <m.div
           animate={{ opacity: 1, scale: 1, x: previewTarget.left, y: previewTop }}
-          className="pointer-events-none fixed top-0 left-0 z-50 max-h-[calc(100vh-24px)] max-w-[calc(100vw-24px)] origin-left overflow-hidden rounded-lg border border-hairline bg-elevated px-3 py-2.5 text-left shadow-popup outline-none"
+          className="pointer-events-none fixed top-0 left-0 z-50 max-h-[calc(100vh-24px)] max-w-[calc(100vw-24px)] origin-left overflow-hidden popup-chrome px-3 py-2.5 text-left outline-none"
           exit={{ opacity: 0, scale: 0.99 }}
           initial={{ opacity: 0, scale: 0.985, x: previewTarget.left, y: previewTop }}
           ref={previewRef}
@@ -297,7 +295,7 @@ export function ConversationTimeline({
               onJump={() => {
                 setPreviewTarget(null);
                 hideNow();
-                scrollToTimelineBlock(scrollContainer, entry.blockIndex);
+                scrollToTurn(scrollContainer, entry.key);
               }}
             />
           ))}
@@ -455,7 +453,8 @@ function TimelinePreviewCard({ entry }: { entry: RailEntry }) {
   );
 }
 
-function scrollToTimelineBlock(scrollContainer: HTMLDivElement | null, blockIndex: number): void {
-  const target = scrollContainer?.querySelectorAll<HTMLElement>(".timeline-block")[blockIndex];
-  target?.scrollIntoView({ behavior: "smooth", block: "start" });
+function scrollToTurn(scrollContainer: HTMLDivElement | null, key: string): void {
+  scrollContainer
+    ?.querySelector<HTMLElement>(`[data-turn="${CSS.escape(key)}"]`)
+    ?.scrollIntoView({ behavior: "smooth", block: "start" });
 }

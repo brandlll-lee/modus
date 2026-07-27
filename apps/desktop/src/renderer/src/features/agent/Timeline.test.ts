@@ -10,11 +10,12 @@ import { subagentColor } from "./subagentUi";
 import {
   attachTurnActions,
   blockRenderKeys,
-  buildActivitySummary,
   buildBlocks,
-  groupActivity,
-  relocateRunFooters,
+  formatElapsedVerbose,
+  groupTurnWork,
   runStatusLabel,
+  segmentTurns,
+  type TimelineBlock,
 } from "./Timeline";
 
 function item(id: string, event: AgentEvent) {
@@ -536,7 +537,7 @@ describe("buildBlocks", () => {
     );
   });
 
-  it("appends a changes card when run.completed carries per-turn stats", () => {
+  it("does not append a turn-end changes card (Review lives above the composer)", () => {
     const stats = {
       files: [{ path: "src/a.ts", added: 3, removed: 1, untracked: false, binary: false }],
       added: 3,
@@ -563,13 +564,9 @@ describe("buildBlocks", () => {
       item("3", { type: "run.completed", sessionId: "s", runId: "r", changes: stats }),
     ]);
 
+    expect(blocks.some((block) => (block as { type: string }).type === "changes")).toBe(false);
     expect(blocks.at(-1)).toEqual(
-      expect.objectContaining({
-        type: "changes",
-        runId: "r",
-        checkpointId: "cp-1",
-        stats: expect.objectContaining({ fileCount: 1, added: 3, removed: 1 }),
-      }),
+      expect.objectContaining({ type: "run", runId: "r", status: "completed" }),
     );
   });
 
@@ -578,7 +575,7 @@ describe("buildBlocks", () => {
       item("1", { type: "run.started", sessionId: "s", runId: "r", delivery: "normal" }),
       item("2", { type: "run.completed", sessionId: "s", runId: "r" }),
     ]);
-    expect(blocks.some((block) => block.type === "changes")).toBe(false);
+    expect(blocks.some((block) => (block as { type: string }).type === "changes")).toBe(false);
   });
 
   it("renders todo_write through a todos card instead of tool rows", () => {
@@ -706,416 +703,178 @@ const runningRun = (id: string) => ({
   status: "running" as const,
   startedAt: 0,
 });
+const completedRun = (id: string, completedAt = 5000) => ({
+  id,
+  type: "run" as const,
+  runId: id,
+  status: "completed" as const,
+  startedAt: 0,
+  completedAt,
+});
 const thought = (id: string, text = "thinking…", streaming = false) => ({
   id: `thought:${id}`,
   type: "thought" as const,
   text,
   ...(streaming ? { streaming: true } : {}),
 });
+const todos = (id: string) => ({
+  id,
+  type: "todos" as const,
+  todos: [{ id: "t1", content: "do thing", status: "pending" as const }],
+  updating: false,
+});
 
-type Blocks = Parameters<typeof groupActivity>[0];
+type Blocks = TimelineBlock[];
 
-describe("groupActivity", () => {
-  it("collapses adjacent exploration tools into a sealed explore group", () => {
-    const result = groupActivity([
+describe("groupTurnWork", () => {
+  it("folds a run's tools and thoughts into one work-fold; final answer stays outside", () => {
+    const result = groupTurnWork([
+      msg("u", "hi", "user"),
+      completedRun("r"),
+      thought("th"),
       tool("1", "read"),
-      tool("2", "read"),
-      tool("3", "read"),
-      msg("m"),
-    ] as Blocks);
-
-    // [explore-group, final-answer message]
-    expect(result).toHaveLength(2);
-    expect(result[0]).toEqual(
-      expect.objectContaining({
-        type: "activity-group",
-        kind: "explore",
-        active: false,
-        summary: "Explored 3 files",
-        id: "activity-group:1",
-      }),
-    );
-    expect((result[0] as { items: unknown[] }).items).toHaveLength(3);
-    expect(result[1]).toEqual(expect.objectContaining({ type: "message" }));
-  });
-
-  it("folds even a single exploration tool into an Exploring group", () => {
-    const result = groupActivity([tool("1", "read"), msg("m")] as Blocks);
-    expect(result[0]).toEqual(
-      expect.objectContaining({
-        type: "activity-group",
-        kind: "explore",
-        summary: "Explored 1 file",
-      }),
-    );
-  });
-
-  it("folds mixed exploration runs and summarizes by category", () => {
-    const result = groupActivity([
-      tool("1", "ls"),
-      tool("2", "grep"),
-      tool("3", "find"),
-      tool("4", "read"),
-      tool("5", "web_search"),
-      msg("m"),
-    ] as Blocks);
-
-    expect(result[0]).toEqual(
-      expect.objectContaining({
-        type: "activity-group",
-        summary: "Explored 1 listing, 2 searches, 1 file, 1 web lookup",
-      }),
-    );
-  });
-
-  it("folds consecutive terminal tools into a shell group", () => {
-    const grouped = groupActivity([tool("1", "bash"), tool("2", "bash"), msg("m")] as Blocks);
-    expect(grouped[0]).toEqual(
-      expect.objectContaining({
-        type: "activity-group",
-        kind: "shell",
-        summary: "Ran 2 commands",
-      }),
-    );
-    expect((grouped[0] as { items: unknown[] }).items).toHaveLength(2);
-  });
-
-  it("folds web_fetch into the explore group, apart from shell renderers", () => {
-    const result = groupActivity([
-      tool("1", "web_fetch"),
-      tool("2", "terminal_read"),
-      msg("m"),
-    ] as Blocks);
-    expect(result[0]).toEqual(
-      expect.objectContaining({ type: "activity-group", kind: "explore", summary: "Explored 1 page" }),
-    );
-    expect(result[1]).toEqual(expect.objectContaining({ type: "activity-group", kind: "shell" }));
-  });
-
-  it("keeps live-rendered tools standalone", () => {
-    const result = groupActivity([
-      tool("1", FAST_CODEBASE_TOOL_NAME),
-      tool("2", "read"),
-      msg("m"),
-    ] as Blocks);
-    expect(result[0]).toEqual(
-      expect.objectContaining({ type: "tool", name: FAST_CODEBASE_TOOL_NAME }),
-    );
-    expect(result[1]).toEqual(expect.objectContaining({ type: "activity-group", kind: "explore" }));
-  });
-
-  it("folds browser-control tools into a Browser group", () => {
-    const result = groupActivity([
-      tool("1", "browser_tabs"),
-      tool("2", "browser_cdp"),
-      msg("m"),
-    ] as Blocks);
-    expect(result[0]).toEqual(
-      expect.objectContaining({
-        type: "activity-group",
-        kind: "browser",
-        summary: "Browser used 1 tab action, 1 CDP command",
-      }),
-    );
-  });
-
-  it("keeps the group active (expanded) at the live tail of a running turn", () => {
-    const result = groupActivity([runningRun("r"), tool("1", "read"), tool("2", "read")] as Blocks);
-
-    const group = result.find((block) => block.type === "activity-group");
-    expect(group).toEqual(expect.objectContaining({ type: "activity-group", active: true }));
-  });
-
-  it("seals the group when assistant text breaks the chain during a running turn", () => {
-    const result = groupActivity([
-      runningRun("r"),
-      tool("1", "read"),
-      tool("2", "read"),
-      msg("m", "now I'll check the workers"),
-    ] as Blocks);
-
-    expect(result.find((block) => block.type === "activity-group")).toEqual(
-      expect.objectContaining({ active: false }),
-    );
-    expect(result.at(-1)).toEqual(expect.objectContaining({ type: "message", id: "m" }));
-  });
-
-  it("seals an unfinished group when assistant text starts a new phase", () => {
-    const result = groupActivity([
-      runningRun("r"),
-      tool("1", "browser_cdp", false),
-      msg("m", "search submitted"),
-      tool("2", "browser_screenshot", false),
-    ] as Blocks);
-
-    expect(result.map((block) => block.type)).toEqual([
-      "run",
-      "activity-group",
-      "message",
-      "activity-group",
-    ]);
-    expect(result[1]).toEqual(expect.objectContaining({ kind: "browser", active: false }));
-    expect(result[2]).toEqual(expect.objectContaining({ type: "message", id: "m" }));
-    expect(result[3]).toEqual(expect.objectContaining({ kind: "browser", active: true }));
-  });
-
-  it("settles the trailing answer outside once the run ends", () => {
-    // Same tail, but with the run no longer active the fold seals: the final
-    // answer moves out to full-width (Cursor-style settle on completion) while
-    // the fold collapses to its digest.
-    const result = groupActivity([
-      tool("1", "read"),
-      tool("2", "read"),
-      msg("m", "Here is the answer."),
-    ] as Blocks);
-
-    expect(result.find((block) => block.type === "activity-group")).toEqual(
-      expect.objectContaining({ active: false }),
-    );
-    expect(result.at(-1)).toEqual(expect.objectContaining({ type: "message", id: "m" }));
-  });
-
-  it("seals the group when a first-class block breaks the chain mid-run", () => {
-    // Shell and explore are distinct fold kinds, so shell arrival is an
-    // authoritative chain break: the preceding exploration seals at once,
-    // even though the run is still active.
-    const result = groupActivity([
-      runningRun("r"),
-      tool("1", "read"),
-      tool("2", "read"),
-      tool("3", "bash"),
-      msg("m"),
-    ] as Blocks);
-
-    const group = result.find((block) => block.type === "activity-group");
-    expect(group).toEqual(expect.objectContaining({ active: false, summary: "Explored 2 files" }));
-  });
-
-  it("collapses at run end even without a following block", () => {
-    const result = groupActivity([tool("1", "read"), tool("2", "grep")] as Blocks);
-    expect(result).toHaveLength(1);
-    expect(result[0]).toEqual(
-      expect.objectContaining({
-        type: "activity-group",
-        active: false,
-        summary: "Explored 1 file, 1 search",
-      }),
-    );
-  });
-
-  it("stays active while a member is still running", () => {
-    const result = groupActivity([
-      runningRun("r"),
-      tool("1", "read"),
-      tool("2", "read", false),
-    ] as Blocks);
-    expect(result.find((block) => block.type === "activity-group")).toEqual(
-      expect.objectContaining({ active: true }),
-    );
-  });
-
-  it("breaks groups at side-effect tools", () => {
-    const result = groupActivity([
-      tool("1", "read"),
-      tool("2", "bash"),
-      tool("3", "read"),
-      msg("m"),
-    ] as Blocks);
-    const groups = result.filter((block) => block.type === "activity-group");
-    expect(groups).toEqual([
-      expect.objectContaining({ kind: "explore" }),
-      expect.objectContaining({ kind: "shell" }),
-      expect.objectContaining({ kind: "explore" }),
-    ]);
-  });
-
-  it("renders assistant narration between activity groups as a full-width break", () => {
-    const result = groupActivity([
-      thought("t1", "plan"),
-      tool("1", "read"),
-      msg("checking", "checking"),
-      tool("2", "read"),
-    ] as Blocks);
-
-    expect(result.map((block) => block.type)).toEqual([
-      "activity-group",
-      "message",
-      "activity-group",
-    ]);
-    const groups = result.filter((block) => block.type === "activity-group");
-    expect(groups).toHaveLength(2);
-    for (const group of groups) {
-      expect(
-        (group as { items: { type: string }[] }).items.every((item) => item.type !== "message"),
-      ).toBe(true);
-    }
-    expect(result[1]).toEqual(expect.objectContaining({ type: "message", id: "checking" }));
-  });
-
-  it("keeps each assistant narration segment at its own event position", () => {
-    const result = groupActivity(
-      buildBlocks([
-        item("1", { type: "run.started", sessionId: "s", runId: "r", delivery: "normal" }),
-        item("2", {
-          type: "message.started",
-          sessionId: "s",
-          messageId: "assistant-1",
-          role: "assistant",
-        }),
-        item("3", {
-          type: "message.delta",
-          sessionId: "s",
-          messageId: "assistant-1",
-          delta: "before read",
-        }),
-        item("4", { type: "tool.started", sessionId: "s", toolCallId: "read-1", toolName: "read" }),
-        item("5", { type: "tool.ended", sessionId: "s", toolCallId: "read-1", isError: false }),
-        item("6", {
-          type: "message.delta",
-          sessionId: "s",
-          messageId: "assistant-1",
-          delta: "before shell",
-        }),
-        item("7", {
-          type: "tool.started",
-          sessionId: "s",
-          toolCallId: "shell-1",
-          toolName: "bash",
-          args: { command: "do work" },
-        }),
-        item("8", { type: "tool.ended", sessionId: "s", toolCallId: "shell-1", isError: false }),
-        item("9", {
-          type: "message.delta",
-          sessionId: "s",
-          messageId: "assistant-1",
-          delta: "after shell",
-        }),
-        item("10", { type: "run.completed", sessionId: "s", runId: "r" }),
-      ]),
-    );
-
-    const rendered = result.filter(
-      (block) => block.type === "activity-group" || block.type === "message",
-    );
-    expect(rendered.map((block) => block.type)).toEqual([
-      "message",
-      "activity-group",
-      "message",
-      "activity-group",
-      "message",
-    ]);
-    expect(rendered[0]).toEqual(
-      expect.objectContaining({ type: "message", content: "before read" }),
-    );
-    expect(rendered[1]).toEqual(
-      expect.objectContaining({ type: "activity-group", kind: "explore" }),
-    );
-    expect(rendered[2]).toEqual(
-      expect.objectContaining({
-        type: "message",
-        content: "before shell",
-      }),
-    );
-    expect(rendered[3]).toEqual(expect.objectContaining({ type: "activity-group", kind: "shell" }));
-    expect(rendered[4]).toEqual(
-      expect.objectContaining({ type: "message", content: "after shell" }),
-    );
-
-    const groups = rendered.filter((block) => block.type === "activity-group");
-    for (const group of groups) {
-      expect(
-        (group as { items: { type: string }[] }).items.every((item) => item.type !== "message"),
-      ).toBe(true);
-    }
-  });
-
-  it("does not split a same-kind tool chain on empty assistant message blocks", () => {
-    const result = groupActivity([
-      tool("1", "read"),
-      msg("empty", ""),
-      tool("2", "read"),
+      tool("2", "edit"),
       msg("final", "done"),
     ] as Blocks);
 
-    expect(result.filter((block) => block.type === "activity-group")).toHaveLength(1);
-    expect(result[0]).toEqual(
-      expect.objectContaining({ type: "activity-group", summary: "Explored 2 files" }),
-    );
-    expect((result[0] as { items: unknown[] }).items).toHaveLength(2);
-  });
-
-  it("folds thoughts into the exploration group", () => {
-    const result = groupActivity([
-      tool("read-1", "read"),
-      thought("plan", "checking worker"),
-      thought("done", "worker settled"),
-    ] as Blocks);
-
-    expect(result).toHaveLength(1);
-    expect(result[0]).toEqual(
+    expect(result.map((block) => block.type)).toEqual(["message", "work-fold", "message"]);
+    const fold = result[1];
+    expect(fold).toEqual(
       expect.objectContaining({
-        type: "activity-group",
-        kind: "explore",
-        summary: "Explored 1 file",
+        type: "work-fold",
+        id: "work-fold:r",
       }),
     );
-    expect((result[0] as { items: { type: string; name?: string }[] }).items).toEqual([
-      expect.objectContaining({ type: "tool", name: "read" }),
-      expect.objectContaining({ type: "thought" }),
-      expect.objectContaining({ type: "thought" }),
+    if (fold?.type === "work-fold") {
+      expect(fold.items.map((item) => item.type)).toEqual(["thought", "tool", "tool"]);
+      expect(fold.run.runId).toBe("r");
+    }
+    expect(result[2]).toEqual(
+      expect.objectContaining({ type: "message", id: "final", content: "done" }),
+    );
+  });
+
+  it("puts assistant segments before the last work anchor inside the fold", () => {
+    const result = groupTurnWork([
+      completedRun("r"),
+      msg("mid", "looking…"),
+      tool("1", "grep"),
+      msg("final", "found it"),
+    ] as Blocks);
+
+    const fold = result.find((block) => block.type === "work-fold");
+    expect(fold?.type).toBe("work-fold");
+    if (fold?.type === "work-fold") {
+      expect(fold.items.map((item) => item.id)).toEqual(["mid", "1"]);
+    }
+    expect(result.at(-1)).toEqual(
+      expect.objectContaining({ type: "message", id: "final", content: "found it" }),
+    );
+  });
+
+  it("keeps todos inside the fold", () => {
+    const result = groupTurnWork([
+      completedRun("r"),
+      tool("1", "write"),
+      todos("todo"),
+      msg("final", "shipped"),
+    ] as Blocks);
+
+    expect(result.map((block) => block.type)).toEqual(["work-fold", "message"]);
+    const fold = result[0];
+    if (fold?.type === "work-fold") {
+      expect(fold.items.map((item) => item.type)).toEqual(["tool", "todos"]);
+    }
+  });
+
+  it("emits a live work-fold while the run is active even before tools arrive", () => {
+    const result = groupTurnWork([msg("u", "go", "user"), runningRun("r")] as Blocks);
+    expect(result.map((block) => block.type)).toEqual(["message", "work-fold"]);
+    const fold = result[1];
+    if (fold?.type === "work-fold") {
+      expect(fold.items).toHaveLength(0);
+      expect(fold.run.status).toBe("running");
+    }
+  });
+
+  it("keeps a steered mid-run user message inside the live fold", () => {
+    const result = groupTurnWork([
+      msg("u1", "go", "user"),
+      runningRun("r1"),
+      tool("1", "read"),
+      msg("steer", "also do this", "user"),
+      msg("mid", "ok"),
+    ] as Blocks);
+
+    // Steer stays in the fold; assistant after the last work anchor is the
+    // (streaming) final answer and sits outside — same rule as settled turns.
+    expect(result.map((block) => block.type)).toEqual(["message", "work-fold", "message"]);
+    const fold = result[1];
+    if (fold?.type === "work-fold") {
+      expect(fold.items.map((item) => item.id)).toEqual(["1", "steer"]);
+    }
+    expect(result[2]).toEqual(expect.objectContaining({ id: "mid", content: "ok" }));
+  });
+
+  it("stops a settled turn at the next user message", () => {
+    const result = groupTurnWork([
+      msg("u1", "first", "user"),
+      completedRun("r1"),
+      tool("1", "bash"),
+      msg("a1", "done"),
+      msg("u2", "second", "user"),
+      completedRun("r2"),
+      thought("th2"),
+      msg("a2", "ok"),
+    ] as Blocks);
+
+    expect(result.map((block) => block.type)).toEqual([
+      "message",
+      "work-fold",
+      "message",
+      "message",
+      "work-fold",
+      "message",
+    ]);
+    expect(result.map((block) => block.id)).toEqual([
+      "u1",
+      "work-fold:r1",
+      "a1",
+      "u2",
+      "work-fold:r2",
+      "a2",
     ]);
   });
 
-  it("keeps group chrome neutral when a member errored", () => {
-    const result = groupActivity([
-      tool("1", "grep"),
-      tool("2", "grep", true, true),
-      msg("m"),
+  it("folds standalone edit/write tools the same as explore tools (run boundary, not kind)", () => {
+    const result = groupTurnWork([
+      completedRun("r"),
+      tool("1", "write"),
+      tool("2", "edit"),
+      msg("final", "patched"),
     ] as Blocks);
-    expect(result[0]).toEqual(expect.objectContaining({ type: "activity-group" }));
-    expect(result[0]).not.toEqual(expect.objectContaining({ isError: true }));
-    expect((result[0] as { items: Array<{ id: string; isError?: boolean }> }).items).toContainEqual(
-      expect.objectContaining({ id: "2", isError: true }),
-    );
+
+    const fold = result.find((block) => block.type === "work-fold");
+    if (fold?.type === "work-fold") {
+      expect(fold.items.map((item) => (item.type === "tool" ? item.name : item.type))).toEqual([
+        "write",
+        "edit",
+      ]);
+    }
+    expect(result.filter((block) => block.type === "work-fold")).toHaveLength(1);
+    expect(result.some((block) => block.type === "run")).toBe(false);
   });
 
-  it("counts distinct read paths when args carry them", () => {
-    expect(
-      buildActivitySummary("explore", [
-        { ...tool("1", "read"), args: { path: "a.ts" } },
-        { ...tool("2", "read"), args: { path: "a.ts" } },
-        { ...tool("3", "read"), args: { path: "b.ts" } },
-      ] as Parameters<typeof buildActivitySummary>[1]),
-    ).toBe("Explored 2 files");
-  });
-
-  it("summarizes shell groups from completion state", () => {
-    expect(
-      buildActivitySummary("shell", [tool("1", "bash", false)] as Parameters<
-        typeof buildActivitySummary
-      >[1]),
-    ).toBe("Running command…");
-    expect(
-      buildActivitySummary("shell", [
-        tool("1", "terminal_run"),
-        tool("2", "terminal_read"),
-      ] as Parameters<typeof buildActivitySummary>[1]),
-    ).toBe("Ran 2 commands");
+  it("drops a settled empty run with no work and no final text", () => {
+    const result = groupTurnWork([msg("u", "hi", "user"), completedRun("r")] as Blocks);
+    expect(result.map((block) => block.type)).toEqual(["message"]);
   });
 });
 
 describe("attachTurnActions", () => {
-  const completedRun = (id: string, completedAt = 5000) => ({
-    id,
-    type: "run" as const,
-    runId: id,
-    status: "completed" as const,
-    startedAt: 0,
-    completedAt,
-  });
   const findRun = (blocks: Blocks) => blocks.find((block) => block.type === "run");
 
-  it("aggregates the turn's assistant segments onto its settled run footer", () => {
+  it("aggregates the turn's assistant segments onto its settled run", () => {
     const result = attachTurnActions([
       msg("u", "hi", "user"),
       completedRun("r"),
@@ -1124,8 +883,6 @@ describe("attachTurnActions", () => {
       msg("a2", "second"),
     ] as Blocks);
 
-    // The whole turn's answer rides on the run block — the footer is the turn's
-    // single copy surface, so it is merged into the status line, not the message.
     expect(findRun(result)).toEqual(expect.objectContaining({ answer: "first\n\nsecond" }));
   });
 
@@ -1148,56 +905,6 @@ describe("attachTurnActions", () => {
   });
 });
 
-describe("relocateRunFooters", () => {
-  const settledRun = (id: string, completedAt = 5000) => ({
-    id,
-    type: "run" as const,
-    runId: id,
-    status: "completed" as const,
-    startedAt: 0,
-    completedAt,
-  });
-
-  it("moves a turn's run block beneath its content", () => {
-    const result = relocateRunFooters([
-      msg("u", "hi", "user"),
-      settledRun("r"),
-      msg("a", "answer"),
-    ] as Blocks);
-
-    expect(result.map((block) => block.type)).toEqual(["message", "message", "run"]);
-    expect(result.at(-1)).toEqual(expect.objectContaining({ type: "run", runId: "r" }));
-  });
-
-  it("keeps every turn's footer at its own turn end across turns", () => {
-    const result = relocateRunFooters([
-      msg("u1", "hi", "user"),
-      settledRun("r1"),
-      msg("a1", "first"),
-      msg("u2", "again", "user"),
-      runningRun("r2"),
-      msg("a2", "second"),
-    ] as Blocks);
-
-    expect(result.map((block) => block.id)).toEqual(["u1", "a1", "r1", "u2", "a2", "r2"]);
-  });
-
-  it("keeps a steered mid-run user message inside the live turn", () => {
-    // The run is still running, so a steered user line is NOT a turn boundary:
-    // the live footer must stay at the very bottom, after all the turn's content.
-    const result = relocateRunFooters([
-      msg("u1", "go", "user"),
-      runningRun("r1"),
-      msg("a1", "working"),
-      msg("steer", "also do this", "user"),
-      msg("a2", "ok"),
-    ] as Blocks);
-
-    expect(result.map((block) => block.id)).toEqual(["u1", "a1", "steer", "a2", "r1"]);
-    expect(result.at(-1)).toEqual(expect.objectContaining({ type: "run", runId: "r1" }));
-  });
-});
-
 describe("runStatusLabel", () => {
   const run = (
     status: "running" | "completed" | "failed" | "blocked" | "cancelled",
@@ -1207,38 +914,16 @@ describe("runStatusLabel", () => {
       typeof runStatusLabel
     >[0];
 
-  it("tracks the live activity while running (hybrid: curated category + humanized MCP)", () => {
-    expect(runStatusLabel(run("running", { activity: { kind: "tool", name: "read" } }))).toBe(
-      "Reading files",
+  it("uses Working for while running", () => {
+    expect(runStatusLabel(run("running", { startedAt: Date.now() - 5000 }))).toMatch(
+      /^Working for /,
     );
-    expect(runStatusLabel(run("running", { activity: { kind: "tool", name: "grep" } }))).toBe(
-      "Searching the codebase",
-    );
-    expect(
-      runStatusLabel(run("running", { activity: { kind: "tool", name: "browser_cdp" } })),
-    ).toBe("Using the browser");
-    expect(
-      runStatusLabel(
-        run("running", { activity: { kind: "tool", name: "mcp_devin_list_integrations" } }),
-      ),
-    ).toBe("Listing integrations");
-    expect(runStatusLabel(run("running", { activity: { kind: "thinking" } }))).toBe("Thinking");
-    expect(runStatusLabel(run("running", { activity: { kind: "writing" } }))).toBe(
-      "Writing the response",
-    );
-    expect(runStatusLabel(run("running"))).toBe("Thinking");
   });
 
-  it("reports the duration once settled", () => {
-    expect(runStatusLabel(run("completed", { completedAt: 5000 }))).toBe(
-      "Modus has worked for 5 seconds",
-    );
-    expect(runStatusLabel(run("completed", { completedAt: 1000 }))).toBe(
-      "Modus has worked for 1 second",
-    );
-    expect(runStatusLabel(run("completed", { completedAt: 125000 }))).toBe(
-      "Modus has worked for 2m 5s",
-    );
+  it("uses Worked for once settled", () => {
+    expect(runStatusLabel(run("completed", { completedAt: 5000 }))).toBe("Worked for 5 seconds");
+    expect(runStatusLabel(run("completed", { completedAt: 1000 }))).toBe("Worked for 1 second");
+    expect(runStatusLabel(run("completed", { completedAt: 125000 }))).toBe("Worked for 2m 5s");
   });
 
   it("surfaces terminal states", () => {
@@ -1248,24 +933,18 @@ describe("runStatusLabel", () => {
   });
 });
 
+describe("formatElapsedVerbose", () => {
+  it("spells seconds and minute mixes", () => {
+    expect(formatElapsedVerbose(5000, 0)).toBe("5 seconds");
+    expect(formatElapsedVerbose(1000, 0)).toBe("1 second");
+    expect(formatElapsedVerbose(125000, 0)).toBe("2m 5s");
+  });
+});
+
 describe("subagentColor", () => {
   it("derives a stable color from the child session id", () => {
     expect(subagentColor("child-a")).toBe(subagentColor("child-a"));
     expect(subagentColor("child-a")).toMatch(/^#[0-9a-f]{6}$/);
-  });
-});
-
-describe("buildActivitySummary", () => {
-  it("summarizes browser actions by their declared nouns", () => {
-    expect(
-      buildActivitySummary("browser", [
-        tool("1", "browser_tabs"),
-        tool("2", "browser_cdp"),
-        tool("3", "browser_cdp"),
-        tool("4", "browser_screenshot"),
-        tool("5", "browser_events"),
-      ] as Parameters<typeof buildActivitySummary>[1]),
-    ).toBe("Browser used 1 tab action, 2 CDP commands, 1 capture, 1 event drain");
   });
 });
 
@@ -1295,5 +974,50 @@ describe("blockRenderKeys", () => {
     const keys = blockRenderKeys(blocks);
     expect(keys).toEqual(["message:assistant:1", "message:assistant:1#2", "message:assistant:2"]);
     expect(new Set(keys).size).toBe(keys.length);
+  });
+});
+
+describe("segmentTurns", () => {
+  function message(
+    id: string,
+    role: "user" | "assistant",
+    content: string,
+  ): Extract<TimelineBlock, { type: "message" }> {
+    return { id, type: "message", role, content };
+  }
+
+  it("opens a new turn on each user message and folds later blocks into it", () => {
+    const blocks: TimelineBlock[] = [
+      message("u1", "user", "first"),
+      tool("t1", "read"),
+      message("a1", "assistant", "ok"),
+      message("u2", "user", "second"),
+      message("a2", "assistant", "done"),
+    ];
+    const turns = segmentTurns(blocks, blockRenderKeys(blocks));
+    expect(turns.map((turn) => turn.key)).toEqual(["u1", "u2"]);
+    expect(turns[0]?.blocks.map((item) => item.block.id)).toEqual(["u1", "t1", "a1"]);
+    expect(turns[1]?.blocks.map((item) => item.block.id)).toEqual(["u2", "a2"]);
+  });
+
+  it("parks leading non-user blocks in their own turn; the next user message opens another", () => {
+    const blocks: TimelineBlock[] = [
+      { id: "notice", type: "notice", title: "runtime error", body: "x" },
+      message("u1", "user", "hello"),
+      message("a1", "assistant", "hi"),
+    ];
+    const turns = segmentTurns(blocks, blockRenderKeys(blocks));
+    expect(turns.map((turn) => turn.key)).toEqual(["notice", "u1"]);
+    expect(turns[0]?.blocks.map((item) => item.block.id)).toEqual(["notice"]);
+    expect(turns[1]?.blocks.map((item) => item.block.id)).toEqual(["u1", "a1"]);
+  });
+
+  it("uses disambiguated render keys when user message ids collide", () => {
+    const blocks: TimelineBlock[] = [
+      message("repeat", "user", "first"),
+      message("repeat", "user", "second"),
+    ];
+    const turns = segmentTurns(blocks, blockRenderKeys(blocks));
+    expect(turns.map((turn) => turn.key)).toEqual(["repeat", "repeat#2"]);
   });
 });

@@ -1,10 +1,11 @@
 import { IconAlertCircle, IconCircleDashed, IconListCheck } from "@tabler/icons-react";
-import { AnimatePresence, m } from "motion/react";
+import { m } from "motion/react";
 import { useMemo } from "react";
 import type {
   AgentEvent,
   ContextItem,
   MessageContextChip,
+  ModelInfo,
   PlanRef,
   PromptImageAttachment,
   QuestionAnswer,
@@ -13,13 +14,11 @@ import type {
   SubagentActivity,
   SubagentStatus,
   TodoItem,
-  WorkingChangeStats,
 } from "../../../../shared/contracts";
 import {
   APP_TOOL_NAMES,
   ASK_USER_TOOL_NAME,
   BROWSER_TOOL_NAMES,
-  getToolUiMeta,
   isMcpToolName,
   MCP_TOOL_PREFIX,
   PLAN_TOOL_NAME,
@@ -28,12 +27,9 @@ import {
   toolRenderKind,
   WEB_TOOL_NAMES,
 } from "../../../../shared/tools";
-import { CopyButton } from "../../components/ui/CopyButton";
 import { ModusBot } from "../../components/ui/ModusBot";
 import { ShinyText } from "../../components/ui/ShinyText";
-import { formatClock } from "../../lib/formatClock";
-import { ActivityGroup, ThoughtRow } from "./ActivityGroup";
-import { TurnChangesCard } from "./changes/ChangeStats";
+import { ThoughtRow, WorkFold } from "./ActivityGroup";
 import { MessageBlock } from "./MessageBlock";
 import { subagentColor } from "./subagentUi";
 import { TodosCard } from "./TodosCard";
@@ -44,6 +40,9 @@ type TimelineProps = {
   precomputedBlocks?: TimelineBlock[];
   /** Session cwd, threaded to diff tool cards so they can open edited files. */
   cwd?: string | undefined;
+  /** Active pane model — needed so inline edit can mount the shared Composer. */
+  model?: string | undefined;
+  models?: ModelInfo[];
   onRestoreCheckpoint?(checkpointId: string): Promise<void> | void;
   /**
    * Cursor-style edit & resend: rolls the session back to just before the
@@ -59,7 +58,6 @@ type TimelineProps = {
   ): Promise<void>;
   onOpenSubagent?(childSessionId: string): void;
   onOpenPlan?(plan: PlanRef): void;
-  botColor?: string;
   workspaceId?: string | undefined;
 };
 
@@ -119,9 +117,6 @@ export type ThoughtBlockItem = {
   streaming?: boolean;
 };
 
-/** Block kinds that can live inside an {@link ActivityGroupBlockItem}. */
-export type ActivityItem = ThoughtBlockItem | ToolBlockItem;
-
 /**
  * The current in-flight phase of an active run, captured from the authoritative
  * event stream (latest signal wins). It drives the live status label in the
@@ -161,15 +156,6 @@ type NoticeBlockItem = {
   isError?: boolean;
 };
 
-type ChangesBlockItem = {
-  id: string;
-  type: "changes";
-  runId: string;
-  stats: WorkingChangeStats;
-  /** Pre-run snapshot — powers the card's Undo. */
-  checkpointId?: string;
-};
-
 type TodosBlockItem = {
   id: string;
   type: "todos";
@@ -190,17 +176,27 @@ export type SubagentBlockItem = {
   activity?: SubagentActivity;
 };
 
-type ActivityGroupBlockItem = {
+/** Block kinds that can live inside a {@link WorkFoldBlockItem}. */
+export type WorkFoldItem =
+  | ThoughtBlockItem
+  | ToolBlockItem
+  | TodosBlockItem
+  | SubagentBlockItem
+  | NoticeBlockItem
+  | MessageBlockItem;
+
+/** @deprecated Use WorkFoldItem */
+export type ActivityItem = ThoughtBlockItem | ToolBlockItem;
+
+/**
+ * One turn's work under a single Cursor-style fold (Working for… / Worked for…).
+ * Built by {@link groupTurnWork} from the run block + in-turn work items.
+ */
+export type WorkFoldBlockItem = {
   id: string;
-  type: "activity-group";
-  /** Read-only exploration, shell, or in-app browser control — drives label + summary. */
-  kind: "explore" | "browser" | "shell";
-  /** Still streaming → forced open, fixed-height fade viewport, shimmering label. */
-  active: boolean;
-  /** Sealed digest of the folded run, e.g. "Explored 4 files, 6 searches". */
-  summary: string;
-  /** Interleaved members in stream order: thoughts and tools. */
-  items: ActivityItem[];
+  type: "work-fold";
+  run: RunBlockItem;
+  items: WorkFoldItem[];
 };
 
 export type TimelineBlock =
@@ -209,15 +205,13 @@ export type TimelineBlock =
   | ThoughtBlockItem
   | RunBlockItem
   | NoticeBlockItem
-  | ActivityGroupBlockItem
-  | ChangesBlockItem
+  | WorkFoldBlockItem
   | TodosBlockItem
   | SubagentBlockItem;
 
 export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): TimelineBlock[] {
   const blocks: TimelineBlock[] = [];
   const blockById = new Map<string, TimelineBlock>();
-  const checkpointByRun = new Map<string, string>();
   /** todo_write tool calls render through the TodosCard, not as tool rows. */
   const todoToolCallIds = new Set<string>();
   const subagentToolCallIds = new Set<string>();
@@ -298,8 +292,8 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
   /**
    * Record the live phase of the active run from the event currently being
    * processed. Latest signal wins (events are in order), and only a still-running
-   * run is touched — settled runs show "worked for Xs", not an activity. This is
-   * the authoritative feed for the turn footer's status text.
+   * run is touched — settled runs no longer surface an activity label. This is
+   * the authoritative feed for the live turn footer's status text.
    */
   function setRunActivity(activity: RunActivity): void {
     if (activeRunId === undefined) {
@@ -396,17 +390,8 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
         }
         blocks.push(completedBlock);
       }
-      // End-of-turn changes card (Codex-style "N files changed").
-      if (event.changes && event.changes.fileCount > 0) {
-        const checkpointId = checkpointByRun.get(event.runId);
-        blocks.push({
-          id: `changes:${event.runId}`,
-          type: "changes",
-          runId: event.runId,
-          stats: event.changes,
-          ...(checkpointId !== undefined ? { checkpointId } : {}),
-        });
-      }
+      // Per-turn file stats stay on ChangesStrip above the composer (Review),
+      // not as an end-of-turn card in the timeline.
       if (activeRunId === event.runId) {
         activeRunId = undefined;
       }
@@ -811,9 +796,6 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
           block.checkpointId = event.checkpoint.id;
         }
       }
-      if (event.checkpoint.kind === "auto" && event.checkpoint.runId) {
-        checkpointByRun.set(event.checkpoint.runId, event.checkpoint.id);
-      }
       continue;
     }
 
@@ -880,63 +862,10 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
 }
 
 /**
- * Which fold a tool joins, or undefined when it always stands alone. Purely
- * catalog-declared: a tool folds by carrying `activity` in its ToolUiMeta, so
- * a new foldable tool is a catalog entry, never an edit here.
- */
-function activityKind(name: string): "explore" | "browser" | "shell" | undefined {
-  return getToolUiMeta(name)?.activity;
-}
-
-/** English plural for digest nouns ("file" → "files", "search" → "searches"). */
-function plural(count: number, noun: string): string {
-  return `${count} ${count === 1 ? noun : /(?:s|x|z|ch|sh)$/.test(noun) ? `${noun}es` : `${noun}s`}`;
-}
-
-/**
- * Sealed digest of a folded activity run, e.g. "Explored 2 files, 1 search" or
- * "Browser used 3 CDP commands". Catalog-driven: each member counts toward the
- * `summaryNoun` its tool declares — distinct primary-arg targets count once,
- * calls without one count individually. Shell wording tracks the run's
- * lifecycle instead. Exported for tests.
- */
-export function buildActivitySummary(
-  kind: "explore" | "browser" | "shell",
-  tools: ToolBlockItem[],
-): string {
-  if (kind === "shell") {
-    if (tools.some((tool) => !tool.isComplete)) {
-      return tools.length > 1 ? "Running commands…" : "Running command…";
-    }
-    return `Ran ${tools.length} ${tools.length === 1 ? "command" : "commands"}`;
-  }
-  const targetsByNoun = new Map<string, Set<string>>();
-  for (const tool of tools) {
-    const meta = getToolUiMeta(tool.name);
-    if (!meta?.summaryNoun) continue;
-    const args = (tool.args && typeof tool.args === "object" ? tool.args : {}) as Record<
-      string,
-      unknown
-    >;
-    const target = meta.primaryArgKey ? args[meta.primaryArgKey] : undefined;
-    const key = typeof target === "string" && target ? target : `call:${tool.id}`;
-    const targets = targetsByNoun.get(meta.summaryNoun) ?? new Set<string>();
-    targets.add(key);
-    targetsByNoun.set(meta.summaryNoun, targets);
-  }
-  const parts = [...targetsByNoun].map(([noun, targets]) => plural(targets.size, noun));
-  const prefix = kind === "browser" ? "Browser used" : "Explored";
-  return parts.length > 0 ? `${prefix} ${parts.join(", ")}` : `${prefix} ${tools.length} steps`;
-}
-
-/**
  * A single agent turn (one run) can produce SEVERAL assistant message segments
- * interleaved with tool calls. We want exactly one copy/timestamp surface per
- * turn, merged into its bottom status footer — so we aggregate the whole turn's
- * assistant markdown onto the turn's RUN block (`answer`) once it has settled.
- * The run block is relocated to the turn's end downstream, where the footer
- * renders that answer's copy button alongside the "worked for Xs" status and the
- * completion clock. While a run is still streaming, nothing is attached.
+ * interleaved with tool calls. We want exactly one copy surface per turn — so we
+ * aggregate the whole turn's assistant markdown onto the turn's RUN block
+ * (`answer`) once it has settled. WorkFold exposes Copy from that answer.
  */
 export function attachTurnActions(blocks: TimelineBlock[]): TimelineBlock[] {
   let run: RunBlockItem | undefined;
@@ -982,170 +911,126 @@ export function blockRenderKeys(blocks: TimelineBlock[]): string[] {
   });
 }
 
-/** Thoughts ride inside an activity fold; assistant text is always full-width. */
-function isFoldableFiller(block: TimelineBlock): block is ThoughtBlockItem {
-  return block.type === "thought";
+export type TimelineTurn = {
+  key: string;
+  blocks: Array<{ block: TimelineBlock; key: string }>;
+};
+
+/**
+ * A user message opens a turn; everything after it belongs to that turn until
+ * the next one.
+ */
+export function segmentTurns(blocks: TimelineBlock[], keys: string[]): TimelineTurn[] {
+  const turns: TimelineTurn[] = [];
+  blocks.forEach((block, index) => {
+    const key = keys[index] ?? block.id;
+    if (turns.length === 0 || (block.type === "message" && block.role === "user")) {
+      turns.push({ key, blocks: [] });
+    }
+    turns.at(-1)?.blocks.push({ block, key });
+  });
+  return turns;
+}
+
+function isWorkAnchor(block: TimelineBlock): boolean {
+  return (
+    block.type === "tool" ||
+    block.type === "thought" ||
+    block.type === "todos" ||
+    block.type === "subagent" ||
+    block.type === "notice"
+  );
 }
 
 /**
- * Collapse contiguous read-only exploration (or browser-control) activity into a
- * single Cursor-style fold. A fold absorbs its same-kind tools plus the thoughts
- * interleaved with them. Assistant text always stays OUTSIDE, full-width, and
- * breaks the chain between activity groups. Single tools fold too, so any
- * foldable call surfaces as a group.
+ * Fold an entire run's work into one Cursor-style WorkFold.
  *
- * While the run is live the fold is left `active` (the component forces it open
- * with a fading viewport) and keeps "listening" across the whole exploration —
- * interleaved thoughts never seal it. Once sealed it collapses to a one-line
- * digest.
- *
- * Seal contract (authoritative signals only — never a guess):
- *   1. the chain is BROKEN — the forward scan stopped before the end because a
- *      block it cannot absorb came next: assistant text, a side-effect /
- *      different-kind tool, a changes/notice/todos block, the next run …, or
- *   2. the run is no longer active.
+ * Authority: `run.status` + turn boundary (next run, or next user when settled).
+ * Final assistant text = messages after the last work anchor; earlier assistant
+ * segments ride inside the fold. Steered user mid-run stays inside the fold.
  */
-export function groupActivity(blocks: TimelineBlock[]): TimelineBlock[] {
-  const hasActiveRun = blocks.some((block) => block.type === "run" && block.status === "running");
+export function groupTurnWork(blocks: TimelineBlock[]): TimelineBlock[] {
   const result: TimelineBlock[] = [];
   let index = 0;
 
   while (index < blocks.length) {
-    const start = blocks[index];
-    if (!start) {
+    const block = blocks[index];
+    if (!block) {
       index += 1;
       continue;
     }
 
-    const startKind = start.type === "tool" ? activityKind(start.name) : undefined;
-    if (!startKind) {
-      result.push(start);
+    if (block.type !== "run") {
+      result.push(block);
       index += 1;
       continue;
     }
 
-    // Pull back leading thoughts already emitted so they
-    // sit inside the fold, above the first tool (Cursor-style).
-    const leading: TimelineBlock[] = [];
-    while (result.length > 0) {
-      const prev = result[result.length - 1];
-      if (prev && isFoldableFiller(prev)) {
-        leading.unshift(prev);
-        result.pop();
-      } else {
+    const run = block;
+    index += 1;
+    const turnContent: TimelineBlock[] = [];
+    while (index < blocks.length) {
+      const next = blocks[index];
+      if (!next) break;
+      if (next.type === "run") break;
+      if (
+        next.type === "message" &&
+        next.role === "user" &&
+        run.status !== "running" &&
+        run.status !== "blocked"
+      ) {
         break;
+      }
+      turnContent.push(next);
+      index += 1;
+    }
+
+    let lastWork = -1;
+    for (let j = 0; j < turnContent.length; j += 1) {
+      const candidate = turnContent[j];
+      if (candidate && isWorkAnchor(candidate)) {
+        lastWork = j;
       }
     }
 
-    // Scan forward over same-kind tools and the thoughts interleaved with them.
-    const window: TimelineBlock[] = [...leading];
-    let assistantBreak: MessageBlockItem | undefined;
-    let lastToolOffset = -1;
-    let cursor = index;
-    while (cursor < blocks.length) {
-      const candidate = blocks[cursor];
-      if (!candidate) break;
-      if (candidate.type === "tool") {
-        if (activityKind(candidate.name) !== startKind) break;
-        lastToolOffset = window.length;
-        window.push(candidate);
-        cursor += 1;
-      } else if (candidate.type === "message" && candidate.role === "assistant") {
-        if (!candidate.content.trim()) {
-          cursor += 1;
-          continue;
-        }
-        assistantBreak = candidate;
-        break;
-      } else if (isFoldableFiller(candidate)) {
-        window.push(candidate);
-        cursor += 1;
+    const items: WorkFoldItem[] = [];
+    const after: TimelineBlock[] = [];
+
+    for (let j = 0; j < turnContent.length; j += 1) {
+      const entry = turnContent[j];
+      if (!entry) continue;
+
+      if (entry.type === "message" && entry.role === "assistant") {
+        if (!entry.content.trim()) continue;
+        if (j > lastWork) after.push(entry);
+        else items.push(entry);
+        continue;
+      }
+
+      if (entry.type === "message" && entry.role === "user") {
+        items.push(entry);
+        continue;
+      }
+
+      if (isWorkAnchor(entry) || entry.type === "message") {
+        items.push(entry as WorkFoldItem);
       } else {
-        break;
+        after.push(entry);
       }
     }
 
-    // Keep trailing thoughts in the fold.
-    let groupEnd = lastToolOffset;
-    for (let offset = lastToolOffset + 1; offset < window.length; offset += 1) {
-      if (window[offset]?.type === "thought") {
-        groupEnd = offset;
-      } else {
-        break;
-      }
-    }
-    const groupItems = window.slice(0, groupEnd + 1);
-    const trailing = window.slice(groupEnd + 1);
-
-    const tools = groupItems.filter((item): item is ToolBlockItem => item.type === "tool");
-    const firstTool = tools[0];
-    const allComplete = tools.every((tool) => tool.isComplete);
-    // Assistant narration is a hard phase boundary: close the previous fold
-    // immediately, even if the tool result is still catching up.
-    const chainBroken = cursor < blocks.length;
-    const sealed = assistantBreak !== undefined || (allComplete && (chainBroken || !hasActiveRun));
-
-    if (firstTool) {
+    const active = run.status === "running" || run.status === "blocked";
+    if (items.length > 0 || active) {
       result.push({
-        id: `activity-group:${firstTool.id}`,
-        type: "activity-group",
-        kind: startKind,
-        active: !sealed,
-        summary: buildActivitySummary(startKind, tools),
-        items: groupItems as ActivityItem[],
+        id: `work-fold:${run.runId}`,
+        type: "work-fold",
+        run,
+        items,
       });
-    } else {
-      result.push(...groupItems);
     }
-    result.push(...trailing);
-    if (assistantBreak) {
-      result.push(assistantBreak);
-      index = cursor + 1;
-    } else {
-      index = cursor;
-    }
+    result.push(...after);
   }
 
-  return result;
-}
-
-/**
- * Relocate each run block to the END of its turn so the run status renders as a
- * footer BENEATH the turn's content (Devin-style: animated logo + live activity
- * label while working, "Modus has worked for N seconds" once settled) instead of
- * a header above it.
- *
- * Runs LAST in the pipeline — after grouping and turn-action sealing have already
- * consumed the original (turn-leading) run positions — so it only reorders the
- * final render list and changes nothing upstream. A footer is emitted when its
- * turn ends: at the next run, or at the user message that opens the next turn.
- * A STEERED/queued user message mid-run (its run still `running`) is NOT a turn
- * boundary, so it stays inside the turn and the live footer remains at the very
- * bottom.
- */
-export function relocateRunFooters(blocks: TimelineBlock[]): TimelineBlock[] {
-  const result: TimelineBlock[] = [];
-  let pendingRun: RunBlockItem | undefined;
-
-  const emit = (): void => {
-    if (pendingRun) {
-      result.push(pendingRun);
-      pendingRun = undefined;
-    }
-  };
-
-  for (const block of blocks) {
-    if (block.type === "run") {
-      emit();
-      pendingRun = block;
-      continue;
-    }
-    if (block.type === "message" && block.role === "user" && pendingRun?.status !== "running") {
-      emit();
-    }
-    result.push(block);
-  }
-  emit();
   return result;
 }
 
@@ -1153,6 +1038,9 @@ export function visibleTimelineBlocks(blocks: TimelineBlock[]): TimelineBlock[] 
   return blocks.filter((block) => {
     if (block.type === "thought") {
       return block.text.trim().length > 0;
+    }
+    if (block.type === "work-fold") {
+      return true;
     }
     if (block.type !== "message") {
       return true;
@@ -1164,13 +1052,11 @@ export function visibleTimelineBlocks(blocks: TimelineBlock[]): TimelineBlock[] 
 export function buildVisibleTimelineBlocks(
   agentEvents: TimelineProps["agentEvents"],
 ): TimelineBlock[] {
-  return visibleTimelineBlocks(
-    relocateRunFooters(groupActivity(attachTurnActions(buildBlocks(agentEvents)))),
-  );
+  return visibleTimelineBlocks(groupTurnWork(attachTurnActions(buildBlocks(agentEvents))));
 }
 
-/** Spell a run's duration for the settled footer ("1 second" / "37 seconds" / "2m 5s"). */
-function formatElapsedVerbose(end: number, start: number): string {
+/** Spell a duration ("1 second" / "37 seconds" / "2m 5s"). */
+export function formatElapsedVerbose(end: number, start: number): string {
   const seconds = Math.max(0, Math.round((end - start) / 1000));
   if (seconds < 60) {
     return `${seconds} second${seconds === 1 ? "" : "s"}`;
@@ -1269,17 +1155,6 @@ function toolActivityLabel(name: string): string {
   return gerundFromToolName(name);
 }
 
-/** Live phrase for a running turn, from its captured {@link RunActivity}. */
-function runningActivityLabel(activity: RunActivity | undefined): string {
-  if (!activity || activity.kind === "thinking") {
-    return "Thinking";
-  }
-  if (activity.kind === "writing") {
-    return "Writing the response";
-  }
-  return toolActivityLabel(activity.name);
-}
-
 function subagentStatusLabel(block: SubagentBlockItem): string {
   if (block.status === "running") {
     if (!block.activity || block.activity.kind === "thinking") {
@@ -1303,14 +1178,12 @@ function subagentStatusLabel(block: SubagentBlockItem): string {
 }
 
 /**
- * The single status line for a turn footer. While running it tracks the live
- * activity; once the run settles it reports the duration (or terminal reason).
- * Authoritative — driven only by the run's status + captured phase.
+ * Status / duration helper (kept for tests). WorkFold builds Working/Worked labels itself.
  */
 export function runStatusLabel(block: RunBlockItem): string {
   switch (block.status) {
     case "running":
-      return runningActivityLabel(block.activity);
+      return `Working for ${formatElapsedVerbose(Date.now(), block.startedAt)}`;
     case "blocked":
       return "Waiting for approval";
     case "failed":
@@ -1318,62 +1191,8 @@ export function runStatusLabel(block: RunBlockItem): string {
     case "cancelled":
       return "Stopped by you";
     default:
-      return `Modus has worked for ${formatElapsedVerbose(
-        block.completedAt ?? block.startedAt,
-        block.startedAt,
-      )}`;
+      return `Worked for ${formatElapsedVerbose(block.completedAt ?? block.startedAt, block.startedAt)}`;
   }
-}
-
-/**
- * Cursor/Devin-style turn footer: the Modus mascot + a single status line on the
- * turn's last line. The mascot walks while the run is live and settles to rest
- * once done; the label crossfades between phases so the text never pops. No
- * separator rule — it reads as part of the turn, not a header.
- *
- * Once the turn settles this same line is also its only copy/timestamp surface:
- * the "Copy response" button and completion clock fade in on hover at the end of
- * the row (reserved space, so revealing them never reflows the layout). There is
- * no longer a separate per-message footer — the two lines are merged into one.
- */
-function TurnStatusFooter({ block, botColor }: { block: RunBlockItem; botColor?: string }) {
-  const active = block.status === "running" || block.status === "blocked";
-  const isError = block.status === "failed";
-  const label = runStatusLabel(block);
-  const settledColor = isError ? "text-danger" : "text-fg-subtle";
-  const answer = !active ? block.answer : undefined;
-  return (
-    <div className="group flex min-w-0 items-center gap-2 text-sm">
-      <ModusBot
-        active={active}
-        busy={active}
-        className="size-[18px] shrink-0"
-        {...(botColor ? { color: botColor } : {})}
-      />
-      <AnimatePresence initial={false} mode="wait">
-        <m.span
-          animate={{ opacity: 1, y: 0 }}
-          className={`min-w-0 truncate ${active ? "" : settledColor}`}
-          exit={{ opacity: 0, y: -3 }}
-          initial={{ opacity: 0, y: 3 }}
-          key={label}
-          transition={{ duration: 0.16, ease: "easeOut" }}
-        >
-          {active ? <ShinyText>{label}</ShinyText> : label}
-        </m.span>
-      </AnimatePresence>
-      {answer !== undefined ? (
-        <div className="flex h-6 shrink-0 items-center gap-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
-          <CopyButton label="Copy response" text={answer} />
-          {block.completedAt !== undefined ? (
-            <span className="text-2xs text-fg-faint tabular-nums">
-              {formatClock(block.completedAt)}
-            </span>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
-  );
 }
 
 /**
@@ -1383,7 +1202,7 @@ function TurnStatusFooter({ block, botColor }: { block: RunBlockItem; botColor?:
  */
 function PlanBuildCard({ planBuild }: { planBuild: NonNullable<MessageBlockItem["planBuild"]> }) {
   return (
-    <div className="rounded-lg border border-hairline-soft bg-panel">
+    <div className="rounded-lg border border-hairline-soft bg-card">
       <div className="flex items-center gap-2 px-3 py-2.5">
         <IconListCheck className="shrink-0 text-fg-subtle" size={15} stroke={1.7} />
         <span className="shrink-0 font-medium text-build text-sm">Build</span>
@@ -1417,113 +1236,148 @@ export function Timeline({
   agentEvents,
   precomputedBlocks,
   cwd,
+  model,
+  models,
   workspaceId,
   onRestoreCheckpoint,
   onEditResend,
   onOpenSubagent,
   onOpenPlan,
-  botColor,
 }: TimelineProps) {
   const visibleBlocks = useMemo(
     () => precomputedBlocks ?? buildVisibleTimelineBlocks(agentEvents),
     [agentEvents, precomputedBlocks],
   );
   const renderKeys = useMemo(() => blockRenderKeys(visibleBlocks), [visibleBlocks]);
+  const turns = useMemo(
+    () => segmentTurns(visibleBlocks, renderKeys),
+    [visibleBlocks, renderKeys],
+  );
 
   if (visibleBlocks.length === 0) {
     return null;
   }
 
   return (
-    <div className="relative mx-auto min-w-0 w-[calc(100%-2rem)] max-w-5xl pt-8 pb-24">
-      <div className="min-w-0 w-full max-w-full space-y-4">
-        {visibleBlocks.map((block, index) => (
-          <m.div
-            animate={{ opacity: 1 }}
-            className="timeline-block min-w-0 w-full max-w-full"
-            initial={{ opacity: 0 }}
-            key={renderKeys[index]}
-            transition={{ duration: 0.15, ease: "easeOut" }}
+    <div className="min-w-0 w-full max-w-full px-4 pt-8 pb-24">
+      {/* max-w-5xl matches Composer chrome — user bubbles fill this column.
+          Assistant / tools / cards use max-w-[60rem] (960px): wider than 4xl,
+          still ~4rem under the 5xl input frame so the reply stays inset. */}
+      <div className="relative mx-auto min-w-0 w-full max-w-5xl">
+        {turns.map((turn) => (
+          <section
+            className="timeline-block w-full min-w-0 space-y-2.5 pb-2.5"
+            data-turn={turn.key}
+            key={turn.key}
           >
-            {block.type === "message" ? (
-              block.planBuild ? (
-                <PlanBuildCard planBuild={block.planBuild} />
-              ) : (
-                <MessageBlock
-                  {...(block.attachments ? { attachments: block.attachments } : {})}
-                  {...(block.contextChips ? { contextChips: block.contextChips } : {})}
-                  {...(block.contextItems ? { contextItems: block.contextItems } : {})}
-                  {...(block.skills ? { skills: block.skills } : {})}
-                  {...(block.checkpointId !== undefined
-                    ? { checkpointId: block.checkpointId }
-                    : {})}
-                  {...(onRestoreCheckpoint ? { onRestoreCheckpoint } : {})}
-                  content={block.content}
-                  cwd={cwd}
-                  {...(block.createdAt !== undefined ? { createdAt: block.createdAt } : {})}
-                  editable={block.editable ?? false}
-                  messageId={block.id}
-                  {...(onEditResend ? { onEditResend } : {})}
-                  messageRole={block.role}
-                  streaming={block.streaming ?? false}
-                  workspaceId={workspaceId}
-                />
-              )
-            ) : null}
-            {block.type === "tool" ? (
-              <ToolCard
-                args={block.args}
-                cwd={cwd}
-                isComplete={block.isComplete ?? false}
-                isError={block.isError ?? false}
-                name={block.name}
-                {...(onOpenPlan ? { onOpenPlan } : {})}
-                output={block.output}
-                {...(block.plan ? { plan: block.plan } : {})}
-                {...(block.questionAnswers ? { questionAnswers: block.questionAnswers } : {})}
-                {...(block.questionRequest ? { questionRequest: block.questionRequest } : {})}
-                {...(block.questionSkipped !== undefined
-                  ? { questionSkipped: block.questionSkipped }
-                  : {})}
-              />
-            ) : null}
-            {block.type === "activity-group" ? (
-              <ActivityGroup
-                active={block.active}
-                items={block.items}
-                kind={block.kind}
-                summary={block.summary}
-              />
-            ) : null}
-            {block.type === "thought" ? (
-              <ThoughtRow streaming={block.streaming ?? false} text={block.text} />
-            ) : null}
-            {block.type === "run" ? (
-              <TurnStatusFooter block={block} {...(botColor ? { botColor } : {})} />
-            ) : null}
-            {block.type === "notice" ? <Notice {...block} /> : null}
-            {block.type === "todos" ? (
-              <TodosCard todos={block.todos} updating={block.updating} />
-            ) : null}
-            {block.type === "subagent" ? (
-              <SubagentCard block={block} {...(onOpenSubagent ? { onOpenSubagent } : {})} />
-            ) : null}
-            {block.type === "changes" ? (
-              <TurnChangesCard
-                {...(block.checkpointId !== undefined ? { checkpointId: block.checkpointId } : {})}
-                {...(onRestoreCheckpoint
-                  ? { onUndo: (checkpointId) => onRestoreCheckpoint(checkpointId) }
-                  : {})}
-                {...(cwd
-                  ? {
-                      onOpenFile: (path: string) =>
-                        void window.modus.file.open({ cwd, path }).catch(() => {}),
-                    }
-                  : {})}
-                stats={block.stats}
-              />
-            ) : null}
-          </m.div>
+            {turn.blocks.map(({ block, key }) => {
+              if (block.type === "message" && block.role === "user") {
+                if (block.planBuild) {
+                  return <PlanBuildCard key={key} planBuild={block.planBuild} />;
+                }
+                return (
+                  <MessageBlock
+                    key={key}
+                    {...(block.attachments ? { attachments: block.attachments } : {})}
+                    {...(block.contextChips ? { contextChips: block.contextChips } : {})}
+                    {...(block.contextItems ? { contextItems: block.contextItems } : {})}
+                    {...(block.skills ? { skills: block.skills } : {})}
+                    {...(block.checkpointId !== undefined
+                      ? { checkpointId: block.checkpointId }
+                      : {})}
+                    {...(onRestoreCheckpoint ? { onRestoreCheckpoint } : {})}
+                    content={block.content}
+                    cwd={cwd}
+                    {...(block.createdAt !== undefined ? { createdAt: block.createdAt } : {})}
+                    editable={block.editable ?? false}
+                    messageId={block.id}
+                    {...(onEditResend ? { onEditResend } : {})}
+                    {...(model ? { model } : {})}
+                    {...(models ? { models } : {})}
+                    messageRole={block.role}
+                    streaming={block.streaming ?? false}
+                    workspaceId={workspaceId}
+                  />
+                );
+              }
+
+              return (
+                <m.div
+                  animate={{ opacity: 1 }}
+                  className="mx-auto min-w-0 w-full max-w-[60rem]"
+                  initial={{ opacity: 0 }}
+                  key={key}
+                  transition={{ duration: 0.15, ease: "easeOut" }}
+                >
+                  {block.type === "work-fold" ? (
+                    <WorkFold
+                      formatElapsed={formatElapsedVerbose}
+                      items={block.items}
+                      run={block.run}
+                      {...(cwd ? { cwd } : {})}
+                      {...(onOpenPlan ? { onOpenPlan } : {})}
+                      {...(onOpenSubagent ? { onOpenSubagent } : {})}
+                    />
+                  ) : null}
+                  {block.type === "message" ? (
+                    <MessageBlock
+                      {...(block.attachments ? { attachments: block.attachments } : {})}
+                      {...(block.contextChips ? { contextChips: block.contextChips } : {})}
+                      {...(block.contextItems ? { contextItems: block.contextItems } : {})}
+                      {...(block.skills ? { skills: block.skills } : {})}
+                      {...(block.checkpointId !== undefined
+                        ? { checkpointId: block.checkpointId }
+                        : {})}
+                      {...(onRestoreCheckpoint ? { onRestoreCheckpoint } : {})}
+                      content={block.content}
+                      cwd={cwd}
+                      {...(block.createdAt !== undefined ? { createdAt: block.createdAt } : {})}
+                      editable={block.editable ?? false}
+                      messageId={block.id}
+                      {...(onEditResend ? { onEditResend } : {})}
+                      messageRole={block.role}
+                      streaming={block.streaming ?? false}
+                      workspaceId={workspaceId}
+                    />
+                  ) : null}
+                  {block.type === "tool" ? (
+                    <ToolCard
+                      args={block.args}
+                      cwd={cwd}
+                      isComplete={block.isComplete ?? false}
+                      isError={block.isError ?? false}
+                      name={block.name}
+                      {...(onOpenPlan ? { onOpenPlan } : {})}
+                      output={block.output}
+                      {...(block.plan ? { plan: block.plan } : {})}
+                      {...(block.questionAnswers
+                        ? { questionAnswers: block.questionAnswers }
+                        : {})}
+                      {...(block.questionRequest
+                        ? { questionRequest: block.questionRequest }
+                        : {})}
+                      {...(block.questionSkipped !== undefined
+                        ? { questionSkipped: block.questionSkipped }
+                        : {})}
+                    />
+                  ) : null}
+                  {block.type === "thought" ? (
+                    <ThoughtRow streaming={block.streaming ?? false} text={block.text} />
+                  ) : null}
+                  {block.type === "notice" ? <Notice {...block} /> : null}
+                  {block.type === "todos" ? (
+                    <TodosCard todos={block.todos} updating={block.updating} />
+                  ) : null}
+                  {block.type === "subagent" ? (
+                    <SubagentCard
+                      block={block}
+                      {...(onOpenSubagent ? { onOpenSubagent } : {})}
+                    />
+                  ) : null}
+                  </m.div>
+                );
+              })}
+            </section>
         ))}
       </div>
     </div>
@@ -1541,7 +1395,7 @@ function SubagentCard({
   const label = subagentStatusLabel(block);
   return (
     <button
-      className="flex min-w-0 w-full items-start gap-3 rounded-lg border border-hairline-soft bg-panel px-3 py-2.5 text-left transition-colors hover:bg-hover"
+      className="flex min-w-0 w-full items-start gap-3 rounded-lg border border-hairline-soft bg-card px-3 py-2.5 text-left transition-colors hover:bg-hover"
       onClick={() => onOpenSubagent?.(block.childSessionId)}
       type="button"
     >
