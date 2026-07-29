@@ -50,17 +50,14 @@ const getViewportSize = (): Size => ({
 export function ImageViewerProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<ViewerState | null>(null);
 
-  const open = useCallback<ImageViewerContextValue["open"]>(
-    (src, alt, natural, onSaveEdited) => {
-      setState({
-        src,
-        alt: alt ?? "image",
-        ...(onSaveEdited ? { onSaveEdited } : {}),
-        natural,
-      });
-    },
-    [],
-  );
+  const open = useCallback<ImageViewerContextValue["open"]>((src, alt, natural, onSaveEdited) => {
+    setState({
+      src,
+      alt: alt ?? "image",
+      ...(onSaveEdited ? { onSaveEdited } : {}),
+      natural,
+    });
+  }, []);
 
   const close = useCallback(() => setState(null), []);
 
@@ -372,7 +369,7 @@ function ImageViewerOverlay({ state, onClose }: { state: ViewerState; onClose():
               <ViewerAction
                 icon={<IconDownload size={14} stroke={1.8} />}
                 label="Save"
-                onClick={() => downloadImage(src, alt)}
+                onClick={() => void saveImage(src, alt)}
               />
               <span className="mx-0.5 h-4 w-px bg-hairline" />
               <ViewerAction icon={<IconX size={14} stroke={2} />} label="Close" onClick={onClose} />
@@ -421,22 +418,35 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   });
 }
 
-/** Copy the image to the OS clipboard as a PNG blob (best-effort). */
-async function copyImage(src: string): Promise<void> {
-  try {
-    const blob = await (await fetch(src)).blob();
-    await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
-  } catch {
-    // Clipboard image write can be blocked; silently ignore (Save still works).
+/** Encode any displayable src (data URL / blob / http) to PNG bytes via canvas. */
+async function imageToPngBytes(src: string): Promise<Uint8Array> {
+  const image = await loadImage(src);
+  const canvas = document.createElement("canvas");
+  canvas.width = image.naturalWidth || image.width;
+  canvas.height = image.naturalHeight || image.height;
+  const context = canvas.getContext("2d");
+  if (!context) {
+    throw new Error("Failed to encode image.");
   }
+  context.drawImage(image, 0, 0);
+  const blob = await new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob(
+      (next) => (next ? resolve(next) : reject(new Error("Failed to encode image."))),
+      "image/png",
+    );
+  });
+  return new Uint8Array(await blob.arrayBuffer());
 }
 
-/** Trigger a download of the image (data URLs download directly). */
-function downloadImage(src: string, alt: string): void {
-  const link = document.createElement("a");
-  link.href = src;
-  link.download = /\.[a-z0-9]+$/i.test(alt) ? alt : `${alt || "image"}.png`;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
+async function copyImage(src: string): Promise<void> {
+  const png = await imageToPngBytes(src);
+  await window.modus.clipboard.writeImage({ png });
+}
+
+async function saveImage(src: string, alt: string): Promise<void> {
+  const png = await imageToPngBytes(src);
+  await window.modus.dialog.saveImage({
+    png,
+    ...(alt.trim() ? { defaultName: alt.trim() } : {}),
+  });
 }

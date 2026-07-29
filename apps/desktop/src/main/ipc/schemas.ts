@@ -144,6 +144,17 @@ export const filesReadSchema = z.object({
   path: nonEmptyString,
 });
 
+export const filesWriteSchema = z.object({
+  cwd: nonEmptyString,
+  path: nonEmptyString,
+  content: z.string(),
+});
+
+export const previewReadSchema = z.object({
+  cwd: nonEmptyString,
+  path: nonEmptyString,
+});
+
 export const browserWorkspaceSchema = z.object({
   workspaceId: nonEmptyString,
 });
@@ -235,7 +246,6 @@ export const subagentsCreateSchema = z.object({
   description: z.string().trim().max(280),
   model: z.string().trim().max(120).optional(),
   readOnly: z.boolean(),
-  isBackground: z.boolean(),
   tools: z.array(z.string().trim().min(1).max(80)).optional(),
   disallowedTools: z.array(z.string().trim().min(1).max(80)).optional(),
   isolation: z.enum(["shared", "worktree"]).optional(),
@@ -572,6 +582,30 @@ export const updateModelConfigSchema = z.object({
   thinkingVariant: optionalNonEmptyString,
   contextWindow: z.number().int().min(1_000).max(10_000_000).optional(),
   maxTokens: z.number().int().min(1).max(1_000_000).optional(),
+});
+
+/** PNG bytes from renderer canvas.encode — Uint8Array survives Electron IPC clone. */
+const pngBytesSchema = z.custom<Uint8Array>(
+  (value): value is Uint8Array => {
+    if (value instanceof Uint8Array) {
+      return value.byteLength > 0 && value.byteLength <= 50_000_000;
+    }
+    // Some Electron builds surface cloned bytes as Buffer on the main side.
+    if (typeof Buffer !== "undefined" && Buffer.isBuffer(value)) {
+      return value.byteLength > 0 && value.byteLength <= 50_000_000;
+    }
+    return false;
+  },
+  { message: "png bytes required" },
+);
+
+export const clipboardWriteImageSchema = z.object({
+  png: pngBytesSchema,
+});
+
+export const dialogSaveImageSchema = z.object({
+  png: pngBytesSchema,
+  defaultName: z.string().trim().min(1).max(200).optional(),
 });
 
 export function parseIpcInput<T>(schema: z.ZodType<T>, value: unknown, channel: string): T {

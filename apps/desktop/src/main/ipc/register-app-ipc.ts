@@ -1,10 +1,14 @@
+import { writeFile } from "node:fs/promises";
 import { isAbsolute, resolve, sep } from "node:path";
 import {
   app,
   BrowserWindow,
   type BrowserWindow as BrowserWindowType,
+  clipboard,
+  dialog,
   type IpcMainInvokeEvent,
   ipcMain,
+  nativeImage,
   shell,
 } from "electron";
 import type { DiffReview, DiffReviewReady, DiffTarget } from "../../shared/contracts";
@@ -75,7 +79,9 @@ import {
 } from "../browser/browser-service";
 import { resolveContext, searchContext } from "../context/context-service";
 import { addDocSource, listDocSources, searchDocs } from "../docs/docs-service";
-import { listDirectory, readWorkspaceFile } from "../files/files-service";
+import { listDirectory, readWorkspaceFile, writeWorkspaceFile } from "../files/files-service";
+import { emitFilesEvent, unwatchWorkspace, watchWorkspace } from "../files/files-watcher";
+import { readWorkspacePreview } from "../files/preview-kind";
 import {
   abortSubagentWorktreeApply,
   applySubagentWorktree,
@@ -173,10 +179,12 @@ import {
   browserTabSchema,
   browserWorkspaceSchema,
   checkpointRestoreSchema,
+  clipboardWriteImageSchema,
   configureProviderSchema,
   contextResolveSchema,
   contextSearchSchema,
   cwdSchema,
+  dialogSaveImageSchema,
   diffCommitOrPushSchema,
   diffFilePatchSchema,
   diffPathSchema,
@@ -188,6 +196,7 @@ import {
   fileOpenSchema,
   filesListSchema,
   filesReadSchema,
+  filesWriteSchema,
   gitCheckoutSchema,
   gitLogSchema,
   mcpServerNameSchema,
@@ -196,6 +205,7 @@ import {
   parseIpcInput,
   permissionDecideSchema,
   personalizationSaveSchema,
+  previewReadSchema,
   processKillSchema,
   processListSchema,
   providerAuthOperationSchema,
@@ -896,6 +906,31 @@ export function registerAppIpc({
     return readWorkspaceFile(parsed.cwd, parsed.path);
   });
 
+  ipcMain.handle(IPC_CHANNELS.filesWrite, async (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(filesWriteSchema, input, IPC_CHANNELS.filesWrite);
+    const result = writeWorkspaceFile(parsed.cwd, parsed.path, parsed.content);
+    emitGitEvent({ cwd: parsed.cwd, kind: "working" });
+    emitFilesEvent({ cwd: resolve(parsed.cwd), paths: [result.path] });
+    return result;
+  });
+
+  ipcMain.handle(IPC_CHANNELS.filesWatch, (event, cwd: string) => {
+    assertTrustedSender(event);
+    return watchWorkspace(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.filesWatch));
+  });
+
+  ipcMain.handle(IPC_CHANNELS.filesUnwatch, (event, cwd: string) => {
+    assertTrustedSender(event);
+    unwatchWorkspace(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.filesUnwatch));
+  });
+
+  ipcMain.handle(IPC_CHANNELS.previewRead, async (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(previewReadSchema, input, IPC_CHANNELS.previewRead);
+    return readWorkspacePreview(parsed.cwd, parsed.path);
+  });
+
   ipcMain.handle(IPC_CHANNELS.gitBranches, async (event, cwd: string) => {
     assertTrustedSender(event);
     return await listBranches(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.gitBranches));
@@ -955,7 +990,11 @@ export function registerAppIpc({
 
   ipcMain.handle(IPC_CHANNELS.permissionGetMode, (event, input) => {
     assertTrustedSender(event);
-    const parsed = parseIpcInput(approvalModeGetSchema, input ?? {}, IPC_CHANNELS.permissionGetMode);
+    const parsed = parseIpcInput(
+      approvalModeGetSchema,
+      input ?? {},
+      IPC_CHANNELS.permissionGetMode,
+    );
     return getApprovalModeState(parsed.cwd);
   });
 
@@ -1409,4 +1448,40 @@ export function registerAppIpc({
     const window = getSenderWindow(event);
     return { maximized: window.isMaximized() };
   });
+
+  ipcMain.handle(IPC_CHANNELS.clipboardWriteImage, (event, input) => {
+    assertTrustedSender(event);
+    const { png } = parseIpcInput(
+      clipboardWriteImageSchema,
+      input,
+      IPC_CHANNELS.clipboardWriteImage,
+    );
+    const image = nativeImage.createFromBuffer(Buffer.from(png));
+    if (image.isEmpty()) {
+      throw new Error("Invalid image data.");
+    }
+    clipboard.writeImage(image);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.dialogSaveImage, async (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(dialogSaveImageSchema, input, IPC_CHANNELS.dialogSaveImage);
+    const result = await dialog.showSaveDialog(getSenderWindow(event), {
+      defaultPath: defaultPngName(parsed.defaultName),
+      filters: [{ name: "PNG Image", extensions: ["png"] }],
+    });
+    if (result.canceled || !result.filePath) {
+      return { saved: false as const };
+    }
+    await writeFile(result.filePath, Buffer.from(parsed.png));
+    return { saved: true as const, path: result.filePath };
+  });
+}
+
+function defaultPngName(name: string | undefined): string {
+  const base = (name?.trim() || "image")
+    .replace(/[<>:"/\\|?*]/g, "_")
+    .replace(/[\r\n\t]/g, "_")
+    .slice(0, 120);
+  return /\.png$/i.test(base) ? base : `${base}.png`;
 }

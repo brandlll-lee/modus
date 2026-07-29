@@ -27,6 +27,8 @@ import type {
   FileDiff,
   FileEntry,
   FileReadResult,
+  FilesChangeEvent,
+  FileWriteResult,
   GitActionResult,
   GitBranchSummary,
   GitChangeEvent,
@@ -43,6 +45,7 @@ import type {
   PermissionAction,
   PermissionDecision,
   PersonalizationState,
+  PreviewReadResult,
   PromptDelivery,
   PromptImageAttachment,
   ProviderAuthOperationState,
@@ -271,6 +274,16 @@ export type ModusApi = {
   files: {
     list(input: { cwd: string; dir?: string }): Promise<FileEntry[]>;
     read(input: { cwd: string; path: string }): Promise<FileReadResult>;
+    write(input: { cwd: string; path: string; content: string }): Promise<FileWriteResult>;
+    /** Start live-watching the workspace root (ref-counted). Returns resolved root. */
+    watch(cwd: string): Promise<string>;
+    /** Stop live-watching (ref-counted). */
+    unwatch(cwd: string): Promise<void>;
+    /** Subscribe to debounced workspace-change events. Returns an unsubscribe fn. */
+    onChanged(callback: (event: FilesChangeEvent) => void): () => void;
+  };
+  preview: {
+    read(input: { cwd: string; path: string }): Promise<PreviewReadResult>;
   };
   git: {
     branches(cwd: string): Promise<GitBranchSummary>;
@@ -394,7 +407,6 @@ export type ModusApi = {
       description: string;
       model?: string;
       readOnly: boolean;
-      isBackground: boolean;
       tools?: string[];
       disallowedTools?: string[];
       isolation?: "shared" | "worktree";
@@ -407,7 +419,6 @@ export type ModusApi = {
       description: string;
       model?: string;
       readOnly: boolean;
-      isBackground: boolean;
       tools?: string[];
       disallowedTools?: string[];
       isolation?: "shared" | "worktree";
@@ -422,5 +433,16 @@ export type ModusApi = {
     close(): Promise<void>;
     getState(): Promise<{ maximized: boolean }>;
     onStateChange(listener: (state: { maximized: boolean }) => void): () => void;
+  };
+  clipboard: {
+    /** Write PNG bytes to the OS clipboard as an image. */
+    writeImage(input: { png: Uint8Array }): Promise<void>;
+  };
+  dialog: {
+    /** Native Save dialog + write PNG bytes. Cancel → `{ saved: false }`. */
+    saveImage(input: {
+      png: Uint8Array;
+      defaultName?: string;
+    }): Promise<{ saved: false } | { saved: true; path: string }>;
   };
 };

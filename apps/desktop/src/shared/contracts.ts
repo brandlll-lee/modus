@@ -339,7 +339,6 @@ export type AgentEvent =
       childSessionId: string;
       task: string;
       subagentType: string;
-      background: boolean;
       model?: string;
     }
   | {
@@ -658,6 +657,10 @@ export type GitCommit = {
   date: string;
   /** Human relative date ("3 hours ago"), from git itself. */
   relativeDate: string;
+  /** Parent object ids (`%P`). Empty for root; length ≥ 2 means merge. */
+  parents: string[];
+  /** Ref decorations from git `%D`, already split on `, ` (may include `HEAD -> …`, `tag: …`). */
+  refs: string[];
 };
 
 export type ContextKind =
@@ -673,10 +676,16 @@ export type ContextKind =
   | "rules"
   | "search"
   | "design-element"
-  | "design-annotation";
+  | "design-annotation"
+  /**
+   * Capture-time text selection from a preview surface (PDF TextLayer, etc.).
+   * Self-contained like design-element — `resolveContext` uses `text`, never
+   * re-reads the binary file.
+   */
+  | "excerpt";
 
 export type ContextItem =
-  | { type: "file"; path: string }
+  | { type: "file"; path: string; range?: { fromLine?: number; toLine?: number } }
   | { type: "folder"; path: string }
   | { type: "doc"; docId: string; title: string; query?: string }
   | { type: "terminal"; terminalId: string; range?: { fromLine?: number; toLine?: number } }
@@ -695,7 +704,13 @@ export type ContextItem =
    * just formats `element` into model-readable text.
    */
   | { type: "design-element"; element: DesignElementPayload }
-  | { type: "design-annotation"; annotation: DesignAnnotationPayload };
+  | { type: "design-annotation"; annotation: DesignAnnotationPayload }
+  /**
+   * Selected text captured from an in-app preview (PDF TextLayer today;
+   * other engines later). `text` is the authority; `locator` is display-only
+   * (e.g. `p.3` from `data-page`).
+   */
+  | { type: "excerpt"; path: string; text: string; locator?: string };
 
 /** Design Mode theme accent — always the first mark / first multi-select slot. */
 export const DESIGN_ACCENT_COLOR = "#1D9BFF";
@@ -1288,7 +1303,7 @@ export type AgentReviewResult = {
   createdAt: string;
 };
 
-/* ── Workspace files (read-only file panel) ────────────────────────────── */
+/* ── Workspace files (file panel) ──────────────────────────────────────── */
 
 /** One entry in a directory listing for the file panel's lazy tree. */
 export type FileEntry = {
@@ -1300,7 +1315,7 @@ export type FileEntry = {
   kind: "file" | "directory";
 };
 
-/** Result of reading a workspace file for preview. */
+/** Result of reading a workspace file for preview / edit. */
 export type FileReadResult = {
   path: string;
   relativePath: string;
@@ -1310,6 +1325,47 @@ export type FileReadResult = {
   /** True when the file exceeded the read cap and `content` is a prefix. */
   truncated: boolean;
   content: string;
+};
+
+/**
+ * Structured preview capability from authoritative byte inspection (magic /
+ * OOXML part peek). UI routes on this enum — never on filename extensions.
+ */
+export type PreviewKind =
+  | "pdf"
+  | "docx"
+  | "xlsx"
+  | "pptx"
+  | "image"
+  | "unsupported";
+
+/** Result of reading workspace file bytes for in-app document/image preview. */
+export type PreviewReadResult = {
+  path: string;
+  relativePath: string;
+  size: number;
+  previewKind: PreviewKind;
+  mime: string;
+  /** Raw file bytes (structured-cloneable over IPC). */
+  bytes: Uint8Array;
+};
+
+/** Result of writing a workspace text file from the file panel editor. */
+export type FileWriteResult = {
+  path: string;
+  relativePath: string;
+  size: number;
+};
+
+/**
+ * Broadcast when a watched workspace changes on disk (agent / terminal /
+ * external editor). Drives live refresh of the Files panel. `paths` are
+ * absolute; an empty array means the burst had no filenames (full refresh).
+ * Conflict policy: disk / AI wins over unsaved local drafts.
+ */
+export type FilesChangeEvent = {
+  cwd: string;
+  paths: string[];
 };
 
 /* ── Plan Mode ─────────────────────────────────────────────────────────── */
@@ -1420,7 +1476,6 @@ export type SubagentInfo = {
   path: string;
   model: string;
   readOnly: boolean;
-  isBackground: boolean;
   tools?: string[];
   disallowedTools?: string[];
   isolation: "shared" | "worktree";
@@ -1438,7 +1493,6 @@ export type CreateSubagentInput = {
   description: string;
   model?: string;
   readOnly: boolean;
-  isBackground: boolean;
   tools?: string[];
   disallowedTools?: string[];
   isolation?: "shared" | "worktree";

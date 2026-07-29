@@ -23,6 +23,7 @@ import {
 import type { SecurityState } from "../../../../preload/types";
 import type {
   AgentSessionInfo,
+  ContextItem,
   ContextUsageInfo,
   ModelInfo,
   PlanRef,
@@ -69,6 +70,12 @@ type InspectorProps = {
   onPlanUpdated(plan: PlanRef): void;
   onOpenChange(open: boolean): void;
   onWidthChange(width: number): void;
+  onAddToChat?(item: ContextItem): void;
+  revealPath?: string | undefined;
+  onRevealConsumed?(): void;
+  /** Select this terminal when the Terminal tab opens (composer rail click). */
+  revealTerminalId?: string | undefined;
+  onRevealTerminalConsumed?(): void;
 };
 
 const INSPECTOR_MAX_WIDTH = 1040;
@@ -150,6 +157,11 @@ export function Inspector({
   onPlanUpdated,
   onOpenChange,
   onWidthChange,
+  onAddToChat,
+  revealPath,
+  onRevealConsumed,
+  revealTerminalId,
+  onRevealTerminalConsumed,
 }: InspectorProps) {
   const dragStartRef = useRef<{ x: number; width: number } | null>(null);
   const latestWidthRef = useRef(width);
@@ -335,7 +347,12 @@ export function Inspector({
                   <PlanPanel plan={plan} />
                 </Tabs.Panel>
                 <Tabs.Panel className="min-h-0 flex-1 outline-none" value="files">
-                  <FilesPanel cwd={cwd} />
+                  <FilesPanel
+                    cwd={cwd}
+                    onAddToChat={onAddToChat}
+                    onRevealConsumed={onRevealConsumed}
+                    revealPath={revealPath}
+                  />
                 </Tabs.Panel>
                 <Tabs.Panel className="min-h-0 flex-1 outline-none" value="subagents">
                   <SubagentsPanel
@@ -372,10 +389,12 @@ export function Inspector({
                     <Suspense fallback={<ModusLoadingFallback />}>
                       <TerminalPanel
                         active={tab === "terminal"}
-                        cwd={cwd}
                         key={activeWorkspace?.id ?? "none"}
-                        sessionId={sessionId}
-                        workspaceId={activeWorkspace?.id}
+                        {...(cwd ? { cwd } : {})}
+                        {...(onRevealTerminalConsumed ? { onRevealTerminalConsumed } : {})}
+                        {...(revealTerminalId ? { revealTerminalId } : {})}
+                        {...(sessionId ? { sessionId } : {})}
+                        {...(activeWorkspace?.id ? { workspaceId: activeWorkspace.id } : {})}
                       />
                     </Suspense>
                   ) : null}

@@ -1,6 +1,12 @@
 import type { IpcRendererEvent } from "electron";
 import { contextBridge, ipcRenderer } from "electron";
-import type { AgentEvent, BrowserEvent, GitChangeEvent, TerminalEvent } from "../shared/contracts";
+import type {
+  AgentEvent,
+  BrowserEvent,
+  FilesChangeEvent,
+  GitChangeEvent,
+  TerminalEvent,
+} from "../shared/contracts";
 import type { ModusApi, SecurityState } from "./types";
 
 const api: ModusApi = {
@@ -121,6 +127,18 @@ const api: ModusApi = {
   files: {
     list: (input) => ipcRenderer.invoke("files:list", input),
     read: (input) => ipcRenderer.invoke("files:read", input),
+    write: (input) => ipcRenderer.invoke("files:write", input),
+    watch: (cwd) => ipcRenderer.invoke("files:watch", cwd),
+    unwatch: (cwd) => ipcRenderer.invoke("files:unwatch", cwd),
+    onChanged: (callback) => {
+      const listener = (_event: IpcRendererEvent, payload: unknown) =>
+        callback(payload as FilesChangeEvent);
+      ipcRenderer.on("files:event", listener);
+      return () => ipcRenderer.removeListener("files:event", listener);
+    },
+  },
+  preview: {
+    read: (input) => ipcRenderer.invoke("preview:read", input),
   },
   git: {
     branches: (cwd) => ipcRenderer.invoke("git:branches", cwd),
@@ -233,6 +251,15 @@ const api: ModusApi = {
       ipcRenderer.on("window:state-event", listener);
       return () => ipcRenderer.removeListener("window:state-event", listener);
     },
+  },
+  clipboard: {
+    writeImage: (input) => ipcRenderer.invoke("clipboard:write-image", input) as Promise<void>,
+  },
+  dialog: {
+    saveImage: (input) =>
+      ipcRenderer.invoke("dialog:save-image", input) as Promise<
+        { saved: false } | { saved: true; path: string }
+      >,
   },
 };
 

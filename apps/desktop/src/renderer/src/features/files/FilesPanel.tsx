@@ -22,16 +22,18 @@ import {
   useRef,
   useState,
 } from "react";
-import type { FileEntry, FileReadResult } from "../../../../shared/contracts";
-import { CodeViewer } from "../../components/code/CodeViewer";
+import type { FileEntry, FileReadResult, FilesChangeEvent, ContextItem } from "../../../../shared/contracts";
+import { CodeViewer, type CodeSelectionRange } from "../../components/code/CodeViewer";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
-import { MarkdownMessage } from "../agent/MarkdownMessage";
+import { MarkdownExcerptPreview } from "../preview/MarkdownExcerptPreview";
+import { PreviewHost } from "../preview/PreviewHost";
 import { materialIconForEntry } from "./fileIcons";
+import { hasLiveFilesWatch } from "./hasLiveFilesWatch";
 
 /**
- * VS-Code-style file panel: a lazy directory tree on the left, a read-only
- * viewer on the right (Monaco for code, the shared Markdown renderer for `.md`).
+ * VS-Code-style file panel: a lazy directory tree on the left, Monaco editor
+ * on the right for code (Markdown still uses the shared renderer).
  *
  * The tree column is resizable (drag the divider) and collapsible (the folder
  * toggle in the toolbar animates its width to 0 and back), mirroring the
@@ -43,6 +45,11 @@ import { materialIconForEntry } from "./fileIcons";
 
 type FilesPanelProps = {
   cwd: string | undefined;
+  onAddToChat?: ((item: ContextItem) => void) | undefined;
+  /** Absolute or workspace-relative path to open (from chat file chips). */
+  revealPath?: string | undefined;
+  /** Cleared by parent after reveal is consumed so the same path can re-trigger. */
+  onRevealConsumed?: (() => void) | undefined;
 };
 
 type FlatNode = { entry: FileEntry; depth: number };
@@ -56,12 +63,43 @@ function isMarkdown(path: string): boolean {
   return /\.(md|markdown|mdx)$/i.test(path);
 }
 
-export function FilesPanel({ cwd }: FilesPanelProps) {
+function joinWorkspacePath(cwd: string, rel: string): string {
+  if (/^[a-zA-Z]:[\\/]/.test(rel) || rel.startsWith("/") || rel.startsWith("\\\\")) {
+    return rel;
+  }
+  const sep = cwd.includes("\\") ? "\\" : "/";
+  return `${cwd.replace(/[\\/]+$/, "")}${sep}${rel.replace(/^[\\/]+/, "").replace(/\//g, sep)}`;
+}
+
+function normPath(path: string): string {
+  return path.replace(/\\/g, "/").toLowerCase();
+}
+
+function samePath(a: string, b: string): boolean {
+  return normPath(a) === normPath(b);
+}
+
+/** True when the open buffer should reload from disk for this change burst. */
+function openFileAffected(openPath: string, changed: string[]): boolean {
+  if (changed.length === 0) {
+    return true;
+  }
+  const open = normPath(openPath);
+  return changed.some((p) => {
+    const hit = normPath(p);
+    return open === hit || open.startsWith(`${hit}/`);
+  });
+}
+
+export function FilesPanel({ cwd, onAddToChat, revealPath, onRevealConsumed }: FilesPanelProps) {
   const [rootEntries, setRootEntries] = useState<FileEntry[]>([]);
   const [childrenByPath, setChildrenByPath] = useState<Map<string, FileEntry[]>>(new Map());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState<Set<string>>(new Set());
   const [selectedFile, setSelectedFile] = useState<FileReadResult | undefined>();
+  /** Disk snapshot after last successful read/write — dirty iff draft !== this. */
+  const [savedContent, setSavedContent] = useState<string | undefined>();
+  const [draftContent, setDraftContent] = useState<string | undefined>();
   const [fileError, setFileError] = useState<string | undefined>();
   const [query, setQuery] = useState("");
   const [wordWrap, setWordWrap] = useState(false);
@@ -73,6 +111,12 @@ export function FilesPanel({ cwd }: FilesPanelProps) {
   const treeW = useMotionValue(DEFAULT_TREE_WIDTH);
   const dragRef = useRef<{ x: number; width: number } | null>(null);
   const latestWidthRef = useRef(DEFAULT_TREE_WIDTH);
+  const selectedPathRef = useRef<string | undefined>(undefined);
+  const childrenKeysRef = useRef<string[]>([]);
+  const savedContentRef = useRef<string | undefined>(undefined);
+  selectedPathRef.current = selectedFile?.path;
+  childrenKeysRef.current = [...childrenByPath.keys()];
+  savedContentRef.current = savedContent;
 
   // Animate the column open/closed; never re-animate mid-drag (pointer owns it).
   useEffect(() => {
@@ -89,6 +133,8 @@ export function FilesPanel({ cwd }: FilesPanelProps) {
     setChildrenByPath(new Map());
     setExpanded(new Set());
     setSelectedFile(undefined);
+    setSavedContent(undefined);
+    setDraftContent(undefined);
     setFileError(undefined);
     if (!cwd) {
       return;
@@ -104,6 +150,112 @@ export function FilesPanel({ cwd }: FilesPanelProps) {
       .catch(() => {});
     return () => {
       active = false;
+    };
+  }, [cwd]);
+
+  // Live workspace sync. Conflict policy: disk / AI wins — overwrite dirty drafts.
+  // Preload may lag renderer HMR (Electron must restart to refresh contextBridge).
+  // Missing watch API must degrade to snapshot mode — never crash the shell.
+  useEffect(() => {
+    if (!cwd) {
+      return;
+    }
+    const filesApi = window.modus.files;
+    if (!hasLiveFilesWatch(filesApi)) {
+      return;
+    }
+    let watchedRoot: string | undefined;
+    let cancelled = false;
+    void filesApi.watch(cwd).then((root: string) => {
+      if (!cancelled) {
+        watchedRoot = root;
+      }
+    });
+    const off = filesApi.onChanged((event: FilesChangeEvent) => {
+      if (watchedRoot) {
+        if (!samePath(event.cwd, watchedRoot)) {
+          return;
+        }
+      } else if (!samePath(event.cwd, cwd)) {
+        return;
+      }
+
+      void (async () => {
+        try {
+          const nextRoot = await window.modus.files.list({ cwd });
+          if (cancelled) {
+            return;
+          }
+          setRootEntries(nextRoot);
+
+          const dirs = childrenKeysRef.current;
+          if (dirs.length > 0) {
+            const results = await Promise.all(
+              dirs.map(async (dir) => {
+                try {
+                  const entries = await window.modus.files.list({ cwd, dir });
+                  return [dir, entries] as const;
+                } catch {
+                  return [dir, [] as FileEntry[]] as const;
+                }
+              }),
+            );
+            if (cancelled) {
+              return;
+            }
+            setChildrenByPath((prev) => {
+              const next = new Map(prev);
+              for (const [dir, entries] of results) {
+                if (next.has(dir)) {
+                  next.set(dir, entries);
+                }
+              }
+              return next;
+            });
+          }
+
+          const openPath = selectedPathRef.current;
+          if (!openPath || !openFileAffected(openPath, event.paths)) {
+            return;
+          }
+          try {
+            const file = await window.modus.files.read({ cwd, path: openPath });
+            if (cancelled) {
+              return;
+            }
+            const nextText = file.binary || file.truncated ? undefined : file.content;
+            // Skip echo of our own write / no-op disk bursts so post-save keystrokes
+            // are not clobbered. Real external edits change content vs last snapshot.
+            if (
+              nextText !== undefined &&
+              nextText === savedContentRef.current &&
+              !file.binary &&
+              !file.truncated
+            ) {
+              return;
+            }
+            setSelectedFile(file);
+            setSavedContent(nextText);
+            setDraftContent(nextText);
+            setFileError(undefined);
+          } catch (error: unknown) {
+            if (cancelled) {
+              return;
+            }
+            setSelectedFile(undefined);
+            setSavedContent(undefined);
+            setDraftContent(undefined);
+            setFileError(error instanceof Error ? error.message : String(error));
+          }
+        } catch {
+          // list failed — leave UI as-is for this burst
+        }
+      })();
+    });
+    return () => {
+      cancelled = true;
+      off();
+      void filesApi.unwatch(cwd);
     };
   }, [cwd]);
 
@@ -180,14 +332,91 @@ export function FilesPanel({ cwd }: FilesPanelProps) {
       setFileError(undefined);
       void window.modus.files
         .read({ cwd, path: entry.path })
-        .then(setSelectedFile)
+        .then((file: FileReadResult) => {
+          setSelectedFile(file);
+          setSavedContent(file.binary || file.truncated ? undefined : file.content);
+          setDraftContent(file.binary || file.truncated ? undefined : file.content);
+        })
         .catch((error: unknown) => {
           setSelectedFile(undefined);
+          setSavedContent(undefined);
+          setDraftContent(undefined);
           setFileError(error instanceof Error ? error.message : String(error));
         });
     },
     [cwd],
   );
+
+  // External reveal (chat file chip): expand ancestors + open the file.
+  useEffect(() => {
+    if (!cwd || !revealPath) {
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const file = await window.modus.files.read({ cwd, path: revealPath });
+        if (cancelled) {
+          return;
+        }
+        const parts = file.relativePath.split("/").filter(Boolean);
+        let acc = "";
+        for (let i = 0; i < parts.length - 1; i += 1) {
+          acc = acc ? `${acc}/${parts[i]}` : (parts[i] ?? "");
+          const entries = await window.modus.files.list({ cwd, dir: acc });
+          if (cancelled) {
+            return;
+          }
+          const dirAbs = joinWorkspacePath(cwd, acc);
+          setChildrenByPath((map) => new Map(map).set(dirAbs, entries));
+          setExpanded((set) => new Set(set).add(dirAbs));
+        }
+        setSelectedFile(file);
+        setSavedContent(file.binary || file.truncated ? undefined : file.content);
+        setDraftContent(file.binary || file.truncated ? undefined : file.content);
+        setFileError(undefined);
+      } catch (error: unknown) {
+        if (!cancelled) {
+          setFileError(error instanceof Error ? error.message : String(error));
+        }
+      } finally {
+        if (!cancelled) {
+          onRevealConsumed?.();
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [cwd, revealPath, onRevealConsumed]);
+
+  const dirty =
+    selectedFile !== undefined &&
+    savedContent !== undefined &&
+    draftContent !== undefined &&
+    draftContent !== savedContent;
+
+  const saveFile = useCallback(async () => {
+    if (!cwd || !selectedFile || draftContent === undefined) {
+      return;
+    }
+    if (selectedFile.binary || selectedFile.truncated) {
+      return;
+    }
+    const result = await window.modus.files.write({
+      cwd,
+      path: selectedFile.path,
+      content: draftContent,
+    });
+    setSavedContent(draftContent);
+    setSelectedFile({
+      ...selectedFile,
+      content: draftContent,
+      size: result.size,
+      truncated: false,
+      binary: false,
+    });
+  }, [cwd, draftContent, selectedFile]);
 
   // Flatten the expanded tree into the visible rows (DFS, dirs already sorted).
   const rows = useMemo<FlatNode[]>(() => {
@@ -221,7 +450,7 @@ export function FilesPanel({ cwd }: FilesPanelProps) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="toolbar-row flex shrink-0 items-center gap-2 border-hairline border-b pr-1.5 pl-3">
-        <FileBreadcrumb cwd={cwd} file={selectedFile} />
+        <FileBreadcrumb cwd={cwd} dirty={dirty} file={selectedFile} />
         {viewerNote ? <span className="shrink-0 text-2xs text-fg-faint">{viewerNote}</span> : null}
         <FileActions
           cwd={cwd}
@@ -308,7 +537,15 @@ export function FilesPanel({ cwd }: FilesPanelProps) {
         ) : null}
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <FileViewer error={fileError} file={selectedFile} wordWrap={wordWrap} />
+          <FileViewer
+            cwd={cwd}
+            error={fileError}
+            file={selectedFile}
+            onChange={setDraftContent}
+            onSave={() => void saveFile()}
+            wordWrap={wordWrap}
+            {...(onAddToChat ? { onAddToChat } : {})}
+          />
         </div>
       </div>
     </div>
@@ -317,9 +554,11 @@ export function FilesPanel({ cwd }: FilesPanelProps) {
 
 function FileBreadcrumb({
   cwd,
+  dirty,
   file,
 }: {
   cwd: string | undefined;
+  dirty: boolean;
   file: FileReadResult | undefined;
 }) {
   const root = cwd?.split(/[\\/]/).filter(Boolean).at(-1) ?? "workspace";
@@ -341,6 +580,12 @@ function FileBreadcrumb({
             >
               {part}
             </span>
+            {last && dirty ? (
+              <span
+                aria-label="Unsaved changes"
+                className="size-1.5 shrink-0 rounded-full bg-fg-muted/70"
+              />
+            ) : null}
           </span>
         );
       })}
@@ -483,47 +728,56 @@ function FileRow({
   return (
     <button
       className={cn(
-        "flex h-8 w-full min-w-0 items-center gap-1.5 rounded-md pr-2 text-left text-sm transition-colors",
+        // Cursor-like density: airy row (36px) + 12px muted label so text floats with breathing room.
+        "flex h-9 w-full min-w-0 items-center gap-1.5 rounded-sm pr-2 text-left text-[11px] font-normal leading-none transition-colors",
         selected ? "bg-active text-fg" : "text-fg hover:bg-hover",
       )}
       onClick={onActivate}
-      style={{ paddingLeft: `${7 + depth * 14}px` }}
+      style={{ paddingLeft: `${8 + depth * 12}px` }}
       title={entry.relativePath}
       type="button"
     >
       {isDir ? (
         <IconChevronRight
           className={cn(
-            "toolbar-icon shrink-0 transition-transform duration-150",
+            "shrink-0 text-fg-faint transition-transform duration-150",
             expanded && "rotate-90",
             loading && "animate-pulse",
           )}
-          size={15}
-          stroke={2}
+          size={12}
+          stroke={1.5}
         />
       ) : (
-        <span className="w-[15px] shrink-0" />
+        <span className="w-3 shrink-0" />
       )}
       {iconUrl ? (
-        <img alt="" className="size-[18px] shrink-0" draggable={false} src={iconUrl} />
+        <img alt="" className="size-3.5 shrink-0 opacity-85" draggable={false} src={iconUrl} />
       ) : isDir ? (
-        <DirIcon className="toolbar-icon shrink-0" size={18} stroke={1.7} />
+        <DirIcon className="shrink-0 text-fg-faint" size={14} stroke={1.4} />
       ) : (
-        <FileIcon className="toolbar-icon shrink-0" size={18} stroke={1.7} />
+        <FileIcon className="shrink-0 text-fg-faint" size={14} stroke={1.4} />
       )}
-      <span className="min-w-0 flex-1 truncate">{entry.name}</span>
+      <span className="min-w-0 flex-1 truncate tracking-normal">{entry.name}</span>
     </button>
   );
 }
 
 function FileViewer({
+  cwd,
   file,
   error,
   wordWrap,
+  onChange,
+  onSave,
+  onAddToChat,
 }: {
+  cwd: string | undefined;
   file: FileReadResult | undefined;
   error: string | undefined;
   wordWrap: boolean;
+  onChange(value: string): void;
+  onSave(): void;
+  onAddToChat?(item: ContextItem): void;
 }) {
   if (error) {
     return <Centered>{error}</Centered>;
@@ -538,17 +792,43 @@ function FileViewer({
     );
   }
   if (file.binary) {
-    return <Centered>Binary file — no preview.</Centered>;
+    if (!cwd) {
+      return <Centered>Binary file — no preview.</Centered>;
+    }
+    return (
+      <PreviewHost
+        cwd={cwd}
+        path={file.path}
+        {...(onAddToChat ? { onAddToChat } : {})}
+      />
+    );
   }
-  return isMarkdown(file.path) ? (
-    <div className="scroll-thin h-full overflow-auto px-4 py-3">
-      <MarkdownMessage content={file.content} />
-    </div>
-  ) : (
+  if (isMarkdown(file.path)) {
+    return (
+      <MarkdownExcerptPreview
+        content={file.content}
+        path={file.path}
+        {...(onAddToChat ? { onAddToChat } : {})}
+      />
+    );
+  }
+  // Truncated reads must stay read-only — saving would clobber the unread tail.
+  const readOnly = file.truncated;
+  return (
     <CodeViewer
+      absolutePath={file.path}
       className="h-full"
       content={file.content}
+      {...(onAddToChat
+        ? {
+            onAddToChat: ({ path, range }: { path: string; range: CodeSelectionRange }) =>
+              onAddToChat({ type: "file", path, range }),
+          }
+        : {})}
+      onChange={readOnly ? undefined : onChange}
+      onSave={readOnly ? undefined : onSave}
       path={file.relativePath}
+      readOnly={readOnly}
       wordWrap={wordWrap}
     />
   );

@@ -1,8 +1,8 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { listDirectory, readWorkspaceFile } from "./files-service";
+import { listDirectory, readWorkspaceFile, writeWorkspaceFile } from "./files-service";
 
 let root: string;
 
@@ -46,9 +46,35 @@ describe("readWorkspaceFile", () => {
   });
 });
 
+describe("writeWorkspaceFile", () => {
+  it("writes text and returns the new size", () => {
+    const next = "export const x = 2;\n";
+    const result = writeWorkspaceFile(root, join(root, "src", "app.ts"), next);
+    expect(result.relativePath).toBe("src/app.ts");
+    expect(result.size).toBe(Buffer.byteLength(next, "utf8"));
+    expect(readFileSync(join(root, "src", "app.ts"), "utf8")).toBe(next);
+  });
+
+  it("creates a new text file inside the workspace", () => {
+    const next = "hello\n";
+    const result = writeWorkspaceFile(root, join(root, "src", "new.ts"), next);
+    expect(result.relativePath).toBe("src/new.ts");
+    expect(readFileSync(join(root, "src", "new.ts"), "utf8")).toBe(next);
+  });
+
+  it("rejects writing a directory path", () => {
+    expect(() => writeWorkspaceFile(root, join(root, "src"), "nope")).toThrow(/directory/);
+  });
+
+  it("rejects overwriting a binary file", () => {
+    expect(() => writeWorkspaceFile(root, join(root, "bin.dat"), "text")).toThrow(/binary/);
+  });
+});
+
 describe("workspace containment (authoritative safety check)", () => {
   it("rejects paths that escape the workspace root", () => {
     expect(() => readWorkspaceFile(root, join(root, "..", "secret.txt"))).toThrow(/outside/);
     expect(() => listDirectory(root, join(root, "..", ".."))).toThrow(/outside/);
+    expect(() => writeWorkspaceFile(root, join(root, "..", "secret.txt"), "x")).toThrow(/outside/);
   });
 });

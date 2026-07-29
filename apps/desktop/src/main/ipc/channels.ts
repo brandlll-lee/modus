@@ -72,8 +72,13 @@ export const IPC_CHANNELS = {
   diffStatsSince: "diff:stats-since",
   diffSessionStats: "diff:session-stats",
   diffCommitOrPush: "diff:commit-or-push",
+  previewRead: "preview:read",
   filesList: "files:list",
   filesRead: "files:read",
+  filesWrite: "files:write",
+  filesWatch: "files:watch",
+  filesUnwatch: "files:unwatch",
+  filesEvent: "files:event",
   gitBranches: "git:branches",
   gitCheckout: "git:checkout",
   gitIsRepository: "git:is-repository",
@@ -142,6 +147,8 @@ export const IPC_CHANNELS = {
   windowClose: "window:close",
   windowState: "window:state",
   windowStateEvent: "window:state-event",
+  clipboardWriteImage: "clipboard:write-image",
+  dialogSaveImage: "dialog:save-image",
 } as const;
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS];

@@ -1,33 +1,27 @@
 /**
- * Read-only workspace file access for the renderer's file panel.
+ * Workspace file access for the renderer's file panel.
  *
- * Two operations, both lazy by design (the panel lists one directory level at a
- * time and reads a file only when opened), so a huge repo never forces a full
- * tree walk or bulk read. Paths are confined to the workspace root — a request
- * that escapes it (via `..` or an absolute elsewhere) is rejected, which is the
- * authoritative containment check rather than blacklisting names.
+ * List/read are lazy (one directory level, one file on open). Write is the
+ * symmetric counterpart for in-panel edits. Paths are confined to the workspace
+ * root — escape via `..` or an absolute elsewhere is rejected (authoritative
+ * containment, not a name blacklist).
  */
 
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
-import type { FileEntry, FileReadResult } from "../../shared/contracts";
+import {
+  existsSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { join, relative, resolve, sep } from "node:path";
+import type { FileEntry, FileReadResult, FileWriteResult } from "../../shared/contracts";
+import { resolveWithin } from "./path-within";
 
 /** Max bytes returned for a single file read; larger files are flagged + capped. */
 const MAX_READ_BYTES = 2 * 1024 * 1024;
-
-/** Resolve `target` against `root`, or throw if it escapes the workspace root. */
-function resolveWithin(root: string, target: string): string {
-  const rootResolved = resolve(root);
-  const abs = isAbsolute(target) ? resolve(target) : resolve(rootResolved, target);
-  const rel = relative(rootResolved, abs);
-  if (rel === "") {
-    return abs;
-  }
-  if (rel.startsWith("..") || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
-    throw new Error("Refusing to access a path outside the workspace.");
-  }
-  return abs;
-}
 
 /**
  * List the immediate children of `dir` (defaults to the workspace root).
@@ -101,4 +95,34 @@ export function readWorkspaceFile(root: string, path: string): FileReadResult {
   const truncated = raw.length > MAX_READ_BYTES;
   const slice = truncated ? raw.subarray(0, MAX_READ_BYTES) : raw;
   return { ...base, binary: false, truncated, content: slice.toString("utf8") };
+}
+
+/**
+ * Atomically write UTF-8 text into a workspace file. Refuses directories and
+ * existing binary files (NUL-sniff) so a text editor cannot clobber them.
+ */
+export function writeWorkspaceFile(root: string, path: string, content: string): FileWriteResult {
+  const abs = resolveWithin(root, path);
+  if (existsSync(abs)) {
+    const stat = statSync(abs);
+    if (stat.isDirectory()) {
+      throw new Error("Path is a directory, not a file.");
+    }
+    if (looksBinary(readFileSync(abs))) {
+      throw new Error("Refusing to overwrite a binary file.");
+    }
+  }
+  const temporaryPath = `${abs}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    writeFileSync(temporaryPath, content, "utf8");
+    renameSync(temporaryPath, abs);
+  } finally {
+    rmSync(temporaryPath, { force: true });
+  }
+  const size = Buffer.byteLength(content, "utf8");
+  return {
+    path: abs,
+    relativePath: relative(resolve(root), abs).split(sep).join("/"),
+    size,
+  };
 }
