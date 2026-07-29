@@ -17,6 +17,7 @@ import { publishManagedProcessChange } from "../process/managed-process-bus";
 import { TerminalGrid } from "./terminal-grid";
 import {
   deriveTitle,
+  interactiveShellArgs,
   matchesReadyLog,
   shellCommandArgs,
   sliceSince,
@@ -55,11 +56,9 @@ let lastWindow: BrowserWindowType | undefined;
 const MAX_EXITED_RETAINED = 40;
 
 /**
- * Environment for agent-run commands: deterministic, non-interactive, UTF-8.
- * Disables animated progress redraws (which bloat output),
- * pagers (which block waiting for a keypress), and color, and forces UTF-8 so
- * tool output decodes cleanly regardless of the host console code page. This is
- * the same hardening CI environments apply.
+ * Environment for agent-run commands: deterministic and non-interactive.
+ * Disables animated progress redraws, pagers, and color. Runtime UTF-8 knobs
+ * (Python) remain here; console CP 65001 is applied by the shared shell prelude.
  */
 const AGENT_COMMAND_ENV: Record<string, string> = {
   CI: "1",
@@ -403,11 +402,10 @@ function spawnTerminal(input: SpawnTerminalInput): TerminalRecord {
     cwd: input.cwd || process.cwd(),
     cols: input.cols,
     rows: input.rows,
+    // ConPTY pipe bytes are always UTF-8 (Microsoft Pseudoconsole contract).
+    encoding: "utf-8",
     ...(input.args !== undefined ? { args: input.args } : {}),
-    // Agent-run commands get a clean, deterministic, UTF-8 environment: no
-    // progress animations/pagers to garble the captured screen, and a forced
-    // UTF-8 stream so the pty-host decodes it without code-page mojibake.
-    ...(isAgent ? { env: AGENT_COMMAND_ENV, encoding: "utf-8" } : {}),
+    ...(isAgent ? { env: AGENT_COMMAND_ENV } : {}),
   });
 
   emit({ type: "terminal.created", terminal: { ...info } }, input.window);
@@ -432,14 +430,17 @@ export function createTerminal(
       return { ...existing.info };
     }
   }
+  const shell = defaultShell();
+  const interactiveArgs = interactiveShellArgs(shell);
   const record = spawnTerminal({
     workspaceId: input.workspaceId,
     cwd,
-    shell: defaultShell(),
+    shell,
     cols: input.cols ?? 80,
     rows: input.rows ?? 24,
     origin: "user",
     window,
+    ...(interactiveArgs !== undefined ? { args: interactiveArgs } : {}),
     ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
   });
   return { ...record.info };

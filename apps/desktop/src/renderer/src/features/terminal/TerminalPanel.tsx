@@ -58,6 +58,9 @@ type TerminalPanelProps = {
   sessionId?: string | undefined;
   /** True when the inspector's Terminal tab is the active one. */
   active?: boolean;
+  /** Select this terminal id once (composer background-terminal rail → here). */
+  revealTerminalId?: string | undefined;
+  onRevealTerminalConsumed?(): void;
 };
 
 /**
@@ -301,7 +304,14 @@ function TerminalView({
   );
 }
 
-export function TerminalPanel({ workspaceId, cwd, sessionId, active = true }: TerminalPanelProps) {
+export function TerminalPanel({
+  workspaceId,
+  cwd,
+  sessionId,
+  active = true,
+  revealTerminalId,
+  onRevealTerminalConsumed,
+}: TerminalPanelProps) {
   const registryRef = useRef<Registry>(new Map());
   const tabsRef = useRef<TerminalTab[]>([]);
   const spawning = useRef(false);
@@ -317,6 +327,26 @@ export function TerminalPanel({ workspaceId, cwd, sessionId, active = true }: Te
   useEffect(() => {
     tabsRef.current = tabs;
   }, [tabs]);
+
+  // Composer rail / external open: ensure the target exists in tabs, select it, consume.
+  useEffect(() => {
+    if (!revealTerminalId) return;
+    let cancelled = false;
+    void (async () => {
+      if (!tabsRef.current.some((tab) => tab.id === revealTerminalId)) {
+        const all = await window.modus.terminal.list();
+        if (cancelled) return;
+        const info = all.find((item: TerminalInfo) => item.id === revealTerminalId);
+        if (info) addTab(info);
+      }
+      if (cancelled) return;
+      setActiveId(revealTerminalId);
+      onRevealTerminalConsumed?.();
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [revealTerminalId, addTab, onRevealTerminalConsumed]);
 
   useEffect(() => {
     const controls = animate(

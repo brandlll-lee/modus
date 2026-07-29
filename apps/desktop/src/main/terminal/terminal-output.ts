@@ -72,6 +72,37 @@ export function deriveTitle(command: string): string {
 }
 
 /**
+ * ConPTY sessions start on the system OEM code page (often CP936 on Chinese
+ * Windows). UTF-8 byte TUIs need console CP 65001 *inside* the session —
+ * CreatePseudoConsole cannot set it. One prelude, shared by interactive + agent.
+ */
+const POWERSHELL_UTF8_PRELUDE =
+  "$OutputEncoding=[Console]::OutputEncoding=[Console]::InputEncoding=[System.Text.Encoding]::UTF8";
+const CMD_UTF8_PRELUDE = "chcp 65001>nul";
+
+function shellKind(shell: string): "powershell" | "cmd" | "posix" {
+  const base = shell.toLowerCase();
+  if (base.includes("pwsh") || base.includes("powershell")) return "powershell";
+  if (base.includes("cmd")) return "cmd";
+  return "posix";
+}
+
+/**
+ * Args for an interactive login shell with UTF-8 console CP already set.
+ * Returns `undefined` on POSIX (locale UTF-8 is the default).
+ */
+export function interactiveShellArgs(shell: string): string[] | undefined {
+  switch (shellKind(shell)) {
+    case "powershell":
+      return ["-NoLogo", "-NoExit", "-Command", POWERSHELL_UTF8_PRELUDE];
+    case "cmd":
+      return ["/d", "/k", CMD_UTF8_PRELUDE];
+    default:
+      return undefined;
+  }
+}
+
+/**
  * Args that make `shell` run a single command and then exit, so the child's
  * exit status becomes the terminal's exit code. Used for agent-run commands.
  */
@@ -80,22 +111,19 @@ export function shellCommandArgs(
   command: string,
   options: { utf8?: boolean } = {},
 ): string[] {
-  const base = shell.toLowerCase();
-  if (base.includes("pwsh") || base.includes("powershell")) {
-    // Force the session to emit/expect UTF-8 so the pty-host decodes tool
-    // output without code-page mojibake, then run the command.
-    const line = options.utf8
-      ? `$OutputEncoding=[Console]::OutputEncoding=[Console]::InputEncoding=[System.Text.Encoding]::UTF8; ${command}`
-      : command;
-    return ["-NoLogo", "-NoProfile", "-Command", line];
+  switch (shellKind(shell)) {
+    case "powershell": {
+      const line = options.utf8 ? `${POWERSHELL_UTF8_PRELUDE}; ${command}` : command;
+      return ["-NoLogo", "-NoProfile", "-Command", line];
+    }
+    case "cmd": {
+      const line = options.utf8 ? `${CMD_UTF8_PRELUDE} & ${command}` : command;
+      return ["/d", "/s", "/c", line];
+    }
+    default:
+      // bash / zsh / sh: login shell so the user's PATH (nvm, asdf, …) is present.
+      return ["-lc", command];
   }
-  if (base.includes("cmd")) {
-    const line = options.utf8 ? `chcp 65001>nul & ${command}` : command;
-    return ["/d", "/s", "/c", line];
-  }
-  // bash / zsh / sh: login shell so the user's PATH (nvm, asdf, …) is present.
-  // These default to UTF-8 locales, so no encoding preamble is needed.
-  return ["-lc", command];
 }
 
 /**

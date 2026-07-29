@@ -35,9 +35,8 @@ enum HostCommand {
         cols: u16,
         rows: u16,
         env: Option<HashMap<String, String>>,
-        /// Decode override for this session: `Some("utf-8")` forces UTF-8 (used
-        /// for agent commands whose shell is set to UTF-8); otherwise the host
-        /// console code page is used.
+        /// Protocol field retained for host compatibility. Decode is always
+        /// UTF-8 (`PtyDecoder`); the value is ignored.
         encoding: Option<String>,
         /// Optional arguments passed to the shell. When present the PTY runs
         /// `shell <args...>` (e.g. `bash -lc "<command>"`) and the child's exit
@@ -158,10 +157,8 @@ fn spawn_session(
     let read_id = id.clone();
     thread::spawn(move || {
         let mut buffer = [0_u8; 8192];
-        // Decode child bytes into UTF-8 using this session's encoding (UTF-8 for
-        // agent commands, else the OS console code page), with state carried
-        // across reads so multi-byte characters that straddle a read boundary
-        // are reassembled. See `decoder::PtyDecoder`.
+        // ConPTY pipe bytes are UTF-8; PtyDecoder is a streaming UTF-8 identity
+        // that reassembles multi-byte chars split across reads.
         let mut decoder = PtyDecoder::new(encoding.as_deref());
 
         loop {

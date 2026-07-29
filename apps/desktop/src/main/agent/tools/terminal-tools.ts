@@ -138,7 +138,7 @@ const runTool: ToolDefinition = defineTool({
     "Separate setup from start: run blocking setup that must finish first (install/build/migrate) in the foreground, then start the long-lived process with background:true.",
     "Before starting a duplicate server, use terminal_list to see what is already running; reuse is on by default so re-running the same command returns the existing terminal instead of drifting to a new port.",
     "To inspect or stop a process, use the real OS pid Modus reports (`pid N`) or terminal_kill with the terminal id. Do NOT discover PIDs by parsing `ps`: in some shells (e.g. Git Bash `ps -W`) the first column is a shell-internal PID that the OS killer (kill/taskkill) will not recognize — Modus's reported pid is the authoritative OS PID.",
-    "Prefer the terminal_* tools over the bash tool for process work (start/inspect/stop): they report the real OS pid, decode output in the host's code page, and terminal_kill stops the whole process tree (freeing held ports).",
+    "Prefer the terminal_* tools over the bash tool for process work (start/inspect/stop): they report the real OS pid, decode ConPTY output as UTF-8, and terminal_kill stops the whole process tree (freeing held ports).",
   ],
   parameters: Type.Object({
     command: Type.String({ description: "The shell command line to execute." }),
