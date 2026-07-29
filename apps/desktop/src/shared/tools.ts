@@ -151,7 +151,7 @@ export const BUILTIN_TOOL_CATALOG: ToolCatalogEntry[] = [
     permission: { danger: "dangerous", action: "file.write" },
     capabilities: ["write"],
     ui: {
-      verb: "Wrote",
+      verb: "Created",
       primaryArgKey: "path",
       render: "diff",
       diffSource: "newFile",

@@ -4,6 +4,7 @@ import {
   IconCheck,
   IconChevronDown,
   IconChevronRight,
+  IconCloud,
   IconCopy,
   IconDots,
   IconFileDiff,
@@ -544,7 +545,7 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
             icon={<IconFileDiff size={22} stroke={1.4} />}
           />
         ) : history ? (
-          commits.map((commit) => (
+          commits.map((commit, index) => (
             <CommitRow
               commit={commit}
               cwd={activeCwd ?? ""}
@@ -552,6 +553,8 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
               expandedFiles={expanded}
               files={commitFiles[commit.hash]}
               ignoreWhitespace={ignoreWhitespace}
+              isFirst={index === 0}
+              isLast={index === commits.length - 1}
               key={commit.hash}
               onToggle={() => void toggleCommit(commit.hash)}
               onToggleFile={toggleFile}
@@ -1461,7 +1464,83 @@ function ChangeMeta({ badge, stat }: { badge: ChangeBadge; stat?: LineStat | und
   );
 }
 
-/* ── Commit row (All commits scope): subject · hash · author · relative date ── */
+/* ── Commit row (All commits): Git Graph–dense single-lane timeline ── */
+
+/**
+ * Parse git `%D` into tip decorations. Local tip branch comes from `HEAD ->`,
+ * remote presence from sibling decorate names that suffix `/${branch}` (or
+ * the literal `origin/HEAD` pointer git itself prints).
+ */
+function commitDecorations(refs: string[]): {
+  isHead: boolean;
+  branch: string | undefined;
+  hasRemote: boolean;
+  tags: string[];
+} {
+  let isHead = false;
+  let branch: string | undefined;
+  const tags: string[] = [];
+  const other: string[] = [];
+  for (const raw of refs) {
+    const ref = raw.trim();
+    if (!ref) continue;
+    if (ref === "HEAD") {
+      isHead = true;
+      continue;
+    }
+    if (ref.startsWith("HEAD -> ")) {
+      isHead = true;
+      branch = ref.slice("HEAD -> ".length);
+      continue;
+    }
+    if (ref.startsWith("tag: ")) {
+      tags.push(ref.slice("tag: ".length));
+      continue;
+    }
+    other.push(ref);
+  }
+  if (!branch) {
+    branch = other.find((ref) => !ref.includes("/")) ?? other[0];
+  }
+  const hasRemote =
+    other.some((ref) => ref === "origin/HEAD") ||
+    (branch != null && other.some((ref) => ref !== branch && ref.endsWith(`/${branch}`)));
+  return { isHead, branch, hasRemote, tags };
+}
+
+function CommitGraphLane({
+  isFirst,
+  isLast,
+  isHead,
+  isMerge,
+}: {
+  isFirst: boolean;
+  isLast: boolean;
+  isHead: boolean;
+  isMerge: boolean;
+}) {
+  return (
+    <span aria-hidden className="relative flex h-full w-4 shrink-0 items-center justify-center self-stretch">
+      {/* One continuous rail — same ink as the nodes (link blue, like Git Graph). */}
+      {!isFirst ? (
+        <span className="absolute inset-x-0 top-0 bottom-1/2 mx-auto w-px bg-link/55" />
+      ) : null}
+      {!isLast ? (
+        <span className="absolute inset-x-0 top-1/2 bottom-0 mx-auto w-px bg-link/55" />
+      ) : null}
+      {isMerge ? (
+        <span className="relative z-1 size-[7px] rotate-45 border border-link bg-panel" />
+      ) : (
+        <span
+          className={cn(
+            "relative z-1 rounded-full bg-link",
+            isHead ? "size-[7px] ring-2 ring-link/25 ring-offset-1 ring-offset-panel" : "size-[6px]",
+          )}
+        />
+      )}
+    </span>
+  );
+}
 
 function CommitRow({
   commit,
@@ -1469,6 +1548,8 @@ function CommitRow({
   expanded,
   files,
   expandedFiles,
+  isFirst,
+  isLast,
   onToggle,
   onToggleFile,
   sideBySide,
@@ -1479,44 +1560,66 @@ function CommitRow({
   expanded: boolean;
   files: ReviewFile[] | undefined;
   expandedFiles: Set<string>;
+  isFirst: boolean;
+  isLast: boolean;
   onToggle(): void;
   onToggleFile(key: string): void;
   sideBySide: boolean;
   ignoreWhitespace: boolean;
 }) {
+  const { isHead, branch, hasRemote, tags } = commitDecorations(commit.refs ?? []);
+  const isMerge = (commit.parents ?? []).length >= 2;
+
   return (
-    <div className="border-hairline-soft border-b">
+    <div>
       <button
         className={cn(
-          "flex h-11 w-full items-center gap-2 px-3 text-left text-sm transition-colors",
-          expanded ? "bg-active text-fg" : "text-fg-muted hover:bg-hover hover:text-fg",
+          "group flex h-8 w-full items-center gap-2 px-3 text-left transition-colors",
+          expanded ? "bg-active" : "hover:bg-hover",
         )}
         onClick={onToggle}
+        title={`${commit.subject}\n${commit.author} · ${commit.relativeDate} · ${commit.shortHash}`}
         type="button"
       >
-        <span className="flex size-4 shrink-0 items-center justify-center text-fg-faint">
-          {expanded ? (
-            <IconChevronDown size={13} stroke={1.7} />
-          ) : (
-            <IconChevronRight size={13} stroke={1.7} />
-          )}
+        <CommitGraphLane isFirst={isFirst} isHead={isHead} isLast={isLast} isMerge={isMerge} />
+        <span className="flex min-w-0 flex-1 items-baseline gap-2 text-[12.5px] leading-none">
+          <span className="min-w-0 truncate text-fg">{commit.subject}</span>
+          <span className="shrink-0 text-fg-faint">{commit.author}</span>
         </span>
-        <span className="flex size-4 shrink-0 items-center justify-center text-fg-subtle">
-          <IconGitCommit size={15} stroke={1.7} />
-        </span>
-        <span className="flex min-w-0 flex-1 flex-col">
-          <span className="truncate text-fg">{commit.subject}</span>
-          <span className="truncate text-2xs text-fg-faint">
-            {commit.author} · {commit.relativeDate}
+        <span className="flex shrink-0 items-center gap-1.5">
+          {isHead && branch ? (
+            <span className="inline-flex items-center gap-0.5 rounded-sm bg-link/12 px-1 py-px text-2xs text-link">
+              <IconGitBranch size={11} stroke={1.8} />
+              {branch}
+            </span>
+          ) : null}
+          {isHead && hasRemote ? (
+            <IconCloud className="text-fg-subtle" size={13} stroke={1.6} />
+          ) : null}
+          {!isHead && tags[0] ? (
+            <span className="rounded-sm bg-hover px-1 py-px font-mono text-2xs text-fg-subtle">
+              {tags[0]}
+            </span>
+          ) : null}
+          <span
+            className={cn(
+              "w-3.5 shrink-0 text-fg-faint transition-opacity",
+              expanded ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+            )}
+          >
+            {expanded ? (
+              <IconChevronDown size={12} stroke={1.7} />
+            ) : (
+              <IconChevronRight size={12} stroke={1.7} />
+            )}
           </span>
         </span>
-        <span className="shrink-0 font-mono text-2xs text-fg-faint">{commit.shortHash}</span>
       </button>
       <CollapsibleMotion open={expanded} preset="default">
         {files === undefined ? (
-          <div className="px-6 py-3 text-fg-faint text-xs">Loading files…</div>
+          <div className="py-2 pr-3 pl-9 text-fg-faint text-xs">Loading files…</div>
         ) : files.length === 0 ? (
-          <div className="px-6 py-3 text-fg-faint text-xs">No files changed.</div>
+          <div className="py-2 pr-3 pl-9 text-fg-faint text-xs">No files changed.</div>
         ) : (
           files.map((file) => {
             const key = `${commit.hash}:${file.path}`;

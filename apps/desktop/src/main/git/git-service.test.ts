@@ -40,7 +40,7 @@ async function git(args: string[]): Promise<string> {
 }
 
 beforeEach(async () => {
-  repo = await mkdtemp(join(process.cwd(), "modus-git-test-"));
+  repo = await mkdtemp(join(tmpdir(), "modus-git-test-"));
   await git(["init"]);
   await git(["config", "user.email", "test@example.com"]);
   await git(["config", "user.name", "Modus Test"]);
@@ -166,7 +166,7 @@ describe("git-service", () => {
   });
 
   it("commits and pushes to a configured remote, setting upstream", async () => {
-    const remote = await mkdtemp(join(process.cwd(), "modus-git-remote-"));
+    const remote = await mkdtemp(join(tmpdir(), "modus-git-remote-"));
     try {
       await execFileAsync("git", ["init", "--bare"], { cwd: remote, windowsHide: true });
       await git(["remote", "add", "origin", remote]);
@@ -241,6 +241,25 @@ describe("git-service", () => {
     expect(log[0]?.shortHash).toMatch(/^[0-9a-f]{7,}$/);
     expect(log[0]?.author).toBe("Modus Test");
     expect(log[0]?.relativeDate).toBeTruthy();
+    expect(log[0]?.parents).toEqual([log[1]?.hash]);
+    expect(log[1]?.parents).toEqual([]);
+    expect(log[0]?.refs.some((ref) => ref === "HEAD" || ref.startsWith("HEAD -> "))).toBe(true);
+  });
+
+  it("reports multiple parents for a merge commit", async () => {
+    await git(["checkout", "-b", "side"]);
+    await writeFile(join(repo, "side.txt"), "side\n");
+    await git(["add", "side.txt"]);
+    await git(["commit", "-m", "side work"]);
+    await git(["checkout", "-"]);
+    await writeFile(join(repo, "tracked.txt"), "mainline\n");
+    await git(["commit", "-am", "mainline"]);
+    await git(["merge", "side", "-m", "merge side"]);
+
+    const [head] = await listCommitLog(repo);
+
+    expect(head?.subject).toBe("merge side");
+    expect(head?.parents).toHaveLength(2);
   });
 
   it("lists files changed by a specific commit", async () => {
@@ -286,7 +305,7 @@ describe("git-service", () => {
   it("unstages a new file on an unborn branch", async () => {
     // A brand-new repo with NO initial commit — `git restore` would fail here
     // (no HEAD), which was the silent "discard does nothing" bug.
-    const fresh = await mkdtemp(join(process.cwd(), "modus-git-unborn-"));
+    const fresh = await mkdtemp(join(tmpdir(), "modus-git-unborn-"));
     try {
       await execFileAsync("git", ["init"], { cwd: fresh, windowsHide: true });
       await execFileAsync("git", ["config", "user.email", "t@e.com"], { cwd: fresh });

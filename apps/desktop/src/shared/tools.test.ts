@@ -47,6 +47,8 @@ describe("tool render descriptor (single source of truth)", () => {
     expect(getToolUiMeta("edit")?.diffSource).toBe("edits");
     expect(getToolUiMeta("write")?.render).toBe("diff");
     expect(getToolUiMeta("write")?.diffSource).toBe("newFile");
+    expect(getToolUiMeta("write")?.verb).toBe("Created");
+    expect(getToolUiMeta("edit")?.verb).toBe("Edited");
 
     // Terminal tools carry terminalFramed so output parsing is data, not a name check.
     expect(getToolUiMeta("bash")?.render).toBe("terminal");

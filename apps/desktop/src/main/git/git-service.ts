@@ -329,7 +329,8 @@ const LOG_SEP = "\u001f";
  * log` call; files per commit are fetched lazily via `listCommitChanges`.
  */
 export async function listCommitLog(cwd: string, limit = 50): Promise<GitCommit[]> {
-  const format = ["%H", "%h", "%s", "%an", "%aI", "%ar"].join(LOG_SEP);
+  // %P / %D feed the All-commits single-lane graph (parents → merge node; refs → pills).
+  const format = ["%H", "%h", "%s", "%an", "%aI", "%ar", "%P", "%D"].join(LOG_SEP);
   const output = await gitSafe(cwd, [
     "log",
     `--max-count=${Math.max(1, Math.min(limit, 500))}`,
@@ -339,8 +340,11 @@ export async function listCommitLog(cwd: string, limit = 50): Promise<GitCommit[
   for (const record of output.split("\0")) {
     const line = record.trim();
     if (!line) continue;
-    const [hash, shortHash, subject, author, date, relativeDate] = line.split(LOG_SEP);
+    const [hash, shortHash, subject, author, date, relativeDate, parentsRaw, refsRaw] =
+      line.split(LOG_SEP);
     if (!hash) continue;
+    const parents = (parentsRaw ?? "").trim();
+    const refs = (refsRaw ?? "").trim();
     commits.push({
       hash,
       shortHash: shortHash ?? hash.slice(0, 7),
@@ -348,6 +352,8 @@ export async function listCommitLog(cwd: string, limit = 50): Promise<GitCommit[
       author: author ?? "",
       date: date ?? "",
       relativeDate: relativeDate ?? "",
+      parents: parents ? parents.split(/\s+/) : [],
+      refs: refs ? refs.split(", ").map((ref) => ref.trim()).filter(Boolean) : [],
     });
   }
   return commits;
