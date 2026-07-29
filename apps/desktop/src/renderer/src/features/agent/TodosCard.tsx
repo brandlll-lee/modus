@@ -13,18 +13,19 @@ import { ShinyText } from "../../components/ui/ShinyText";
 import { cn } from "../../lib/cn";
 
 /**
- * Agent task-list snapshot (Cursor-style To-dos card). The timeline renders one
+ * Agent task-list snapshot (wireframe To-dos card). The timeline renders one
  * card when the agent creates the list and another when all items are completed.
  * While the displayed `todo_write` call is in flight, the header shows a
  * shimmering "Updating to-dos…" hint.
+ *
+ * Chrome is `.timeline-wire` — transparent fill + slight radius — so the card
+ * shares the chat canvas instead of floating as a grey blotch.
  */
 export function TodosCard({ todos, updating }: { todos: TodoItem[]; updating: boolean }) {
   const [open, setOpen] = useState(true);
-  const done = todos.filter((todo) => todo.status === "completed").length;
-  const headline = done > 0 ? `${done} of ${todos.length} Done` : `To-dos ${todos.length}`;
 
   return (
-    <section className="overflow-hidden rounded-lg border border-hairline-soft bg-card">
+    <section className="timeline-wire overflow-hidden">
       <button
         aria-expanded={open}
         className="flex h-9 w-full items-center gap-2 px-3 text-left transition-colors hover:bg-hover"
@@ -32,7 +33,8 @@ export function TodosCard({ todos, updating }: { todos: TodoItem[]; updating: bo
         type="button"
       >
         <IconListCheck className="shrink-0 text-fg-subtle" size={14} stroke={1.7} />
-        <span className="shrink-0 text-sm text-fg-muted">{headline}</span>
+        <span className="shrink-0 text-sm text-fg-muted">To-dos</span>
+        <span className="shrink-0 text-sm text-fg-faint tabular-nums">{todos.length}</span>
         {updating ? (
           <span className="min-w-0 truncate text-xs">
             <ShinyText>Updating to-dos…</ShinyText>
@@ -49,7 +51,7 @@ export function TodosCard({ todos, updating }: { todos: TodoItem[]; updating: bo
         />
       </button>
       <CollapsibleMotion open={open} preset="timeline">
-        <ul className="border-hairline-soft border-t px-3 py-2">
+        <ul className="border-hairline border-t px-3 py-1.5">
           {todos.map((todo) => (
             <TodoRow key={todo.id} todo={todo} />
           ))}
@@ -62,9 +64,9 @@ export function TodosCard({ todos, updating }: { todos: TodoItem[]; updating: bo
 /**
  * Per-status visual language for a to-do row. Centralizing icon + colour here
  * (instead of branching inline) keeps the hierarchy systematic and legible:
- * unfinished work stays prominent in `fg`, the active item gains weight + the
- * brand accent, and finished work recedes to a clearly struck, dimmed tone.
- * Every colour is a Modus token, so dark/light themes flip automatically.
+ * unfinished work stays muted, the active item gains weight, and finished work
+ * recedes to a clearly struck, dimmed tone. Every colour is a Modus token, so
+ * dark/light themes flip automatically — no brand purple on the wireframe.
  */
 const TODO_ROW_STYLES: Record<
   TodoStatus,
@@ -72,13 +74,13 @@ const TODO_ROW_STYLES: Record<
 > = {
   pending: {
     Glyph: IconCircleDashed,
-    iconClass: "text-fg-subtle",
+    iconClass: "text-fg-faint",
     iconStroke: 1.6,
-    textClass: "text-fg",
+    textClass: "text-fg-subtle",
   },
   in_progress: {
     Glyph: IconCircleArrowRight,
-    iconClass: "text-focus-ring-soft",
+    iconClass: "text-fg-muted",
     iconStroke: 1.8,
     textClass: "text-fg font-medium",
   },
@@ -86,7 +88,7 @@ const TODO_ROW_STYLES: Record<
     Glyph: IconCircleCheck,
     iconClass: "text-fg-faint",
     iconStroke: 1.7,
-    textClass: "text-fg-subtle line-through decoration-fg-faint",
+    textClass: "text-fg-faint line-through decoration-fg-faint",
   },
   cancelled: {
     Glyph: IconCircleX,

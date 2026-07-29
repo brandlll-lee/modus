@@ -62,8 +62,8 @@ import {
   selectedThinkingOption,
 } from "../../lib/modelThinking";
 import { type ThemeMode, useTheme } from "../../lib/theme";
-import { CustomProviderForm } from "./CustomProviderForm";
 import { ApprovalModeSettings } from "./ApprovalModeSettings";
+import { CustomProviderForm } from "./CustomProviderForm";
 import { Field, parsePositiveInteger, SelectField, SwitchControl } from "./form-controls";
 import { groupProviderModels, modelResultLabel } from "./modelListUtils";
 import { ProviderLogo } from "./ProviderLogo";
@@ -2689,7 +2689,6 @@ type SubagentFormState = {
   description: string;
   model: string;
   readOnly: boolean;
-  isBackground: boolean;
   tools: string;
   disallowedTools: string;
   isolation: "shared" | "worktree";
@@ -2704,7 +2703,6 @@ function emptySubagentForm(scope: ConfigScope = "workspace", projectCwd = ""): S
     description: "",
     model: "inherit",
     readOnly: false,
-    isBackground: false,
     tools: "",
     disallowedTools: "",
     isolation: "shared",
@@ -2721,7 +2719,6 @@ function formFromSubagent(subagent: SubagentDetail): SubagentFormState {
     description: subagent.description,
     model: subagent.model,
     readOnly: subagent.readOnly,
-    isBackground: subagent.isBackground,
     tools: (subagent.tools ?? []).join(", "),
     disallowedTools: (subagent.disallowedTools ?? []).join(", "),
     isolation: subagent.isolation,
@@ -2826,7 +2823,6 @@ function SubagentsSettingsPanel({
         description: current.description.trim(),
         model: current.model.trim() || "inherit",
         readOnly: current.readOnly,
-        isBackground: current.isBackground,
         ...(tools ? { tools } : {}),
         ...(disallowedTools ? { disallowedTools } : {}),
         isolation: current.isolation,
@@ -3024,33 +3020,18 @@ function SubagentsSettingsPanel({
                 value={form.description}
               />
             </label>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="flex items-center justify-between gap-4 rounded-md border border-hairline-soft bg-surface px-3 py-2">
-                <span>
-                  <span className="block text-sm text-fg">Readonly</span>
-                  <span className="block text-xs text-fg-faint">
-                    Disable write/shell/control tools
-                  </span>
+            <div className="flex items-center justify-between gap-4 rounded-md border border-hairline-soft bg-surface px-3 py-2">
+              <span>
+                <span className="block text-sm text-fg">Readonly</span>
+                <span className="block text-xs text-fg-faint">
+                  Disable write/shell/control tools
                 </span>
-                <SwitchControl
-                  ariaLabel="Readonly subagent"
-                  checked={form.readOnly}
-                  onCheckedChange={(checked) => setForm({ ...form, readOnly: checked })}
-                />
-              </div>
-              <div className="flex items-center justify-between gap-4 rounded-md border border-hairline-soft bg-surface px-3 py-2">
-                <span>
-                  <span className="block text-sm text-fg">Background</span>
-                  <span className="block text-xs text-fg-faint">
-                    Return immediately after spawn
-                  </span>
-                </span>
-                <SwitchControl
-                  ariaLabel="Background subagent"
-                  checked={form.isBackground}
-                  onCheckedChange={(checked) => setForm({ ...form, isBackground: checked })}
-                />
-              </div>
+              </span>
+              <SwitchControl
+                ariaLabel="Readonly subagent"
+                checked={form.readOnly}
+                onCheckedChange={(checked) => setForm({ ...form, readOnly: checked })}
+              />
             </div>
             <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_160px]">
               <label className="flex flex-col gap-1.5">
@@ -3175,7 +3156,6 @@ function SubagentsSettingsPanel({
                     <span className="font-mono text-sm text-fg">/{subagent.name}</span>
                     <ReadOnlyPill>{subagent.model || "inherit"}</ReadOnlyPill>
                     {subagent.readOnly ? <ReadOnlyPill>readonly</ReadOnlyPill> : null}
-                    {subagent.isBackground ? <ReadOnlyPill>background</ReadOnlyPill> : null}
                     {subagent.isolation === "worktree" ? (
                       <ReadOnlyPill>worktree</ReadOnlyPill>
                     ) : null}

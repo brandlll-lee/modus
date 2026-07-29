@@ -19,9 +19,9 @@ export function SessionStatusDot({
 
   if (activity?.needsInput) {
     return (
-      <span className={cn("relative flex size-2 shrink-0", className)} title="Needs your input">
+      <span className={cn("relative flex size-1.5 shrink-0", className)} title="Needs your input">
         <span className="absolute inset-0 animate-ping rounded-full bg-danger/50" />
-        <span className="relative size-2 rounded-full bg-danger" />
+        <span className="relative size-1.5 rounded-full bg-danger" />
       </span>
     );
   }
@@ -46,7 +46,7 @@ export function SessionStatusDot({
     return (
       <span
         className={cn(
-          "size-2 shrink-0 rounded-full border border-danger bg-transparent",
+          "size-1.5 shrink-0 rounded-full border border-danger bg-transparent",
           className,
         )}
         title="Last run failed"
@@ -56,14 +56,14 @@ export function SessionStatusDot({
   if (activity?.unread) {
     return (
       <span
-        className={cn("size-2 shrink-0 rounded-full bg-success", className)}
+        className={cn("size-1.5 shrink-0 rounded-full bg-success", className)}
         title="Finished while in the background"
       />
     );
   }
   return (
     <span
-      className={cn("size-2 shrink-0 rounded-full bg-fg-faint/35", className)}
+      className={cn("size-1.5 shrink-0 rounded-full bg-fg-faint/35", className)}
       title="Idle"
     />
   );

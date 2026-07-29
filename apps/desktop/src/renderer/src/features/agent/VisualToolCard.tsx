@@ -50,8 +50,8 @@ const RECEIVER_HTML = `<!doctype html>
   --color-fg-subtle: #8a8a87;
   --color-fg-faint: #5a5a5d;
   --color-hairline: rgba(255,255,255,.08);
-  --color-link: #7bbcff;
-  --color-link-hover: #a8d5ff;
+  --color-link: #6299c3;
+  --color-link-hover: #7eb0d2;
   --color-hover: rgba(255,255,255,.04);
   --color-active: rgba(255,255,255,.06);
   --color-chip-faint: rgba(255,255,255,.03);
@@ -77,15 +77,16 @@ html, body {
 }
 * {
   box-sizing: border-box;
-  scrollbar-width: thin;
-  scrollbar-color: transparent transparent;
 }
-*:hover {
-  scrollbar-color: color-mix(in oklab, var(--color-fg) 22%, transparent) transparent;
-}
+/* scrollbar-width|color must stay unset — they disable ::-webkit-scrollbar* (Chrome 121+). */
 *::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
 }
 *::-webkit-scrollbar-thumb {
   background-color: transparent;
@@ -94,7 +95,10 @@ html, body {
   background-clip: content-box;
 }
 *:hover::-webkit-scrollbar-thumb {
-  background-color: color-mix(in oklab, var(--color-fg) 22%, transparent);
+  background-color: color-mix(in oklab, var(--color-fg) 8%, transparent);
+}
+*:hover::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in oklab, var(--color-fg) 14%, transparent);
 }
 *::-webkit-scrollbar-track,
 *::-webkit-scrollbar-corner {

@@ -32,6 +32,7 @@ import type { AgentSessionInfo, WorkspaceInfo } from "../../../shared/contracts"
 import type { SessionActivity } from "../features/agent/agentEventHub";
 import { SessionStatusDot } from "../features/agent/SessionStatusDot";
 import { cn } from "../lib/cn";
+import { useScrollFade } from "../lib/useScrollFade";
 import { CollapsibleMotion } from "./ui/CollapsibleMotion";
 import { ToolbarButton } from "./ui/ToolbarButton";
 
@@ -101,6 +102,7 @@ export function Sidebar({
   const [projectsExpanded, setProjectsExpanded] = useState(true);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const sessionsByWorkspace = groupSessionsByWorkspace(agentSessions);
+  const { ref: scrollFadeRef, fadeTop, fadeBottom } = useScrollFade();
 
   const dragStartRef = useRef<{ x: number; width: number } | null>(null);
   const latestWidthRef = useRef(width);
@@ -188,7 +190,15 @@ export function Sidebar({
           <NavRow icon={<IconClock size={17} stroke={1.75} />}>Automations</NavRow>
         </div>
 
-        <div className="scroll-thin mr-1 min-h-0 flex-1 overflow-y-auto pr-2 pl-2.5 pb-2">
+        <div
+          className={cn(
+            "scroll-thin min-h-0 flex-1 overflow-y-auto pr-2 pl-2.5 pb-2",
+            (fadeTop || fadeBottom) && "scroll-fade",
+          )}
+          {...(fadeTop ? { "data-fade-top": "" } : {})}
+          {...(fadeBottom ? { "data-fade-bottom": "" } : {})}
+          ref={scrollFadeRef}
+        >
           <SectionHeader
             expanded={projectsExpanded}
             onToggle={() => setProjectsExpanded((expanded) => !expanded)}
@@ -488,12 +498,12 @@ function SessionRow({
         title="Open"
         type="button"
       >
-        <span className="min-w-0 flex-1 truncate">{title}</span>
-        <span className="ml-2 shrink-0 text-xs font-normal text-fg-faint group-hover:hidden">
-          {formatRelativeTime(updatedAt)}
-        </span>
+        <span className="min-w-0 flex-1 truncate-fade">{title}</span>
       </button>
       <span className="ml-1 hidden shrink-0 items-center group-hover:flex group-focus-within:flex">
+        <span className="px-1 text-xs font-normal text-fg-faint tabular-nums">
+          {formatRelativeTime(updatedAt)}
+        </span>
         <IconButton label={pinned ? "Unpin chat" : "Pin chat"} onClick={onPin}>
           {pinned ? <IconPinnedOff size={14} stroke={1.8} /> : <IconPin size={14} stroke={1.8} />}
         </IconButton>
@@ -536,17 +546,17 @@ function ArchivedSessionRow({
   return (
     <div className="group flex h-[30px] items-center rounded-sm pr-1 text-sm text-fg-faint transition-colors hover:bg-hover hover:text-fg-muted">
       <button
-        className="min-w-0 flex-1 truncate py-1.5 pr-1 pl-3 text-left"
+        className="min-w-0 flex-1 truncate-fade py-1.5 pr-1 pl-3 text-left"
         onClick={onOpen}
         title="Open archived chat"
         type="button"
       >
         {session.title}
       </button>
-      <span className="mr-1 text-2xs text-fg-faint group-hover:hidden">
-        {formatRelativeTime(session.archivedAt ?? session.updatedAt)}
-      </span>
-      <span className="hidden shrink-0 group-hover:flex group-focus-within:flex">
+      <span className="hidden shrink-0 items-center group-hover:flex group-focus-within:flex">
+        <span className="px-1 text-2xs tabular-nums">
+          {formatRelativeTime(session.archivedAt ?? session.updatedAt)}
+        </span>
         <IconButton label="Restore" onClick={onRestore}>
           <IconArchiveOff size={14} stroke={1.8} />
         </IconButton>

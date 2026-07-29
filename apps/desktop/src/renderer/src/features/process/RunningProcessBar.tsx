@@ -1,4 +1,4 @@
-import { IconTrash } from "@tabler/icons-react";
+import { IconAppWindow, IconTerminal2, IconTrash } from "@tabler/icons-react";
 import { useState } from "react";
 import type { ManagedProcessInfo } from "../../../../shared/contracts";
 import { formatElapsed } from "../../../../shared/managed-process";
@@ -14,10 +14,13 @@ export function RunningProcessBar({
   processes,
   nowMs,
   onStop,
+  onOpenTerminal,
 }: {
   processes: ManagedProcessInfo[];
   nowMs: number;
   onStop(id: string): void;
+  /** Open the inspector Terminal tab and select this process (terminal ids only). */
+  onOpenTerminal?(terminalId: string): void;
 }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -33,7 +36,13 @@ export function RunningProcessBar({
     <ComposerRail expanded={expanded} label={label} onExpandedChange={setExpanded}>
       <ul className="flex flex-col">
         {processes.map((process) => (
-          <ProcessRow key={process.id} nowMs={nowMs} onStop={onStop} process={process} />
+          <ProcessRow
+            key={process.id}
+            nowMs={nowMs}
+            onOpenTerminal={onOpenTerminal}
+            onStop={onStop}
+            process={process}
+          />
         ))}
       </ul>
     </ComposerRail>
@@ -44,14 +53,39 @@ function ProcessRow({
   process,
   nowMs,
   onStop,
+  onOpenTerminal,
 }: {
   process: ManagedProcessInfo;
   nowMs: number;
   onStop: (id: string) => void;
+  onOpenTerminal?: ((terminalId: string) => void) | undefined;
 }) {
   const elapsed = formatElapsed(nowMs - Date.parse(process.startedAt));
+  const isTerminal = process.kind === "terminal";
+  const canOpen = isTerminal && Boolean(onOpenTerminal);
+  const Icon = isTerminal ? IconTerminal2 : IconAppWindow;
+
   return (
-    <li className="group/row flex items-center gap-2 rounded-md px-2 py-1.5">
+    <li
+      className={cn(
+        "group/row flex items-center gap-2 rounded-md px-2 py-1.5",
+        canOpen && "cursor-pointer hover:bg-hover",
+      )}
+      onClick={canOpen ? () => onOpenTerminal?.(process.id) : undefined}
+      onKeyDown={
+        canOpen
+          ? (event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onOpenTerminal?.(process.id);
+              }
+            }
+          : undefined
+      }
+      role={canOpen ? "button" : undefined}
+      tabIndex={canOpen ? 0 : undefined}
+    >
+      <Icon className="shrink-0 text-fg-faint" size={15} stroke={1.7} />
       <span
         className="min-w-0 flex-1 truncate text-sm text-fg-subtle transition-colors group-hover/row:text-fg"
         title={process.label}
@@ -67,7 +101,10 @@ function ProcessRow({
           "flex size-5 shrink-0 items-center justify-center rounded-md text-fg-faint opacity-0 transition-[opacity,color]",
           "hover:text-danger group-hover/row:opacity-100",
         )}
-        onClick={() => onStop(process.id)}
+        onClick={(event) => {
+          event.stopPropagation();
+          onStop(process.id);
+        }}
         onMouseDown={(event) => event.preventDefault()}
         tabIndex={-1}
         type="button"

@@ -19,8 +19,7 @@ type ToolCardProps = {
   output: string;
   isError?: boolean;
   isComplete?: boolean;
-  /** Session cwd, threaded to the diff card so it can open the edited file. */
-  cwd?: string | undefined;
+  onOpenFile?: ((path: string) => void) | undefined;
   questionRequest?: QuestionRequest;
   questionAnswers?: QuestionAnswer[];
   questionSkipped?: boolean;
@@ -46,7 +45,7 @@ export const ToolCard = memo(
     output,
     isComplete = false,
     isError = false,
-    cwd,
+    onOpenFile,
     questionRequest,
     questionAnswers,
     questionSkipped,
@@ -60,7 +59,13 @@ export const ToolCard = memo(
     const render = toolRenderKind(name);
     if (render === "diff") {
       return (
-        <DiffToolCard args={args} cwd={cwd} isComplete={isComplete} isError={isError} name={name} />
+        <DiffToolCard
+          args={args}
+          isComplete={isComplete}
+          isError={isError}
+          name={name}
+          {...(onOpenFile ? { onOpenFile } : {})}
+        />
       );
     }
 
@@ -131,7 +136,7 @@ export const ToolCard = memo(
     prev.output === next.output &&
     prev.isComplete === next.isComplete &&
     prev.isError === next.isError &&
-    prev.cwd === next.cwd &&
+    prev.onOpenFile === next.onOpenFile &&
     prev.questionRequest === next.questionRequest &&
     prev.questionAnswers === next.questionAnswers &&
     prev.questionSkipped === next.questionSkipped &&
@@ -140,7 +145,7 @@ export const ToolCard = memo(
     argsEqual(prev.args, next.args),
 );
 
-type FlatToolRowProps = Omit<ToolCardProps, "cwd">;
+type FlatToolRowProps = ToolCardProps;
 
 const LIVE_AUTO_COLLAPSE_MS = 800;
 const LIVE_OUTPUT_PACING = {
@@ -204,7 +209,7 @@ function LiveToolCard({
   }, [bodyOpen, detail]);
 
   return (
-    <div className="min-w-0 overflow-hidden rounded-lg border border-hairline bg-card text-sm">
+    <div className="timeline-wire min-w-0 overflow-hidden text-sm">
       <button
         aria-expanded={bodyOpen}
         className="flex w-full min-w-0 items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-hover"
@@ -244,7 +249,7 @@ function LiveToolCard({
       <CollapsibleMotion open={bodyOpen} preset="timeline">
         <pre
           className={cn(
-            "scroll-thin max-h-80 overflow-auto border-hairline border-t bg-card px-3 py-2",
+            "scroll-thin max-h-80 overflow-auto border-hairline border-t px-3 py-2",
             "whitespace-pre-wrap wrap-break-word text-[12px] text-fg-faint leading-relaxed",
             isError && "text-danger/90",
           )}
