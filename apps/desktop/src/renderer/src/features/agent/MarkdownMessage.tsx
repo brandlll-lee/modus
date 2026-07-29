@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, lazy, type ReactNode, Suspense } from "react";
+import { MarkdownFileNavContext } from "./markdownFileNav";
 
 const MarkdownMessageRenderer = lazy(() => import("./MarkdownMessageRenderer"));
 
@@ -6,15 +7,25 @@ type MarkdownMessageProps = {
   className?: string | undefined;
   content: string;
   streaming?: boolean;
+  cwd?: string | undefined;
+  onOpenFile?: ((path: string) => void) | undefined;
 };
 
-export function MarkdownMessage({ className, content, streaming = false }: MarkdownMessageProps) {
+export function MarkdownMessage({
+  className,
+  content,
+  streaming = false,
+  cwd,
+  onOpenFile,
+}: MarkdownMessageProps) {
   return (
-    <MarkdownMessageErrorBoundary content={content}>
-      <Suspense fallback={<PlainTextFallback content={content} />}>
-        <MarkdownMessageRenderer className={className} content={content} streaming={streaming} />
-      </Suspense>
-    </MarkdownMessageErrorBoundary>
+    <MarkdownFileNavContext.Provider value={{ cwd, onOpenFile }}>
+      <MarkdownMessageErrorBoundary content={content}>
+        <Suspense fallback={<PlainTextFallback content={content} />}>
+          <MarkdownMessageRenderer className={className} content={content} streaming={streaming} />
+        </Suspense>
+      </MarkdownMessageErrorBoundary>
+    </MarkdownFileNavContext.Provider>
   );
 }
 

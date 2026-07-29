@@ -27,13 +27,13 @@
   --color-code-fg: #d4d4d4;
   --color-code-line-number: #858585;
   --color-code-line-number-active: #b8b8b8;
-  --color-code-active-line: rgba(255, 255, 255, 0);
+  --color-code-active-line: rgba(255, 255, 255, 0.045);
   --color-code-indent-guide: rgba(255, 255, 255, 0.08);
-  --color-code-comment: #6a9955;
-  --color-code-keyword: #c586c0;
-  --color-code-string: #ce9178;
-  --color-code-number: #b5cea8;
-  --color-code-type: #4fc1ff;
+  --color-code-comment: #8b949e;
+  --color-code-keyword: #b794f4;
+  --color-code-string: #c9a882;
+  --color-code-number: #a3b89a;
+  --color-code-type: #7db7d4;
 
   /* hairline 三级 —— 用途分层（明度对齐 Cursor 实测）：
      - soft (0.03)     内部 list 分隔、超细分割
@@ -62,6 +62,8 @@
   --color-fg-muted: #b4b4b1;
   --color-fg-subtle: #8a8a87;
   --color-fg-faint: #5a5a5d;
+  /* Hint / empty-state copy — one step quieter than faint chrome labels. */
+  --color-fg-placeholder: #454548;
   --color-icon: #d8d8d6;
   --color-icon-muted: #a6a6a3;
 
@@ -85,9 +87,9 @@
   /* 文本选区：半透明品牌紫。文字色保留（含代码高亮），暗底上读作柔和紫高亮 */
   --color-selection: rgba(133, 63, 244, 0.42);
 
-  /* Markdown 链接色（暗色：柔和天蓝；亮色见 light 覆盖） */
-  --color-link: #7bbcff;
-  --color-link-hover: #a8d5ff;
+  /* Markdown / git graph 链接色（全主题统一 #6299c3；亮色见 light 覆盖 hover） */
+  --color-link: #6299c3;
+  --color-link-hover: #7eb0d2;
 
   /* 语义填充叠层：暗色为白色 alpha，亮色覆盖为黑色 alpha —— 用于 chip/pill/tile/ghost 按钮底 */
   --color-chip-faint: rgba(255, 255, 255, 0.03);
@@ -112,8 +114,7 @@
     "Malgun Gothic", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
   --font-mono:
-    "Cascadia Mono", "Cascadia Code", "JetBrains Mono", "SFMono-Regular", Consolas, Menlo, Monaco,
-    monospace;
+    ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, "Cascadia Mono", monospace;
   --font-terminal:
     "Cascadia Mono", "Cascadia Code", "SFMono-Regular", Consolas, Menlo, "DejaVu Sans Mono",
     monospace;
@@ -173,6 +174,11 @@
     0 1px 2px rgba(0, 0, 0, 0.28), 0 8px 24px -6px rgba(0, 0, 0, 0.55);
 
   --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* Scrollbar — edge-flush floating pill; light theme overrides below. */
+  --scrollbar-size: 10px;
+  --scrollbar-thumb: rgba(255, 255, 255, 0.1);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.18);
 }
 
 :root {
@@ -213,13 +219,13 @@
   --color-code-fg: #1f2328;
   --color-code-line-number: #6e7781;
   --color-code-line-number-active: #24292f;
-  --color-code-active-line: rgba(0, 0, 0, 0);
+  --color-code-active-line: rgba(0, 0, 0, 0.04);
   --color-code-indent-guide: rgba(0, 0, 0, 0.12);
-  --color-code-comment: #008000;
-  --color-code-keyword: #af00db;
-  --color-code-string: #a31515;
-  --color-code-number: #098658;
-  --color-code-type: #0000ff;
+  --color-code-comment: #8c959f;
+  --color-code-keyword: #c41d7f;
+  --color-code-string: #6e7781;
+  --color-code-number: #cf222e;
+  --color-code-type: #24292f;
 
   /* Hairlines — neutral grays close to #e5e5e5 / #d0d0d0 on white */
   --color-hairline: rgba(0, 0, 0, 0.1);
@@ -244,6 +250,7 @@
   --color-fg-muted: #444444;
   --color-fg-subtle: #737373;
   --color-fg-faint: #9a9a9a;
+  --color-fg-placeholder: #bdbdbd;
   --color-icon: #2f2f2f;
   --color-icon-muted: #5f5f5f;
 
@@ -260,9 +267,9 @@
   /* Text selection — lighter brand-purple tint so dark text stays readable on white */
   --color-selection: rgba(133, 63, 244, 0.2);
 
-  /* Markdown link — blue-600, AA (~5.2:1) on white */
-  --color-link: #2563eb;
-  --color-link-hover: #1d4ed8;
+  /* Markdown / git graph link — brand blue #6299c3 */
+  --color-link: #6299c3;
+  --color-link-hover: #4e84ad;
 
   /* Semantic fills become black-alpha so chips/tiles read on white */
   --color-chip-faint: rgba(0, 0, 0, 0.035);
@@ -312,6 +319,9 @@
   --shadow-popup:
     0 1px 2px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.06),
     0 12px 28px -8px rgba(0, 0, 0, 0.08);
+
+  --scrollbar-thumb: rgba(0, 0, 0, 0.08);
+  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.14);
 }
 
 :root[data-theme="dark-plus"] {
@@ -327,13 +337,13 @@
   --color-code-fg: #cccccc;
   --color-code-line-number: #858585;
   --color-code-line-number-active: #c6c6c6;
-  --color-code-active-line: rgba(255, 255, 255, 0);
+  --color-code-active-line: rgba(255, 255, 255, 0.045);
   --color-code-indent-guide: rgba(255, 255, 255, 0.12);
-  --color-code-comment: #6a9955;
-  --color-code-keyword: #c586c0;
-  --color-code-string: #ce9178;
-  --color-code-number: #b5cea8;
-  --color-code-type: #4fc1ff;
+  --color-code-comment: #8b949e;
+  --color-code-keyword: #b794f4;
+  --color-code-string: #c9a882;
+  --color-code-number: #a3b89a;
+  --color-code-type: #7db7d4;
 
   --color-hairline: #2b2b2c;
   --color-hairline-soft: rgba(255, 255, 255, 0.032);
@@ -350,6 +360,7 @@
   --color-fg-muted: #bfbfbf;
   --color-fg-subtle: #989898;
   --color-fg-faint: #6a6a6a;
+  --color-fg-placeholder: #525252;
   --color-icon: #cccccc;
   --color-icon-muted: #bfbfbf;
 
@@ -361,8 +372,8 @@
   --color-focus-ring: #853ff4;
   --color-focus-ring-soft: #b388ff;
   --color-selection: rgba(133, 63, 244, 0.36);
-  --color-link: #8cb4ff;
-  --color-link-hover: #b6d0ff;
+  --color-link: #6299c3;
+  --color-link-hover: #7eb0d2;
 
   --color-chip-faint: rgba(255, 255, 255, 0.04);
   --color-chip: rgba(255, 255, 255, 0.06);
@@ -429,6 +440,18 @@
   box-shadow: var(--shadow-popup);
 }
 
+/*
+ * Timeline wireframe — To-dos / live tool shells (Fast Codebase, …).
+ * Transparent fill keeps the canvas colour; hairline + slight radius is the
+ * whole chrome. Prefer this over ad-hoc `rounded-lg border bg-card` which
+ * reads as a soft grey blotch and, on short bars, almost as a pill.
+ */
+.timeline-wire {
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-sm); /* 6px — 方形微圆角 */
+  background: transparent;
+}
+
 /* 全局默认行高与字重，避免某些控件回退到浏览器默认（16px / bold） */
 html,
 body,
@@ -452,11 +475,15 @@ body {
   background: var(--color-canvas);
 }
 
-button,
-textarea,
-input {
-  font: inherit;
-  letter-spacing: inherit;
+/* Inherit family/weight from root; keep in @layer base so Tailwind text-* /
+ * font-* utilities can still override size on individual controls (FileRow…). */
+@layer base {
+  button,
+  textarea,
+  input {
+    font: inherit;
+    letter-spacing: inherit;
+  }
 }
 
 /* Base UI portal 层叠上下文 */
@@ -499,39 +526,50 @@ input {
   }
 }
 
-/* 极简滚动条：默认隐形，悬停容器时淡出现 */
+/*
+ * Global Cursor-like scrollbar: hover-reveal floating pill, transparent track,
+ * no arrow buttons. Chrome 121+ / Electron: scrollbar-width|color disables ALL
+ * ::-webkit-scrollbar* — keep webkit-only on Chromium.
+ */
 @layer base {
-  .scroll-thin {
-    scrollbar-width: thin;
-    scrollbar-color: transparent transparent;
+  @supports selector(::-webkit-scrollbar) {
+    *::-webkit-scrollbar {
+      width: var(--scrollbar-size);
+      height: var(--scrollbar-size);
+    }
+    *::-webkit-scrollbar-button {
+      display: none;
+      width: 0;
+      height: 0;
+    }
+    *::-webkit-scrollbar-thumb {
+      background-color: transparent;
+      /* 2px inset → ~6px visible pill inside 10px gutter */
+      border: 2px solid transparent;
+      border-radius: 9999px;
+      background-clip: content-box;
+    }
+    *:hover::-webkit-scrollbar-thumb {
+      background-color: var(--scrollbar-thumb);
+    }
+    *:hover::-webkit-scrollbar-thumb:hover {
+      background-color: var(--scrollbar-thumb-hover);
+    }
+    *::-webkit-scrollbar-track,
+    *::-webkit-scrollbar-corner {
+      background: transparent;
+    }
   }
-  .scroll-thin:hover {
-    scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
-  }
-  .scroll-thin::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
-  }
-  .scroll-thin::-webkit-scrollbar-thumb {
-    background-color: transparent;
-    border-radius: 9999px;
-    border: 2px solid transparent;
-    background-clip: content-box;
-  }
-  .scroll-thin:hover::-webkit-scrollbar-thumb {
-    background-color: rgba(255, 255, 255, 0.12);
-  }
-  .scroll-thin::-webkit-scrollbar-corner {
-    background: transparent;
-  }
-}
 
-/* Light-mode scrollbar thumb must be dark to be visible on white. */
-:root[data-theme="light"] .scroll-thin:hover {
-  scrollbar-color: rgba(0, 0, 0, 0.22) transparent;
-}
-:root[data-theme="light"] .scroll-thin:hover::-webkit-scrollbar-thumb {
-  background-color: rgba(0, 0, 0, 0.22);
+  @supports not selector(::-webkit-scrollbar) {
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: transparent transparent;
+    }
+    *:hover {
+      scrollbar-color: var(--scrollbar-thumb) transparent;
+    }
+  }
 }
 
 @layer utilities {
@@ -573,31 +611,31 @@ input {
 @keyframes effort-energy-flow {
   0% {
     opacity: 0;
-    transform: translate3d(28%, 0, 0) scaleX(0.72);
+    transform: translate3d(32%, 0, 0) scaleX(0.55);
   }
-  18% {
+  12% {
     opacity: 1;
   }
-  82% {
-    opacity: 0.9;
+  55% {
+    opacity: 1;
   }
   100% {
     opacity: 0;
-    transform: translate3d(-28%, 0, 0) scaleX(1.08);
+    transform: translate3d(-36%, 0, 0) scaleX(1.25);
   }
 }
 
 @keyframes effort-energy-particles {
   0% {
     opacity: 0;
-    transform: translate3d(30%, 0, 0) scaleX(0.55);
+    transform: translate3d(34%, 0, 0) scaleX(0.45);
   }
-  22% {
-    opacity: 0.9;
+  14% {
+    opacity: 1;
   }
   100% {
     opacity: 0;
-    transform: translate3d(-38%, 0, 0) scaleX(1.15);
+    transform: translate3d(-42%, 0, 0) scaleX(1.3);
   }
 }
 
@@ -620,6 +658,107 @@ input {
 }
 
 @layer utilities {
+  /**
+   * Bottom dissolve on a clipped viewport (fixed max-height + overflow).
+   * Apply to the clipped box itself — mask percentages are relative to the
+   * masked element's box; putting this on the tall inner content makes the
+   * fade land below the visible window, so users only see a hard cut.
+   * Toggled by useClipFade() (scrollHeight vs clientHeight).
+   */
+  .clip-fade {
+    -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 55%, transparent 100%);
+    mask-image: linear-gradient(to bottom, #000 0%, #000 55%, transparent 100%);
+  }
+
+  /**
+   * Scroll-edge dissolve for overflow scrollports (sidebar lists, etc.).
+   * Toggle edges via data-fade-top / data-fade-bottom from useScrollFade().
+   */
+  .scroll-fade {
+    --scroll-fade-top: 0px;
+    --scroll-fade-bottom: 0px;
+    -webkit-mask-image: linear-gradient(
+      to bottom,
+      transparent 0,
+      #000 var(--scroll-fade-top),
+      #000 calc(100% - var(--scroll-fade-bottom)),
+      transparent 100%
+    );
+    mask-image: linear-gradient(
+      to bottom,
+      transparent 0,
+      #000 var(--scroll-fade-top),
+      #000 calc(100% - var(--scroll-fade-bottom)),
+      transparent 100%
+    );
+  }
+  .scroll-fade[data-fade-top] {
+    --scroll-fade-top: 20px;
+  }
+  .scroll-fade[data-fade-bottom] {
+    --scroll-fade-bottom: 20px;
+  }
+
+  /**
+   * Single-line title dissolve (sidebar sessions, etc.) — same mask family as
+   * clip-fade / scroll-fade, axis flipped. Prefer over Tailwind `truncate`
+   * (`…`) when the edge should soft-exit instead of ellipsis.
+   */
+  .truncate-fade {
+    overflow: hidden;
+    white-space: nowrap;
+    -webkit-mask-image: linear-gradient(
+      to right,
+      #000 0%,
+      #000 calc(100% - 1.5rem),
+      transparent 100%
+    );
+    mask-image: linear-gradient(to right, #000 0%, #000 calc(100% - 1.5rem), transparent 100%);
+  }
+
+  /**
+   * Subagent preview scrim: even frosted backdrop, like a native sheet.
+   *
+   * No mask. Masking `backdrop-filter` leaves part of the background sharp next
+   * to the blurred part, so the same text shows twice (sharp + soft) with a
+   * visible gradient seam — that is what read as fake. Uniform frost + a light
+   * tint is what a real sheet does.
+   */
+  .subagent-preview-scrim {
+    background-color: color-mix(in oklab, var(--color-canvas) 55%, transparent);
+    opacity: 0;
+    transition: opacity 200ms cubic-bezier(0.22, 1, 0.36, 1);
+    will-change: opacity;
+  }
+  .subagent-preview-scrim[data-mounted] {
+    opacity: 1;
+  }
+  /**
+   * The frost lands only after the sheet has settled. A `backdrop-filter` whose
+   * own opacity is animating forces the compositor to re-sample the entire
+   * timeline behind it every frame, which competes with the sheet animation for
+   * the same budget. Applied as a step (no transition) — at 1px the arrival is
+   * imperceptible, and it then costs nothing while the sheet sits open.
+   */
+  .subagent-preview-scrim[data-settled] {
+    backdrop-filter: blur(1px);
+    -webkit-backdrop-filter: blur(1px);
+    will-change: auto;
+  }
+
+  /* Body mounts after the sheet animation, so it fades in on its own. */
+  .subagent-preview-body {
+    animation: subagent-preview-body-in 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  @keyframes subagent-preview-body-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
   .modus-shine-border {
     padding: var(--shine-border-width, 1px);
     background-size: 360% 360%;
@@ -662,31 +801,37 @@ input {
     );
   }
 
+  /*
+   * Effort energy — mid-gray ink, no outer bloom. Max-tier keeps a bright
+   * internal sheen + sparkle (not an external glow ring).
+   */
+  .effort-energy {
+    --effort-ink: light-dark(#3f3f3f, #c4c4c4);
+    --effort-ink-mid: light-dark(#555555, #b0b0b0);
+    --effort-knob: light-dark(#f0f0f0, #2a2a2a);
+    /* Sparks stay near-white so they punch on both mid-gray fills. */
+    --effort-spark: #ffffff;
+  }
+
   .effort-energy-track {
     isolation: isolate;
-    background: color-mix(in srgb, var(--color-fg) 18%, transparent);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-fg) 7%, transparent);
+    background: color-mix(in srgb, var(--effort-ink) 16%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--effort-ink) 10%, transparent);
   }
 
   .effort-energy-fill {
     z-index: 1;
     overflow: hidden;
-    background: linear-gradient(
-      90deg,
-      color-mix(in srgb, var(--color-focus-ring) 84%, var(--color-canvas)),
-      var(--color-focus-ring-soft)
-    );
+    background: linear-gradient(90deg, var(--effort-ink-mid), var(--effort-ink));
     opacity: var(--effort-opacity);
-    box-shadow: 0 0 var(--effort-glow) color-mix(in srgb, var(--color-focus-ring) 68%, transparent);
     transition:
       width 210ms var(--ease-out-quint),
-      opacity 180ms var(--ease-out-quint),
-      box-shadow 180ms var(--ease-out-quint);
+      opacity 180ms var(--ease-out-quint);
   }
 
   .effort-energy-stop {
     z-index: 2;
-    background: color-mix(in srgb, var(--color-fg) 48%, transparent);
+    background: color-mix(in srgb, var(--effort-ink) 55%, transparent);
     opacity: 0;
     transition: opacity 120ms var(--ease-out-quint);
   }
@@ -697,10 +842,8 @@ input {
 
   .effort-energy-thumb {
     z-index: 3;
-    background: color-mix(in srgb, #f6f8ff 82%, var(--color-focus-ring-soft));
-    box-shadow:
-      0 0 0 1px color-mix(in srgb, #f6f8ff 68%, transparent),
-      0 0 var(--effort-glow) color-mix(in srgb, var(--color-focus-ring) 72%, transparent);
+    background: var(--effort-knob);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--effort-ink) 45%, transparent);
     scale: 1;
     transition:
       inset-inline-start 210ms var(--ease-out-quint),
@@ -724,55 +867,62 @@ input {
   }
 
   .effort-energy[data-maximum="true"] .effort-energy-thumb {
-    background: #f6f8ff;
+    box-shadow: 0 0 0 1.5px var(--effort-ink);
   }
 
   .effort-energy[data-maximum="true"] .effort-energy-track {
-    background: linear-gradient(
-      90deg,
-      color-mix(in srgb, var(--color-focus-ring) 84%, var(--color-canvas)),
-      var(--color-focus-ring-soft)
-    );
+    background: linear-gradient(90deg, var(--effort-ink-mid), var(--effort-ink));
   }
 
   .effort-energy[data-maximum="true"] .effort-energy-fill::before,
   .effort-energy[data-maximum="true"] .effort-energy-fill::after {
     position: absolute;
-    inset: -3px -30%;
+    inset: -4px -35%;
     content: "";
     pointer-events: none;
     will-change: transform, opacity;
   }
 
+  /* Sweeping specular band — internal only. */
   .effort-energy[data-maximum="true"] .effort-energy-fill::before {
     background:
       radial-gradient(
-        ellipse at 62% 50%,
-        color-mix(in srgb, #f6f8ff 94%, var(--color-focus-ring-soft)) 0%,
-        color-mix(in srgb, var(--color-focus-ring-soft) 68%, transparent) 12%,
-        transparent 34%
+        ellipse at 55% 50%,
+        color-mix(in srgb, var(--effort-spark) 100%, transparent) 0%,
+        color-mix(in srgb, var(--effort-spark) 55%, transparent) 14%,
+        transparent 38%
       ),
       linear-gradient(
         90deg,
-        transparent 24%,
-        color-mix(in srgb, var(--color-focus-ring-soft) 42%, transparent) 48%,
-        color-mix(in srgb, #f6f8ff 86%, transparent) 60%,
-        transparent 76%
+        transparent 12%,
+        color-mix(in srgb, var(--effort-spark) 35%, transparent) 36%,
+        color-mix(in srgb, var(--effort-spark) 95%, transparent) 50%,
+        color-mix(in srgb, var(--effort-spark) 35%, transparent) 64%,
+        transparent 88%
       );
-    filter: blur(1px);
-    mix-blend-mode: screen;
-    animation: effort-energy-flow 1.35s linear infinite;
+    filter: blur(0.6px);
+    mix-blend-mode: plus-lighter;
+    animation: effort-energy-flow 0.85s linear infinite;
   }
 
+  /* Dense spark trail. */
   .effort-energy[data-maximum="true"] .effort-energy-fill::after {
-    inset: 1px -30%;
+    inset: 0 -32%;
     background:
-      radial-gradient(circle at 82% 24%, #f6f8ff 0 1px, transparent 1.5px),
-      radial-gradient(circle at 70% 72%, var(--color-focus-ring-soft) 0 1px, transparent 1.6px),
-      radial-gradient(circle at 55% 38%, #f6f8ff 0 0.75px, transparent 1.35px),
-      radial-gradient(circle at 38% 68%, var(--color-focus-ring-soft) 0 0.75px, transparent 1.4px);
-    mask-image: linear-gradient(90deg, transparent, #000 22%, #000 78%, transparent);
-    animation: effort-energy-particles 820ms var(--ease-out-quint) infinite;
+      radial-gradient(circle at 92% 18%, var(--effort-spark) 0 1.6px, transparent 2.2px),
+      radial-gradient(circle at 84% 72%, var(--effort-spark) 0 1.2px, transparent 1.85px),
+      radial-gradient(circle at 76% 38%, var(--effort-spark) 0 1.45px, transparent 2.05px),
+      radial-gradient(circle at 68% 62%, var(--effort-spark) 0 0.95px, transparent 1.55px),
+      radial-gradient(circle at 60% 24%, var(--effort-spark) 0 1.35px, transparent 1.95px),
+      radial-gradient(circle at 52% 78%, var(--effort-spark) 0 1.1px, transparent 1.7px),
+      radial-gradient(circle at 44% 42%, var(--effort-spark) 0 1.5px, transparent 2.15px),
+      radial-gradient(circle at 36% 66%, var(--effort-spark) 0 0.85px, transparent 1.4px),
+      radial-gradient(circle at 28% 30%, var(--effort-spark) 0 1.25px, transparent 1.9px),
+      radial-gradient(circle at 20% 70%, var(--effort-spark) 0 1px, transparent 1.6px);
+    mix-blend-mode: plus-lighter;
+    opacity: 1;
+    mask-image: linear-gradient(90deg, transparent, #000 14%, #000 86%, transparent);
+    animation: effort-energy-particles 520ms var(--ease-out-quint) infinite;
   }
 }
 
@@ -852,22 +1002,29 @@ input {
   letter-spacing: -0.015em;
 }
 
+/*
+ * Step size shrinks going down (0.3em, 0.25em, 0.15em) — the eye needs the
+ * biggest jump at the top of the hierarchy, where h1 vs h2 is a structural
+ * decision, and the smallest jump at the bottom, where h4-6 only need to beat
+ * body weight, not body size. A flat/tight scale (previously 1.4/1.22/1.1em)
+ * reads as "everything is medium-bold", not as a hierarchy.
+ */
 .modus-markdown :where(h1) {
+  font-size: 1.7em;
+  font-weight: 700;
+}
+
+.modus-markdown :where(h2) {
   font-size: 1.4em;
   font-weight: 650;
 }
 
-.modus-markdown :where(h2) {
-  font-size: 1.22em;
-  font-weight: 650;
-}
-
 .modus-markdown :where(h3) {
-  font-size: 1.1em;
+  font-size: 1.15em;
 }
 
 .modus-markdown :where(h4, h5, h6) {
-  font-size: 1.05em;
+  font-size: 1em;
 }
 
 /* Streamdown + dir="auto": first Block is display:contents — clear lead-in heading. */
@@ -975,12 +1132,12 @@ input {
 }
 
 /*
- * ── Table — single frame, horizontal rules only (Cursor chat parity) ────
+ * ── Table — single outer frame + cell hairline grid ─────────────────────
  *
  * Streamdown nests TWO frames (outer bg-sidebar + inner bordered box). Flatten
- * the outer wrapper; ONE inner frame holds the table. Cells use bottom hairlines
- * only — never a full grid. Header fill uses --color-panel so light theme stays
- * visible (surface≈canvas on light washes out).
+ * the outer wrapper; ONE inner frame holds the table. Cells use bottom + right
+ * hairlines (last column clears right). Header fill uses --color-panel so light
+ * theme stays visible (surface≈canvas on light washes out).
  */
 .modus-markdown [data-streamdown="table-wrapper"] {
   position: relative;
@@ -1068,7 +1225,7 @@ input {
   color: var(--markdown-fg-strong);
 }
 
-/* Kill Streamdown divide-y / full-grid leftovers; chat default = horizontal rules. */
+/* Reset Streamdown divide-y / outer cell borders; grid comes from th/td hairlines. */
 .modus-markdown :where(table, thead, tbody, tr) {
   border: 0;
   background: transparent;
@@ -1077,9 +1234,14 @@ input {
 .modus-markdown :where(th, td) {
   padding: 0.65em 0.9em;
   border: 0;
+  border-right: 1px solid var(--color-hairline-soft);
   border-bottom: 1px solid var(--color-hairline-soft);
   text-align: left;
   vertical-align: top;
+}
+
+.modus-markdown :where(th:last-child, td:last-child) {
+  border-right: 0;
 }
 
 .modus-markdown :where(th) {
@@ -1222,6 +1384,31 @@ input {
  * dead (click "does nothing"). Supply the missing utility ourselves.
  */
 .modus-markdown [class~="pointer-events-auto"] {
+  pointer-events: auto;
+}
+
+/*
+ * Block chrome actions: Streamdown ships them always-visible. Modus contract =
+ * reveal on host :hover / :focus-within (Copy menus stay open via focus-within).
+ */
+.modus-markdown [data-streamdown="table-wrapper"] > div:not(:has(table)),
+.modus-markdown [data-streamdown="code-block"] > div:has(> [data-streamdown="code-block-actions"]),
+.modus-markdown [data-streamdown="mermaid-block"] > div:has(> [data-streamdown="mermaid-block-actions"]) {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
+.modus-markdown
+  [data-streamdown="table-wrapper"]:is(:hover, :focus-within)
+  > div:not(:has(table)),
+.modus-markdown
+  [data-streamdown="code-block"]:is(:hover, :focus-within)
+  > div:has(> [data-streamdown="code-block-actions"]),
+.modus-markdown
+  [data-streamdown="mermaid-block"]:is(:hover, :focus-within)
+  > div:has(> [data-streamdown="mermaid-block-actions"]) {
+  opacity: 1;
   pointer-events: auto;
 }
 
@@ -1460,17 +1647,110 @@ input {
   font-size: 1.32em;
 }
 
-/* Whole-file add/remove tint for the Source Control preview of NEW or DELETED
-   files. One side is empty, so there is no diff to compute — we render the
-   non-empty side in a plain editor and wash every line. Margin uses the SAME
-   tint as the content so each line reads as one uniform full-width band (no
-   mismatched gutter strip, matching Cursor/VS Code). Global (un-layered) so
-   Monaco's injected line elements pick the classes up. */
-.modus-wholeline-add,
-.modus-wholeline-add-margin {
-  background-color: var(--color-diff-add-bg);
+/* Monaco "Add to Chat" selection chip — Cursor-parity: one row, light edge, soft lift. */
+.modus-add-to-chat {
+  pointer-events: auto;
+  display: none;
+  align-items: center;
+  gap: 0.4rem;
+  height: 26px;
+  padding: 0 0.55rem;
+  border: 1px solid var(--color-hairline);
+  border-radius: 6px;
+  background: var(--color-elevated);
+  color: var(--color-fg);
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 2px 8px rgba(0, 0, 0, 0.06);
+  cursor: pointer;
 }
-.modus-wholeline-del,
-.modus-wholeline-del-margin {
-  background-color: var(--color-diff-del-bg);
+.modus-add-to-chat .label {
+  font-weight: 500;
+}
+.modus-add-to-chat .hint {
+  color: var(--color-fg-muted);
+  font-weight: 400;
+}
+:root[data-theme="light"] .modus-add-to-chat {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 2px 6px rgba(0, 0, 0, 0.04);
+}
+
+/* PDF.js TextLayer — scoped under .pdf-page (official layout, z-index above canvas). */
+.pdf-page {
+  position: relative;
+  --total-scale-factor: 1;
+}
+.pdf-page > canvas {
+  display: block;
+  position: absolute;
+  inset: 0;
+}
+.pdf-page > .textLayer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: clip;
+  line-height: 1;
+  transform-origin: 0 0;
+  opacity: 1;
+}
+.pdf-page > .textLayer :is(span, br) {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+  user-select: text;
+}
+.pdf-page > .textLayer > :not(.markedContent),
+.pdf-page > .textLayer .markedContent span:not(.markedContent) {
+  z-index: 1;
+  --font-height: 0;
+  --scale-x: 1;
+  --rotate: 0deg;
+  --min-font-size: 1;
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+.pdf-page > .textLayer .markedContent {
+  display: contents;
+}
+.pdf-page > .textLayer ::selection {
+  background: color-mix(in srgb, AccentColor, transparent 50%);
+  color: transparent;
+}
+
+/* Reserve scrollbar gutter so content paint does not change clientWidth and
+   retrigger PdfEngine's fit-width ResizeObserver (flicker loop on Windows). */
+.pdf-scroller {
+  scrollbar-gutter: stable;
+}
+
+/* Floating page chrome — Gemini-style “Page N / Total”, non-interactive. */
+.pdf-page-indicator {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  z-index: 20;
+  transform: translateX(-50%);
+  pointer-events: none;
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--color-hairline);
+  background: color-mix(in srgb, var(--color-elevated) 92%, transparent);
+  color: var(--color-fg);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 4px 14px rgba(0, 0, 0, 0.08);
+  backdrop-filter: blur(8px);
+}
+:root[data-theme="light"] .pdf-page-indicator {
+  background: color-mix(in srgb, var(--color-elevated) 94%, transparent);
 }

@@ -5,13 +5,23 @@ import { createCodePlugin } from "@streamdown/code";
 import { createMathPlugin } from "@streamdown/math";
 import type { MermaidConfig } from "@streamdown/mermaid";
 import { createMermaidPlugin } from "@streamdown/mermaid";
-import { memo, useContext, useLayoutEffect, useMemo } from "react";
+import { memo, useContext, useLayoutEffect, useMemo, type ReactNode } from "react";
 import remarkBreaks from "remark-breaks";
 import type { BlockProps, Components, StreamdownProps } from "streamdown";
-import { Block, defaultRemarkPlugins, Streamdown, StreamdownContext } from "streamdown";
+import {
+  Block,
+  defaultRehypePlugins,
+  defaultRemarkPlugins,
+  Streamdown,
+  StreamdownContext,
+} from "streamdown";
 import { cn } from "../../lib/cn";
 import { type ThemeMode, useTheme } from "../../lib/theme";
+import { FileRefChip, MarkdownFileCode } from "./FileRefChip";
+import { useMarkdownFileNav } from "./markdownFileNav";
 import { createStreamingTailAnimation } from "./streamingTailAnimation";
+import { normalizeMathDelimiters } from "./normalizeMathDelimiters";
+import { parseModusFileHref, rehypeWorkspaceFileLinks } from "./workspaceFileLinks";
 
 type MarkdownMessageRendererProps = {
   className?: string | undefined;
@@ -36,8 +46,9 @@ const codeDarkPlus = createCodePlugin({
 });
 
 /* Math/CJK plugins are theme-agnostic — kept as stable module constants.
- * singleDollarTextMath: true renders inline `$...$` (what LLMs emit for math),
- * matching ChatGPT/Claude. Block `$$...$$` works regardless. Tradeoff: bare
+ * remark-math only parses `$…$` / `$$…$$`. LLMs often emit `\(...\)` / `\[…\]`;
+ * `normalizeMathDelimiters` aligns those to the dollar contract before parse.
+ * singleDollarTextMath keeps inline `$…$` (ChatGPT/Claude-style). Tradeoff: bare
  * currency like "$5" can be misread as math, but for a coding/math agent
  * correct formula rendering is the right call. errorColor stays muted so an
  * invalid expression degrades quietly in both themes. */
@@ -106,6 +117,17 @@ const LINK_SAFETY: NonNullable<StreamdownProps["linkSafety"]> = { enabled: false
  * lines into one paragraph). Stable module-level reference to preserve memo. */
 const REMARK_PLUGINS = [...Object.values(defaultRemarkPlugins), remarkBreaks];
 
+/**
+ * raw → rewrite workspace path hrefs → sanitize.
+ * Omit default harden: its indicator policy appends " [blocked]" after sanitize
+ * strips `f:` drive-letter hrefs. Sanitize already gates link protocols.
+ */
+const REHYPE_PLUGINS = [
+  defaultRehypePlugins.raw,
+  rehypeWorkspaceFileLinks,
+  defaultRehypePlugins.sanitize,
+];
+
 const StreamingBlock = memo(function StreamingBlock({
   content,
   rehypePlugins,
@@ -154,21 +176,54 @@ const translations = {
 } satisfies Partial<NonNullable<StreamdownProps["translations"]>>;
 
 /* ── Custom components ─────────────────────────────────────────────── */
+function InlineCodeWithFileNav({
+  children,
+  className,
+  node: _node,
+  ...props
+}: {
+  children?: ReactNode;
+  className?: string;
+  node?: unknown;
+} & Record<string, unknown>) {
+  const { cwd, onOpenFile } = useMarkdownFileNav();
+  return (
+    <MarkdownFileCode className={className} cwd={cwd} onOpenFile={onOpenFile} {...props}>
+      {children}
+    </MarkdownFileCode>
+  );
+}
+
+function MarkdownAnchor({
+  children,
+  href,
+  node: _node,
+  ...props
+}: {
+  children?: ReactNode;
+  href?: string;
+  node?: unknown;
+} & Record<string, unknown>) {
+  const { onOpenFile } = useMarkdownFileNav();
+  const path = parseModusFileHref(href);
+  if (path) {
+    if (onOpenFile) {
+      return <FileRefChip onOpen={onOpenFile} path={path} />;
+    }
+    // Sentinel must never navigate; fall back to plain label without onOpenFile.
+    const name = path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
+    return <span className="font-medium text-sm">{name}</span>;
+  }
+  return (
+    <a href={href} rel="noreferrer" target="_blank" {...props}>
+      {children}
+    </a>
+  );
+}
+
 const components: Components = {
-  a({ children, href, node: _node, ...props }) {
-    return (
-      <a href={href} rel="noreferrer" target="_blank" {...props}>
-        {children}
-      </a>
-    );
-  },
-  inlineCode({ children, className, node: _node, ...props }) {
-    return (
-      <code className={cn("modus-markdown-inline-code", className)} {...props}>
-        {children}
-      </code>
-    );
-  },
+  a: MarkdownAnchor,
+  inlineCode: InlineCodeWithFileNav,
 };
 
 /* ── Main renderer ─────────────────────────────────────────────────── */
@@ -198,6 +253,9 @@ export default function MarkdownMessageRenderer({
     () => ({ config: mermaidConfig }),
     [mermaidConfig],
   );
+  // Normalize once at the Streamdown boundary (after streaming slice), so
+  // incomplete `\[` mid-chunk is left alone until the closing fence arrives.
+  const markdown = useMemo(() => normalizeMathDelimiters(content), [content]);
 
   return (
     <Streamdown
@@ -214,10 +272,11 @@ export default function MarkdownMessageRenderer({
       normalizeHtmlIndentation
       parseIncompleteMarkdown
       plugins={plugins}
+      rehypePlugins={REHYPE_PLUGINS}
       remarkPlugins={REMARK_PLUGINS}
       translations={translations}
     >
-      {content}
+      {markdown}
     </Streamdown>
   );
 }

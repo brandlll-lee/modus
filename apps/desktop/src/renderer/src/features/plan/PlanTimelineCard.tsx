@@ -2,6 +2,8 @@ import { IconArrowsMaximize, IconListCheck } from "@tabler/icons-react";
 import type { PlanRef } from "../../../../shared/contracts";
 import { CopyButton } from "../../components/ui/CopyButton";
 import { ShinyText } from "../../components/ui/ShinyText";
+import { cn } from "../../lib/cn";
+import { useClipFade } from "../../lib/useClipFade";
 import { MarkdownMessage } from "../agent/MarkdownMessage";
 
 function textArg(args: unknown, key: string): string {
@@ -46,9 +48,10 @@ export function PlanTimelineCard({
   const content = plan?.content ?? previewArg(args);
   const preview = content || overview;
   const ready = isComplete && !isError && plan !== undefined;
+  const { boxRef, contentRef, clipped } = useClipFade();
 
   return (
-    <article className="min-w-0 overflow-hidden rounded-xl border border-hairline-soft bg-card px-4 py-3.5">
+    <article className="group/plan min-w-0 overflow-hidden rounded-xl border border-hairline-soft bg-card px-4 py-3.5">
       <header className="flex min-h-6 items-center gap-2 text-xs">
         <IconListCheck className="shrink-0 text-fg-faint" size={14} stroke={1.7} />
         {isComplete ? (
@@ -60,7 +63,7 @@ export function PlanTimelineCard({
         )}
         <span className="flex-1" />
         {ready ? (
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 opacity-0 transition-opacity duration-150 group-hover/plan:opacity-100 group-focus-within/plan:opacity-100">
             <CopyButton label="Copy plan" text={plan.content} />
             {onOpen ? (
               <button
@@ -78,26 +81,25 @@ export function PlanTimelineCard({
       </header>
 
       <div
-        className="mt-4 max-h-48 overflow-hidden"
-        style={{
-          WebkitMaskImage: "linear-gradient(to bottom, #000 0%, #000 70%, transparent 100%)",
-          maskImage: "linear-gradient(to bottom, #000 0%, #000 70%, transparent 100%)",
-        }}
+        className={cn("mt-4 max-h-48 overflow-hidden", clipped && "clip-fade")}
+        ref={boxRef}
       >
-        {title ? (
-          <h2 className="mb-4 font-bold text-[1.75rem] text-fg leading-tight tracking-[-0.025em]">
-            {title}
-          </h2>
-        ) : null}
-        {preview ? (
-          <MarkdownMessage
-            className="modus-plan-markdown"
-            content={preview}
-            streaming={!isComplete}
-          />
-        ) : title ? null : (
-          <div className="h-20" />
-        )}
+        <div ref={contentRef}>
+          {title ? (
+            <h2 className="mb-4 font-bold text-[1.75rem] text-fg leading-tight tracking-[-0.025em]">
+              {title}
+            </h2>
+          ) : null}
+          {preview ? (
+            <MarkdownMessage
+              className="modus-plan-markdown"
+              content={preview}
+              streaming={!isComplete}
+            />
+          ) : title ? null : (
+            <div className="h-20" />
+          )}
+        </div>
       </div>
     </article>
   );
