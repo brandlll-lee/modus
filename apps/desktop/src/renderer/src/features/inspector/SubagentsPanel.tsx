@@ -14,7 +14,8 @@ import { ModusBot } from "../../components/ui/ModusBot";
 import type { AgentEventHub } from "../agent/agentEventHub";
 import { ChatPane } from "../agent/ChatPane";
 import { LineDelta } from "../agent/changes/ChangeStats";
-import { subagentColor } from "../agent/subagentUi";
+import { isSubagentSessionLive, subagentColor } from "../agent/subagentUi";
+import { lookupModel, modelIdentityLabel } from "../../lib/modelIdentity";
 
 type PanelView = "overview" | "detail";
 type DisplayMode = "board" | "list";
@@ -77,8 +78,8 @@ export function SubagentsPanel({
   const parentCwd = parentSession?.cwd;
   const selected = subagents.find((session) => session.id === selectedId);
   const filteredSubagents = useMemo(
-    () => subagents.filter((session) => matchesSubagentQuery(session, query)),
-    [subagents, query],
+    () => subagents.filter((session) => matchesSubagentQuery(session, query, models)),
+    [subagents, query, models],
   );
 
   useEffect(() => {
@@ -268,14 +269,14 @@ export function SubagentsPanel({
             <IconArrowLeft size={16} stroke={1.7} />
           </button>
           <ModusBot
-            active={isSubagentLive(selected.status)}
-            busy={isSubagentLive(selected.status)}
+            active={isSubagentSessionLive(selected.status)}
+            busy={isSubagentSessionLive(selected.status)}
             className="size-5 shrink-0"
             color={subagentColor(selected.id)}
           />
           <div className="min-w-0 flex-1">
             <div className="truncate font-medium text-fg text-sm">{subagentTitle(selected)}</div>
-            <div className="truncate text-fg-faint text-xs">{subagentMeta(selected)}</div>
+            <div className="truncate text-fg-faint text-xs">{subagentMeta(selected, models)}</div>
           </div>
           <StatusPill session={selected} />
         </div>
@@ -378,6 +379,7 @@ export function SubagentsPanel({
           />
         ) : (
           <SubagentList
+            models={models}
             sessions={filteredSubagents}
             statsBySession={worktreeStatsBySession}
             onOpen={openDetail}
@@ -452,8 +454,8 @@ function SubagentCard({
     >
       <span className="flex size-10 shrink-0 items-center justify-center rounded-md bg-fill">
         <ModusBot
-          active={isSubagentLive(session.status)}
-          busy={isSubagentLive(session.status)}
+          active={isSubagentSessionLive(session.status)}
+          busy={isSubagentSessionLive(session.status)}
           className="size-5"
           color={subagentColor(session.id)}
         />
@@ -476,10 +478,12 @@ function SubagentCard({
 
 function SubagentList({
   sessions,
+  models,
   statsBySession,
   onOpen,
 }: {
   sessions: AgentSessionInfo[];
+  models: ModelInfo[];
   statsBySession: Record<string, WorkingChangeStats>;
   onOpen(session: AgentSessionInfo): void;
 }) {
@@ -496,8 +500,8 @@ function SubagentList({
             type="button"
           >
             <ModusBot
-              active={isSubagentLive(session.status)}
-              busy={isSubagentLive(session.status)}
+              active={isSubagentSessionLive(session.status)}
+              busy={isSubagentSessionLive(session.status)}
               className="size-5 shrink-0"
               color={subagentColor(session.id)}
             />
@@ -508,7 +512,7 @@ function SubagentList({
                   <LineDelta added={stats.added} removed={stats.removed} />
                 ) : null}
               </div>
-              <div className="truncate text-fg-faint text-xs">{subagentMeta(session)}</div>
+              <div className="truncate text-fg-faint text-xs">{subagentMeta(session, models)}</div>
             </div>
             <StatusPill session={session} />
           </button>
@@ -771,13 +775,19 @@ function SubagentConflictChoiceCard({
   );
 }
 
-function matchesSubagentQuery(session: AgentSessionInfo, query: string): boolean {
+function matchesSubagentQuery(
+  session: AgentSessionInfo,
+  query: string,
+  models: ModelInfo[],
+): boolean {
   const normalized = query.trim().toLowerCase();
   if (!normalized) return true;
+  const info = lookupModel(models, session.model);
   return [
     session.subagentTask,
     session.title,
     session.model,
+    info ? modelIdentityLabel(info) : undefined,
     session.status,
     session.subagentType,
     session.subagentWorktree?.integrationStatus,
@@ -792,14 +802,15 @@ function subagentTitle(session: AgentSessionInfo): string {
   return session.subagentTask ?? session.title;
 }
 
-function subagentMeta(session: AgentSessionInfo): string {
-  return [session.status, session.model, relativeTime(session.updatedAt)]
+function subagentMeta(session: AgentSessionInfo, models: ModelInfo[]): string {
+  const info = lookupModel(models, session.model);
+  return [session.status, info ? modelIdentityLabel(info) : undefined, relativeTime(session.updatedAt)]
     .filter(Boolean)
     .join(" · ");
 }
 
 function subagentGroup(session: AgentSessionInfo): SubagentGroup {
-  if (isSubagentLive(session.status)) return "running";
+  if (isSubagentSessionLive(session.status)) return "running";
   if (session.status === "blocked") return "blocked";
   return "ready";
 }
@@ -822,10 +833,6 @@ function relativeTime(value: string): string {
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h ago`;
   return `${Math.floor(hours / 24)}d ago`;
-}
-
-function isSubagentLive(status: AgentSessionInfo["status"]): boolean {
-  return status === "starting" || status === "running";
 }
 
 function normalizePath(path: string | undefined): string {

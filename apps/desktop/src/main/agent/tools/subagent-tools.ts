@@ -10,7 +10,7 @@ import { resolveSubagent } from "../subagents-config";
 import { toolRegistry } from "./registry";
 import { type AgentToolContext, resolveAgentToolContext } from "./tool-context";
 
-type SubagentToolOps = Pick<AgentRuntime, "spawnSubagent" | "waitSubagent">;
+type SubagentToolOps = Pick<AgentRuntime, "runSubagent">;
 
 let ops: SubagentToolOps | undefined;
 let registered = false;
@@ -30,19 +30,6 @@ function toResult<T>(text: string, details: T): AgentToolResult<T> {
   return { content: [{ type: "text", text }], details };
 }
 
-function renderTaskStarted(): string {
-  return "Started background subagent. No result is available yet.";
-}
-
-function renderWaitResult(result: Awaited<ReturnType<SubagentToolOps["waitSubagent"]>>): string {
-  if (result.timedOut) {
-    return "Subagent is still running.";
-  }
-  return result.agents
-    .map((agent) => agent.output ?? "Subagent finished without assistant output.")
-    .join("\n\n");
-}
-
 const taskParams = Type.Object({
   description: Type.String({
     minLength: 1,
@@ -60,28 +47,21 @@ const taskParams = Type.Object({
       description: "Exact configured subagent name from the available subagents list.",
     }),
   ),
-  background: Type.Optional(
-    Type.Boolean({
-      description:
-        "Run in the background and return immediately. Defaults to the configured subagent setting, otherwise false.",
-    }),
-  ),
 });
 
 const taskTool: ToolDefinition = defineTool({
   name: "task",
   label: "Start subagent",
   description:
-    "Start a child subagent with its own context window. Use a configured subagent when its description matches; otherwise use only when the user explicitly asks for subagents, parallel work, or isolated exploration.",
+    "Run a bounded task in a child subagent with its own context window and return its final answer.",
   promptSnippet:
-    "task(description, prompt, subagent?, background?) — delegate a bounded task to a child subagent.",
+    "task(description, prompt, subagent?) — delegate a bounded task and wait for its final answer.",
   promptGuidelines: [
     "Use subagents for bounded, parallel, noisy work; keep simple work in this main conversation.",
+    "Independent task calls may run in parallel, but every call returns its subagent's final answer before this turn can finish.",
     "Set subagent only to an exact available subagent name; for generic delegation, omit subagent.",
     "If the user invokes `/name` and `name` is an available subagent, call task with subagent set to that name.",
     "Give each subagent a clear prompt and expected return format.",
-    "Leave background false when you need the subagent answer before replying.",
-    "Use background true only for long-running or parallel work; no result is available until the user opens that subagent session.",
   ],
   parameters: taskParams,
   execute: async (_toolCallId, params: Static<typeof taskParams>, _signal, _onUpdate, ctx) => {
@@ -91,13 +71,11 @@ const taskTool: ToolDefinition = defineTool({
     }
     const subagentName = params.subagent?.trim();
     const subagent = subagentName ? resolveSubagent(ctx.cwd, subagentName) : undefined;
-    const background = params.background ?? subagent?.isBackground ?? false;
-    const result = await currentOps().spawnSubagent(context.window, {
+    const result = await currentOps().runSubagent(context.window, {
       parentSessionId: ownerSessionId(context),
       task: params.description.trim(),
       prompt: params.prompt,
       subagentType: subagent?.name ?? "task",
-      background,
       ...(subagent
         ? {
             subagent: {
@@ -105,7 +83,6 @@ const taskTool: ToolDefinition = defineTool({
               body: subagent.body,
               model: subagent.model,
               readOnly: subagent.readOnly,
-              isBackground: subagent.isBackground,
               ...(subagent.tools ? { tools: subagent.tools } : {}),
               ...(subagent.disallowedTools ? { disallowedTools: subagent.disallowedTools } : {}),
               isolation: subagent.isolation,
@@ -113,13 +90,7 @@ const taskTool: ToolDefinition = defineTool({
           }
         : {}),
     });
-    if (!background) {
-      const waitResult = await currentOps().waitSubagent(ownerSessionId(context), {
-        target: result.session.id,
-      });
-      return toResult(renderWaitResult(waitResult), waitResult);
-    }
-    return toResult(renderTaskStarted(), result);
+    return toResult(result.output ?? "Subagent finished without assistant output.", result);
   },
 });
 

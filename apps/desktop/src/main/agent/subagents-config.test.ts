@@ -25,7 +25,6 @@ describe("parseSubagent", () => {
       description: "Review auth",
       model: "inherit",
       readOnly: true,
-      isBackground: false,
       isolation: "shared",
       body: "Body",
     });
@@ -42,12 +41,6 @@ describe("parseSubagent", () => {
       disallowedTools: ["shell"],
       isolation: "worktree",
     });
-  });
-
-  it("accepts background as an alias for is_background", () => {
-    const agent = parseSubagent("---\nbackground: true\n---\nBody", "researcher");
-
-    expect(agent.isBackground).toBe(true);
   });
 });
 
@@ -125,7 +118,6 @@ describe("loadWorkspaceSubagents", () => {
       description: "Review auth",
       model: "mock/model",
       readOnly: true,
-      isBackground: false,
       tools: ["read", "grep"],
       disallowedTools: ["shell"],
       isolation: "worktree",
@@ -141,12 +133,10 @@ describe("loadWorkspaceSubagents", () => {
       description: "Review payments",
       model: "inherit",
       readOnly: false,
-      isBackground: true,
       isolation: "shared",
       body: "UPDATED BODY",
     });
     expect(updated.description).toBe("Review payments");
-    expect(updated.isBackground).toBe(true);
 
     const prompt = resolveSubagentsPrompt(cwd);
     expect(prompt).toContain("security-auditor");

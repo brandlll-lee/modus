@@ -13,12 +13,11 @@ import type {
   AgentEvent,
   AgentRunInfo,
   AgentSessionInfo,
-  ContextItem,
   ContextUsageInfo,
-  MessageContextChip,
   ModelInfo,
   PlanBuildStatus,
 } from "../../shared/contracts";
+import { buildContextChips } from "../../shared/context-chips";
 import { SUBAGENT_TOOL_NAMES, type ToolProfileName } from "../../shared/tools";
 import { releaseAgentBrowserControl } from "../browser/browser-service";
 import { formatResolvedContext, resolveContext } from "../context/context-service";
@@ -137,7 +136,6 @@ type RunOutputTracker = {
  */
 const TOOL_DELTA_THROTTLE_MS = 100;
 const MAX_SUBAGENTS_PER_SESSION = 6;
-const DEFAULT_SUBAGENT_WAIT_MS = 300_000;
 
 function setSessionThinkingBudget(session: AgentSession, budget: number | undefined): void {
   if (budget === undefined) {
@@ -1084,29 +1082,24 @@ export class PiSdkRuntime implements AgentRuntime {
     }
   }
 
-  async spawnSubagent(
+  async runSubagent(
     window: BrowserWindowType,
     input: {
       parentSessionId: string;
       task: string;
       prompt: string;
       subagentType: string;
-      background?: boolean;
       subagent?: {
         name: string;
         body: string;
         model: string;
         readOnly: boolean;
-        isBackground: boolean;
         tools?: string[];
         disallowedTools?: string[];
         isolation?: "shared" | "worktree";
       };
     },
-  ): Promise<{
-    session: AgentSessionInfo;
-    status: "running";
-  }> {
+  ): Promise<{ session: AgentSessionInfo; output?: string }> {
     const parent = getAgentSession(input.parentSessionId);
     if (!parent) {
       throw new Error(`Parent session not found: ${input.parentSessionId}`);
@@ -1125,7 +1118,6 @@ export class PiSdkRuntime implements AgentRuntime {
     const requestedModel = input.subagent?.model.trim();
     const childModel =
       requestedModel && requestedModel !== "inherit" ? requestedModel : (parent.model ?? undefined);
-    const background = input.background ?? input.subagent?.isBackground ?? false;
     const childSessionId = randomUUID();
     const worktree =
       input.subagent && !input.subagent.readOnly && input.subagent.isolation === "worktree"
@@ -1153,85 +1145,48 @@ export class PiSdkRuntime implements AgentRuntime {
       childSessionId: session.id,
       task: input.task,
       subagentType: input.subagentType,
-      background,
       ...(session.model ? { model: session.model } : {}),
     });
 
-    const run = this.prompt(window, {
-      sessionId: session.id,
-      message: composeSubagentPrompt(input),
-      context: [],
-      delivery: "normal",
-      userMessageId: `subagent-user:${randomUUID()}`,
-      ...(childModel ? { model: childModel } : {}),
-    });
-
-    let runFailed = false;
-    void run
-      .catch(() => {
-        runFailed = true;
-        emit({
-          type: "subagent.updated",
-          sessionId: parent.id,
-          childSessionId: session.id,
-          status: "failed",
+    try {
+      let promptError: unknown;
+      try {
+        await this.prompt(window, {
+          sessionId: session.id,
+          message: composeSubagentPrompt(input),
+          context: [],
+          delivery: "normal",
+          userMessageId: `subagent-user:${randomUUID()}`,
+          ...(childModel ? { model: childModel } : {}),
         });
-      })
-      .then(async () => {
-        if (!session.subagentWorktree) {
-          return;
-        }
-        const updated = await finishSubagentWorktree(session.subagentWorktree, input.task);
-        updateAgentSessionWorktree(session.id, updated);
-        if (!runFailed) {
-          emit({
-            type: "subagent.updated",
-            sessionId: parent.id,
-            childSessionId: session.id,
-            status: "completed",
-          });
-        }
-      })
-      .catch((error) => {
-        emit({
-          type: "runtime.error",
-          sessionId: parent.id,
-          message: `Subagent worktree finalization failed: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        });
-      })
-      .finally(() => {
-        void this.dispose(session.id).catch(() => undefined);
-      });
-    return { session, status: "running" };
-  }
-
-  async waitSubagent(
-    parentSessionId: string,
-    input: { target?: string; timeoutMs?: number },
-  ): Promise<{ timedOut: boolean; agents: Array<AgentSessionInfo & { output?: string }> }> {
-    const deadline = Date.now() + (input.timeoutMs ?? DEFAULT_SUBAGENT_WAIT_MS);
-    while (true) {
-      const agents = input.target
-        ? [this.requireChildSession(parentSessionId, input.target)]
-        : listSubagentSessions(parentSessionId);
-      if (agents.every((agent) => !isSubagentBusy(agent.status))) {
-        return { timedOut: false, agents: agents.map(withSubagentOutput) };
+      } catch (error) {
+        promptError = error;
       }
-      if (Date.now() >= deadline) {
-        return { timedOut: true, agents };
+      let finalizationError: unknown;
+      if (session.subagentWorktree) {
+        try {
+          const updated = await finishSubagentWorktree(session.subagentWorktree, input.task);
+          updateAgentSessionWorktree(session.id, updated);
+        } catch (error) {
+          finalizationError = error;
+        }
       }
-      await sleep(250);
+      if (promptError) {
+        throw promptError;
+      }
+      if (finalizationError) {
+        throw finalizationError;
+      }
+      const completed = getAgentSession(session.id) ?? session;
+      const childRun = listAgentRuns(session.id).at(-1);
+      if (childRun && childRun.status !== "completed") {
+        throw new Error(childRun.error ?? `Subagent ${childRun.status}.`);
+      }
+      const output = lastAssistantOutput(session.id);
+      return { session: completed, ...(output ? { output } : {}) };
+    } finally {
+      await this.dispose(session.id);
     }
-  }
-
-  private requireChildSession(parentSessionId: string, childSessionId: string): AgentSessionInfo {
-    const child = getAgentSession(childSessionId);
-    if (!child || child.parentSessionId !== parentSessionId) {
-      throw new Error(`Unknown subagent: ${childSessionId}`);
-    }
-    return child;
   }
 
   async abort(sessionId: string): Promise<void> {
@@ -1516,11 +1471,6 @@ function shouldPersistSubagentUpdate(event: AgentEvent): boolean {
   );
 }
 
-function withSubagentOutput(session: AgentSessionInfo): AgentSessionInfo & { output?: string } {
-  const output = lastAssistantOutput(session.id);
-  return output ? { ...session, output } : session;
-}
-
 function lastAssistantOutput(sessionId: string): string | undefined {
   const roles = new Map<string, "assistant" | "user">();
   const textByMessage = new Map<string, string>();
@@ -1552,70 +1502,4 @@ function lastAssistantOutput(sessionId: string): string | undefined {
 
 function isSubagentBusy(status: AgentSessionInfo["status"]): boolean {
   return status === "starting" || status === "running" || status === "blocked";
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/**
- * Compact, display-only chips for the sent user message bubble (Cursor parity:
- * the context you attached stays visible after sending). Derived from the run's
- * context items — the full items are still resolved server-side for the model.
- */
-function buildContextChips(items: ContextItem[]): MessageContextChip[] {
-  return items.map(contextChipFor);
-}
-
-function contextChipFor(item: ContextItem): MessageContextChip {
-  switch (item.type) {
-    case "file":
-      return { kind: "file", label: chipBasename(item.path) };
-    case "folder":
-      return { kind: "folder", label: `${chipBasename(item.path)}/` };
-    case "doc":
-      return { kind: "doc", label: item.title };
-    case "terminal":
-      return { kind: "terminal", label: `terminal:${item.terminalId.slice(0, 6)}` };
-    case "browser":
-      return { kind: "browser", label: "browser" };
-    case "git-diff":
-      return { kind: "git-diff", label: item.mode === "branch" ? "Branch" : "working diff" };
-    case "past-chat":
-      return { kind: "past-chat", label: item.title };
-    case "project-summary":
-      return { kind: "project-summary", label: "project summary" };
-    case "recent-changes":
-      return { kind: "recent-changes", label: "recent changes" };
-    case "rules":
-      return { kind: "rules", label: "project rules" };
-    case "search":
-      return { kind: "search", label: `search:${item.query}` };
-    case "design-element": {
-      const el = item.element;
-      const text = el.text
-        ? ` "${el.text.length > 24 ? `${el.text.slice(0, 23)}…` : el.text}"`
-        : "";
-      const detail = el.source ? `${el.source.file}:${el.source.line}` : el.domPath;
-      return {
-        kind: "design-element",
-        label: `${el.label}${text}`,
-        detail,
-        ...(el.color ? { color: el.color } : {}),
-      };
-    }
-    case "design-annotation": {
-      const annotation = item.annotation;
-      return {
-        kind: "design-annotation",
-        label: annotation.label,
-        detail: `${Math.round(annotation.rect.width)}×${Math.round(annotation.rect.height)}`,
-        ...(annotation.color ? { color: annotation.color } : {}),
-      };
-    }
-  }
-}
-
-function chipBasename(path: string): string {
-  return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
 }

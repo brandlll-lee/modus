@@ -30,7 +30,6 @@ export type ParsedSubagent = {
   description: string;
   model: string;
   readOnly: boolean;
-  isBackground: boolean;
   tools?: string[];
   disallowedTools?: string[];
   isolation: "shared" | "worktree";
@@ -53,7 +52,6 @@ export function parseSubagent(text: string, fallbackName: string): ParsedSubagen
     description,
     model: scalar(data.model)?.trim() || "inherit",
     readOnly: asBoolean(data.readonly, false),
-    isBackground: asBoolean(data.background ?? data.is_background ?? data["is-background"], false),
     ...(tools ? { tools } : {}),
     ...(disallowedTools ? { disallowedTools } : {}),
     isolation: asIsolation(data.isolation),
@@ -185,7 +183,6 @@ export function resolveSubagentsPrompt(cwd: string): string {
       const flags = [
         agent.model && agent.model !== "inherit" ? `model=${agent.model}` : "model=inherit",
         agent.readOnly ? "readonly" : undefined,
-        agent.isBackground ? "background" : "foreground",
         agent.tools?.length ? `tools=${agent.tools.join("|")}` : undefined,
         agent.disallowedTools?.length ? `disallowed=${agent.disallowedTools.join("|")}` : undefined,
         agent.isolation === "worktree" ? "isolation=worktree" : undefined,
@@ -271,7 +268,6 @@ function toSubagentDetail(parsed: ParsedSubagent, path: string, root: AgentRoot)
     path,
     model: parsed.model,
     readOnly: parsed.readOnly,
-    isBackground: parsed.isBackground,
     ...(parsed.tools ? { tools: parsed.tools } : {}),
     ...(parsed.disallowedTools ? { disallowedTools: parsed.disallowedTools } : {}),
     isolation: parsed.isolation,
@@ -295,7 +291,6 @@ function renderSubagentFile(input: CreateSubagentInput): string {
     `description: ${frontmatterScalar(input.description)}`,
     `model: ${frontmatterScalar(model)}`,
     `readonly: ${input.readOnly ? "true" : "false"}`,
-    `is_background: ${input.isBackground ? "true" : "false"}`,
   ];
   if (input.tools?.length) {
     lines.push(`tools: [${input.tools.map(frontmatterScalar).join(", ")}]`);

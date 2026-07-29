@@ -54,33 +54,24 @@ export type AgentRuntime = {
   create(window: BrowserWindowType, input: CreateAgentRuntimeInput): Promise<AgentSessionInfo>;
   ensure(window: BrowserWindowType, sessionId: string): Promise<AgentSessionInfo>;
   prompt(window: BrowserWindowType, input: PromptAgentInput): Promise<void>;
-  spawnSubagent(
+  runSubagent(
     window: BrowserWindowType,
     input: {
       parentSessionId: string;
       task: string;
       prompt: string;
       subagentType: string;
-      background?: boolean;
       subagent?: {
         name: string;
         body: string;
         model: string;
         readOnly: boolean;
-        isBackground: boolean;
         tools?: string[];
         disallowedTools?: string[];
         isolation?: "shared" | "worktree";
       };
     },
-  ): Promise<{
-    session: AgentSessionInfo;
-    status: "running";
-  }>;
-  waitSubagent(
-    parentSessionId: string,
-    input: { target?: string; timeoutMs?: number },
-  ): Promise<{ timedOut: boolean; agents: Array<AgentSessionInfo & { output?: string }> }>;
+  ): Promise<{ session: AgentSessionInfo; output?: string }>;
   abort(sessionId: string): Promise<void>;
   listRuns(sessionId: string): Promise<AgentRunInfo[]>;
   dispose(sessionId: string): Promise<void>;
