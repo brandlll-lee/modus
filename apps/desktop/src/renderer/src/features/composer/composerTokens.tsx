@@ -15,6 +15,7 @@ import {
 } from "@tabler/icons-react";
 import type { ReactNode } from "react";
 import type { ContextItem, SkillSelection } from "../../../../shared/contracts";
+import { formatFileLineRange } from "../../../../shared/context-chips";
 import { materialIconForFile } from "../files/fileIcons";
 
 function basename(path: string): string {
@@ -61,11 +62,17 @@ export function InspectGlyph({ size = 13 }: { size?: number }) {
 
 /** Icon + display label for a context item — the single source for both the
  * inline editor atom and any chip rendering. */
-export function tokenMeta(item: ContextItem): { icon: ReactNode; label: string } {
+export function tokenMeta(item: ContextItem): { icon: ReactNode; label: string; detail?: string } {
   const props = { size: 13, stroke: 1.7 } as const;
   switch (item.type) {
-    case "file":
-      return { icon: fileTokenIcon(item.path), label: basename(item.path) };
+    case "file": {
+      const detail = formatFileLineRange(item.range);
+      return {
+        icon: fileTokenIcon(item.path),
+        label: basename(item.path),
+        ...(detail ? { detail } : {}),
+      };
+    }
     case "folder":
       return { icon: <IconFolder {...props} />, label: `${basename(item.path)}/` };
     case "doc":
@@ -99,6 +106,12 @@ export function tokenMeta(item: ContextItem): { icon: ReactNode; label: string }
       };
     case "design-annotation":
       return { icon: <IconPencil {...props} />, label: item.annotation.label };
+    case "excerpt":
+      return {
+        icon: fileTokenIcon(item.path),
+        label: basename(item.path),
+        ...(item.locator ? { detail: item.locator } : {}),
+      };
     default:
       return { icon: <IconFileText {...props} />, label: "context" };
   }
@@ -119,11 +132,12 @@ export function TokenContent({ item }: { item: ContextItem }) {
         : undefined;
   return (
     <span
-      className="inline-flex max-w-[220px] items-center gap-1 align-[-0.15em] text-link"
+      className="inline-flex max-w-[260px] items-center gap-1 align-[-0.15em] text-link"
       style={markColor ? { color: markColor } : undefined}
     >
       <span className="inline-flex">{meta.icon}</span>
       <span className="truncate">{meta.label}</span>
+      {meta.detail ? <span className="shrink-0 font-normal text-fg-muted">{meta.detail}</span> : null}
     </span>
   );
 }
@@ -140,8 +154,11 @@ export function SkillTokenContent({ skill }: { skill: SkillSelection }) {
 }
 
 export function contextItemKey(item: ContextItem): string {
-  if (item.type === "file" || item.type === "folder") {
-    return `${item.type}:${item.path}`;
+  if (item.type === "file") {
+    return `file:${item.path}:${item.range?.fromLine ?? ""}:${item.range?.toLine ?? ""}`;
+  }
+  if (item.type === "folder") {
+    return `folder:${item.path}`;
   }
 
   if (item.type === "doc") {
@@ -170,6 +187,10 @@ export function contextItemKey(item: ContextItem): string {
 
   if (item.type === "design-annotation") {
     return `design-annotation:${item.annotation.id}`;
+  }
+
+  if (item.type === "excerpt") {
+    return `excerpt:${item.path}:${item.locator ?? ""}:${item.text}`;
   }
 
   return item.type;

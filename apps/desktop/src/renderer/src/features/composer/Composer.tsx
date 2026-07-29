@@ -114,6 +114,9 @@ export function createEmptyComposerDraft(): ComposerDraft {
 
 function inlinePartLabel(part: MentionEditorPart): string | undefined {
   if (part.type === "context") {
+    // Design marks keep a short in-flow label. Every other context kind is shown
+    // via chips; the model payload travels on `context[]` IPC — omit from body.
+    // Returning undefined used to become the literal "[context]" placeholder.
     if (part.item.type === "design-element") {
       return (
         part.item.element.componentName || part.item.element.tagName || part.item.element.label
@@ -122,7 +125,7 @@ function inlinePartLabel(part: MentionEditorPart): string | undefined {
     if (part.item.type === "design-annotation") {
       return part.item.annotation.label;
     }
-    return undefined;
+    return "";
   }
   if (part.type === "skill") {
     return `skill:${part.skill.name}`;
@@ -135,7 +138,16 @@ export function messageFromParts(parts: MentionEditorPart[] | undefined, fallbac
     return fallback;
   }
   return parts
-    .map((part) => (part.type === "text" ? part.text : `[${inlinePartLabel(part) ?? "context"}]`))
+    .map((part) => {
+      if (part.type === "text") {
+        return part.text;
+      }
+      const label = inlinePartLabel(part);
+      if (label === "") {
+        return "";
+      }
+      return `[${label ?? "context"}]`;
+    })
     .join("")
     .replace(/\u00a0/g, " ")
     .trim();
@@ -527,13 +539,14 @@ export function Composer({
           {!hasText && !hasInlineTokens && !isComposing ? (
             <div
               aria-hidden
-              className="pointer-events-none absolute inset-x-0 top-0 px-4 pt-4 text-md font-normal text-fg-faint"
+              className="pointer-events-none absolute inset-x-0 top-0 px-4 pt-3 text-md font-light text-fg-placeholder leading-normal"
             >
               {COMPOSER_PLACEHOLDER}
             </div>
           ) : null}
+          {/* One typing line + airy pad (top/bottom) — not a multi-line empty runway. */}
           <MentionEditor
-            className="min-h-[68px] px-4 pt-4 text-md font-normal text-fg leading-[1.5]"
+            className="min-h-[calc(1lh+1.25rem)] px-4 pt-3 pb-2 text-md font-normal text-fg leading-normal"
             contextItems={contextItems}
             onChange={handleEditorChange}
             onKeyDown={handleKeyDown}
@@ -584,7 +597,7 @@ export function Composer({
 
         {/* @container: controls collapse their labels to icons as the composer
           narrows (responsive to the composer's own width, not the viewport). */}
-        <div className="@container flex items-center gap-2 px-3 pt-1 pb-2.5">
+        <div className="@container flex items-center gap-2 px-3 pt-1.5 pb-2.5">
           <button
             aria-label="Attach files"
             className="app-no-drag flex size-[26px] shrink-0 items-center justify-center rounded-md text-fg-subtle transition-colors hover:bg-hover hover:text-fg-muted"
@@ -787,7 +800,7 @@ function ModelSelect({
           provider={current.provider}
           size="sm"
         />
-        <span className="min-w-0 truncate text-fg-subtle">{tag}</span>
+        <span className="min-w-0 truncate text-fg">{tag}</span>
         <span className="hidden shrink-0 whitespace-nowrap text-fg-faint @md:inline">
           {selectedThinkingLabel(current)}
         </span>
@@ -972,8 +985,7 @@ function EffortEnergySlider({
       data-maximum={!disabled && options.length > 1 && index === options.length - 1}
       style={
         {
-          "--effort-glow": `${2 + energy * 8}px`,
-          "--effort-opacity": 0.38 + energy * 0.62,
+          "--effort-opacity": 0.7 + energy * 0.3,
         } as CSSProperties
       }
     >

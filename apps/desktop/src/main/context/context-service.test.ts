@@ -35,6 +35,16 @@ describe("context-service", () => {
     expect(resolved).toEqual([]);
   });
 
+  it("resolves a file range to the selected lines", async () => {
+    await writeFile(join(repo, "sample.ts"), "one\ntwo\nthree\nfour\n");
+    const resolved = await resolveContext(repo, [
+      { type: "file", path: join(repo, "sample.ts"), range: { fromLine: 2, toLine: 3 } },
+    ]);
+
+    expect(resolved[0]?.title).toContain(":L2-3");
+    expect(resolved[0]?.content).toBe("two\nthree");
+  });
+
   it("resolves project rules", async () => {
     const resolved = await resolveContext(repo, [{ type: "rules" }]);
 
@@ -145,5 +155,33 @@ describe("context-service", () => {
     expect(content).toContain("width=320");
     expect(content).toContain("visual evidence only");
     expect(content).toContain("A screenshot of the marked region is attached");
+  });
+
+  it("resolves an excerpt from capture-time text without reading the file", async () => {
+    const pdfPath = join(repo, "notes.pdf");
+    await writeFile(pdfPath, "%PDF-1.4 binary garbage that is not utf8 lines\n");
+    const text = "What distinguishes diffusion models from other latent variable models";
+    const resolved = await resolveContext(repo, [
+      { type: "excerpt", path: pdfPath, text, locator: "p.1" },
+    ]);
+
+    expect(resolved).toHaveLength(1);
+    expect(resolved[0]?.title).toContain("notes.pdf");
+    expect(resolved[0]?.title).toContain("p.1");
+    expect(resolved[0]?.content).toBe(text);
+  });
+
+  it("resolves an excerpt even when path is outside cwd (text is capture-time authority)", async () => {
+    const text = "outside path must still inject";
+    const resolved = await resolveContext(repo, [
+      {
+        type: "excerpt",
+        path: join(process.cwd(), "outside.pdf"),
+        text,
+        locator: "p.9",
+      },
+    ]);
+    expect(resolved).toHaveLength(1);
+    expect(resolved[0]?.content).toBe(text);
   });
 });

@@ -194,10 +194,23 @@ export async function resolveContext(
       if (!info || info.size > MAX_FILE_BYTES) {
         continue;
       }
+      const relative = toRelative(cwd, item.path);
+      const raw = await readFile(item.path, "utf8");
+      const from = item.range?.fromLine;
+      const to = item.range?.toLine ?? from;
+      let content = raw;
+      let title = `file:${relative}`;
+      if (from !== undefined && from >= 1) {
+        const lines = raw.split("\n");
+        const start = Math.min(from, lines.length);
+        const end = Math.min(Math.max(to ?? from, start), lines.length);
+        content = lines.slice(start - 1, end).join("\n");
+        title = `file:${relative}:L${start}${end === start ? "" : `-${end}`}`;
+      }
       resolvedItems.push({
         item,
-        title: `file:${toRelative(cwd, item.path)}`,
-        content: await readFile(item.path, "utf8"),
+        title,
+        content: capText(content),
       });
     }
 
@@ -407,6 +420,18 @@ export async function resolveContext(
         item,
         title: `design-annotation:${annotation.label}`,
         content: lines.join("\n"),
+      });
+    }
+
+    if (item.type === "excerpt") {
+      // Capture-time text is authoritative (like design-element). Path is only
+      // for the title — do not drop the excerpt when path fails the cwd check.
+      const relative = inside(cwd, item.path) ? toRelative(cwd, item.path) : item.path;
+      const where = item.locator ? `${relative}:${item.locator}` : relative;
+      resolvedItems.push({
+        item,
+        title: `excerpt:${where}`,
+        content: capText(item.text),
       });
     }
   }
