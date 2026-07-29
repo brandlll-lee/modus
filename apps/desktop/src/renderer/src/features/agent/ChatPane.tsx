@@ -14,6 +14,8 @@ import type {
   PromptImageAttachment,
   QuestionAnswer,
   SkillSelection,
+  SubagentActivity,
+  SubagentStatus,
   WorkingChangeStats,
   WorkspaceInfo,
 } from "../../../../shared/contracts";
@@ -26,6 +28,7 @@ import {
   messageFromParts,
 } from "../composer/Composer";
 import { ComposerDock } from "../composer/ComposerDock";
+import { contextItemKey } from "../composer/composerTokens";
 import type { MentionEditorPart } from "../composer/MentionEditor";
 import { buildPlanMessage, effectiveBuildStatus, normalizePlan } from "../plan/planState";
 import { QuestionsCard } from "../plan/QuestionsCard";
@@ -46,7 +49,13 @@ import { latestPendingPermissionRequest } from "./permissionRequests";
 import { latestPendingQuestionRequest } from "./questionRequests";
 import { RetryStatusBar } from "./RetryStatusBar";
 import { latestSessionStatus } from "./runState";
+import { SubagentPreviewSheet } from "./SubagentPreviewSheet";
+import {
+  isSubagentSessionWorking,
+  subagentActivityLabel,
+} from "./subagentUi";
 import { buildVisibleTimelineBlocks, Timeline } from "./Timeline";
+import { WorkingSubagentBar } from "./WorkingSubagentBar";
 import { useAutoScroll } from "./useAutoScroll";
 
 /**
@@ -80,6 +89,17 @@ type ChatPaneProps = {
   onPlanUpdated(plan: PlanRef): void;
   /** Explicitly open a completed timeline plan in the inspector. */
   onOpenPlan?(plan: PlanRef): void;
+  /** Open a workspace file in the Files inspector panel. */
+  onOpenFile?(path: string): void;
+  /** Open a background terminal in the Terminal inspector panel. */
+  onOpenTerminal?(terminalId: string): void;
+  /**
+   * Child sessions of this pane's session. When set with `onOpenSubagent`,
+   * timeline/rail clicks open a local preview; `onOpenSubagent` is Expand only.
+   */
+  subagentSessions?: AgentSessionInfo[] | undefined;
+  /** Omit composer dock — used by the local subagent preview sheet. */
+  hideComposer?: boolean | undefined;
 };
 
 type DesignContextItem = Extract<ContextItem, { type: "design-element" }>;
@@ -100,6 +120,30 @@ export function createEmptyChatComposerDraft(): ChatComposerDraft {
 
 function resolveDraftUpdate<T>(update: T | ((current: T) => T), current: T): T {
   return typeof update === "function" ? (update as (value: T) => T)(current) : update;
+}
+
+export function addContextItemToDraft(
+  draft: ChatComposerDraft,
+  item: ContextItem,
+): ChatComposerDraft {
+  const key = contextItemKey(item);
+  if (draft.contextItems.some((contextItem) => contextItemKey(contextItem) === key)) {
+    return draft;
+  }
+  return {
+    ...draft,
+    contextItems: [...draft.contextItems, item],
+    parts: [
+      ...(draft.parts ?? [
+        ...draft.contextItems.map((contextItem) => ({
+          type: "context" as const,
+          item: contextItem,
+        })),
+        ...(draft.value ? [{ type: "text" as const, text: `${draft.value}\n` }] : []),
+      ]),
+      { type: "context" as const, item },
+    ],
+  };
 }
 
 export function addDesignElementToDraft(
@@ -322,6 +366,10 @@ export function ChatPane({
   onComposerDraftChange,
   onPlanUpdated,
   onOpenPlan,
+  onOpenFile,
+  onOpenTerminal,
+  subagentSessions,
+  hideComposer = false,
 }: ChatPaneProps) {
   const sessionId = session.id;
   const [agentEvents, setAgentEvents] = useState<AgentEventItem[]>([]);
@@ -333,6 +381,7 @@ export function ChatPane({
   const [aborting, setAborting] = useState(false);
   const [workingStats, setWorkingStats] = useState<WorkingChangeStats | undefined>();
   const [dismissedPlanHash, setDismissedPlanHash] = useState<string | undefined>(undefined);
+  const [previewSubagentId, setPreviewSubagentId] = useState<string | undefined>();
   const managedProcesses = useManagedProcesses({
     workspaceId: workspace?.id,
     sessionId,
@@ -342,8 +391,48 @@ export function ChatPane({
     () => managedProcesses.processes.filter((process) => process.status === "running"),
     [managedProcesses.processes],
   );
+  const subagentActivityByChild = useMemo(() => {
+    const map = new Map<string, { status: SubagentStatus; activity?: SubagentActivity }>();
+    for (const item of agentEvents) {
+      const event = item.event;
+      if (event.type === "subagent.started") {
+        map.set(event.childSessionId, { status: "running" });
+      } else if (event.type === "subagent.updated") {
+        const previous = map.get(event.childSessionId);
+        map.set(event.childSessionId, {
+          status: event.status,
+          ...(event.activity
+            ? { activity: event.activity }
+            : previous?.activity
+              ? { activity: previous.activity }
+              : {}),
+        });
+      }
+    }
+    return map;
+  }, [agentEvents]);
+  const workingSubagents = useMemo(() => {
+    if (!subagentSessions?.length) {
+      return [];
+    }
+    return subagentSessions
+      .filter((child) => isSubagentSessionWorking(child.status))
+      .map((child) => {
+        const live = subagentActivityByChild.get(child.id);
+        const status: SubagentStatus =
+          live?.status ?? (child.status === "blocked" ? "blocked" : "running");
+        return {
+          id: child.id,
+          task: child.subagentTask ?? child.title,
+          activityLabel: subagentActivityLabel(status, live?.activity),
+        };
+      });
+  }, [subagentSessions, subagentActivityByChild]);
+  const previewSession = subagentSessions?.find((child) => child.id === previewSubagentId);
+  const canPreviewSubagents = Boolean(subagentSessions && onOpenSubagent);
   const showChangesRail = Boolean(workingStats && workingStats.fileCount > 0);
-  const hasComposerRails = runningProcesses.length > 0 || showChangesRail;
+  const hasComposerRails =
+    runningProcesses.length > 0 || workingSubagents.length > 0 || showChangesRail;
   const activeComposerDraft = composerDraft ?? localComposerDraft;
   const contextItems = activeComposerDraft.contextItems;
   const composerMode = activeComposerDraft.mode;
@@ -624,13 +713,17 @@ export function ChatPane({
     setPromptError(undefined);
     setPendingPrompt(true);
     const mergedAttachments = attachments ?? [];
-    const leanContext = context.map((item) =>
-      item.type === "design-element"
-        ? { ...item, element: { ...item.element, screenshotDataUrl: undefined } }
-        : item.type === "design-annotation"
-          ? { ...item, annotation: { ...item.annotation, screenshotDataUrl: undefined } }
-          : item,
-    );
+    const leanContext = context.map((item): ContextItem => {
+      if (item.type === "design-element") {
+        const { screenshotDataUrl: _drop, ...element } = item.element;
+        return { ...item, element };
+      }
+      if (item.type === "design-annotation") {
+        const { screenshotDataUrl: _drop, ...annotation } = item.annotation;
+        return { ...item, annotation };
+      }
+      return item;
+    });
     // Bind THIS turn's execution params to the prompt: the model the composer
     // currently shows + its provider-facing thinking variant. The runtime applies them at turn
     // start, so the turn is self-describing — no stale model/thinking/mode after
@@ -647,6 +740,7 @@ export function ChatPane({
           message,
           ...(mergedAttachments.length > 0 ? { attachments: mergedAttachments } : {}),
           ...(skills && skills.length > 0 ? { skills } : {}),
+          ...(leanContext.length > 0 ? { contextItems: leanContext } : {}),
         }),
       ),
     );
@@ -790,6 +884,29 @@ export function ChatPane({
     onSessionsChanged();
   }
 
+  const openSubagentPreview = useCallback((childSessionId: string): void => {
+    setPreviewSubagentId(childSessionId);
+  }, []);
+
+  const closeSubagentPreview = useCallback((): void => {
+    setPreviewSubagentId(undefined);
+  }, []);
+
+  const expandSubagentPreview = useCallback((): void => {
+    if (!previewSubagentId) {
+      return;
+    }
+    const id = previewSubagentId;
+    setPreviewSubagentId(undefined);
+    onOpenSubagent?.(id);
+  }, [previewSubagentId, onOpenSubagent]);
+
+  useEffect(() => {
+    if (previewSubagentId && subagentSessions && !previewSession) {
+      setPreviewSubagentId(undefined);
+    }
+  }, [previewSubagentId, previewSession, subagentSessions]);
+
   return (
     <section className="flex h-full min-w-0 flex-1 flex-col">
       {promptError ? (
@@ -809,11 +926,17 @@ export function ChatPane({
             <Timeline
               agentEvents={agentEvents}
               cwd={activeCwd}
+              {...(hideComposer ? { embedded: true } : {})}
               model={paneModel}
               models={models}
               onEditResend={editAndResend}
+              {...(onOpenFile ? { onOpenFile } : {})}
               {...(onOpenPlan ? { onOpenPlan } : {})}
-              {...(onOpenSubagent ? { onOpenSubagent } : {})}
+              {...(canPreviewSubagents
+                ? { onOpenSubagent: openSubagentPreview }
+                : onOpenSubagent
+                  ? { onOpenSubagent }
+                  : {})}
               onRestoreCheckpoint={async (checkpointId) => {
                 await window.modus.checkpoint.restore({ checkpointId });
                 refreshStats();
@@ -822,9 +945,38 @@ export function ChatPane({
               workspaceId={workspace?.id}
             />
           </ChatViewport>
+          {/* Scoped to the timeline area: the composer stays sharp and usable below. */}
+          {!hideComposer ? (
+            <SubagentPreviewSheet
+              onClose={closeSubagentPreview}
+              onExpand={expandSubagentPreview}
+              open={Boolean(previewSession)}
+              title={previewSession?.subagentTask ?? previewSession?.title ?? "Subagent"}
+            >
+              {previewSession ? (
+                <ChatPane
+                  defaultModel={defaultModel}
+                  hideComposer
+                  hub={hub}
+                  key={previewSession.id}
+                  models={models}
+                  onModelChange={onModelChange}
+                  onModelConfigChange={onModelConfigChange}
+                  onOpenReview={onOpenReview}
+                  onPlanUpdated={onPlanUpdated}
+                  onSessionsChanged={onSessionsChanged}
+                  session={previewSession}
+                  workspace={workspace}
+                  {...(onOpenFile ? { onOpenFile } : {})}
+                  {...(onOpenPlan ? { onOpenPlan } : {})}
+                />
+              ) : null}
+            </SubagentPreviewSheet>
+          ) : null}
         </div>
       </CollapsibleMotionProvider>
 
+      {hideComposer ? null : (
       <div className="min-w-0 max-w-full shrink-0 px-4 pb-4">
         <div className="relative mx-auto min-w-0 w-full max-w-5xl">
           {autoScroll.showScrollToLatest ? (
@@ -878,6 +1030,13 @@ export function ChatPane({
                               nowMs={managedProcesses.nowMs}
                               onStop={managedProcesses.kill}
                               processes={runningProcesses}
+                              {...(onOpenTerminal ? { onOpenTerminal } : {})}
+                            />
+                          ) : null}
+                          {workingSubagents.length > 0 ? (
+                            <WorkingSubagentBar
+                              items={workingSubagents}
+                              onOpen={openSubagentPreview}
                             />
                           ) : null}
                           {showChangesRail && workingStats ? (
@@ -928,6 +1087,7 @@ export function ChatPane({
           )}
         </div>
       </div>
+      )}
     </section>
   );
 }

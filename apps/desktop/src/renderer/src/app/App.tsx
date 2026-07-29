@@ -61,6 +61,8 @@ import {
   type SessionActivity,
 } from "../features/agent/agentEventHub";
 import type { ChatComposerDraft, ChatComposerDraftUpdate } from "../features/agent/ChatPane";
+import { addContextItemToDraft } from "../features/agent/ChatPane";
+import { contextItemKey } from "../features/composer/composerTokens";
 import { Composer, createEmptyComposerDraft } from "../features/composer/Composer";
 import { BranchSwitcher } from "../features/git/BranchSwitcher";
 import { INSPECTOR_MIN_WIDTH } from "../features/inspector/inspector-layout";
@@ -126,6 +128,8 @@ export function App() {
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [inspectorWidth, setInspectorWidth] = useState(384);
   const [inspectorTab, setInspectorTab] = useState("changes");
+  const [filesRevealPath, setFilesRevealPath] = useState<string | undefined>();
+  const [terminalRevealId, setTerminalRevealId] = useState<string | undefined>();
   const [reviewCwd, setReviewCwd] = useState<string | undefined>();
   const [selectedSubagentId, setSelectedSubagentId] = useState<string | undefined>();
   // Plans are scoped per session (the authoritative key), so switching sessions
@@ -773,6 +777,35 @@ export function App() {
     [],
   );
 
+  const addContextToChat = useCallback(
+    (item: ContextItem) => {
+      if (activeSession) {
+        updateSessionComposerDraft(activeSession.id, (draft) => addContextItemToDraft(draft, item));
+        return;
+      }
+      setHeroContextItems((current) => {
+        const key = contextItemKey(item);
+        if (current.some((existing) => contextItemKey(existing) === key)) {
+          return current;
+        }
+        return [...current, item];
+      });
+    },
+    [activeSession, updateSessionComposerDraft],
+  );
+
+  const openWorkspaceFile = useCallback((path: string) => {
+    setInspectorOpen(true);
+    setInspectorTab("files");
+    setFilesRevealPath(path);
+  }, []);
+
+  const openTerminal = useCallback((terminalId: string) => {
+    setInspectorOpen(true);
+    setInspectorTab("terminal");
+    setTerminalRevealId(terminalId);
+  }, []);
+
   return (
     <LazyMotion features={domAnimation} strict>
       <TooltipProvider>
@@ -889,7 +922,6 @@ export function App() {
                                   void updateModelThinking(next, thinkingVariant)
                                 }
                                 onOpenReview={openReview}
-                                onOpenSubagent={openSubagent}
                                 onComposerDraftChange={(update) =>
                                   updateSessionComposerDraft(activeSession.id, update)
                                 }
@@ -904,6 +936,12 @@ export function App() {
                                   });
                                 }}
                                 onOpenPlan={openPlan}
+                                onOpenFile={openWorkspaceFile}
+                                onOpenTerminal={openTerminal}
+                                onOpenSubagent={openSubagent}
+                                subagentSessions={agentSessions.filter(
+                                  (session) => session.parentSessionId === activeSession.id,
+                                )}
                                 onPlanUpdated={rememberActivePlan}
                                 onSessionsChanged={() => void refreshSessions()}
                                 session={activeSession}
@@ -1000,6 +1038,11 @@ export function App() {
                           onSessionsChanged={() => void refreshSessions()}
                           onTabChange={setInspectorTab}
                           onWidthChange={setInspectorWidth}
+                          onAddToChat={addContextToChat}
+                          onRevealConsumed={() => setFilesRevealPath(undefined)}
+                          onRevealTerminalConsumed={() => setTerminalRevealId(undefined)}
+                          revealPath={filesRevealPath}
+                          revealTerminalId={terminalRevealId}
                           open={inspectorOpen}
                           {...(activeSession && activePlanBySession[activeSession.id]
                             ? { plan: activePlanBySession[activeSession.id] }
