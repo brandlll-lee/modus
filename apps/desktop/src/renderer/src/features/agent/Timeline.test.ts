@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentEvent, PlanRef } from "../../../../shared/contracts";
-import {
-  FAST_CODEBASE_TOOL_NAME,
-  PLAN_TOOL_NAME,
-  VISUAL_TOOL_NAME,
-} from "../../../../shared/tools";
+import { PLAN_TOOL_NAME, VISUAL_TOOL_NAME } from "../../../../shared/tools";
 import { optimisticUserPromptEvents } from "./agentEventHub";
 import { subagentColor } from "./subagentUi";
 import {
@@ -13,7 +9,6 @@ import {
   buildBlocks,
   formatElapsedVerbose,
   groupTurnWork,
-  runStatusLabel,
   segmentTurns,
   type TimelineBlock,
 } from "./Timeline";
@@ -292,7 +287,6 @@ describe("buildBlocks", () => {
         childSessionId: "child-a",
         task: "Audit files",
         subagentType: "reviewer",
-        background: true,
         model: "mock/model",
       }),
       item("2", {
@@ -902,34 +896,6 @@ describe("attachTurnActions", () => {
       tool("t", "read"),
     ] as Blocks);
     expect(findRun(result)).not.toHaveProperty("answer");
-  });
-});
-
-describe("runStatusLabel", () => {
-  const run = (
-    status: "running" | "completed" | "failed" | "blocked" | "cancelled",
-    extra: Record<string, unknown> = {},
-  ) =>
-    ({ id: "r", type: "run", runId: "r", status, startedAt: 0, ...extra }) as Parameters<
-      typeof runStatusLabel
-    >[0];
-
-  it("uses Working for while running", () => {
-    expect(runStatusLabel(run("running", { startedAt: Date.now() - 5000 }))).toMatch(
-      /^Working for /,
-    );
-  });
-
-  it("uses Worked for once settled", () => {
-    expect(runStatusLabel(run("completed", { completedAt: 5000 }))).toBe("Worked for 5 seconds");
-    expect(runStatusLabel(run("completed", { completedAt: 1000 }))).toBe("Worked for 1 second");
-    expect(runStatusLabel(run("completed", { completedAt: 125000 }))).toBe("Worked for 2m 5s");
-  });
-
-  it("surfaces terminal states", () => {
-    expect(runStatusLabel(run("blocked"))).toBe("Waiting for approval");
-    expect(runStatusLabel(run("failed"))).toBe("Modus stopped");
-    expect(runStatusLabel(run("cancelled"))).toBe("Stopped by you");
   });
 });
 

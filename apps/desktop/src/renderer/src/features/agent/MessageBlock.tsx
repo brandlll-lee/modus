@@ -23,6 +23,7 @@ import { ImageThumb } from "../../components/ui/ImageViewer";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
 import { formatClock } from "../../lib/formatClock";
+import { useClipFade } from "../../lib/useClipFade";
 import { useSmoothStreamingText } from "../../lib/useSmoothStreamingText";
 import {
   Composer,
@@ -33,6 +34,7 @@ import {
 } from "../composer/Composer";
 import type { ComposerImage } from "../composer/useComposerImages";
 import { InspectGlyph, SkillTokenContent } from "../composer/composerTokens";
+import { materialIconForFile } from "../files/fileIcons";
 import { CheckpointRestoreButton } from "./CheckpointRestoreButton";
 import { MarkdownMessage } from "./MarkdownMessage";
 
@@ -62,6 +64,8 @@ type MessageBlockProps = {
   models?: ModelInfo[];
   workspaceId?: string | undefined;
   cwd?: string | undefined;
+  /** Open a workspace file in the Files inspector panel. */
+  onOpenFile?: ((path: string) => void) | undefined;
   /** User only: images attached to the prompt, rendered as thumbnails. */
   attachments?: PromptImageAttachment[];
   /** User only: context chips attached to the prompt, kept visible after send. */
@@ -70,6 +74,12 @@ type MessageBlockProps = {
   contextItems?: ContextItem[];
   /** User only: selected skills attached to the prompt. */
   skills?: SkillSelection[];
+  /**
+   * Preview sheet: no sticky chrome or hover actions (sticky fights the
+   * nested scrollport). The 3.5-line clip + fade is shared with the main
+   * timeline regardless of this flag.
+   */
+  compactClip?: boolean | undefined;
 };
 
 export const MessageBlock = memo(function MessageBlock({
@@ -86,18 +96,26 @@ export const MessageBlock = memo(function MessageBlock({
   models = [],
   workspaceId,
   cwd,
+  onOpenFile,
   attachments,
   contextChips,
   contextItems,
   skills,
+  compactClip = false,
 }: MessageBlockProps) {
   const [editing, setEditing] = useState(false);
   const displayContent = useSmoothStreamingText(content, streaming);
+  // Pause measurement while the edit composer owns the slot — remounting the
+  // clip surface must re-run the observer (active flip), not reuse a stale one.
+  const { boxRef, contentRef, clipped } = useClipFade(!editing);
 
   if (messageRole === "user") {
     const hasAttachments = Boolean(attachments?.length);
     const hasText = content.trim().length > 0;
-    if (!hasText && !hasAttachments) return null;
+    const hasInlineTokens = Boolean(contextChips?.length || skills?.length);
+    // File/folder chips are omitted from body text (chips + context[] are authority),
+    // so chip-only prompts must still render a bubble.
+    if (!hasText && !hasAttachments && !hasInlineTokens) return null;
 
     const canEdit = Boolean(editable && onEditResend && model && models.length > 0);
     const showEditor = Boolean(editing && canEdit && onEditResend);
@@ -108,9 +126,11 @@ export const MessageBlock = memo(function MessageBlock({
     const bubbleBody = (
       <>
         <PromptAttachmentRow {...(attachments ? { attachments } : {})} />
-        {hasText ? (
+        {hasText || hasInlineTokens ? (
           <div className="whitespace-pre-wrap wrap-break-word">
-            {contextChips?.map((chip) => (
+            {contextChips
+              ?.filter((chip): chip is MessageContextChip => chip != null && typeof chip.kind === "string")
+              .map((chip) => (
               <InlineContextToken
                 chip={chip}
                 key={`${chip.kind}:${chip.label}:${chip.detail ?? ""}`}
@@ -119,61 +139,77 @@ export const MessageBlock = memo(function MessageBlock({
             {(skills ?? []).map((skill) => (
               <InlineSkillToken key={skill.path} name={skill.name} />
             ))}
-            {content}
+            {hasText ? content : null}
           </div>
         ) : null}
       </>
     );
 
     return (
-      <>
-        {/* Sticky slot owns occlusion: opaque canvas plate so scroll-under
-            timeline never bleeds through rounded corners. Actions stay outside
-            this box (avoids a tall invisible plate). */}
-        <div className={cn("peer sticky top-0 z-10 block w-full min-w-0 bg-canvas", COMPOSER_RADIUS_CLASS)}>
-          {showEditor && onEditResend ? (
-            <InlineEditComposer
-              {...(attachments ? { attachments } : {})}
-              content={content}
-              {...(contextChips ? { contextChips } : {})}
-              {...(contextItems ? { contextItems } : {})}
-              cwd={cwd}
-              messageId={messageId}
-              model={model}
-              models={models}
-              onCancel={() => setEditing(false)}
-              onEditResend={onEditResend}
-              {...(skills ? { skills } : {})}
-              workspaceId={workspaceId}
-            />
-          ) : (
-            <div
-              aria-label={canEdit ? "Edit message" : undefined}
-              className={cn(
-                "block w-full min-w-0 max-h-48 space-y-2 overflow-hidden px-4 py-3 text-left text-sm text-fg leading-relaxed transition-colors hover:border-composer-border-strong",
-                COMPOSER_SHELL_CLASS,
-                canEdit && "cursor-pointer",
-              )}
-              onClick={canEdit ? () => setEditing(true) : undefined}
-              onKeyDown={
-                canEdit
-                  ? (event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        setEditing(true);
-                      }
+      <div
+        className={cn(
+          "group/user-msg relative block w-full min-w-0",
+          COMPOSER_RADIUS_CLASS,
+          // Sticky chrome + absolutely-positioned hover actions: one timeline
+          // child so turn `space-y-6` / `pb-6` keep equal air above and below
+          // the bubble (in-flow ghost action rows used to double the gap below).
+          compactClip ? undefined : "sticky top-0 z-10 bg-canvas",
+        )}
+      >
+        {showEditor && onEditResend ? (
+          <InlineEditComposer
+            {...(attachments ? { attachments } : {})}
+            content={content}
+            {...(contextChips ? { contextChips } : {})}
+            {...(contextItems ? { contextItems } : {})}
+            cwd={cwd}
+            messageId={messageId}
+            model={model}
+            models={models}
+            onCancel={() => setEditing(false)}
+            onEditResend={onEditResend}
+            {...(skills ? { skills } : {})}
+            workspaceId={workspaceId}
+          />
+        ) : (
+          <div
+            aria-label={canEdit ? "Edit message" : undefined}
+            className={cn(
+              "block w-full min-w-0 px-4 py-3 text-left text-sm text-fg leading-relaxed transition-colors hover:border-composer-border-strong",
+              COMPOSER_SHELL_CLASS,
+              canEdit && "cursor-pointer",
+            )}
+            onClick={canEdit ? () => setEditing(true) : undefined}
+            onKeyDown={
+              canEdit
+                ? (event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      setEditing(true);
                     }
-                  : undefined
-              }
-              role={canEdit ? "button" : undefined}
-              tabIndex={canEdit ? 0 : undefined}
+                  }
+                : undefined
+            }
+            role={canEdit ? "button" : undefined}
+            tabIndex={canEdit ? 0 : undefined}
+          >
+            {/* 3.5 lines at leading-relaxed (1.625em × 3.5 = 5.6875em): 3
+                clear lines + a half-line peek for the bottom dissolve.
+                Mask MUST live on this clipped viewport — on the tall inner
+                content the gradient is sized to the full text height, so
+                the visible window stays opaque. */}
+            <div
+              className={cn("max-h-[5.6875em] overflow-hidden", clipped && "clip-fade")}
+              ref={boxRef}
             >
-              {bubbleBody}
+              <div className="space-y-2" ref={contentRef}>
+                {bubbleBody}
+              </div>
             </div>
-          )}
-        </div>
-        {!showEditor ? (
-          <div className="!mt-1 flex h-6 max-w-full items-center gap-1 opacity-0 transition-opacity duration-150 hover:opacity-100 focus-within:opacity-100 peer-hover:opacity-100">
+          </div>
+        )}
+        {!showEditor && !compactClip ? (
+          <div className="pointer-events-none absolute top-full left-0 z-10 mt-1 flex h-6 max-w-full items-center gap-1 opacity-0 transition-opacity duration-150 group-hover/user-msg:pointer-events-auto group-hover/user-msg:opacity-100 group-focus-within/user-msg:pointer-events-auto group-focus-within/user-msg:opacity-100">
             <span className="text-2xs text-fg-faint tabular-nums">{formatClock(createdAt)}</span>
             {checkpointId && onRestoreCheckpoint ? (
               <CheckpointRestoreButton checkpointId={checkpointId} onRestore={onRestoreCheckpoint} />
@@ -193,13 +229,20 @@ export const MessageBlock = memo(function MessageBlock({
             ) : null}
           </div>
         ) : null}
-      </>
+      </div>
     );
   }
 
   return (
     <div className="min-w-0 max-w-full text-sm leading-relaxed">
-      {content ? <MarkdownMessage content={displayContent} streaming={streaming} /> : null}
+      {content ? (
+        <MarkdownMessage
+          content={displayContent}
+          cwd={cwd}
+          onOpenFile={onOpenFile}
+          streaming={streaming}
+        />
+      ) : null}
     </div>
   );
 });
@@ -313,6 +356,9 @@ function contextItemsFromChips(
   workspaceId: string | undefined,
 ): ContextItem[] {
   return chips.flatMap((chip): ContextItem[] => {
+    if (chip == null || typeof chip.kind !== "string") {
+      return [];
+    }
     if (chip.kind === "git-diff") {
       return [{ type: "git-diff", mode: chip.label === "Branch" ? "branch" : "working-state" }];
     }
@@ -336,18 +382,25 @@ function contextItemsFromChips(
 }
 
 function InlineContextToken({ chip }: { chip: MessageContextChip }) {
+  const fileIcon =
+    chip.kind === "file" || chip.kind === "excerpt"
+      ? materialIconForFile(chip.label)
+      : undefined;
   return (
     <span
-      className="mr-1 inline-flex max-w-[220px] items-center gap-1 align-[-0.15em] font-medium text-link text-sm"
+      className="mr-1 inline-flex max-w-[260px] items-center gap-1 align-[-0.15em] font-medium text-link text-sm"
       style={chip.color ? { color: chip.color } : undefined}
       title={chip.detail ? `${chip.label} — ${chip.detail}` : chip.label}
     >
       {chip.kind === "design-element" ? (
         <InspectGlyph size={12} />
+      ) : fileIcon ? (
+        <img alt="" className="size-3 shrink-0" draggable={false} src={fileIcon} />
       ) : (
         <ContextKindIcon kind={chip.kind} />
       )}
       <span className="truncate">{chip.label}</span>
+      {chip.detail ? <span className="shrink-0 font-normal text-fg-muted">{chip.detail}</span> : null}
     </span>
   );
 }

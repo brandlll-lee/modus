@@ -1,9 +1,12 @@
-import type { AgentEvent } from "./contracts";
+import { buildContextChips } from "./context-chips";
+import type { AgentEvent, ContextItem, MessageContextChip } from "./contracts";
 
 export type AgentEventItem = {
   id: string;
   event: AgentEvent;
   createdAt?: string;
+  /** Last streamed chunk time for folded deltas (thinking / message / tool). */
+  updatedAt?: string;
   optimistic?: boolean;
 };
 
@@ -57,14 +60,16 @@ function foldInto<T extends AgentEventItem>(previous: T, next: T): T {
   }
   const prev = previous.event;
   const cur = next.event;
+  const withEnd = (item: T): T =>
+    next.createdAt !== undefined ? ({ ...item, updatedAt: next.createdAt } as T) : item;
   if (prev.type === "message.delta" && cur.type === "message.delta") {
-    return { ...previous, event: { ...prev, delta: prev.delta + cur.delta } } as T;
+    return withEnd({ ...previous, event: { ...prev, delta: prev.delta + cur.delta } } as T);
   }
   if (prev.type === "thinking.delta" && cur.type === "thinking.delta") {
-    return { ...previous, event: { ...prev, delta: prev.delta + cur.delta } } as T;
+    return withEnd({ ...previous, event: { ...prev, delta: prev.delta + cur.delta } } as T);
   }
   if (prev.type === "tool.output" && cur.type === "tool.output") {
-    return { ...previous, event: { ...prev, output: prev.output + cur.output } } as T;
+    return withEnd({ ...previous, event: { ...prev, output: prev.output + cur.output } } as T);
   }
   return next;
 }
@@ -112,8 +117,15 @@ export function optimisticUserPromptEvents(input: {
   message: string;
   attachments?: Extract<AgentEvent, { type: "message.started" }>["attachments"];
   skills?: Extract<AgentEvent, { type: "message.started" }>["skills"];
+  contextItems?: ContextItem[];
+  contextChips?: MessageContextChip[];
 }): AgentEventItem[] {
   const createdAt = new Date().toISOString();
+  const contextChips =
+    input.contextChips ??
+    (input.contextItems && input.contextItems.length > 0
+      ? buildContextChips(input.contextItems)
+      : undefined);
   const started: Extract<AgentEvent, { type: "message.started" }> = {
     type: "message.started",
     sessionId: input.sessionId,
@@ -123,6 +135,10 @@ export function optimisticUserPromptEvents(input: {
       ? { attachments: input.attachments }
       : {}),
     ...(input.skills && input.skills.length > 0 ? { skills: input.skills } : {}),
+    ...(input.contextItems && input.contextItems.length > 0
+      ? { contextItems: input.contextItems }
+      : {}),
+    ...(contextChips && contextChips.length > 0 ? { contextChips } : {}),
   };
   return [
     {

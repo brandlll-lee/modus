@@ -195,6 +195,24 @@ describe("appendAgentEvents", () => {
     });
   });
 
+  it("keeps first createdAt and last updatedAt when folding thinking deltas", () => {
+    const folded = foldAgentEvents([
+      {
+        id: "a",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        event: { type: "thinking.delta", sessionId: "s", messageId: "m", delta: "a" },
+      },
+      {
+        id: "b",
+        createdAt: "2026-01-01T00:00:19.000Z",
+        event: { type: "thinking.delta", sessionId: "s", messageId: "m", delta: "b" },
+      },
+    ]);
+    expect(folded).toHaveLength(1);
+    expect(folded[0]?.createdAt).toBe("2026-01-01T00:00:00.000Z");
+    expect(folded[0]?.updatedAt).toBe("2026-01-01T00:00:19.000Z");
+  });
+
   it("is idempotent — folding already-folded events changes nothing", () => {
     const once = foldAgentEvents([
       item({ type: "message.delta", sessionId: "s", messageId: "m", delta: "a" }),

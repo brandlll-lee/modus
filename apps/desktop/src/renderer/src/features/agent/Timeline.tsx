@@ -15,30 +15,18 @@ import type {
   SubagentStatus,
   TodoItem,
 } from "../../../../shared/contracts";
-import {
-  APP_TOOL_NAMES,
-  ASK_USER_TOOL_NAME,
-  BROWSER_TOOL_NAMES,
-  isMcpToolName,
-  MCP_TOOL_PREFIX,
-  PLAN_TOOL_NAME,
-  TERMINAL_TOOL_NAMES,
-  TODO_TOOL_NAME,
-  toolRenderKind,
-  WEB_TOOL_NAMES,
-} from "../../../../shared/tools";
-import { ModusBot } from "../../components/ui/ModusBot";
-import { ShinyText } from "../../components/ui/ShinyText";
+import { toolRenderKind } from "../../../../shared/tools";
 import { ThoughtRow, WorkFold } from "./ActivityGroup";
 import { MessageBlock } from "./MessageBlock";
-import { subagentColor } from "./subagentUi";
+import { SubagentRow } from "./SubagentRow";
+import { subagentActivityLabel } from "./subagentUi";
 import { TodosCard } from "./TodosCard";
 import { ToolCard } from "./ToolCard";
 
 type TimelineProps = {
   agentEvents: Array<{ id: string; event: AgentEvent; createdAt?: string }>;
   precomputedBlocks?: TimelineBlock[];
-  /** Session cwd, threaded to diff tool cards so they can open edited files. */
+  /** Session cwd — file chips / markdown file nav resolve against the workspace. */
   cwd?: string | undefined;
   /** Active pane model — needed so inline edit can mount the shared Composer. */
   model?: string | undefined;
@@ -58,7 +46,11 @@ type TimelineProps = {
   ): Promise<void>;
   onOpenSubagent?(childSessionId: string): void;
   onOpenPlan?(plan: PlanRef): void;
+  /** Open a workspace file path in the Files inspector. */
+  onOpenFile?(path: string): void;
   workspaceId?: string | undefined;
+  /** Tighter padding when embedded in the subagent preview sheet (no composer clearance). */
+  embedded?: boolean | undefined;
 };
 
 export type MessageBlockItem = {
@@ -115,6 +107,9 @@ export type ThoughtBlockItem = {
   text: string;
   /** True while the segment is still being produced — label shimmers, body live. */
   streaming?: boolean;
+  /** Wall-clock from first / last thinking.delta (via event createdAt/updatedAt). */
+  startedAt?: number;
+  completedAt?: number;
 };
 
 /**
@@ -171,7 +166,6 @@ export type SubagentBlockItem = {
   task: string;
   subagentType: string;
   status: SubagentStatus;
-  background: boolean;
   model?: string;
   activity?: SubagentActivity;
 };
@@ -184,9 +178,6 @@ export type WorkFoldItem =
   | SubagentBlockItem
   | NoticeBlockItem
   | MessageBlockItem;
-
-/** @deprecated Use WorkFoldItem */
-export type ActivityItem = ThoughtBlockItem | ToolBlockItem;
 
 /**
  * One turn's work under a single Cursor-style fold (Working for… / Worked for…).
@@ -474,6 +465,10 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
     }
 
     if (event.type === "message.started") {
+      const contextChips = event.contextChips?.filter(
+        (chip): chip is NonNullable<(typeof event.contextChips)[number]> =>
+          chip != null && typeof chip.kind === "string",
+      );
       const block: MessageBlockItem = {
         id: event.messageId,
         type: "message",
@@ -483,9 +478,7 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
         ...(event.attachments && event.attachments.length > 0
           ? { attachments: event.attachments }
           : {}),
-        ...(event.contextChips && event.contextChips.length > 0
-          ? { contextChips: event.contextChips }
-          : {}),
+        ...(contextChips && contextChips.length > 0 ? { contextChips } : {}),
         ...(event.contextItems && event.contextItems.length > 0
           ? { contextItems: event.contextItems }
           : {}),
@@ -519,6 +512,7 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
       const targetId = blockById.has(event.messageId)
         ? event.messageId
         : (activeAssistantMessageId ?? event.messageId);
+      const eventEndAt = eventTime(item.updatedAt ?? item.createdAt, order);
       let thought = thoughtByMessage.get(targetId);
       if (!thought) {
         thought = {
@@ -526,6 +520,8 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
           type: "thought",
           text: "",
           streaming: true,
+          startedAt: eventAt,
+          completedAt: eventEndAt,
           ...(activeRunId !== undefined ? { runId: activeRunId } : {}),
         };
         thoughtByMessage.set(targetId, thought);
@@ -540,6 +536,7 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
       }
       thought.text += event.delta;
       thought.streaming = true;
+      thought.completedAt = eventEndAt;
       activeThoughtId = thought.id;
       continue;
     }
@@ -709,7 +706,6 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
         task: event.task,
         subagentType: event.subagentType,
         status: "running",
-        background: event.background,
         ...(event.model ? { model: event.model } : {}),
       };
       subagentsByChild.set(event.childSessionId, block);
@@ -728,7 +724,6 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
           task: "Subagent",
           subagentType: "worker",
           status: event.status,
-          background: true,
         };
         subagentsByChild.set(event.childSessionId, block);
         blocks.push(block);
@@ -1066,149 +1061,20 @@ export function formatElapsedVerbose(end: number, start: number): string {
   return rest === 0 ? `${minutes} minute${minutes === 1 ? "" : "s"}` : `${minutes}m ${rest}s`;
 }
 
-function capitalize(word: string): string {
-  return word.charAt(0).toUpperCase() + word.slice(1);
-}
-
 /**
- * Turn a tool identifier into a present-tense gerund phrase: "list_integrations"
- * → "Listing integrations", "mcp_devin_create_pr" → "Creating pr". Used for MCP
- * and custom tools that have no curated category phrase.
- */
-function gerundFromToolName(name: string): string {
-  let rest = name;
-  if (isMcpToolName(name)) {
-    const afterPrefix = name.slice(MCP_TOOL_PREFIX.length);
-    const separator = afterPrefix.indexOf("_");
-    rest = separator > 0 ? afterPrefix.slice(separator + 1) : afterPrefix;
-  }
-  const words = rest.split(/[_\s]+/).filter(Boolean);
-  if (words.length === 0) {
-    return "Working";
-  }
-  const [verb, ...others] = words;
-  const lower = (verb ?? "").toLowerCase();
-  const irregular: Record<string, string> = {
-    list: "Listing",
-    get: "Getting",
-    set: "Setting",
-    run: "Running",
-    add: "Adding",
-    put: "Putting",
-  };
-  const head =
-    irregular[lower] ??
-    (lower.endsWith("e") && lower.length > 2
-      ? `${capitalize(lower.slice(0, -1))}ing`
-      : `${capitalize(lower)}ing`);
-  return [head, ...others].join(" ");
-}
-
-/**
- * Present-tense status phrase for a running tool. Hybrid by design: builtin /
- * known-capability tools get curated category phrases (routed by the
- * authoritative tool-name sets, never guessed), while MCP and custom tools are
- * humanized from their own name.
- */
-function toolActivityLabel(name: string): string {
-  if (isMcpToolName(name)) {
-    return gerundFromToolName(name);
-  }
-  switch (name) {
-    case "read":
-      return "Reading files";
-    case "grep":
-    case "find":
-      return "Searching the codebase";
-    case "ls":
-      return "Listing files";
-    case "edit":
-    case "write":
-      return "Editing files";
-    case "bash":
-      return "Running commands";
-    case "web_search":
-      return "Searching the web";
-    case "web_fetch":
-      return "Reading a page";
-    case TODO_TOOL_NAME:
-      return "Updating the to-dos";
-    case PLAN_TOOL_NAME:
-      return "Writing the plan";
-    case ASK_USER_TOOL_NAME:
-      return "Asking a question";
-    default:
-      break;
-  }
-  if ((TERMINAL_TOOL_NAMES as readonly string[]).includes(name)) {
-    return "Working in the terminal";
-  }
-  if ((WEB_TOOL_NAMES as readonly string[]).includes(name)) {
-    return "Searching the web";
-  }
-  if ((BROWSER_TOOL_NAMES as readonly string[]).includes(name)) {
-    return "Using the browser";
-  }
-  if ((APP_TOOL_NAMES as readonly string[]).includes(name)) {
-    return "Launching an app";
-  }
-  return gerundFromToolName(name);
-}
-
-function subagentStatusLabel(block: SubagentBlockItem): string {
-  if (block.status === "running") {
-    if (!block.activity || block.activity.kind === "thinking") {
-      return "Thinking";
-    }
-    if (block.activity.kind === "writing") {
-      return "Writing the response";
-    }
-    return toolActivityLabel(block.activity.name);
-  }
-  if (block.status === "blocked") {
-    return "Waiting for approval";
-  }
-  if (block.status === "failed") {
-    return "Subagent stopped";
-  }
-  if (block.status === "cancelled") {
-    return "Stopped";
-  }
-  return "Completed";
-}
-
-/**
- * Status / duration helper (kept for tests). WorkFold builds Working/Worked labels itself.
- */
-export function runStatusLabel(block: RunBlockItem): string {
-  switch (block.status) {
-    case "running":
-      return `Working for ${formatElapsedVerbose(Date.now(), block.startedAt)}`;
-    case "blocked":
-      return "Waiting for approval";
-    case "failed":
-      return "Modus stopped";
-    case "cancelled":
-      return "Stopped by you";
-    default:
-      return `Worked for ${formatElapsedVerbose(block.completedAt ?? block.startedAt, block.startedAt)}`;
-  }
-}
-
-/**
- * Compact "Build this plan" card (Cursor parity, figure 4): the user message
- * for a build action renders as a single line — a list glyph, "Build {title}",
- * and the to-do count — instead of the raw build instruction text.
+ * Compact "Build this plan" card: the user message for a build action renders
+ * as a single line — list glyph, "Build {title}", and to-do count — instead of
+ * the raw build instruction text.
  */
 function PlanBuildCard({ planBuild }: { planBuild: NonNullable<MessageBlockItem["planBuild"]> }) {
   return (
-    <div className="rounded-lg border border-hairline-soft bg-card">
+    <div className="timeline-wire overflow-hidden">
       <div className="flex items-center gap-2 px-3 py-2.5">
         <IconListCheck className="shrink-0 text-fg-subtle" size={15} stroke={1.7} />
         <span className="shrink-0 font-medium text-build text-sm">Build</span>
         <span className="min-w-0 truncate text-fg text-sm">{planBuild.title}</span>
       </div>
-      <div className="flex items-center gap-2 border-hairline-soft border-t px-3 py-2 text-fg-subtle text-xs">
+      <div className="flex items-center gap-2 border-hairline border-t px-3 py-2 text-fg-subtle text-xs">
         <IconCircleDashed className="shrink-0 text-fg-faint" size={14} stroke={1.6} />
         {planBuild.todoCount} To-dos
       </div>
@@ -1243,30 +1109,35 @@ export function Timeline({
   onEditResend,
   onOpenSubagent,
   onOpenPlan,
+  onOpenFile,
+  embedded = false,
 }: TimelineProps) {
   const visibleBlocks = useMemo(
     () => precomputedBlocks ?? buildVisibleTimelineBlocks(agentEvents),
     [agentEvents, precomputedBlocks],
   );
   const renderKeys = useMemo(() => blockRenderKeys(visibleBlocks), [visibleBlocks]);
-  const turns = useMemo(
-    () => segmentTurns(visibleBlocks, renderKeys),
-    [visibleBlocks, renderKeys],
-  );
+  const turns = useMemo(() => segmentTurns(visibleBlocks, renderKeys), [visibleBlocks, renderKeys]);
 
   if (visibleBlocks.length === 0) {
     return null;
   }
 
   return (
-    <div className="min-w-0 w-full max-w-full px-4 pt-8 pb-24">
+    <div
+      className={
+        embedded
+          ? "min-w-0 w-full max-w-full px-4 pt-4 pb-6"
+          : "min-w-0 w-full max-w-full px-4 pt-8 pb-24"
+      }
+    >
       {/* max-w-5xl matches Composer chrome — user bubbles fill this column.
           Assistant / tools / cards use max-w-[60rem] (960px): wider than 4xl,
           still ~4rem under the 5xl input frame so the reply stays inset. */}
       <div className="relative mx-auto min-w-0 w-full max-w-5xl">
         {turns.map((turn) => (
           <section
-            className="timeline-block w-full min-w-0 space-y-2.5 pb-2.5"
+            className="timeline-block w-full min-w-0 space-y-6 pb-6"
             data-turn={turn.key}
             key={turn.key}
           >
@@ -1286,8 +1157,10 @@ export function Timeline({
                       ? { checkpointId: block.checkpointId }
                       : {})}
                     {...(onRestoreCheckpoint ? { onRestoreCheckpoint } : {})}
+                    {...(embedded ? { compactClip: true } : {})}
                     content={block.content}
                     cwd={cwd}
+                    {...(onOpenFile ? { onOpenFile } : {})}
                     {...(block.createdAt !== undefined ? { createdAt: block.createdAt } : {})}
                     editable={block.editable ?? false}
                     messageId={block.id}
@@ -1313,8 +1186,9 @@ export function Timeline({
                     <WorkFold
                       formatElapsed={formatElapsedVerbose}
                       items={block.items}
+                      {...(models ? { models } : {})}
                       run={block.run}
-                      {...(cwd ? { cwd } : {})}
+                      {...(onOpenFile ? { onOpenFile } : {})}
                       {...(onOpenPlan ? { onOpenPlan } : {})}
                       {...(onOpenSubagent ? { onOpenSubagent } : {})}
                     />
@@ -1331,6 +1205,7 @@ export function Timeline({
                       {...(onRestoreCheckpoint ? { onRestoreCheckpoint } : {})}
                       content={block.content}
                       cwd={cwd}
+                      {...(onOpenFile ? { onOpenFile } : {})}
                       {...(block.createdAt !== undefined ? { createdAt: block.createdAt } : {})}
                       editable={block.editable ?? false}
                       messageId={block.id}
@@ -1343,26 +1218,29 @@ export function Timeline({
                   {block.type === "tool" ? (
                     <ToolCard
                       args={block.args}
-                      cwd={cwd}
                       isComplete={block.isComplete ?? false}
                       isError={block.isError ?? false}
                       name={block.name}
+                      {...(onOpenFile ? { onOpenFile } : {})}
                       {...(onOpenPlan ? { onOpenPlan } : {})}
                       output={block.output}
                       {...(block.plan ? { plan: block.plan } : {})}
-                      {...(block.questionAnswers
-                        ? { questionAnswers: block.questionAnswers }
-                        : {})}
-                      {...(block.questionRequest
-                        ? { questionRequest: block.questionRequest }
-                        : {})}
+                      {...(block.questionAnswers ? { questionAnswers: block.questionAnswers } : {})}
+                      {...(block.questionRequest ? { questionRequest: block.questionRequest } : {})}
                       {...(block.questionSkipped !== undefined
                         ? { questionSkipped: block.questionSkipped }
                         : {})}
                     />
                   ) : null}
                   {block.type === "thought" ? (
-                    <ThoughtRow streaming={block.streaming ?? false} text={block.text} />
+                    <ThoughtRow
+                      streaming={block.streaming ?? false}
+                      text={block.text}
+                      {...(block.startedAt !== undefined ? { startedAt: block.startedAt } : {})}
+                      {...(block.completedAt !== undefined
+                        ? { completedAt: block.completedAt }
+                        : {})}
+                    />
                   ) : null}
                   {block.type === "notice" ? <Notice {...block} /> : null}
                   {block.type === "todos" ? (
@@ -1371,13 +1249,14 @@ export function Timeline({
                   {block.type === "subagent" ? (
                     <SubagentCard
                       block={block}
+                      {...(models ? { models } : {})}
                       {...(onOpenSubagent ? { onOpenSubagent } : {})}
                     />
                   ) : null}
-                  </m.div>
-                );
-              })}
-            </section>
+                </m.div>
+              );
+            })}
+          </section>
         ))}
       </div>
     </div>
@@ -1386,37 +1265,22 @@ export function Timeline({
 
 function SubagentCard({
   block,
+  models,
   onOpenSubagent,
 }: {
   block: SubagentBlockItem;
+  models?: ModelInfo[];
   onOpenSubagent?: (childSessionId: string) => void;
 }) {
-  const active = block.status === "running";
-  const label = subagentStatusLabel(block);
   return (
-    <button
-      className="flex min-w-0 w-full items-start gap-3 rounded-lg border border-hairline-soft bg-card px-3 py-2.5 text-left transition-colors hover:bg-hover"
+    <SubagentRow
+      activityLabel={subagentActivityLabel(block.status, block.activity)}
+      {...(block.model ? { modelId: block.model } : {})}
+      {...(models ? { models } : {})}
       onClick={() => onOpenSubagent?.(block.childSessionId)}
-      type="button"
-    >
-      <ModusBot
-        active={active}
-        busy={active}
-        className="mt-0.5 size-6 shrink-0"
-        color={subagentColor(block.childSessionId)}
-      />
-      <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="min-w-0 truncate text-sm font-medium text-fg">{block.task}</span>
-          <span className="shrink-0 rounded-sm bg-fill px-1.5 py-0.5 text-2xs text-fg-faint">
-            {block.model ?? block.subagentType}
-          </span>
-        </div>
-        <div className="mt-1 min-w-0 truncate text-xs text-fg-subtle">
-          {active ? <ShinyText>{label}</ShinyText> : label}
-        </div>
-      </div>
-    </button>
+      status={block.status}
+      task={block.task}
+    />
   );
 }
 

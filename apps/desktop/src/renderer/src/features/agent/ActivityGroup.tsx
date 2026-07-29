@@ -1,24 +1,91 @@
 import { Menu } from "@base-ui/react/menu";
 import { IconChevronRight, IconDots } from "@tabler/icons-react";
 import { m } from "motion/react";
-import { memo, useEffect, useRef, useState, type ReactNode } from "react";
+import { memo, type ReactNode, useEffect, useRef, useState } from "react";
 import { ThinkingOrb } from "thinking-orbs";
-import type { PlanRef } from "../../../../shared/contracts";
+import type { ModelInfo, PlanRef } from "../../../../shared/contracts";
 import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
-import { ModusBot } from "../../components/ui/ModusBot";
 import { ShinyText } from "../../components/ui/ShinyText";
 import { cn } from "../../lib/cn";
 import { useTheme } from "../../lib/theme";
 import { useSmoothStreamingText } from "../../lib/useSmoothStreamingText";
 import { MessageBlock } from "./MessageBlock";
-import { subagentColor } from "./subagentUi";
+import { SubagentRow } from "./SubagentRow";
+import { subagentActivityLabel } from "./subagentUi";
 import type { RunBlockItem, WorkFoldItem } from "./Timeline";
 import { TodosCard } from "./TodosCard";
 import { ToolCard } from "./ToolCard";
 
-/** Rough reading-time estimate for a thinking transcript (1–9s), Cursor-style. */
-function estimateThinkingSeconds(text: string): number {
-  return Math.max(1, Math.min(9, Math.round(text.length / 240)));
+/**
+ * One thinking segment. While streaming it auto-expands; once done it folds to
+ * "Thought for … s" using wall-clock from thinking.delta timestamps.
+ */
+export function ThoughtRow({
+  text,
+  streaming = false,
+  startedAt,
+  completedAt,
+}: {
+  text: string;
+  streaming?: boolean;
+  startedAt?: number;
+  completedAt?: number;
+}) {
+  const [open, setOpen] = useState(false);
+  const interactedRef = useRef(false);
+
+  useEffect(() => {
+    if (!interactedRef.current) {
+      setOpen(streaming);
+    }
+  }, [streaming]);
+
+  const displayText = useSmoothStreamingText(text, streaming);
+
+  if (!streaming && !text.trim()) {
+    return null;
+  }
+
+  const label = streaming
+    ? "Thinking"
+    : startedAt !== undefined
+      ? thoughtLabel(completedAt ?? startedAt, startedAt)
+      : "Thought";
+
+  return (
+    <div className="min-w-0">
+      <FoldHeader
+        active={streaming}
+        label={label}
+        onToggle={() => {
+          interactedRef.current = true;
+          setOpen((value) => !value);
+        }}
+        open={open}
+      />
+      <CollapsibleMotion open={open} preset="timeline">
+        <pre className="mt-2 max-w-full whitespace-pre-wrap text-2xs text-fg-faint leading-relaxed">
+          {displayText}
+        </pre>
+      </CollapsibleMotion>
+    </div>
+  );
+}
+
+/** Sub-second → "Thought briefly"; otherwise "Thought for 19 s" / "2 m 5 s". */
+function thoughtLabel(end: number, start: number): string {
+  const seconds = Math.max(0, Math.round((end - start) / 1000));
+  if (seconds < 1) {
+    return "Thought briefly";
+  }
+  if (seconds < 60) {
+    return `Thought for ${seconds} s`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return rest === 0
+    ? `Thought for ${minutes} m`
+    : `Thought for ${minutes} m ${rest} s`;
 }
 
 function FoldHeader({
@@ -67,55 +134,13 @@ function FoldHeader({
         )}
         <m.span
           animate={{ rotate: open ? 90 : 0 }}
-          className="flex size-4 shrink-0 items-center justify-center text-fg-faint opacity-0 transition-opacity group-focus-visible/activity:opacity-100 group-hover/activity:opacity-100"
+          className="flex size-4 shrink-0 items-center justify-center text-fg-faint"
           transition={{ duration: 0.16, ease: "easeOut" }}
         >
           <IconChevronRight size={12} stroke={1.8} />
         </m.span>
       </button>
       {trailing}
-    </div>
-  );
-}
-
-/**
- * One thinking segment. While streaming it auto-expands; once done it folds to
- * "Thought for Xs". Used inside a {@link WorkFold}.
- */
-export function ThoughtRow({ text, streaming = false }: { text: string; streaming?: boolean }) {
-  const [open, setOpen] = useState(false);
-  const interactedRef = useRef(false);
-
-  useEffect(() => {
-    if (!interactedRef.current) {
-      setOpen(streaming);
-    }
-  }, [streaming]);
-
-  const displayText = useSmoothStreamingText(text, streaming);
-
-  if (!streaming && !text.trim()) {
-    return null;
-  }
-
-  const label = streaming ? "Thinking" : `Thought for ${estimateThinkingSeconds(text)}s`;
-
-  return (
-    <div className="min-w-0">
-      <FoldHeader
-        active={streaming}
-        label={label}
-        onToggle={() => {
-          interactedRef.current = true;
-          setOpen((value) => !value);
-        }}
-        open={open}
-      />
-      <CollapsibleMotion open={open} preset="timeline">
-        <pre className="mt-1 max-w-full whitespace-pre-wrap text-2xs text-fg-faint leading-relaxed">
-          {displayText}
-        </pre>
-      </CollapsibleMotion>
     </div>
   );
 }
@@ -176,15 +201,17 @@ function FoldMoreActions({ answer, elapsedLabel }: { answer?: string; elapsedLab
 export const WorkFold = memo(function WorkFold({
   run,
   items,
+  models,
   formatElapsed,
-  cwd,
+  onOpenFile,
   onOpenSubagent,
   onOpenPlan,
 }: {
   run: RunBlockItem;
   items: WorkFoldItem[];
+  models?: ModelInfo[];
   formatElapsed: (end: number, start: number) => string;
-  cwd?: string;
+  onOpenFile?(path: string): void;
   onOpenSubagent?(childSessionId: string): void;
   onOpenPlan?(plan: PlanRef): void;
 }) {
@@ -240,11 +267,17 @@ export const WorkFold = memo(function WorkFold({
       />
       <CollapsibleMotion open={open} preset="timeline">
         <div className="mt-0.5 ml-[6px] border-hairline-strong border-l pl-3">
-          <div className="space-y-1 pt-0.5 pb-1">
+          <div className="space-y-2.5 pt-1.5 pb-2">
             {items.map((item) => {
               if (item.type === "thought") {
                 return (
-                  <ThoughtRow key={item.id} streaming={item.streaming ?? false} text={item.text} />
+                  <ThoughtRow
+                    key={item.id}
+                    streaming={item.streaming ?? false}
+                    text={item.text}
+                    {...(item.startedAt !== undefined ? { startedAt: item.startedAt } : {})}
+                    {...(item.completedAt !== undefined ? { completedAt: item.completedAt } : {})}
+                  />
                 );
               }
               if (item.type === "tool") {
@@ -256,7 +289,7 @@ export const WorkFold = memo(function WorkFold({
                     key={item.id}
                     name={item.name}
                     output={item.output}
-                    {...(cwd ? { cwd } : {})}
+                    {...(onOpenFile ? { onOpenFile } : {})}
                     {...(item.plan && onOpenPlan ? { onOpenPlan, plan: item.plan } : {})}
                     {...(item.questionAnswers ? { questionAnswers: item.questionAnswers } : {})}
                     {...(item.questionRequest ? { questionRequest: item.questionRequest } : {})}
@@ -270,27 +303,16 @@ export const WorkFold = memo(function WorkFold({
                 return <TodosCard key={item.id} todos={item.todos} updating={item.updating} />;
               }
               if (item.type === "subagent") {
-                const subActive = item.status === "running";
                 return (
-                  <button
-                    className="flex min-w-0 w-full items-start gap-3 rounded-lg border border-hairline-soft bg-card px-3 py-2.5 text-left transition-colors hover:bg-hover"
+                  <SubagentRow
+                    activityLabel={subagentActivityLabel(item.status, item.activity)}
                     key={item.id}
+                    {...(item.model ? { modelId: item.model } : {})}
+                    {...(models ? { models } : {})}
                     onClick={() => onOpenSubagent?.(item.childSessionId)}
-                    type="button"
-                  >
-                    <ModusBot
-                      active={subActive}
-                      busy={subActive}
-                      className="mt-0.5 size-6 shrink-0"
-                      color={subagentColor(item.childSessionId)}
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="min-w-0 truncate text-sm font-medium text-fg">{item.task}</div>
-                      <div className="mt-1 text-xs text-fg-subtle">
-                        {item.model ?? item.subagentType}
-                      </div>
-                    </div>
-                  </button>
+                    status={item.status}
+                    task={item.task}
+                  />
                 );
               }
               if (item.type === "notice") {
