@@ -8,4 +8,8 @@ describe("streaming text pace", () => {
     expect(nextPacedTextIndex(emojiPair, 0)).toBe(emojiPair.length);
     expect(nextPacedTextIndex("abcdef，next", 0)).toBe("abcdef，".length);
   });
+
+  it("snaps to newlines so list markers are not cut mid-line when near the pace window", () => {
+    expect(nextPacedTextIndex("ab\n2. item", 0)).toBe("ab\n".length);
+  });
 });

@@ -3,7 +3,8 @@ import { useEffect, useRef, useState } from "react";
 const DEFAULT_PACE_MS = 24;
 const DEFAULT_MAX_STEP = 24;
 const SNAP_AHEAD = 8;
-const SNAP_BOUNDARY = /[\p{P}\p{Z}]/u;
+/** Prefer stopping on punctuation, spaces, or newlines (not mid `**` / list). */
+const SNAP_BOUNDARY = /[\p{P}\p{Z}\n]/u;
 
 type SmoothStreamingTextOptions = {
   paceMs?: number;

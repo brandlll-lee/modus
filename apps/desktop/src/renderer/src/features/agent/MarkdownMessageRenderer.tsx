@@ -7,13 +7,21 @@ import type { MermaidConfig } from "@streamdown/mermaid";
 import { createMermaidPlugin } from "@streamdown/mermaid";
 import { memo, useContext, useLayoutEffect, useMemo, type ReactNode } from "react";
 import remarkBreaks from "remark-breaks";
-import type { BlockProps, Components, StreamdownProps } from "streamdown";
+import type {
+  BlockProps,
+  Components,
+  CustomRenderer,
+  CustomRendererProps,
+  MermaidErrorComponentProps,
+  StreamdownProps,
+} from "streamdown";
 import {
   Block,
   defaultRehypePlugins,
   defaultRemarkPlugins,
   Streamdown,
   StreamdownContext,
+  useIsCodeFenceIncomplete,
 } from "streamdown";
 import { cn } from "../../lib/cn";
 import { type ThemeMode, useTheme } from "../../lib/theme";
@@ -21,6 +29,8 @@ import { FileRefChip, MarkdownFileCode } from "./FileRefChip";
 import { useMarkdownFileNav } from "./markdownFileNav";
 import { createStreamingTailAnimation } from "./streamingTailAnimation";
 import { normalizeMathDelimiters } from "./normalizeMathDelimiters";
+import { Favicon } from "./toolIcons";
+import { VisualToolCard } from "./VisualToolCard";
 import { parseModusFileHref, rehypeWorkspaceFileLinks } from "./workspaceFileLinks";
 
 type MarkdownMessageRendererProps = {
@@ -63,7 +73,7 @@ function buildMermaidConfig(theme: ThemeMode): MermaidConfig {
   const rootStyle = getComputedStyle(document.documentElement);
   const fontFamily =
     rootStyle.getPropertyValue("--font-sans").trim() ||
-    '"Inter Variable", "Inter", system-ui, sans-serif';
+    '"Inter Variable", "Inter", "Noto Sans SC Variable", "Noto Sans SC", system-ui, sans-serif';
   const token = (name: string, fallback: string): string =>
     rootStyle.getPropertyValue(name).trim() || fallback;
 
@@ -75,17 +85,21 @@ function buildMermaidConfig(theme: ThemeMode): MermaidConfig {
       theme: "base",
       themeVariables: {
         background: "transparent",
+        clusterBkg: token("--color-panel", "#f8f8f8"),
+        clusterBorder: token("--color-hairline-strong", "rgba(0, 0, 0, 0.09)"),
         darkMode: false,
+        edgeLabelBackground: token("--color-surface", "#ffffff"),
         fontFamily,
         lineColor: token("--color-fg-faint", "#9a9a9a"),
         mainBkg: token("--color-surface", "#ffffff"),
-        nodeBorder: token("--color-hairline-strong", "rgba(0, 0, 0, 0.18)"),
-        primaryBorderColor: token("--color-hairline-strong", "rgba(0, 0, 0, 0.18)"),
-        primaryColor: token("--color-panel", "#f8f8f8"),
-        primaryTextColor: token("--color-fg", "#242424"),
-        secondaryColor: token("--color-surface", "#ffffff"),
+        nodeBorder: token("--color-hairline-strong", "rgba(0, 0, 0, 0.09)"),
+        primaryBorderColor: token("--color-hairline-strong", "rgba(0, 0, 0, 0.09)"),
+        primaryColor: token("--color-surface", "#ffffff"),
+        primaryTextColor: token("--color-fg", "#222222"),
+        secondaryColor: token("--color-panel", "#f8f8f8"),
         tertiaryColor: token("--color-panel", "#f8f8f8"),
-        textColor: token("--color-fg", "#242424"),
+        textColor: token("--color-fg", "#222222"),
+        titleColor: token("--color-fg-muted", "#666666"),
       },
     } satisfies MermaidConfig;
   }
@@ -96,7 +110,10 @@ function buildMermaidConfig(theme: ThemeMode): MermaidConfig {
     theme: "dark",
     themeVariables: {
       background: "transparent",
+      clusterBkg: token("--color-panel", "#161617"),
+      clusterBorder: token("--color-hairline-strong", "rgba(255, 255, 255, 0.065)"),
       darkMode: true,
+      edgeLabelBackground: token("--color-surface", "#1c1c1d"),
       fontFamily,
       lineColor: token("--color-fg-faint", "#5a5a5d"),
       mainBkg: token("--color-surface", "#1c1c1d"),
@@ -107,6 +124,7 @@ function buildMermaidConfig(theme: ThemeMode): MermaidConfig {
       secondaryColor: token("--color-surface", "#1c1c1d"),
       tertiaryColor: token("--color-panel", "#161617"),
       textColor: token("--color-fg", "#e4e4e3"),
+      titleColor: token("--color-fg-muted", "#a0a0a0"),
     },
   } satisfies MermaidConfig;
 }
@@ -146,6 +164,41 @@ const StreamingBlock = memo(function StreamingBlock({
   useLayoutEffect(() => tailAnimation.commit(content), [content, tailAnimation]);
   return <Block content={content} rehypePlugins={plugins} {...props} />;
 });
+
+/**
+ * Streamdown renders incomplete ```mermaid fences mid-stream; mermaid.parse
+ * fails and the default UI is a red "Mermaid Error" flash. Authority signals:
+ * isAnimating (whole turn streaming) + useIsCodeFenceIncomplete (this fence).
+ * Quiet placeholder while open; muted copy only after the stream settles.
+ */
+function MermaidErrorSurface({ error }: MermaidErrorComponentProps) {
+  const { isAnimating } = useContext(StreamdownContext);
+  const fenceIncomplete = useIsCodeFenceIncomplete();
+  if (isAnimating || fenceIncomplete) {
+    return <div aria-hidden className="h-2" />;
+  }
+  return (
+    <div className="px-3 py-2 font-mono text-fg-subtle text-xs">Diagram unavailable: {error}</div>
+  );
+}
+
+/** Streamdown custom renderer: fenced html/svg grows via message.delta, not tool-arg dump. */
+function VisualFenceRenderer({ code, isIncomplete, language }: CustomRendererProps) {
+  return (
+    <VisualToolCard
+      args={{
+        title: "Visual",
+        kind: language === "svg" ? "svg" : "html",
+        content: code,
+      }}
+      isComplete={!isIncomplete}
+    />
+  );
+}
+
+const VISUAL_FENCE_RENDERERS: CustomRenderer[] = [
+  { language: ["html", "svg"], component: VisualFenceRenderer },
+];
 
 /* ── Controls ──────────────────────────────────────────────────────── */
 const controls = {
@@ -194,6 +247,18 @@ function InlineCodeWithFileNav({
   );
 }
 
+function isHttpUrl(href: string | undefined): href is string {
+  if (!href) {
+    return false;
+  }
+  try {
+    const protocol = new URL(href).protocol;
+    return protocol === "http:" || protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 function MarkdownAnchor({
   children,
   href,
@@ -213,6 +278,20 @@ function MarkdownAnchor({
     // Sentinel must never navigate; fall back to plain label without onOpenFile.
     const name = path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
     return <span className="font-medium text-sm">{name}</span>;
+  }
+  if (isHttpUrl(href)) {
+    return (
+      <a
+        className="inline-flex max-w-full items-center gap-1 align-[-0.15em]"
+        href={href}
+        rel="noreferrer"
+        target="_blank"
+        {...props}
+      >
+        <Favicon url={href} />
+        <span className="min-w-0 break-all">{children}</span>
+      </a>
+    );
   }
   return (
     <a href={href} rel="noreferrer" target="_blank" {...props}>
@@ -246,11 +325,12 @@ export default function MarkdownMessageRenderer({
         code: codePlugin,
         math,
         mermaid: createMermaidPlugin({ config: mermaidConfig }),
+        renderers: VISUAL_FENCE_RENDERERS,
       }) satisfies NonNullable<StreamdownProps["plugins"]>,
     [codePlugin, mermaidConfig],
   );
   const mermaidProp = useMemo<NonNullable<StreamdownProps["mermaid"]>>(
-    () => ({ config: mermaidConfig }),
+    () => ({ config: mermaidConfig, errorComponent: MermaidErrorSurface }),
     [mermaidConfig],
   );
   // Normalize once at the Streamdown boundary (after streaming slice), so
@@ -268,9 +348,9 @@ export default function MarkdownMessageRenderer({
       linkSafety={LINK_SAFETY}
       lineNumbers={false}
       mermaid={mermaidProp}
-      mode="streaming"
+      mode={streaming ? "streaming" : "static"}
       normalizeHtmlIndentation
-      parseIncompleteMarkdown
+      parseIncompleteMarkdown={streaming}
       plugins={plugins}
       rehypePlugins={REHYPE_PLUGINS}
       remarkPlugins={REMARK_PLUGINS}

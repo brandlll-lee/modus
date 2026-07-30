@@ -33,7 +33,8 @@ type VisualToolCardProps = {
 type VisualMessage = { type: "visual:height"; height: number };
 
 const COLLAPSED_HEIGHT = 1;
-const LOADING_HEIGHT = 360;
+/** Empty shell while the model has not emitted paintables yet — readable, not a 1px slit. */
+const SHELL_MIN_HEIGHT = 120;
 const RECEIVER_HTML = `<!doctype html>
 <html>
 <head>
@@ -58,7 +59,7 @@ const RECEIVER_HTML = `<!doctype html>
   --color-chip: rgba(255,255,255,.05);
   --color-chip-strong: rgba(255,255,255,.08);
   --color-success: #3fae87;
-  --color-danger: #e5687a;
+  --color-danger: #ef4444;
   --color-build: #3b82f6;
   --color-build-fg: #ffffff;
   --color-accent: #f54e00;
@@ -73,7 +74,7 @@ html, body {
   overflow: hidden !important;
   background: var(--color-canvas) !important;
   color: var(--color-fg);
-  font: 14px/1.5 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font: 14px/1.5 var(--font-sans);
 }
 * {
   box-sizing: border-box;
@@ -110,18 +111,12 @@ html, body {
   min-height: 1px;
   overflow-x: auto;
   overflow-y: hidden;
-  transform: translateY(6px);
-  opacity: .001;
-  transition: opacity 160ms ease-out, transform 160ms ease-out;
+  opacity: 1;
 }
 #modus-visual-content {
   display: flow-root;
   width: 100%;
   min-width: 100%;
-}
-#modus-visual-viewport[data-visible="true"] {
-  transform: translateY(0);
-  opacity: 1;
 }
 #modus-visual-viewport[data-mode="fullscreen"] {
   height: 100vh;
@@ -138,9 +133,6 @@ html, body {
 }
 #modus-visual-viewport[data-panning="true"] {
   cursor: grabbing;
-}
-@media (prefers-reduced-motion: reduce) {
-  #modus-visual-viewport { transition: none; transform: none; opacity: 1; }
 }
 </style>
 </head>
@@ -226,19 +218,34 @@ function applyViewport(state) {
   viewport.dataset.mode = nextMode;
   requestLayout();
 }
-function setContent(html) {
+function setContent(html, executeScripts) {
   const finalHtml = String(html || "");
-  if (finalHtml === lastRendered) return;
-  lastRendered = finalHtml;
+  const key = finalHtml + "\\0" + (executeScripts ? "1" : "0");
+  if (key === lastRendered) return;
+  lastRendered = key;
   content.innerHTML = finalHtml;
   viewport.dataset.visible = String(finalHtml.length > 0);
-  for (const script of [...content.querySelectorAll("script")]) {
-    const next = document.createElement("script");
-    for (const attr of script.attributes) next.setAttribute(attr.name, attr.value);
-    next.text = script.textContent || "";
-    script.replaceWith(next);
+  if (executeScripts) {
+    for (const script of [...content.querySelectorAll("script")]) {
+      const next = document.createElement("script");
+      for (const attr of script.attributes) next.setAttribute(attr.name, attr.value);
+      next.text = script.textContent || "";
+      script.replaceWith(next);
+    }
   }
   requestLayout();
+}
+let pendingPaint = null;
+let paintRaf = 0;
+function queueContent(html, executeScripts) {
+  pendingPaint = { html, executeScripts: Boolean(executeScripts) };
+  if (paintRaf) return;
+  paintRaf = requestAnimationFrame(() => {
+    paintRaf = 0;
+    const next = pendingPaint;
+    pendingPaint = null;
+    if (next) setContent(next.html, next.executeScripts);
+  });
 }
 function observeLayout() {
   requestLayout();
@@ -274,48 +281,53 @@ addEventListener("message", (event) => {
   const data = event.data || {};
   if (data.type === "visual:theme") applyTheme(data.theme);
   if (data.type === "visual:viewport") applyViewport(data);
-  if (data.type === "visual:render") setContent(data.content);
+  if (data.type === "visual:render") queueContent(data.content, Boolean(data.executeScripts));
 });
 </script>
 </body>
 </html>`;
 
+/** Drop a trailing incomplete tag fragment (e.g. `<div cla`) so partial streams paint cleanly. */
+export function trimIncompleteTrailingTag(html: string): string {
+  const open = html.lastIndexOf("<");
+  if (open < 0) return html;
+  const close = html.indexOf(">", open);
+  if (close >= 0) return html;
+  return html.slice(0, open);
+}
+
 export function VisualToolCard({ args, isComplete = false, isError = false }: VisualToolCardProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const visual = parseVisualArgs(args);
   const [height, setHeight] = useState(COLLAPSED_HEIGHT);
-  const [painted, setPainted] = useState(false);
   const [ready, setReady] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const running = !isComplete && !isError;
   const title = visual?.title || "Visual";
   const content = visual?.content ?? "";
   const hasContent = content.trim().length > 0;
-  const shouldRenderFrame = isComplete && hasContent;
-  const showLoader = running || (isComplete && hasContent && !painted);
+  // Mount shell as soon as the tool card is live — don't wait for content bytes.
+  const showFrame = !isError && (running || hasContent);
+  const renderContent = isComplete ? content : trimIncompleteTrailingTag(content);
 
   useTheme();
   const theme = readTheme();
 
   useEffect(() => {
     if (hasContent) return;
-    setHeight(COLLAPSED_HEIGHT);
-    setPainted(false);
-    setReady(false);
-  }, [hasContent]);
+    setHeight(running ? SHELL_MIN_HEIGHT : COLLAPSED_HEIGHT);
+  }, [hasContent, running]);
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent<VisualMessage>) => {
       if (event.source !== iframeRef.current?.contentWindow) return;
       if (event.data.type === "visual:height") {
-        const nextHeight = Math.max(COLLAPSED_HEIGHT, event.data.height);
-        setHeight(nextHeight);
-        if (hasContent && nextHeight > COLLAPSED_HEIGHT) setPainted(true);
+        setHeight(Math.max(COLLAPSED_HEIGHT, event.data.height));
       }
     };
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [hasContent]);
+  }, []);
 
   const download = (): void => {
     if (!visual || !content) return;
@@ -334,38 +346,31 @@ export function VisualToolCard({ args, isComplete = false, isError = false }: Vi
     void navigator.clipboard?.writeText(content).catch(() => {});
   };
 
-  if (!hasContent && !running) return null;
+  if (!showFrame) return null;
 
   return (
     <div className="group relative min-w-0 overflow-hidden rounded-lg text-sm">
-      {showLoader ? <VisualLoading height={LOADING_HEIGHT} /> : null}
       <VisualMenu
         copy={copy}
-        disabled={!painted}
+        disabled={!isComplete || !hasContent}
         download={download}
         onFullscreen={() => setFullscreen(true)}
       />
-      {shouldRenderFrame ? (
-        <VisualFrame
-          className={cn(
-            "w-full origin-center bg-transparent transition-[height,opacity,transform] duration-200 ease-out",
-            painted
-              ? "block scale-100 opacity-100"
-              : "pointer-events-none absolute inset-x-0 top-0 scale-[0.985] opacity-0",
-          )}
-          content={content}
-          iframeRef={iframeRef}
-          ready={ready}
-          setReady={setReady}
-          style={{
-            height: painted ? height : LOADING_HEIGHT,
-            pointerEvents: painted ? undefined : "none",
-          }}
-          theme={theme}
-          title={title}
-        />
-      ) : null}
-      {fullscreen && visual ? (
+      <VisualFrame
+        className="block w-full origin-center bg-[var(--color-canvas)]"
+        content={renderContent}
+        executeScripts={isComplete}
+        iframeRef={iframeRef}
+        ready={ready}
+        setReady={setReady}
+        style={{
+          height: Math.max(height, running && !hasContent ? SHELL_MIN_HEIGHT : COLLAPSED_HEIGHT),
+          pointerEvents: isComplete ? undefined : "none",
+        }}
+        theme={theme}
+        title={title}
+      />
+      {fullscreen && visual && isComplete ? (
         <VisualFullscreen
           content={content}
           copy={copy}
@@ -376,18 +381,6 @@ export function VisualToolCard({ args, isComplete = false, isError = false }: Vi
         />
       ) : null}
     </div>
-  );
-}
-
-function VisualLoading({ height }: { height: number }) {
-  return (
-    <div
-      className={cn(
-        "relative overflow-hidden rounded-lg border border-hairline-soft bg-card",
-        "visual-glare-loading",
-      )}
-      style={{ height }}
-    />
   );
 }
 
@@ -448,6 +441,7 @@ function VisualMenu({
 function VisualFrame({
   className,
   content,
+  executeScripts = true,
   iframeRef,
   panMode,
   ready,
@@ -460,6 +454,7 @@ function VisualFrame({
 }: {
   className?: string;
   content: string;
+  executeScripts?: boolean;
   iframeRef: React.RefObject<HTMLIFrameElement | null>;
   panMode?: boolean;
   ready: boolean;
@@ -471,11 +466,19 @@ function VisualFrame({
   viewportMode?: "preview" | "fullscreen";
 }) {
   useEffect(() => {
+    if (!ready) return;
     const target = iframeRef.current?.contentWindow;
-    if (!target || !ready) return;
+    if (!target) return;
     target.postMessage({ type: "visual:theme", theme }, "*");
-    target.postMessage({ type: "visual:render", content }, "*");
-  }, [content, iframeRef, ready, theme]);
+    target.postMessage(
+      {
+        type: "visual:render",
+        content,
+        executeScripts,
+      },
+      "*",
+    );
+  }, [content, executeScripts, iframeRef, ready, theme]);
 
   useEffect(() => {
     const target = iframeRef.current?.contentWindow;
@@ -579,6 +582,7 @@ function VisualFullscreen({
         <VisualFrame
           className="block h-full w-full rounded-lg bg-transparent"
           content={content}
+          executeScripts
           iframeRef={iframeRef}
           panMode={handMode}
           ready={ready}
@@ -628,8 +632,9 @@ function VisualAction({
 function parseVisualArgs(args: unknown): VisualArgs | undefined {
   if (!args || typeof args !== "object") return undefined;
   const value = args as Record<string, unknown>;
-  const kind = value.kind === "svg" ? "svg" : value.kind === "html" ? "html" : undefined;
-  if (!kind) return undefined;
+  // Streaming JSON often emits title/content before kind — default html so
+  // content can paint without waiting on the kind field.
+  const kind = value.kind === "svg" ? "svg" : "html";
   return {
     title: typeof value.title === "string" && value.title.trim() ? value.title : "Visual",
     kind,

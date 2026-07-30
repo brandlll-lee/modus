@@ -30,24 +30,26 @@ export const VISUAL_AUTHORING_GUIDELINES = [
   "Render content only: Modus owns the surrounding surface, title, menu, and fullscreen action. Do not add an outer card shell, page header, outer border, shadow, background, or duplicate fullscreen control.",
   "Build a working model the user operates, not a document illustration, architecture poster, layered equal-box board, or phase deck that only swaps prose.",
   "Compose one dominant visual stage with clear hierarchy and generous space. When interactive, controls must manipulate that same model rather than become a settings form, equal-card dashboard, stat strip, or text-only page switcher.",
+  "Write visible structure and styles first; put interactive <script> blocks at the end of content so streaming preview can paint before scripts run.",
   "Use natural height and responsive width; avoid fixed-width page wrappers and overflow-hidden outer layouts. Animate only interaction feedback with transform and opacity, support keyboard focus and prefers-reduced-motion, and never run an idle animation loop.",
 ] as const;
 
 const visualTool: ToolDefinition<typeof visualParams> = defineTool({
   name: VISUAL_TOOL_NAME,
-  label: "Create visual",
+  label: "Stage / update visual",
   description:
-    "Create a sandboxed custom visual when a chart, diagram, or interactive widget explains the " +
-    "result better than text. Chat renders it inline; Plan Mode stages it for plan_write.",
+    "Stage a Plan visualRef or update an existing chat visual via visualId. " +
+    "Channel for new live chat visuals: see response_formatting (fenced html/svg).",
   promptSnippet:
-    "visual_write(title, kind, content, visualId?) — create or update a self-contained inline HTML/SVG visual; Plan Mode returns a visualRef for plan_write.",
+    "visual_write(title, kind, content, visualId?) — Plan visualRef, or chat update via visualId. New live chat visuals: fenced html/svg per response_formatting.",
   promptGuidelines: [
-    "Use visual_write for charts, diagrams, simulations, comparison widgets, and interactive explainers.",
+    "Channel selection for new chat visuals is defined in response_formatting — do not restate it here.",
+    "Use this tool in Plan Mode to stage a visualRef for plan_write, or in chat to update an existing visual via visualId.",
     ...VISUAL_AUTHORING_GUIDELINES,
     "Prefer HTML with inline CSS/JS for operable models (sliders, toggles, live calculations). Use SVG only for a small static relationship inset — never as a full-page architecture poster standing in for the primary visual.",
     "For charts, label axes, units, ticks, and legends clearly.",
     "When changing an existing visual in this session, reuse its visualId and send the full updated HTML/SVG.",
-    "Return complete HTML/SVG in content. Chat renders it directly; Plan Mode passes the returned visualRef to plan_write.",
+    "Return complete HTML/SVG in content. Plan Mode passes the returned visualRef to plan_write.",
   ],
   parameters: visualParams,
   execute: async (toolCallId, params: Static<typeof visualParams>, _signal, _onUpdate, ctx) => {
