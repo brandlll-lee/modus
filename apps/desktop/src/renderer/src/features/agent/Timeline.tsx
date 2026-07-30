@@ -613,7 +613,9 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
       }
       const block = blockById.get(event.toolCallId);
       if (block?.type === "tool") {
-        block.output += event.output;
+        // Pi's tool_execution_update carries the full partialResult each time —
+        // replace, don't append, or progress frames concatenate and final labels break.
+        block.output = event.output;
       }
       continue;
     }
@@ -805,12 +807,7 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
     }
 
     if (event.type === "queue.updated") {
-      blocks.push({
-        body: [...event.steering, ...event.followUp].join("\n"),
-        id,
-        title: "queue updated",
-        type: "notice",
-      });
+      // Pi queue noise (steer/follow-up envelopes) — not a user-facing notice.
       continue;
     }
 
@@ -925,6 +922,31 @@ export function segmentTurns(blocks: TimelineBlock[], keys: string[]): TimelineT
     turns.at(-1)?.blocks.push({ block, key });
   });
   return turns;
+}
+
+/**
+ * Authority: in-flight stream/work on the turn. Live turns skip
+ * content-visibility so rapid height growth doesn't fight layout.
+ */
+export function turnHasLiveStream(turn: TimelineTurn): boolean {
+  for (const { block } of turn.blocks) {
+    if (block.type === "message" && block.streaming) {
+      return true;
+    }
+    if (block.type === "thought" && block.streaming) {
+      return true;
+    }
+    if (block.type === "work-fold" && block.run.status === "running") {
+      return true;
+    }
+    if (block.type === "tool" && block.isComplete === false) {
+      return true;
+    }
+    if (block.type === "todos" && block.updating) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function isWorkAnchor(block: TimelineBlock): boolean {
@@ -1131,13 +1153,16 @@ export function Timeline({
           : "min-w-0 w-full max-w-full px-4 pt-8 pb-24"
       }
     >
-      {/* max-w-5xl matches Composer chrome — user bubbles fill this column.
-          Assistant / tools / cards use max-w-[60rem] (960px): wider than 4xl,
-          still ~4rem under the 5xl input frame so the reply stays inset. */}
-      <div className="relative mx-auto min-w-0 w-full max-w-5xl">
+      {/* Same .chat-column token as ChatPane's composer wrapper — one width authority,
+          shared by content only. The scroll container above stays full-bleed. */}
+      <div className="chat-column relative">
         {turns.map((turn) => (
           <section
-            className="timeline-block w-full min-w-0 space-y-6 pb-6"
+            className={
+              turnHasLiveStream(turn)
+                ? "timeline-block timeline-block--live w-full min-w-0 space-y-6 pb-6"
+                : "timeline-block w-full min-w-0 space-y-6 pb-6"
+            }
             data-turn={turn.key}
             key={turn.key}
           >
@@ -1177,7 +1202,10 @@ export function Timeline({
               return (
                 <m.div
                   animate={{ opacity: 1 }}
-                  className="mx-auto min-w-0 w-full max-w-[60rem]"
+                  // Inset from the user bubble/composer frame (Cursor-style): padding
+                  // inside the SAME .chat-column, not a second competing max-width —
+                  // stays a constant 4rem narrower at any pane size, never inverts.
+                  className="w-full px-8"
                   initial={{ opacity: 0 }}
                   key={key}
                   transition={{ duration: 0.15, ease: "easeOut" }}

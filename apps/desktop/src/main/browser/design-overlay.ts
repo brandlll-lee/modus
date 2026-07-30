@@ -55,7 +55,7 @@ const SHADOW_CSS = `
   font-family: var(--mdo-font-family);
   --mdo-accent: ${DESIGN_ACCENT_COLOR}; --mdo-accent-contrast: #ffffff;
   --mdo-surface: #1c1c1d; --mdo-elevated: #232325; --mdo-fg: #e4e4e3; --mdo-fg-subtle: #8a8a87;
-  --mdo-font-family: "Inter Variable", "Inter", system-ui, sans-serif;
+  --mdo-font-family: "Inter Variable", "Inter", "Noto Sans SC Variable", "Noto Sans SC", "PingFang SC", "Microsoft YaHei UI", system-ui, sans-serif;
   --mdo-border: rgba(255,255,255,0.10); --mdo-shadow: rgba(0,0,0,0.55);
   --mdo-fill: color-mix(in srgb, var(--mdo-accent) 16%, transparent); }
 * { box-sizing: border-box; }

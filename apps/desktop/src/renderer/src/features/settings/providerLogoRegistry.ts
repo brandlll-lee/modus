@@ -45,8 +45,9 @@ export const PROVIDER_LOGO_COLORS: Record<string, string> = {
   "openai-codex": "var(--color-fg)",
   openrouter: "#8b8cff",
   perplexity: "#20b8cd",
-  vercel: "#f5f5f5",
-  xai: "#e8e8e8",
+  // Monochrome ink marks — follow theme fg (same class as openai-codex).
+  vercel: "var(--color-fg)",
+  xai: "var(--color-fg)",
   zai: "#7dd3fc",
 };
 
@@ -76,12 +77,53 @@ export function providerLogoFallbackLabel(provider: string, name?: string): stri
   return source.slice(0, 1).toUpperCase();
 }
 
+/** Theme foreground for mask fills that would vanish on one of the surfaces. */
+const THEME_INK = "var(--color-fg)";
+
+/**
+ * Relative luminance of a #rgb / #rrggbb fill (sRGB). Non-hex / CSS vars pass
+ * through unchanged — callers already chose an adaptive token.
+ */
+export function hexLuminance(color: string): number | undefined {
+  const raw = color.trim();
+  const short = /^#([0-9a-f]{3})$/i.exec(raw);
+  const long = /^#([0-9a-f]{6})$/i.exec(raw);
+  let hex = long?.[1];
+  if (!hex && short?.[1]) {
+    hex = [...short[1]].map((c) => `${c}${c}`).join("");
+  }
+  if (!hex || hex.length !== 6) {
+    return undefined;
+  }
+  const channels = [0, 2, 4].map((offset) => {
+    const value = Number.parseInt(hex.slice(offset, offset + 2), 16) / 255;
+    return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  });
+  const [r = 0, g = 0, b = 0] = channels;
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+/**
+ * Near-white / near-black brand fills fail on one theme when used as a mask tint.
+ * Remap those to theme foreground; keep mid-tone brand colors as-is.
+ */
+export function resolveProviderLogoFill(color: string): string {
+  if (color.startsWith("var(") || color === "currentColor") {
+    return color;
+  }
+  const luminance = hexLuminance(color);
+  if (luminance !== undefined && (luminance > 0.85 || luminance < 0.08)) {
+    return THEME_INK;
+  }
+  return color;
+}
+
 export function providerLogoColor(provider: string, logoKey: string): string {
-  return (
+  const raw =
     PROVIDER_LOGO_COLORS[normalizeProviderLogoKey(provider)] ??
     PROVIDER_LOGO_COLORS[logoKey] ??
-    "currentColor"
-  );
+    "currentColor";
+  return resolveProviderLogoFill(raw);
 }
 
 export function normalizeProviderLogoKey(value: string): string {

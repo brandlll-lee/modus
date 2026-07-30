@@ -50,7 +50,8 @@ import { ImageViewerProvider } from "../components/ui/ImageViewer";
 import { ModusBot } from "../components/ui/ModusBot";
 import { ModusLoadingFallback } from "../components/ui/ModusLoadingMark";
 import { NativeSurfaceProvider } from "../components/ui/nativeSurface";
-import { ToolbarButton } from "../components/ui/ToolbarButton";
+import { ChromeMoreMenu } from "../components/ui/ChromeMoreMenu";
+import { ToolbarButton, TOOLBAR_ICON } from "../components/ui/ToolbarButton";
 import { TooltipProvider } from "../components/ui/Tooltip";
 import {
   AgentEventHub,
@@ -62,6 +63,7 @@ import {
 } from "../features/agent/agentEventHub";
 import type { ChatComposerDraft, ChatComposerDraftUpdate } from "../features/agent/ChatPane";
 import { addContextItemToDraft } from "../features/agent/ChatPane";
+import { SessionTitlePopover } from "../features/agent/SessionTitlePopover";
 import { contextItemKey } from "../features/composer/composerTokens";
 import { Composer, createEmptyComposerDraft } from "../features/composer/Composer";
 import { BranchSwitcher } from "../features/git/BranchSwitcher";
@@ -348,8 +350,15 @@ export function App() {
         event.type === "run.failed" ||
         event.type === "run.cancelled" ||
         event.type === "run.blocked" ||
+        event.type === "session.updated" ||
         event.type === "subagent.started" ||
-        event.type === "subagent.updated"
+        // Activity-only subagent.updated (writing/thinking/tool) must NOT list
+        // sessions — that re-rendered the whole app on every child token.
+        (event.type === "subagent.updated" &&
+          (event.status === "completed" ||
+            event.status === "failed" ||
+            event.status === "cancelled" ||
+            event.status === "blocked"))
       ) {
         void refreshSessions();
       }
@@ -859,9 +868,10 @@ export function App() {
                       workspaces={workspaces}
                     />
 
-                    <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-tl-xl border-hairline-strong border-t border-l bg-canvas">
+                    {/* Vertical seam only — the full-width top hairline lives on MenuBar. */}
+                    <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-hairline-strong border-l bg-canvas">
                       <header className="toolbar-row relative flex shrink-0 items-center px-3">
-                        <div className="app-no-drag flex flex-1 items-center gap-1.5">
+                        <div className="app-no-drag flex min-w-0 flex-1 items-center gap-1.5">
                           <AnimatePresence initial={false}>
                             {!responsiveSidebarOpen ? (
                               <m.div
@@ -875,11 +885,26 @@ export function App() {
                                   label="Show left sidebar"
                                   onClick={() => setSidebarOpen(true)}
                                 >
-                                  <IconLayoutSidebar size={18} stroke={1.7} />
+                                  <IconLayoutSidebar
+                                    size={TOOLBAR_ICON.size}
+                                    stroke={TOOLBAR_ICON.stroke}
+                                  />
                                 </ToolbarButton>
                               </m.div>
                             ) : null}
                           </AnimatePresence>
+                          {activeSession ? (
+                            <SessionTitlePopover
+                              branch={branch}
+                              contextUsage={contextUsageBySession[activeSession.id]}
+                              modelId={activeSession.model ?? model}
+                              models={models}
+                              session={activeSession}
+                              workspace={
+                                workspaceById.get(activeSession.workspaceId) ?? activeWorkspace
+                              }
+                            />
+                          ) : null}
                         </div>
                         <div className="flex flex-1 items-center justify-end pr-2">
                           <HeaderActions
@@ -887,6 +912,7 @@ export function App() {
                             branch={branch}
                             environmentStats={environmentStats}
                             inspectorOpen={responsiveInspectorOpen}
+                            onOpenSettings={() => setSettingsOpen(true)}
                             onToggleInspector={() => setInspectorOpen((open) => !open)}
                           />
                         </div>
@@ -942,6 +968,11 @@ export function App() {
                                 subagentSessions={agentSessions.filter(
                                   (session) => session.parentSessionId === activeSession.id,
                                 )}
+                                {...(responsiveInspectorOpen &&
+                                inspectorTab === "subagents" &&
+                                selectedSubagentId
+                                  ? { inspectorLiveSessionId: selectedSubagentId }
+                                  : {})}
                                 onPlanUpdated={rememberActivePlan}
                                 onSessionsChanged={() => void refreshSessions()}
                                 session={activeSession}
@@ -1032,6 +1063,7 @@ export function App() {
                           }
                           onOpenChange={setInspectorOpen}
                           onOpenReview={openReview}
+                          onOpenSettings={() => setSettingsOpen(true)}
                           onOpenSubagent={openSubagent}
                           onPlanUpdated={rememberActivePlan}
                           onSelectSubagent={setSelectedSubagentId}
@@ -1074,7 +1106,7 @@ export function App() {
  */
 function MenuBar() {
   return (
-    <div className="app-drag flex h-11 shrink-0 items-center bg-panel">
+    <div className="app-drag flex h-11 shrink-0 items-center border-hairline-strong border-b bg-panel">
       <div className="flex flex-1 items-center gap-0.5 pl-2.5">
         <BrandMark />
         <MenuItem>File</MenuItem>
@@ -1099,7 +1131,7 @@ function MenuItem({ children }: { children: string }) {
   return (
     <button
       className={cn(
-        "app-no-drag flex h-7 items-center rounded-md px-2 text-xs font-normal text-fg-muted",
+        "app-no-drag flex h-7 items-center rounded-md px-2 text-xs font-normal text-fg-subtle",
         "transition-colors hover:bg-hover hover:text-fg",
       )}
       type="button"
@@ -1315,12 +1347,14 @@ function HeaderActions({
   branch,
   environmentStats,
   inspectorOpen,
+  onOpenSettings,
   onToggleInspector,
 }: {
   activeWorkspace: WorkspaceInfo | null;
   branch: string | undefined;
   environmentStats: { added: number; removed: number };
   inspectorOpen: boolean;
+  onOpenSettings(): void;
   onToggleInspector(): void;
 }) {
   return (
@@ -1329,13 +1363,15 @@ function HeaderActions({
         activeWorkspace={activeWorkspace}
         branch={branch}
         environmentStats={environmentStats}
+        onOpenSettings={onOpenSettings}
       />
+      <ChromeMoreMenu onOpenSettings={onOpenSettings} />
       <ToolbarButton
         active={inspectorOpen}
         label={inspectorOpen ? "Hide right sidebar" : "Show right sidebar"}
         onClick={onToggleInspector}
       >
-        <IconLayoutSidebarRight size={18} stroke={1.7} />
+        <IconLayoutSidebarRight size={TOOLBAR_ICON.size} stroke={TOOLBAR_ICON.stroke} />
       </ToolbarButton>
     </div>
   );
@@ -1345,10 +1381,12 @@ function EnvironmentPopover({
   activeWorkspace,
   branch,
   environmentStats,
+  onOpenSettings,
 }: {
   activeWorkspace: WorkspaceInfo | null;
   branch: string | undefined;
   environmentStats: { added: number; removed: number };
+  onOpenSettings(): void;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -1362,7 +1400,7 @@ function EnvironmentPopover({
         )}
         data-active={open}
       >
-        <IconListDetails size={18} stroke={1.7} />
+        <IconListDetails size={TOOLBAR_ICON.size} stroke={TOOLBAR_ICON.stroke} />
       </Popover.Trigger>
       <AnimatePresence>
         {open ? (
@@ -1381,9 +1419,13 @@ function EnvironmentPopover({
                     <button
                       aria-label="Environment settings"
                       className="toolbar-icon-button flex items-center justify-center rounded-md transition-colors hover:bg-hover"
+                      onClick={() => {
+                        setOpen(false);
+                        onOpenSettings();
+                      }}
                       type="button"
                     >
-                      <IconSettings size={18} stroke={1.7} />
+                      <IconSettings size={TOOLBAR_ICON.size} stroke={TOOLBAR_ICON.stroke} />
                     </button>
                   </div>
                   <div className="space-y-3 text-sm text-fg">

@@ -75,9 +75,8 @@ type MessageBlockProps = {
   /** User only: selected skills attached to the prompt. */
   skills?: SkillSelection[];
   /**
-   * Preview sheet: no sticky chrome or hover actions (sticky fights the
-   * nested scrollport). The 3.5-line clip + fade is shared with the main
-   * timeline regardless of this flag.
+   * Preview sheet: hide hover actions (edit/copy chrome). Sticky user bubble
+   * still pins like the main session — same ChatViewport scroll ancestor.
    */
   compactClip?: boolean | undefined;
 };
@@ -148,12 +147,13 @@ export const MessageBlock = memo(function MessageBlock({
     return (
       <div
         className={cn(
-          "group/user-msg relative block w-full min-w-0",
+          "group/user-msg sticky top-0 z-10 block w-full min-w-0",
           COMPOSER_RADIUS_CLASS,
           // Sticky chrome + absolutely-positioned hover actions: one timeline
           // child so turn `space-y-6` / `pb-6` keep equal air above and below
           // the bubble (in-flow ghost action rows used to double the gap below).
-          compactClip ? undefined : "sticky top-0 z-10 bg-canvas",
+          // Preview sheet is elevated; main chat is canvas.
+          compactClip ? "bg-elevated" : "bg-canvas",
         )}
       >
         {showEditor && onEditResend ? (

@@ -38,6 +38,11 @@ import { ImageThumb } from "../../components/ui/ImageViewer";
 import { ShineBorder } from "../../components/ui/ShineBorder";
 import { cn } from "../../lib/cn";
 import {
+  ContextUsageRing,
+  contextUsagePercent,
+  formatUsagePercent,
+} from "../../lib/contextUsage";
+import {
   modelThinkingOptions,
   selectedThinkingLabel,
   selectedThinkingOption,
@@ -58,7 +63,7 @@ import { type SlashItem, useComposerSlash } from "./useComposerSlash";
 const COMPOSER_PLACEHOLDER = "What will you build with Modus?";
 
 /** Shared with read-only user bubbles — single radius/chrome truth for the prompt shell. */
-export const COMPOSER_RADIUS_CLASS = "rounded-[14px]";
+export const COMPOSER_RADIUS_CLASS = "rounded-[12px]";
 export const COMPOSER_SHELL_CLASS = cn(
   "border border-composer-border bg-surface shadow-composer-edge",
   COMPOSER_RADIUS_CLASS,
@@ -514,13 +519,19 @@ export function Composer({
   return (
     <div className={cn("relative flex flex-col items-stretch", footer ? "pb-12" : undefined)}>
       {footer ? (
-        <div className="pointer-events-none absolute inset-x-0 top-12 bottom-0 z-0 rounded-[20px] bg-composer-tray shadow-composer" />
+        <div
+          className={cn(
+            "pointer-events-none absolute inset-x-0 top-12 bottom-0 z-0 bg-composer-tray shadow-composer",
+            COMPOSER_RADIUS_CLASS,
+          )}
+        />
       ) : null}
       {/* biome-ignore lint/a11y/noStaticElementInteractions: drag-drop is a pointer-only enhancement; keyboard users attach images via paste in the editor. */}
       <div
         className={cn(
           "relative border border-composer-border bg-surface shadow-composer-edge transition-[border-color] duration-150",
-          footer ? "z-10 rounded-[20px]" : COMPOSER_RADIUS_CLASS,
+          COMPOSER_RADIUS_CLASS,
+          footer && "z-10",
           // No focus glow: only text focus or drag nudges the border one notch brighter.
           !isRunning && "focus-within:border-composer-border-strong",
           dragging && "border-composer-border-strong",
@@ -1036,47 +1047,6 @@ function EffortEnergySlider({
   );
 }
 
-function ContextUsageRing({ percent }: { percent: number | undefined }) {
-  const strokeWidth = 1.8;
-  const center = 8;
-  const radius = center - strokeWidth / 2;
-  const circumference = 2 * Math.PI * radius;
-  const known = percent !== undefined;
-  const offset = circumference * (1 - clampPercent(percent ?? 0) / 100);
-
-  return (
-    <svg
-      aria-hidden="true"
-      className="-rotate-90 shrink-0"
-      fill="none"
-      height="15"
-      viewBox="0 0 16 16"
-      width="15"
-    >
-      <circle
-        cx={center}
-        cy={center}
-        r={radius}
-        stroke="var(--color-hairline-strong)"
-        strokeWidth={strokeWidth}
-      />
-      <circle
-        cx={center}
-        cy={center}
-        r={radius}
-        stroke="currentColor"
-        strokeDasharray={circumference}
-        strokeDashoffset={offset}
-        strokeWidth={strokeWidth}
-        className={cn(
-          "transition-[stroke-dashoffset] duration-300 ease-out",
-          !known && "opacity-0",
-        )}
-      />
-    </svg>
-  );
-}
-
 function ContextUsageIndicator({
   contextWindow,
   usage,
@@ -1161,35 +1131,4 @@ function ContextUsageRow({
       <span className={strong ? "font-semibold text-fg" : "text-fg"}>{value}</span>
     </div>
   );
-}
-
-function clampPercent(value: number | null | undefined): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return 0;
-  }
-  return Math.min(100, Math.max(0, value));
-}
-
-function contextUsagePercent(usage: ContextUsageInfo | undefined): number | undefined {
-  if (!usage) {
-    return undefined;
-  }
-  if (typeof usage.percent === "number" && Number.isFinite(usage.percent)) {
-    return clampPercent(usage.percent);
-  }
-  if (
-    typeof usage.tokens === "number" &&
-    Number.isFinite(usage.tokens) &&
-    usage.contextWindow > 0
-  ) {
-    return clampPercent((usage.tokens / usage.contextWindow) * 100);
-  }
-  return undefined;
-}
-
-function formatUsagePercent(value: number | null | undefined): string {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return "—";
-  }
-  return `${Math.round(value)}%`;
 }

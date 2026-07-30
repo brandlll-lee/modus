@@ -34,11 +34,25 @@ import { SessionStatusDot } from "../features/agent/SessionStatusDot";
 import { cn } from "../lib/cn";
 import { useScrollFade } from "../lib/useScrollFade";
 import { CollapsibleMotion } from "./ui/CollapsibleMotion";
-import { ToolbarButton } from "./ui/ToolbarButton";
+import { ToolbarButton, TOOLBAR_ICON } from "./ui/ToolbarButton";
 
 export const SIDEBAR_MIN_WIDTH = 240;
 const SIDEBAR_MAX_WIDTH = 480;
 const SIDEBAR_TRANSITION = { duration: 0.18, ease: [0.22, 1, 0.36, 1] } as const;
+
+/**
+ * Sidebar density contract — one icon rail for nav / folder / session dots.
+ * Nested blocks indent by exactly one rail (no magic pl-[30px]).
+ */
+const SB_RAIL = "pointer-events-none flex w-5 shrink-0 items-center justify-center";
+const SB_ROW =
+  "flex h-[30px] w-full items-center gap-2 rounded-md pr-1 pl-2 text-sm font-normal transition-colors";
+/** Session titles — one step quieter/smaller than nav & project rows (Cursor density). */
+const SB_SESSION =
+  "flex h-[30px] w-full items-center gap-2 rounded-md pr-1 pl-2 text-xs font-normal transition-colors";
+const SB_NEST = "pl-5"; // 20px = one rail
+const SB_ICON = 16;
+const SB_STROKE = 1.5;
 
 type SidebarProps = {
   workspaces: WorkspaceInfo[];
@@ -177,22 +191,22 @@ export function Sidebar({
       style={{ width: panelWidth }}
     >
       <m.div className="flex h-full flex-col bg-panel" style={{ width: contentWidth }}>
-        <div className="px-2.5 pt-4 pb-2">
+        <div className="px-2 pt-3 pb-1">
           <NavRow
             disabled={!canCreateSession}
-            icon={<IconEdit size={17} stroke={1.75} />}
+            icon={<IconEdit size={SB_ICON} stroke={SB_STROKE} />}
             onClick={onNewSession}
           >
             New chat
           </NavRow>
-          <NavRow icon={<IconSearch size={17} stroke={1.75} />}>Search</NavRow>
-          <NavRow icon={<IconGridDots size={17} stroke={1.75} />}>Plugins</NavRow>
-          <NavRow icon={<IconClock size={17} stroke={1.75} />}>Automations</NavRow>
+          <NavRow icon={<IconSearch size={SB_ICON} stroke={SB_STROKE} />}>Search</NavRow>
+          <NavRow icon={<IconGridDots size={SB_ICON} stroke={SB_STROKE} />}>Plugins</NavRow>
+          <NavRow icon={<IconClock size={SB_ICON} stroke={SB_STROKE} />}>Automations</NavRow>
         </div>
 
         <div
           className={cn(
-            "scroll-thin min-h-0 flex-1 overflow-y-auto pr-2 pl-2.5 pb-2",
+            "scroll-thin min-h-0 flex-1 overflow-y-auto px-2 pb-2",
             (fadeTop || fadeBottom) && "scroll-fade",
           )}
           {...(fadeTop ? { "data-fade-top": "" } : {})}
@@ -208,7 +222,11 @@ export function Sidebar({
 
           <CollapsibleMotion open={projectsExpanded} preset="default">
             {workspaces.length === 0 ? (
-              <NavRow icon={<IconFolder size={17} stroke={1.6} />} muted onClick={onOpenWorkspace}>
+              <NavRow
+                icon={<IconFolder size={SB_ICON} stroke={SB_STROKE} />}
+                muted
+                onClick={onOpenWorkspace}
+              >
                 Open a repository…
               </NavRow>
             ) : (
@@ -247,7 +265,7 @@ export function Sidebar({
 
             <div className="mt-1">
               <NavRow
-                icon={<IconFolderPlus size={17} stroke={1.6} />}
+                icon={<IconFolderPlus size={SB_ICON} stroke={SB_STROKE} />}
                 muted
                 onClick={onOpenWorkspace}
               >
@@ -259,14 +277,17 @@ export function Sidebar({
           <SectionLabel>Chats</SectionLabel>
         </div>
 
-        <div className="app-no-drag flex items-center gap-1 px-2.5 pt-2 pb-3">
+        <div className="app-no-drag flex items-center gap-1 px-2 pt-1 pb-2">
           <div className="min-w-0 flex-1">
-            <NavRow icon={<IconSettings size={17} stroke={1.75} />} onClick={onOpenSettings}>
+            <NavRow
+              icon={<IconSettings size={SB_ICON} stroke={SB_STROKE} />}
+              onClick={onOpenSettings}
+            >
               Settings
             </NavRow>
           </div>
           <ToolbarButton label="Collapse sidebar" onClick={() => onOpenChange(false)}>
-            <IconLayoutSidebar size={18} stroke={1.7} />
+            <IconLayoutSidebar size={TOOLBAR_ICON.size} stroke={TOOLBAR_ICON.stroke} />
           </ToolbarButton>
         </div>
       </m.div>
@@ -408,20 +429,20 @@ function WorkspaceItem({
         ))}
         {canToggleSessions ? (
           <button
-            className="flex h-[30px] w-full items-center gap-2 pr-1 pl-2 text-left text-sm text-fg-faint transition-colors hover:text-fg-muted"
+            className={cn(SB_SESSION, "text-fg-faint hover:text-fg-subtle")}
             onClick={() => setShowAllSessions((value) => !value)}
             type="button"
           >
-            <span aria-hidden className="w-5 shrink-0" />
+            <span aria-hidden className={SB_RAIL} />
             {showAllSessions ? "See less" : "See more"}
           </button>
         ) : null}
         <CollapsibleMotion open={archivedOpen} preset="default">
-          <div className="mt-1 space-y-0.5 pl-[30px]">
+          <div className={cn("mt-1 space-y-0.5", SB_NEST)}>
             {archivedSessions === undefined ? (
-              <div className="px-3 py-1 text-2xs text-fg-faint">Loading archived chats…</div>
+              <div className="px-2 py-1 text-2xs text-fg-faint">Loading archived chats…</div>
             ) : archivedSessions.length === 0 ? (
-              <div className="px-3 py-1 text-2xs text-fg-faint">No archived chats</div>
+              <div className="px-2 py-1 text-2xs text-fg-faint">No archived chats</div>
             ) : (
               archivedSessions.map((session) => (
                 <ArchivedSessionRow
@@ -477,8 +498,11 @@ function SessionRow({
   return (
     <m.div
       className={cn(
-        "group flex h-[34px] w-full items-center gap-2 rounded-sm pr-1 pl-2 text-sm font-normal transition-colors hover:bg-hover",
-        isActive ? "bg-active text-fg" : "text-fg-muted hover:text-fg",
+        SB_SESSION,
+        "group",
+        isActive
+          ? "bg-active text-fg-muted"
+          : "text-fg-subtle hover:bg-hover hover:text-fg-muted",
       )}
       layout
       onBlurCapture={(event) => {
@@ -489,30 +513,34 @@ function SessionRow({
       onMouseLeave={() => setConfirmDelete(false)}
       transition={{ duration: 0.14, ease: "easeOut" }}
     >
-      <span className="pointer-events-none flex w-5 shrink-0 items-center justify-center">
+      <span className={SB_RAIL}>
         <SessionStatusDot activity={activity} />
       </span>
       <button
-        className="flex min-w-0 flex-1 items-center gap-2 py-2 pr-1 text-left"
+        className="flex min-w-0 flex-1 items-center pr-1 text-left"
         onClick={onSelect}
         title="Open"
         type="button"
       >
         <span className="min-w-0 flex-1 truncate-fade">{title}</span>
       </button>
-      <span className="ml-1 hidden shrink-0 items-center group-hover:flex group-focus-within:flex">
-        <span className="px-1 text-xs font-normal text-fg-faint tabular-nums">
+      <span className="ml-0.5 hidden shrink-0 items-center group-hover:flex group-focus-within:flex">
+        <span className="px-1 text-2xs font-normal text-fg-faint tabular-nums">
           {formatRelativeTime(updatedAt)}
         </span>
         <IconButton label={pinned ? "Unpin chat" : "Pin chat"} onClick={onPin}>
-          {pinned ? <IconPinnedOff size={14} stroke={1.8} /> : <IconPin size={14} stroke={1.8} />}
+          {pinned ? (
+            <IconPinnedOff size={14} stroke={SB_STROKE} />
+          ) : (
+            <IconPin size={14} stroke={SB_STROKE} />
+          )}
         </IconButton>
         <IconButton label="Archive" onClick={onArchive}>
-          <IconArchive size={14} stroke={1.8} />
+          <IconArchive size={14} stroke={SB_STROKE} />
         </IconButton>
         {confirmDelete ? (
           <button
-            className="ml-0.5 h-6 rounded-md px-1.5 text-2xs text-danger transition-colors hover:bg-active"
+            className="ml-0.5 h-5 rounded-md px-1.5 text-2xs text-danger transition-colors hover:bg-active"
             onClick={onDelete}
             type="button"
           >
@@ -526,7 +554,7 @@ function SessionRow({
               setConfirmDelete(true);
             }}
           >
-            <IconTrash size={14} stroke={1.8} />
+            <IconTrash size={14} stroke={SB_STROKE} />
           </IconButton>
         )}
       </span>
@@ -544,9 +572,10 @@ function ArchivedSessionRow({
   onRestore(): void;
 }) {
   return (
-    <div className="group flex h-[30px] items-center rounded-sm pr-1 text-sm text-fg-faint transition-colors hover:bg-hover hover:text-fg-muted">
+    <div className={cn(SB_SESSION, "group text-fg-faint hover:bg-hover hover:text-fg-subtle")}>
+      <span aria-hidden className={SB_RAIL} />
       <button
-        className="min-w-0 flex-1 truncate-fade py-1.5 pr-1 pl-3 text-left"
+        className="min-w-0 flex-1 truncate-fade pr-1 text-left"
         onClick={onOpen}
         title="Open archived chat"
         type="button"
@@ -558,7 +587,7 @@ function ArchivedSessionRow({
           {formatRelativeTime(session.archivedAt ?? session.updatedAt)}
         </span>
         <IconButton label="Restore" onClick={onRestore}>
-          <IconArchiveOff size={14} stroke={1.8} />
+          <IconArchiveOff size={14} stroke={SB_STROKE} />
         </IconButton>
       </span>
     </div>
@@ -605,9 +634,9 @@ function ProjectRow({
 
   if (renaming) {
     return (
-      <div className="flex h-[36px] w-full items-center gap-3 rounded-sm px-2 text-sm">
-        <span className="shrink-0 text-fg-subtle">
-          <FolderIcon size={17} stroke={1.6} />
+      <div className={cn(SB_ROW, "text-fg")}>
+        <span className={cn(SB_RAIL, "text-fg-subtle")}>
+          <FolderIcon size={SB_ICON} stroke={SB_STROKE} />
         </span>
         <RenameInput initialValue={label} onCancel={onCancelRename} onCommit={onCommitRename} />
       </div>
@@ -628,43 +657,41 @@ function ProjectRow({
       {(menuOpen, trigger) => (
         <m.div
           className={cn(
-            "group flex h-[36px] w-full items-center rounded-sm pr-1 text-sm font-normal transition-colors hover:bg-hover",
-            menuOpen && "bg-hover",
-            "text-fg",
+            SB_ROW,
+            "group text-fg-muted hover:bg-hover hover:text-fg",
+            menuOpen && "bg-hover text-fg",
           )}
           layout
           transition={{ duration: 0.14, ease: "easeOut" }}
         >
           <button
             aria-expanded={expanded}
-            className="flex min-w-0 flex-1 items-center gap-3 px-2 text-left"
+            className="flex min-w-0 flex-1 items-center gap-2 text-left"
             onClick={onClick}
             title={title}
             type="button"
           >
-            <span className="shrink-0 text-fg">
-              <FolderIcon size={17} stroke={1.6} />
+            <span className={cn(SB_RAIL, "text-fg-muted group-hover:text-fg")}>
+              <FolderIcon size={SB_ICON} stroke={SB_STROKE} />
             </span>
-            <span className="flex min-w-0 items-center gap-1.5">
-              <span className="min-w-0 truncate">{children}</span>
-              <m.span
-                animate={{ rotate: expanded ? 90 : 0 }}
-                className="flex size-3.5 shrink-0 items-center justify-center text-fg-faint"
-                transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-              >
-                <IconChevronRight size={13} stroke={1.7} />
-              </m.span>
-            </span>
+            <span className="min-w-0 truncate">{children}</span>
+            <m.span
+              animate={{ rotate: expanded ? 90 : 0 }}
+              className="flex size-3 shrink-0 items-center justify-center text-fg-faint opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+              transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+            >
+              <IconChevronRight size={12} stroke={SB_STROKE} />
+            </m.span>
           </button>
           <span
             className={cn(
-              "ml-1 flex shrink-0 items-center gap-1 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100",
+              "flex shrink-0 items-center gap-0.5 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100",
               menuOpen ? "opacity-100" : "opacity-0",
             )}
           >
             {trigger}
             <IconButton label="New session" onClick={onCreate}>
-              <IconEdit size={14} stroke={1.8} />
+              <IconEdit size={14} stroke={SB_STROKE} />
             </IconButton>
           </span>
         </m.div>
@@ -756,11 +783,12 @@ function NavRow({
   return (
     <button
       className={cn(
-        "group relative flex h-[36px] w-full items-center gap-3 rounded-lg px-2 text-left text-sm font-normal transition-colors",
-        "text-fg hover:bg-hover",
+        SB_ROW,
+        "group relative text-left",
+        "text-fg-muted hover:bg-hover hover:text-fg",
         highlight && "bg-active text-fg hover:bg-hover",
-        muted && "text-fg-subtle hover:text-fg-muted",
-        disabled && "cursor-not-allowed opacity-40 hover:bg-transparent hover:text-fg-subtle",
+        muted && "text-fg-faint hover:text-fg-muted",
+        disabled && "cursor-not-allowed opacity-40 hover:bg-transparent hover:text-fg-faint",
       )}
       disabled={disabled}
       onClick={onClick}
@@ -769,12 +797,12 @@ function NavRow({
     >
       {active && layoutHighlight ? (
         <m.span
-          className="absolute inset-0 rounded-lg bg-active"
+          className="absolute inset-0 rounded-md bg-active"
           layoutId="sidebar-active"
           transition={{ duration: 0.12, ease: "easeOut" }}
         />
       ) : null}
-      <span className="relative shrink-0 text-fg">{icon}</span>
+      <span className={cn(SB_RAIL, "relative text-current")}>{icon}</span>
       <span className="relative flex min-w-0 flex-1 items-center truncate">{children}</span>
       {trailing ? <span className="relative shrink-0">{trailing}</span> : null}
     </button>
@@ -942,20 +970,20 @@ function SectionHeader({
   onToggle(): void;
 }) {
   return (
-    <div className="group mt-5 mb-1 flex h-7 items-center px-2 text-sm font-normal text-fg-faint">
+    <div className="group mt-3 mb-0.5 flex h-6 items-center px-2 text-2xs font-normal text-fg-faint">
       <button
         aria-expanded={expanded}
-        className="flex items-center gap-1.5 transition-colors hover:text-fg-subtle"
+        className="flex items-center gap-1 transition-colors hover:text-fg-subtle"
         onClick={onToggle}
         type="button"
       >
         <span>{children}</span>
         <m.span
           animate={{ rotate: expanded ? 90 : 0 }}
-          className="flex size-3.5 items-center justify-center opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100"
+          className="flex size-3 items-center justify-center opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100"
           transition={{ duration: 0.16, ease: "easeOut" }}
         >
-          <IconChevronRight size={13} stroke={1.7} />
+          <IconChevronRight size={11} stroke={SB_STROKE} />
         </m.span>
       </button>
     </div>
@@ -963,7 +991,7 @@ function SectionHeader({
 }
 
 function SectionLabel({ children }: { children: string }) {
-  return <div className="px-2 pt-5 pb-1 text-sm font-normal text-fg-faint">{children}</div>;
+  return <div className="px-2 pt-3 pb-0.5 text-2xs font-normal text-fg-faint">{children}</div>;
 }
 
 function formatRelativeTime(value: string): string {

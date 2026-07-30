@@ -20,6 +20,8 @@ import type {
   WorkspaceInfo,
 } from "../../../../shared/contracts";
 import { CollapsibleMotionProvider } from "../../components/ui/CollapsibleMotion";
+import { VortexMark } from "../../components/ui/VortexMark";
+import { lookupModel } from "../../lib/modelIdentity";
 import {
   Composer,
   type ComposerDraft,
@@ -35,6 +37,7 @@ import { QuestionsCard } from "../plan/QuestionsCard";
 import { ReviewPlanCard } from "../plan/ReviewPlanCard";
 import { RunningProcessBar } from "../process/RunningProcessBar";
 import { useManagedProcesses } from "../process/useManagedProcesses";
+import { ProviderLogo } from "../settings/ProviderLogo";
 import { ApprovalPanel } from "./ApprovalPanel";
 import {
   type AgentEventHub,
@@ -51,6 +54,7 @@ import { RetryStatusBar } from "./RetryStatusBar";
 import { latestSessionStatus } from "./runState";
 import { SubagentPreviewSheet } from "./SubagentPreviewSheet";
 import {
+  isSubagentSessionLive,
   isSubagentSessionWorking,
   subagentActivityLabel,
 } from "./subagentUi";
@@ -100,6 +104,17 @@ type ChatPaneProps = {
   subagentSessions?: AgentSessionInfo[] | undefined;
   /** Omit composer dock — used by the local subagent preview sheet. */
   hideComposer?: boolean | undefined;
+  /**
+   * Preview / inspector chrome only: hide the turn rail and use embedded
+   * timeline padding. Streaming physics stay identical to the main pane.
+   * Defaults to true when `hideComposer` is set.
+   */
+  lite?: boolean | undefined;
+  /**
+   * Session already mounted live in the inspector detail pane. Authority for
+   * "at most one live ChatPane per sessionId" — preview must not dual-mount.
+   */
+  inspectorLiveSessionId?: string | undefined;
 };
 
 type DesignContextItem = Extract<ContextItem, { type: "design-element" }>;
@@ -370,7 +385,10 @@ export function ChatPane({
   onOpenTerminal,
   subagentSessions,
   hideComposer = false,
+  lite,
+  inspectorLiveSessionId,
 }: ChatPaneProps) {
+  const isLite = lite ?? hideComposer;
   const sessionId = session.id;
   const [agentEvents, setAgentEvents] = useState<AgentEventItem[]>([]);
   const [localComposerDraft, setLocalComposerDraft] = useState<ChatComposerDraft>(
@@ -500,6 +518,9 @@ export function ChatPane({
   // mid-turn. `pendingPrompt` is the optimistic bridge until the first status.
   const sessionStatus = useMemo(() => latestSessionStatus(agentEvents), [agentEvents]);
   const isRunning = !aborting && (sessionStatus.type !== "idle" || pendingPrompt);
+  // Authoritative: keep SDK hot only while a turn is live (DB status or stream).
+  const keepRuntimeHotRef = useRef(false);
+  keepRuntimeHotRef.current = isSubagentSessionWorking(session.status) || isRunning;
 
   // Stick-to-bottom follows the bottom only while the session is working; idle
   // viewing/scrolling never snaps back (opencode's createAutoScroll model).
@@ -660,19 +681,16 @@ export function ChatPane({
         requestAnimationFrame(() => autoScroll.resume());
       }
     })();
-    void window.modus.agent
-      .ensure(sessionId)
-      .then(() => onSessionsChanged())
-      .catch((error: unknown) => {
-        if (!cancelled) {
-          setPromptError(error instanceof Error ? error.message : String(error));
-        }
-      });
 
     return () => {
       cancelled = true;
       unsubscribe();
       clearQueued();
+      // View history ≠ keep SDK. Release when the pane leaves and no turn is live;
+      // prompt/setModel rehydrate via getOrResume on the next interaction.
+      if (!keepRuntimeHotRef.current) {
+        void window.modus.agent.releaseRuntime(sessionId);
+      }
     };
   }, [sessionId, hub, flushQueued, clearQueued]);
 
@@ -884,9 +902,17 @@ export function ChatPane({
     onSessionsChanged();
   }
 
-  const openSubagentPreview = useCallback((childSessionId: string): void => {
-    setPreviewSubagentId(childSessionId);
-  }, []);
+  const openSubagentPreview = useCallback(
+    (childSessionId: string): void => {
+      // Inspector already owns the live ChatPane for this session — don't dual-mount.
+      if (inspectorLiveSessionId === childSessionId) {
+        onOpenSubagent?.(childSessionId);
+        return;
+      }
+      setPreviewSubagentId(childSessionId);
+    },
+    [inspectorLiveSessionId, onOpenSubagent],
+  );
 
   const closeSubagentPreview = useCallback((): void => {
     setPreviewSubagentId(undefined);
@@ -907,6 +933,13 @@ export function ChatPane({
     }
   }, [previewSubagentId, previewSession, subagentSessions]);
 
+  // Inspector detail took ownership of this session — drop the preview mount.
+  useEffect(() => {
+    if (inspectorLiveSessionId && previewSubagentId === inspectorLiveSessionId) {
+      setPreviewSubagentId(undefined);
+    }
+  }, [inspectorLiveSessionId, previewSubagentId]);
+
   return (
     <section className="flex h-full min-w-0 flex-1 flex-col">
       {promptError ? (
@@ -917,7 +950,9 @@ export function ChatPane({
 
       <CollapsibleMotionProvider>
         <div className="relative flex min-h-0 min-w-0 flex-1">
-          <ConversationTimeline blocks={visibleBlocks} scrollContainer={scrollContainer} />
+          {isLite ? null : (
+            <ConversationTimeline blocks={visibleBlocks} scrollContainer={scrollContainer} />
+          )}
           <ChatViewport
             contentRef={autoScroll.contentRef}
             onScroll={autoScroll.handleScroll}
@@ -926,7 +961,7 @@ export function ChatPane({
             <Timeline
               agentEvents={agentEvents}
               cwd={activeCwd}
-              {...(hideComposer ? { embedded: true } : {})}
+              {...(isLite ? { embedded: true } : {})}
               model={paneModel}
               models={models}
               onEditResend={editAndResend}
@@ -945,9 +980,20 @@ export function ChatPane({
               workspaceId={workspace?.id}
             />
           </ChatViewport>
-          {/* Scoped to the timeline area: the composer stays sharp and usable below. */}
           {!hideComposer ? (
             <SubagentPreviewSheet
+              leading={
+                previewSession ? (
+                  isSubagentSessionLive(previewSession.status) ? (
+                    <VortexMark className="size-4.5" />
+                  ) : (
+                    <SubagentPreviewProviderMark
+                      modelId={previewSession.model}
+                      models={models}
+                    />
+                  )
+                ) : undefined
+              }
               onClose={closeSubagentPreview}
               onExpand={expandSubagentPreview}
               open={Boolean(previewSession)}
@@ -977,116 +1023,117 @@ export function ChatPane({
       </CollapsibleMotionProvider>
 
       {hideComposer ? null : (
-      <div className="min-w-0 max-w-full shrink-0 px-4 pb-4">
-        <div className="relative mx-auto min-w-0 w-full max-w-5xl">
-          {autoScroll.showScrollToLatest ? (
-            <div className="pointer-events-none absolute bottom-full left-1/2 z-30 mb-2 -translate-x-1/2">
-              <button
-                aria-label="Scroll to latest"
-                className="pointer-events-auto flex size-10 items-center justify-center rounded-full border border-popup-border bg-elevated text-fg-muted shadow-popup outline-none transition-colors duration-100 hover:bg-hover hover:text-fg focus-visible:ring-2 focus-visible:ring-focus-ring/35"
-                onClick={autoScroll.scrollToLatest}
-                title="Scroll to latest"
-                type="button"
-              >
-                <IconArrowDown aria-hidden size={21} stroke={1.9} />
-              </button>
-            </div>
-          ) : null}
-          {pendingPermission ? (
-            <ApprovalPanel
-              key={pendingPermission.id}
-              onDecide={(request, decision) => decidePermission(request, decision)}
-              request={pendingPermission}
-            />
-          ) : (
-            <>
-              {pendingQuestion ? (
-                <QuestionsCard
-                  key={pendingQuestion.id}
-                  onSkip={() => void respondQuestion([], true)}
-                  onSubmit={(answers) => void respondQuestion(answers, false)}
-                  request={pendingQuestion}
-                />
-              ) : null}
-              {composerReplacement ? (
-                composerReplacement
-              ) : reviewPlan ? (
-                <ReviewPlanCard
-                  onBuildLocally={() => buildPlanLocally(reviewPlan)}
-                  onContinuePlanning={() => {
-                    setComposerMode("plan");
-                    setDismissedPlanHash(reviewPlan.hash);
-                  }}
-                />
-              ) : (
-                <>
-                  {retryStatus ? <RetryStatusBar status={retryStatus} /> : null}
-                  <ComposerDock
-                    rails={
-                      hasComposerRails ? (
-                        <>
-                          {runningProcesses.length > 0 ? (
-                            <RunningProcessBar
-                              nowMs={managedProcesses.nowMs}
-                              onStop={managedProcesses.kill}
-                              processes={runningProcesses}
-                              {...(onOpenTerminal ? { onOpenTerminal } : {})}
-                            />
-                          ) : null}
-                          {workingSubagents.length > 0 ? (
-                            <WorkingSubagentBar
-                              items={workingSubagents}
-                              onOpen={openSubagentPreview}
-                            />
-                          ) : null}
-                          {showChangesRail && workingStats ? (
-                            <ChangesStrip
-                              onOpenFile={(path) =>
-                                void window.modus.file
-                                  .open({ cwd: activeCwd, path })
-                                  .catch(() => {})
-                              }
-                              onReview={() => onOpenReview(activeCwd)}
-                              stats={workingStats}
-                            />
-                          ) : null}
-                        </>
-                      ) : undefined
-                    }
-                  >
-                    <Composer
-                      canSubmit={Boolean(workspace) && Boolean(paneModel)}
-                      contextItems={contextItems}
-                      cwd={activeCwd}
-                      draft={{
-                        images: activeComposerDraft.images,
-                        parts: activeComposerDraft.parts,
-                        selectedSkills: activeComposerDraft.selectedSkills,
-                        value: activeComposerDraft.value,
-                      }}
-                      isRunning={isRunning}
-                      mode={composerMode}
-                      model={paneModel}
-                      models={models}
-                      {...(contextUsage ? { contextUsage } : {})}
-                      onAbort={() => void abortPrompt()}
-                      onContextChange={setContextItems}
-                      onDraftChange={setComposerFields}
-                      onModeChange={setComposerMode}
-                      onModelChange={(next) => void changeModel(next)}
-                      onModelConfigChange={onModelConfigChange}
-                      onSubmit={(message, context, delivery, attachments, skills, mode) =>
-                        submitPrompt(message, context, delivery, attachments, skills, mode)
+        <div className="min-w-0 max-w-full shrink-0 px-4 pb-4">
+          {/* Same .chat-column token as Timeline's content wrapper — one width authority. */}
+          <div className="chat-column relative">
+            {autoScroll.showScrollToLatest ? (
+              <div className="pointer-events-none absolute bottom-full left-1/2 z-30 mb-2 -translate-x-1/2">
+                <button
+                  aria-label="Scroll to latest"
+                  className="pointer-events-auto flex size-10 items-center justify-center rounded-full border border-popup-border bg-elevated text-fg-muted shadow-popup outline-none transition-colors duration-100 hover:bg-hover hover:text-fg focus-visible:ring-2 focus-visible:ring-focus-ring/35"
+                  onClick={autoScroll.scrollToLatest}
+                  title="Scroll to latest"
+                  type="button"
+                >
+                  <IconArrowDown aria-hidden size={21} stroke={1.9} />
+                </button>
+              </div>
+            ) : null}
+            {pendingPermission ? (
+              <ApprovalPanel
+                key={pendingPermission.id}
+                onDecide={(request, decision) => decidePermission(request, decision)}
+                request={pendingPermission}
+              />
+            ) : (
+              <>
+                {pendingQuestion ? (
+                  <QuestionsCard
+                    key={pendingQuestion.id}
+                    onSkip={() => void respondQuestion([], true)}
+                    onSubmit={(answers) => void respondQuestion(answers, false)}
+                    request={pendingQuestion}
+                  />
+                ) : null}
+                {composerReplacement ? (
+                  composerReplacement
+                ) : reviewPlan ? (
+                  <ReviewPlanCard
+                    onBuildLocally={() => buildPlanLocally(reviewPlan)}
+                    onContinuePlanning={() => {
+                      setComposerMode("plan");
+                      setDismissedPlanHash(reviewPlan.hash);
+                    }}
+                  />
+                ) : (
+                  <>
+                    {retryStatus ? <RetryStatusBar status={retryStatus} /> : null}
+                    <ComposerDock
+                      rails={
+                        hasComposerRails ? (
+                          <>
+                            {runningProcesses.length > 0 ? (
+                              <RunningProcessBar
+                                nowMs={managedProcesses.nowMs}
+                                onStop={managedProcesses.kill}
+                                processes={runningProcesses}
+                                {...(onOpenTerminal ? { onOpenTerminal } : {})}
+                              />
+                            ) : null}
+                            {workingSubagents.length > 0 ? (
+                              <WorkingSubagentBar
+                                items={workingSubagents}
+                                onOpen={openSubagentPreview}
+                              />
+                            ) : null}
+                            {showChangesRail && workingStats ? (
+                              <ChangesStrip
+                                onOpenFile={(path) =>
+                                  void window.modus.file
+                                    .open({ cwd: activeCwd, path })
+                                    .catch(() => {})
+                                }
+                                onReview={() => onOpenReview(activeCwd)}
+                                stats={workingStats}
+                              />
+                            ) : null}
+                          </>
+                        ) : undefined
                       }
-                      workspaceId={workspace?.id}
-                    />
-                  </ComposerDock>
-                </>
-              )}
-            </>
-          )}
+                    >
+                      <Composer
+                        canSubmit={Boolean(workspace) && Boolean(paneModel)}
+                        contextItems={contextItems}
+                        cwd={activeCwd}
+                        draft={{
+                          images: activeComposerDraft.images,
+                          parts: activeComposerDraft.parts,
+                          selectedSkills: activeComposerDraft.selectedSkills,
+                          value: activeComposerDraft.value,
+                        }}
+                        isRunning={isRunning}
+                        mode={composerMode}
+                        model={paneModel}
+                        models={models}
+                        {...(contextUsage ? { contextUsage } : {})}
+                        onAbort={() => void abortPrompt()}
+                        onContextChange={setContextItems}
+                        onDraftChange={setComposerFields}
+                        onModeChange={setComposerMode}
+                        onModelChange={(next) => void changeModel(next)}
+                        onModelConfigChange={onModelConfigChange}
+                        onSubmit={(message, context, delivery, attachments, skills, mode) =>
+                          submitPrompt(message, context, delivery, attachments, skills, mode)
+                        }
+                        workspaceId={workspace?.id}
+                      />
+                    </ComposerDock>
+                  </>
+                )}
+              </>
+            )}
+          </div>
         </div>
-      </div>
       )}
     </section>
   );
@@ -1113,5 +1160,27 @@ function ChatViewport({
         {children}
       </div>
     </div>
+  );
+}
+
+/** Settled preview title mark — same ProviderLogo path as SubagentRow / inspector. */
+function SubagentPreviewProviderMark({
+  modelId,
+  models,
+}: {
+  modelId?: string | undefined;
+  models: ModelInfo[];
+}) {
+  const model = lookupModel(models, modelId);
+  if (!model) {
+    return null;
+  }
+  return (
+    <ProviderLogo
+      framed={false}
+      name={model.providerName ?? model.provider}
+      provider={model.provider}
+      size="sm"
+    />
   );
 }

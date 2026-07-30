@@ -1,13 +1,21 @@
-import { createContext, type ReactNode, useContext, useLayoutEffect, useMemo, useState } from "react";
+import {
+  createContext,
+  type ReactNode,
+  useContext,
+  useLayoutEffect,
+  useMemo,
+  useState,
+} from "react";
 
 /**
  * Coordinates native-view occlusion for full-screen DOM overlays.
  *
  * Electron `WebContentsView`s (the embedded browser tabs) are composited by the
  * OS compositor *above* the renderer's DOM, so a `z-index` can never place a
- * DOM layer over them. Any full-screen DOM overlay — the image lightbox today,
- * dialogs/modals tomorrow — would therefore be partially covered by a visible
- * browser view, and the overlay's dark backdrop wouldn't dim it.
+ * DOM layer over them. Any full-screen DOM overlay — image lightbox, visual
+ * fullscreen, Streamdown mermaid fullscreen — would therefore be partially
+ * covered by a visible browser view, and the overlay's dark backdrop wouldn't
+ * dim it.
  *
  * The fix is cooperative: an overlay calls {@link useSuppressNativeSurface}
  * while it is on screen, which raises a reference-counted suppression flag; the
@@ -48,10 +56,49 @@ export function NativeSurfaceProvider({ children }: { children: ReactNode }) {
   return (
     <NativeSurfaceControlContext.Provider value={control}>
       <NativeSurfaceStateContext.Provider value={count > 0}>
+        <StreamdownMermaidFullscreenSuppress />
         {children}
       </NativeSurfaceStateContext.Provider>
     </NativeSurfaceControlContext.Provider>
   );
+}
+
+/**
+ * Streamdown portals mermaid fullscreen to `document.body` (no React mount we own).
+ * Watch that portal's presence — the authoritative open signal — and suppress
+ * native BrowserViews the same way ImageViewer / VisualFullscreen do.
+ */
+function StreamdownMermaidFullscreenSuppress() {
+  const control = useContext(NativeSurfaceControlContext);
+  useLayoutEffect(() => {
+    if (!control) {
+      return;
+    }
+    let release: (() => void) | null = null;
+    const isOpen = (): boolean =>
+      Boolean(
+        document.body.querySelector(
+          ':scope > div.fixed.inset-0:has([data-streamdown="mermaid"])',
+        ),
+      );
+    const sync = (): void => {
+      const open = isOpen();
+      if (open && !release) {
+        release = control.acquire();
+      } else if (!open && release) {
+        release();
+        release = null;
+      }
+    };
+    sync();
+    const observer = new MutationObserver(sync);
+    observer.observe(document.body, { childList: true });
+    return () => {
+      observer.disconnect();
+      release?.();
+    };
+  }, [control]);
+  return null;
 }
 
 /** True when a DOM overlay is on top and native views must hide to stay behind it. */

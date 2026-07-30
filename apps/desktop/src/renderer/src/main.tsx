@@ -1,4 +1,7 @@
-import "@fontsource-variable/inter";
+/* Inter: opsz+wght build so :root opsz variation is real (default index.css is wght-only).
+ * Noto Sans SC Variable: owned CJK face — same optical contract on every machine, not YaHei lottery. */
+import "@fontsource-variable/inter/opsz.css";
+import "@fontsource-variable/noto-sans-sc";
 import { StrictMode, useLayoutEffect, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./app/App";

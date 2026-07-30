@@ -1,6 +1,5 @@
 import { Tabs } from "@base-ui/react/tabs";
 import {
-  IconDots,
   IconFileText,
   IconGitBranch,
   IconGridDots,
@@ -29,6 +28,7 @@ import type {
   PlanRef,
   WorkspaceInfo,
 } from "../../../../shared/contracts";
+import { ChromeMoreMenu } from "../../components/ui/ChromeMoreMenu";
 import { ModusLoadingFallback } from "../../components/ui/ModusLoadingMark";
 import { PanelHeader } from "../../components/ui/Panel";
 import { ToolbarButton, TOOLBAR_ICON } from "../../components/ui/ToolbarButton";
@@ -61,11 +61,12 @@ type InspectorProps = {
   models: ModelInfo[];
   defaultModel: string;
   contextUsageBySession: Record<string, ContextUsageInfo>;
-  onSelectSubagent(id: string): void;
+  onSelectSubagent(id: string | undefined): void;
   onSessionsChanged(): void;
   onModelChange(model: string): void;
   onModelConfigChange(model: string, thinkingVariant: string): Promise<void> | void;
   onOpenReview(cwd?: string): void;
+  onOpenSettings(): void;
   onOpenSubagent(childSessionId: string): void;
   onPlanUpdated(plan: PlanRef): void;
   onOpenChange(open: boolean): void;
@@ -153,6 +154,7 @@ export function Inspector({
   onModelChange,
   onModelConfigChange,
   onOpenReview,
+  onOpenSettings,
   onOpenSubagent,
   onPlanUpdated,
   onOpenChange,
@@ -279,7 +281,7 @@ export function Inspector({
     <m.aside
       className={cn(
         "relative flex min-w-0 shrink-0 flex-col overflow-hidden bg-canvas",
-        open && "border-hairline-strong border-t border-l",
+        open && "border-hairline-strong border-l",
       )}
       style={{ width: panelWidth }}
     >
@@ -325,9 +327,7 @@ export function Inspector({
                     <Tabs.Indicator className="absolute top-1/2 left-0 z-0 h-6.5 w-(--active-tab-width) -translate-y-1/2 translate-x-(--active-tab-left) rounded-md bg-active transition-all duration-200 ease-out-quint" />
                   </Tabs.List>
                   <div className="ml-1 flex shrink-0 items-center gap-0.5">
-                    <ToolbarButton label="More">
-                      <IconDots size={TOOLBAR_ICON.size} stroke={TOOLBAR_ICON.stroke} />
-                    </ToolbarButton>
+                    <ChromeMoreMenu onOpenSettings={onOpenSettings} />
                     <ToolbarButton
                       label="Collapse right panel"
                       onClick={() => onOpenChange(false)}

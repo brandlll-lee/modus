@@ -3,6 +3,7 @@ import {
   createProviderLogoResolver,
   providerLogoColor,
   providerLogoFallbackLabel,
+  resolveProviderLogoFill,
 } from "./providerLogoRegistry";
 
 const resolveProviderLogoKey = createProviderLogoResolver(
@@ -19,6 +20,7 @@ const resolveProviderLogoKey = createProviderLogoResolver(
     "synthetic",
     "togetherai",
     "vercel",
+    "xai",
     "xiaomi",
     "zai-coding-plan",
   ]),
@@ -52,9 +54,15 @@ describe("ProviderLogo", () => {
     expect(resolveProviderLogoKey("zai-coding-cn")).toBe("zai-coding-plan");
   });
 
-  it("keeps the OpenAI API brand color and renders Codex with the theme foreground", () => {
+  it("keeps mid-tone brand colors and remaps near-white ink to theme foreground", () => {
     expect(providerLogoColor("openai", "openai")).toBe("#10a37f");
     expect(providerLogoColor("openai-codex", "openai")).toBe("var(--color-fg)");
+    expect(providerLogoColor("xai", "xai")).toBe("var(--color-fg)");
+    expect(providerLogoColor("vercel", "vercel")).toBe("var(--color-fg)");
+    // Synthetic near-white hex (not in the table) still remaps by luminance.
+    expect(resolveProviderLogoFill("#f0f0f0")).toBe("var(--color-fg)");
+    expect(resolveProviderLogoFill("#111111")).toBe("var(--color-fg)");
+    expect(resolveProviderLogoFill("#10a37f")).toBe("#10a37f");
   });
 
   it("falls back to the synthetic logo and stable initials", () => {

@@ -98,7 +98,7 @@
 
   /* 语义色：仅真正的成功/错误状态，平时不出现 */
   --color-success: #3fae87;
-  --color-danger: #e5687a;
+  --color-danger: #ef4444;
 
   /* Diff 行底纹：Git 面板、agent diff、整文件预览共用同一套语义层。 */
   --color-diff-add-bg: #23352b;
@@ -106,13 +106,19 @@
   --color-diff-del-bg: #3a2824;
   --color-diff-del-gutter: #4b302a;
 
-  /* 字体：UI 用 sans；代码与终端用等宽。终端有专属栈，避免 app 字体特性污染 xterm cell 度量。 */
+  /* 字体：Latin=Inter Variable（自托管 opsz+wght）；CJK=Noto Sans SC Variable（自托管）。
+   * 系统 Noto/PingFang/YaHei 仅作未覆盖字形兜底——正文光学不再赌机器装了什么。 */
   --font-sans:
-    "Inter Variable", "Inter", "Noto Sans SC", "Source Han Sans SC", "PingFang SC",
-    "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans TC", "PingFang TC",
+    "Inter Variable", "Inter", "Noto Sans SC Variable", "Noto Sans SC", "Source Han Sans SC",
+    "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans TC", "PingFang TC",
     "Microsoft JhengHei", "Noto Sans JP", "Yu Gothic", "Hiragino Sans", "Noto Sans KR",
     "Malgun Gothic", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
+  /* 深墨实骨：Regular 400 保墨量（375 会被 AA 冲成发灰）；层级仍靠颜色而非堆肉。 */
+  --font-weight-normal: 400;
+  --font-weight-medium: 520;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 650;
   --font-mono:
     ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, "Cascadia Mono", monospace;
   --font-terminal:
@@ -187,10 +193,11 @@
   background: var(--color-canvas);
   letter-spacing: 0;
   font-feature-settings: "cv11", "ss01", "ss03";
-  font-variation-settings: "opsz" 16;
+  /* Text optical at 13–14px UI — display-leaning opsz thinned strokes into “washed” ink. */
+  font-variation-settings: "opsz" 14;
   font-synthesis-weight: none;
   text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
+  /* Prefer platform AA (ClearType on Windows). Forced grayscale softens thick CJK into "cheap blur". */
   -moz-osx-font-smoothing: grayscale;
   font-size: 13px;
   line-height: 1.5;
@@ -227,10 +234,12 @@
   --color-code-number: #cf222e;
   --color-code-type: #24292f;
 
-  /* Hairlines — neutral grays close to #e5e5e5 / #d0d0d0 on white */
-  --color-hairline: rgba(0, 0, 0, 0.1);
-  --color-hairline-soft: rgba(0, 0, 0, 0.06);
-  --color-hairline-strong: rgba(0, 0, 0, 0.18);
+  /* Hairlines — Cursor-grade wireframe: faint ink on white, not chalk seams.
+   * strong ≈ #e8e8e8 on white (was 0.18 → #d1, too heavy). All border-hairline*
+   * consumers inherit this — one place, every seam. */
+  --color-hairline: rgba(0, 0, 0, 0.07);
+  --color-hairline-soft: rgba(0, 0, 0, 0.045);
+  --color-hairline-strong: rgba(0, 0, 0, 0.09);
   /* 浮层描边比常驻 hairline 更淡 —— 避免白底上画出硬线框 */
   --color-popup-border: rgba(0, 0, 0, 0.06);
 
@@ -245,14 +254,15 @@
   --color-hover: rgba(0, 0, 0, 0.04);
   --color-active: rgba(0, 0, 0, 0.06);
 
-  /* Text — soft near-black (Cursor-like); still ~12:1 on white, not chalk-pale */
-  --color-fg: #2f2f2f;
-  --color-fg-muted: #444444;
-  --color-fg-subtle: #737373;
-  --color-fg-faint: #9a9a9a;
-  --color-fg-placeholder: #bdbdbd;
-  --color-icon: #2f2f2f;
-  --color-icon-muted: #5f5f5f;
+  /* Text — soft near-black (Cursor-like): deep enough with weight 400, not chalk #111. */
+  --color-fg: #222222;
+  --color-fg-muted: #3f3f3f;
+  --color-fg-subtle: #666666;
+  --color-fg-faint: #8f8f8f;
+  --color-fg-placeholder: #b5b5b5;
+  --color-icon: #222222;
+  /* Toolbar chrome — one step quieter than body icons (Cursor-like). */
+  --color-icon-muted: #8a8a87;
 
   /* Brand accent (send): orange fill works on both themes */
   --color-accent: #f54e00;
@@ -298,7 +308,7 @@
 
   /* Semantic — darkened for contrast on white */
   --color-success: #1f9d6b;
-  --color-danger: #d63a4f;
+  --color-danger: #ef4444;
 
   /* Diff line tints — light theme. Matches the muted Cursor-style review wash. */
   --color-diff-add-bg: #e5f0e1;
@@ -380,7 +390,7 @@
   --color-chip-strong: rgba(255, 255, 255, 0.1);
 
   --color-success: #3fae87;
-  --color-danger: #e5687a;
+  --color-danger: #ef4444;
   --color-diff-add-bg: #26362d;
   --color-diff-add-gutter: #31483a;
   --color-diff-del-bg: #3c2c29;
@@ -460,7 +470,7 @@ input,
 textarea,
 select {
   font-family: var(--font-sans);
-  font-weight: 400;
+  font-weight: var(--font-weight-normal);
   font-feature-settings: "cv11", "ss01", "ss03";
 }
 
@@ -580,10 +590,17 @@ body {
      inside their own turn and get pushed out by the next. Unlike virtualization
      the React tree stays mounted, so nothing re-parses on scroll.
      `contain-intrinsic-size: auto` remembers each turn's last height so the
-     scrollbar never jumps; 120px is only the never-yet-rendered fallback. */
+     scrollbar never jumps; 120px is only the never-yet-rendered fallback.
+     Live (still-streaming) turns opt out — rapid height growth must not fight
+     content-visibility intrinsic-size estimates. */
   .timeline-block {
     content-visibility: auto;
     contain-intrinsic-size: auto 120px;
+  }
+
+  .timeline-block--live {
+    content-visibility: visible;
+    contain-intrinsic-size: none;
   }
 }
 
@@ -596,15 +613,6 @@ body {
   }
   to {
     background-position: 0% 0%;
-  }
-}
-
-@keyframes visual-glare {
-  from {
-    transform: translate3d(-32%, -32%, 0);
-  }
-  to {
-    transform: translate3d(32%, 32%, 0);
   }
 }
 
@@ -774,33 +782,6 @@ body {
     animation: modus-shine-border var(--shine-duration, 11s) linear infinite;
   }
 
-  .visual-glare-loading::before {
-    position: absolute;
-    inset: -65%;
-    content: "";
-    pointer-events: none;
-    background: linear-gradient(
-      -35deg,
-      transparent 43%,
-      color-mix(in srgb, var(--color-fg) 13%, transparent) 50%,
-      transparent 57%
-    );
-    will-change: transform;
-    animation: visual-glare 1.65s cubic-bezier(0.4, 0, 0.2, 1) infinite;
-  }
-
-  .visual-glare-loading::after {
-    position: absolute;
-    inset: 0;
-    content: "";
-    pointer-events: none;
-    background: radial-gradient(
-      circle at 50% 35%,
-      color-mix(in srgb, var(--color-fg) 5.5%, transparent),
-      transparent 45%
-    );
-  }
-
   /*
    * Effort energy — mid-gray ink, no outer bloom. Max-tier keeps a bright
    * internal sheen + sparkle (not an external glow ring).
@@ -931,10 +912,6 @@ body {
     animation: none;
   }
 
-  .visual-glare-loading::before {
-    animation: none;
-  }
-
   .effort-energy[data-maximum="true"] .effort-energy-fill::before,
   .effort-energy[data-maximum="true"] .effort-energy-fill::after {
     opacity: 0.6;
@@ -979,7 +956,7 @@ body {
   --sdm-bg: transparent;
   color: var(--markdown-fg);
   font-size: var(--text-md);
-  font-weight: 400;
+  font-weight: var(--font-weight-normal);
   line-height: 1.65;
   max-width: 100%;
   min-width: 0;
@@ -997,7 +974,7 @@ body {
 .modus-markdown :where(h1, h2, h3, h4, h5, h6) {
   margin: var(--md-space-heading-before) 0 var(--md-space-heading-after);
   color: var(--markdown-fg-strong);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   line-height: 1.3;
   letter-spacing: -0.015em;
 }
@@ -1006,17 +983,17 @@ body {
  * Step size shrinks going down (0.3em, 0.25em, 0.15em) — the eye needs the
  * biggest jump at the top of the hierarchy, where h1 vs h2 is a structural
  * decision, and the smallest jump at the bottom, where h4-6 only need to beat
- * body weight, not body size. A flat/tight scale (previously 1.4/1.22/1.1em)
- * reads as "everything is medium-bold", not as a hierarchy.
+ * body weight, not body size. Hierarchy is size + ink, not stroke mass —
+ * CJK bold at 700 reads as ink blots.
  */
 .modus-markdown :where(h1) {
   font-size: 1.7em;
-  font-weight: 700;
+  font-weight: var(--font-weight-bold);
 }
 
 .modus-markdown :where(h2) {
   font-size: 1.4em;
-  font-weight: 650;
+  font-weight: var(--font-weight-semibold);
 }
 
 .modus-markdown :where(h3) {
@@ -1057,7 +1034,7 @@ body {
 
 .modus-markdown :where(strong) {
   color: var(--markdown-fg-strong);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
 }
 
 .modus-markdown :where(em) {
@@ -1132,12 +1109,12 @@ body {
 }
 
 /*
- * ── Table — single outer frame + cell hairline grid ─────────────────────
+ * ── Table — transparent professional frame ─────────────────────────────
  *
- * Streamdown nests TWO frames (outer bg-sidebar + inner bordered box). Flatten
- * the outer wrapper; ONE inner frame holds the table. Cells use bottom + right
- * hairlines (last column clears right). Header fill uses --color-panel so light
- * theme stays visible (surface≈canvas on light washes out).
+ * Soft radius + hairline outer frame; transparent fill (document chart, not a
+ * card). Cell grid is soft hairlines on all sides. Header: faint tint only.
+ * Body cells use the same ink as prose (--markdown-fg), never muted.
+ * Streamdown nests outer wrapper + inner box — flatten outer; style ONE frame.
  */
 .modus-markdown [data-streamdown="table-wrapper"] {
   position: relative;
@@ -1174,14 +1151,14 @@ body {
   background: var(--color-hover);
 }
 
-/* The ONE frame. */
+/* The ONE frame — transparent fill, soft outer hairline. */
 .modus-markdown [data-streamdown="table-wrapper"] > div:has(> table) {
   margin: 0;
   max-width: 100%;
   min-width: 0;
   border: 1px solid var(--color-hairline);
   border-radius: var(--radius-md);
-  background: var(--color-canvas);
+  background: transparent;
   overflow-x: auto;
   overflow-y: hidden;
 }
@@ -1225,19 +1202,20 @@ body {
   color: var(--markdown-fg-strong);
 }
 
-/* Reset Streamdown divide-y / outer cell borders; grid comes from th/td hairlines. */
+/* Reset Streamdown divide-y; soft professional cell grid. */
 .modus-markdown :where(table, thead, tbody, tr) {
   border: 0;
   background: transparent;
 }
 
 .modus-markdown :where(th, td) {
-  padding: 0.65em 0.9em;
+  padding: 0.72em 1em;
   border: 0;
   border-right: 1px solid var(--color-hairline-soft);
   border-bottom: 1px solid var(--color-hairline-soft);
   text-align: left;
   vertical-align: top;
+  color: var(--markdown-fg);
 }
 
 .modus-markdown :where(th:last-child, td:last-child) {
@@ -1245,13 +1223,9 @@ body {
 }
 
 .modus-markdown :where(th) {
-  background: var(--color-panel);
+  background: var(--color-chip-faint);
   color: var(--markdown-fg-strong);
-  font-weight: 600;
-}
-
-.modus-markdown :where(td) {
-  color: var(--markdown-fg-muted);
+  font-weight: var(--font-weight-semibold);
 }
 
 .modus-markdown :where(tr:last-child > th, tr:last-child > td) {
@@ -1264,7 +1238,7 @@ body {
   border: 0;
   border-radius: var(--radius-xs);
   background: color-mix(in oklab, var(--color-fg) 7%, transparent);
-  color: var(--markdown-fg-muted);
+  color: var(--markdown-fg);
   font-family: var(--font-mono);
   font-size: 0.86em;
   line-height: 1.45;
@@ -1436,21 +1410,18 @@ body {
 }
 
 /*
- * ── Mermaid diagram — single frame, frameless wrapper (图2 / 图3) ──────
+ * ── Mermaid diagram — single frame, frameless wrapper (图1 / 图2) ──────
  *
  * Streamdown nests TWO frames: the outer [data-streamdown="mermaid-block"]
- * (`border bg-sidebar rounded-xl p-2`) AND an inner unlabeled
- * `rounded-md border bg-background` div around the diagram. That doubled
- * border is exactly what we strip. We flatten the outer wrapper to a bare
- * column (transparent, no border/padding), keep the `mermaid` label + the
- * copy/fullscreen controls floating on a transparent header row, and let the
- * inner box be the ONE frame that holds the diagram.
+ * AND an inner box around the diagram. Flatten the outer wrapper; hide the
+ * "mermaid" label; keep copy/fullscreen on hover; ONE frame = surface
+ * (same token as the composer input).
  */
 .modus-markdown [data-streamdown="mermaid-block"] {
   position: relative;
   margin: var(--md-space-block) 0;
   padding: 0;
-  gap: 0.4rem;
+  gap: 0;
   border: none;
   border-radius: 0;
   background: transparent;
@@ -1458,31 +1429,17 @@ body {
   box-shadow: none;
 }
 
-/* Header row: holds the `mermaid` label (left). Transparent, compact. */
-.modus-markdown [data-streamdown="mermaid-block"] > div:first-child {
-  height: auto;
-  min-height: 0;
-  margin: 0;
-  padding: 0 0.1rem;
-  color: var(--markdown-fg-subtle);
+/* Drop Streamdown's language chrome — product noise next to the diagram. */
+.modus-markdown [data-streamdown="mermaid-block"] > div:first-child:not(:has([data-streamdown])) {
+  display: none;
 }
 
-.modus-markdown [data-streamdown="mermaid-block"] > div:first-child > span {
-  margin: 0;
-  font-family: var(--font-mono);
-  font-size: var(--text-2xs);
-  font-weight: 500;
-  color: var(--markdown-fg-subtle);
-  text-transform: lowercase;
-  letter-spacing: 0;
-}
-
-/* Actions cluster wrapper (copy / fullscreen) — pin to the header's right. */
+/* Actions cluster (copy / fullscreen) — pin top-right; visibility via hover rules above. */
 .modus-markdown [data-streamdown="mermaid-block"]
   > div:has(> [data-streamdown="mermaid-block-actions"]) {
   position: absolute;
-  top: -0.1rem;
-  right: 0;
+  top: 0.45rem;
+  right: 0.45rem;
   z-index: 3;
   margin: 0;
   height: auto;
@@ -1524,40 +1481,176 @@ body {
   background: var(--color-hover);
 }
 
-/* The ONE frame: the inner box that directly wraps the diagram. */
-.modus-markdown [data-streamdown="mermaid-block"] > div:has(> [data-streamdown="mermaid"]) {
+/*
+ * Stage chrome — always last child (Streamdown: label, actions?, chart shell).
+ * Do NOT gate on :has([data-streamdown="mermaid"]): loading/error shells lack
+ * that node and would flash Streamdown's raw border-border (reads as a heavy
+ * black frame in light mode). Token chrome from first paint.
+ */
+.modus-markdown [data-streamdown="mermaid-block"] > div:last-child {
   border: 1px solid var(--color-hairline);
   border-radius: var(--radius-lg);
-  background: var(--markdown-block-bg);
-  overflow: hidden;
+  background: var(--color-surface);
+  overflow-x: auto;
+  overflow-y: visible;
 }
 
-/* Diagram surface */
+/* Loading-only: collapse Streamdown min-h shells before SVG exists. */
+.modus-markdown
+  [data-streamdown="mermaid-block"]
+  > div:last-child:not(:has([data-streamdown="mermaid"]))
+  [class*="min-h-"] {
+  min-height: 0;
+}
+
+/*
+ * Inline height: Streamdown panZoom is flex-col + flex-1 + transform. Forcing
+ * height:auto/min-height:0 on that shell made flex-1 resolve to 0 → SVG gone.
+ * Fix: break the flex viewport so the SVG's intrinsic box drives height;
+ * disable inline transform (zoom lives in fullscreen only).
+ */
 .modus-markdown [data-streamdown="mermaid"] {
+  width: 100%;
+  height: auto;
+  max-height: none;
   border-radius: 0;
   background: transparent;
   padding: 0.85rem;
+  overflow: visible;
 }
 
-/* PanZoom control pill (zoom in / out / reset) — align to tokens. */
+/* Beat Tailwind size-full (h/w 100%) — percentage height vs auto parent = collapse. */
+.modus-markdown [data-streamdown="mermaid"][class*="size-full"] {
+  width: 100%;
+  height: auto;
+}
+
+.modus-markdown [data-streamdown="mermaid"] > div {
+  display: block;
+  width: 100%;
+  height: auto;
+  min-height: 0;
+  overflow: visible;
+}
+
+.modus-markdown [data-streamdown="mermaid"] > div > div[class*="flex-1"] {
+  display: block;
+  width: 100%;
+  height: auto;
+  flex: none;
+  transform: none !important;
+  will-change: auto;
+  cursor: default;
+}
+
+.modus-markdown [data-streamdown="mermaid"] svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+/*
+ * Inline panZoom chrome: hide. Zoom UI belongs in the body portal only.
+ */
 .modus-markdown [data-streamdown="mermaid"] [class*="absolute"][class*="rounded-md"] {
+  display: none;
+}
+
+/*
+ * ── Mermaid fullscreen (图3) — Streamdown portals to body, no data-attr ──
+ * Signature: body > fixed inset-0 overlay containing [data-streamdown="mermaid"].
+ * Align shell with VisualFullscreen (z-100, canvas veil); cluster Zoom±/Reset
+ * + Close into one top-right chrome pill.
+ */
+body > div.fixed.inset-0:has([data-streamdown="mermaid"]) {
+  z-index: 100;
+  background: color-mix(in oklab, var(--color-canvas) 95%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+/* Stage: surface frame matching the inline diagram + composer. */
+body > div.fixed.inset-0:has([data-streamdown="mermaid"]) [data-streamdown="mermaid"] {
+  box-sizing: border-box;
+  max-width: min(96vw, 72rem);
+  max-height: min(90vh, 52rem);
+  padding: 1.25rem;
   border: 1px solid var(--color-hairline);
-  border-radius: var(--radius-sm);
-  background: color-mix(in oklab, var(--color-elevated) 85%, transparent);
-  backdrop-filter: blur(6px);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  overflow: hidden;
 }
 
-.modus-markdown [data-streamdown="mermaid"] [class*="absolute"] button {
-  color: var(--markdown-fg-subtle);
-  border-radius: var(--radius-xs);
-  transition:
-    color 0.12s ease,
-    background 0.12s ease;
+/* Shared chrome tokens for the top-right control cluster. */
+body > div.fixed.inset-0:has([data-streamdown="mermaid"]) > button.absolute,
+body
+  > div.fixed.inset-0:has([data-streamdown="mermaid"])
+  [data-streamdown="mermaid"]
+  [class*="absolute"][class*="rounded-md"] {
+  display: flex;
+  align-items: center;
+  gap: 0.1rem;
+  height: 2rem;
+  padding: 0.15rem;
+  border: 1px solid var(--color-hairline);
+  background: color-mix(in oklab, var(--color-elevated) 92%, transparent);
+  color: var(--color-fg-subtle);
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.06));
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 }
 
-.modus-markdown [data-streamdown="mermaid"] [class*="absolute"] button:hover {
-  color: var(--markdown-fg-strong);
+/* Zoom± / Reset: move from bottom-left column → top-right row, left of Close. */
+body
+  > div.fixed.inset-0:has([data-streamdown="mermaid"])
+  [data-streamdown="mermaid"]
+  [class*="absolute"][class*="rounded-md"] {
+  top: 1rem !important;
+  right: 3.35rem !important;
+  bottom: auto !important;
+  left: auto !important;
+  flex-direction: row;
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+  border-right: none;
+  z-index: 11;
+}
+
+/* Close: abut the zoom pill into one continuous chrome. */
+body > div.fixed.inset-0:has([data-streamdown="mermaid"]) > button.absolute {
+  top: 1rem;
+  right: 1rem;
+  z-index: 12;
+  width: 2.2rem;
+  justify-content: center;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  padding: 0;
+}
+
+body > div.fixed.inset-0:has([data-streamdown="mermaid"]) > button.absolute:hover,
+body
+  > div.fixed.inset-0:has([data-streamdown="mermaid"])
+  [data-streamdown="mermaid"]
+  [class*="absolute"]
+  button:hover {
+  color: var(--color-fg);
   background: var(--color-hover);
+}
+
+body
+  > div.fixed.inset-0:has([data-streamdown="mermaid"])
+  [data-streamdown="mermaid"]
+  [class*="absolute"]
+  button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.7rem;
+  height: 1.7rem;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--color-fg-subtle);
+  cursor: pointer;
 }
 
 .modus-terminal-host,
@@ -1718,9 +1811,23 @@ body {
 .pdf-page > .textLayer .markedContent {
   display: contents;
 }
-.pdf-page > .textLayer ::selection {
-  background: color-mix(in srgb, AccentColor, transparent 50%);
-  color: transparent;
+
+.pdf-scroller.pdf-rect-selecting {
+  cursor: crosshair;
+  user-select: none;
+}
+.pdf-scroller.pdf-rect-selecting .textLayer {
+  user-select: none;
+}
+
+.pdf-marquee {
+  position: fixed;
+  z-index: 55;
+  display: none;
+  pointer-events: none;
+  box-sizing: border-box;
+  border: 1.5px solid color-mix(in srgb, var(--color-accent) 70%, transparent);
+  background: color-mix(in srgb, var(--color-selection) 55%, transparent);
 }
 
 /* Reserve scrollbar gutter so content paint does not change clientWidth and
@@ -1729,18 +1836,29 @@ body {
   scrollbar-gutter: stable;
 }
 
-/* Floating page chrome — Gemini-style “Page N / Total”, non-interactive. */
-.pdf-page-indicator {
+/*
+ * Chat reading column — ONE width authority for timeline + composer.
+ * Any pane size: content and input share this box (no 5xl vs 60rem dual track).
+ */
+.chat-column {
+  width: 100%;
+  max-width: 64rem; /* Tailwind max-w-5xl */
+  margin-inline: auto;
+  min-width: 0;
+}
+
+/* Floating PDF chrome — frame-select tool + Page N / Total. */
+.pdf-page-chrome {
   position: absolute;
   bottom: 12px;
   left: 50%;
   z-index: 20;
   transform: translateX(-50%);
-  pointer-events: none;
   display: inline-flex;
   align-items: center;
+  gap: 2px;
   height: 28px;
-  padding: 0 12px;
+  padding: 0 6px 0 4px;
   border-radius: 999px;
   border: 1px solid var(--color-hairline);
   background: color-mix(in srgb, var(--color-elevated) 92%, transparent);
@@ -1751,6 +1869,32 @@ body {
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 4px 14px rgba(0, 0, 0, 0.08);
   backdrop-filter: blur(8px);
 }
-:root[data-theme="light"] .pdf-page-indicator {
+.pdf-page-chrome__label {
+  padding: 0 8px 0 4px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.pdf-rect-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-fg-muted);
+  cursor: pointer;
+}
+.pdf-rect-tool:hover {
+  color: var(--color-fg);
+  background: color-mix(in srgb, var(--color-fg) 8%, transparent);
+}
+.pdf-rect-tool.is-active {
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+}
+:root[data-theme="light"] .pdf-page-chrome {
   background: color-mix(in srgb, var(--color-elevated) 94%, transparent);
 }

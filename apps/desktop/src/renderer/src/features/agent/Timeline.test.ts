@@ -10,6 +10,7 @@ import {
   formatElapsedVerbose,
   groupTurnWork,
   segmentTurns,
+  turnHasLiveStream,
   type TimelineBlock,
 } from "./Timeline";
 
@@ -101,15 +102,21 @@ describe("buildBlocks", () => {
     expect((run as { activity?: unknown }).activity).toEqual({ kind: "tool", name: "read" });
   });
 
-  it("aggregates tool output", () => {
+  it("replaces tool output on each update (full partialResult)", () => {
     const blocks = buildBlocks([
       item("1", { type: "tool.started", sessionId: "s", toolCallId: "t", toolName: "bash" }),
       item("2", { type: "tool.output", sessionId: "s", toolCallId: "t", output: "hello" }),
-      item("3", { type: "tool.ended", sessionId: "s", toolCallId: "t", isError: false }),
+      item("3", {
+        type: "tool.output",
+        sessionId: "s",
+        toolCallId: "t",
+        output: "Waited 12s for subagent\n",
+      }),
+      item("4", { type: "tool.ended", sessionId: "s", toolCallId: "t", isError: false }),
     ]);
 
     expect(blocks[0]).toEqual(
-      expect.objectContaining({ type: "tool", output: "hello", isError: false }),
+      expect.objectContaining({ type: "tool", output: "Waited 12s for subagent\n", isError: false }),
     );
   });
 
@@ -516,6 +523,18 @@ describe("buildBlocks", () => {
     expect(blocks.find((block) => block.type === "message")).toEqual(
       expect.objectContaining({ id: "u1", editable: false }),
     );
+  });
+
+  it("does not render queue.updated as a user-facing notice", () => {
+    const blocks = buildBlocks([
+      item("1", {
+        type: "queue.updated",
+        sessionId: "s",
+        steering: [],
+        followUp: ["## Skills\n- browser"],
+      }),
+    ]);
+    expect(blocks.filter((block) => block.type === "notice")).toEqual([]);
   });
 
   it("anchors editability on the most recent user message when run.started has no id", () => {
@@ -985,5 +1004,45 @@ describe("segmentTurns", () => {
     ];
     const turns = segmentTurns(blocks, blockRenderKeys(blocks));
     expect(turns.map((turn) => turn.key)).toEqual(["repeat", "repeat#2"]);
+  });
+});
+
+describe("turnHasLiveStream", () => {
+  it("is live while an assistant message is still streaming", () => {
+    const blocks: TimelineBlock[] = [
+      { id: "u1", type: "message", role: "user", content: "go" },
+      { id: "a1", type: "message", role: "assistant", content: "hi", streaming: true },
+    ];
+    const [turn] = segmentTurns(blocks, blockRenderKeys(blocks));
+    expect(turnHasLiveStream(turn!)).toBe(true);
+  });
+
+  it("is settled when the turn has no in-flight stream or work", () => {
+    const blocks: TimelineBlock[] = [
+      { id: "u1", type: "message", role: "user", content: "go" },
+      { id: "a1", type: "message", role: "assistant", content: "done" },
+    ];
+    const [turn] = segmentTurns(blocks, blockRenderKeys(blocks));
+    expect(turnHasLiveStream(turn!)).toBe(false);
+  });
+
+  it("is live while a work-fold run is still running", () => {
+    const blocks: TimelineBlock[] = [
+      { id: "u1", type: "message", role: "user", content: "go" },
+      {
+        id: "fold",
+        type: "work-fold",
+        run: {
+          id: "run",
+          type: "run",
+          runId: "r1",
+          status: "running",
+          startedAt: 1,
+        },
+        items: [],
+      },
+    ];
+    const [turn] = segmentTurns(blocks, blockRenderKeys(blocks));
+    expect(turnHasLiveStream(turn!)).toBe(true);
   });
 });

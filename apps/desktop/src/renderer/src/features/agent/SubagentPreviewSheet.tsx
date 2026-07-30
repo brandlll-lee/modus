@@ -22,12 +22,15 @@ const PANEL_TRANSITION = { duration: 0.19, ease: [0.22, 1, 0.36, 1] } as const;
 export function SubagentPreviewSheet({
   open,
   title,
+  leading,
   onExpand,
   onClose,
   children,
 }: {
   open: boolean;
   title: string;
+  /** Running mark / provider logo — same authority as SubagentRow. */
+  leading?: ReactNode;
   onExpand(): void;
   onClose(): void;
   children: ReactNode;
@@ -72,11 +75,14 @@ export function SubagentPreviewSheet({
         role="dialog"
         transition={PANEL_TRANSITION}
       >
-        <div className="flex h-11 shrink-0 items-center justify-between gap-1 border-hairline border-b px-2">
+        <div className="flex h-11 shrink-0 items-center justify-between gap-1 bg-elevated/85 px-2 backdrop-blur">
           <div className="flex min-w-0 flex-1 items-center gap-1">
             <ToolbarButton label="Close preview" onClick={onClose}>
               <IconArrowLeft size={TOOLBAR_ICON.size} stroke={TOOLBAR_ICON.stroke} />
             </ToolbarButton>
+            {leading ? (
+              <span className="flex size-5 shrink-0 items-center justify-center">{leading}</span>
+            ) : null}
             <div className="min-w-0 flex-1 truncate px-1 font-medium text-fg text-sm">{title}</div>
           </div>
           <div className="flex shrink-0 items-center gap-0.5">

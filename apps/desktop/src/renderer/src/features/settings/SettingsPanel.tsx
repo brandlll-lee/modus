@@ -452,7 +452,7 @@ export function SettingsPanel({
         query={settingsQuery}
       />
 
-      <main className="scroll-thin min-w-0 flex-1 overflow-y-auto rounded-tl-xl border-hairline-strong border-t border-l bg-canvas">
+      <main className="scroll-thin min-w-0 flex-1 overflow-y-auto border-hairline-strong border-l bg-canvas">
         <div className="mx-auto flex w-full max-w-[1080px] flex-col gap-8 px-10 pt-16 pb-12">
           {activeSection === "general" ? (
             <GeneralSettingsPanel cwd={workspaceCwd} workspaces={workspaces} />
@@ -1338,8 +1338,8 @@ function AppearanceSettingsPanel() {
             title="Color scheme"
           />
           <SettingsRow
-            control={<ReadOnlyPill>Inter</ReadOnlyPill>}
-            description="Typography uses one self-hosted Inter stack with system CJK fallback."
+            control={<ReadOnlyPill>Inter + Noto SC</ReadOnlyPill>}
+            description="Self-hosted Inter Variable (Latin) and Noto Sans SC Variable (CJK); system faces only cover gaps."
             title="Font family"
           />
         </SettingsList>
