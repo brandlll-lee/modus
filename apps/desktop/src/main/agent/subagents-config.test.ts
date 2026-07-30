@@ -109,6 +109,8 @@ describe("loadWorkspaceSubagents", () => {
     expect(prompt).toContain("No configured subagents are available");
     expect(prompt).toContain("without the `subagent` field");
     expect(prompt).toContain("do not invent subagent names");
+    expect(prompt).toContain("returns immediately");
+    expect(prompt).toContain("`wait`");
   });
 
   it("creates, updates, deletes, and renders the manifest without bodies", () => {

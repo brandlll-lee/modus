@@ -1,7 +1,12 @@
 import { IconChevronRight } from "@tabler/icons-react";
 import { memo, type ReactNode, useEffect, useRef, useState } from "react";
 import type { PlanRef, QuestionAnswer, QuestionRequest } from "../../../../shared/contracts";
-import { getToolUiMeta, type ToolUiMeta, toolRenderKind } from "../../../../shared/tools";
+import {
+  getToolUiMeta,
+  type ToolUiMeta,
+  toolRenderKind,
+  WAIT_TOOL_NAME,
+} from "../../../../shared/tools";
 import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
 import { ShinyText } from "../../components/ui/ShinyText";
 import { cn } from "../../lib/cn";
@@ -271,7 +276,7 @@ function FlatToolRow({
 }: FlatToolRowProps) {
   const [open, setOpen] = useState(false);
   const running = !isComplete && !isError;
-  const view = describeTool(name, running ? undefined : args);
+  const view = describeTool(name, args, running, output);
   const status = running ? liveStatus(output) : "";
   const detail = running ? "" : toolDetail(name, args, output);
   const expandable = detail.trim().length > 0;
@@ -341,8 +346,19 @@ function FlatToolRow({
   );
 }
 
-function describeTool(name: string, args: unknown): ToolView {
+function describeTool(
+  name: string,
+  args: unknown,
+  running = false,
+  output = "",
+): ToolView {
   const a = (args && typeof args === "object" ? args : {}) as Record<string, unknown>;
+  if (name === WAIT_TOOL_NAME) {
+    if (running) {
+      return { verb: "Waiting", target: "" };
+    }
+    return { verb: "Waited", target: waitedTargetLabel(output) };
+  }
   const meta = getToolUiMeta(name);
   if (!meta) {
     return { verb: humanize(name), target: bestEffortArg(a) };
@@ -372,6 +388,16 @@ function describeTool(name: string, args: unknown): ToolView {
     default:
       return base;
   }
+}
+
+/** Everything after the verb on the wait tool's authoritative first line. */
+function waitedTargetLabel(output: string): string {
+  const first =
+    output
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find(Boolean) ?? "";
+  return first.replace(/^Waited\s+/i, "").trim();
 }
 
 /** Default target label derived from the tool's declared primary argument. */

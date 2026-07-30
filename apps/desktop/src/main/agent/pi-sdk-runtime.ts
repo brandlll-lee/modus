@@ -18,7 +18,7 @@ import type {
   PlanBuildStatus,
 } from "../../shared/contracts";
 import { buildContextChips } from "../../shared/context-chips";
-import { SUBAGENT_TOOL_NAMES, type ToolProfileName } from "../../shared/tools";
+import { SUBAGENT_TOOL_NAMES, type ToolProfileName, WAIT_TOOL_NAME } from "../../shared/tools";
 import { releaseAgentBrowserControl } from "../browser/browser-service";
 import { formatResolvedContext, resolveContext } from "../context/context-service";
 import {
@@ -49,9 +49,9 @@ import {
   createAgentSessionRecord,
   getAgentSession,
   listSubagentSessions,
+  touchAgentSession,
   updateAgentSessionMetadata,
   updateAgentSessionStatus,
-  updateAgentSessionTitle,
   updateAgentSessionWorktree,
 } from "./agent-store";
 import { createCheckpoint } from "./checkpoint-service";
@@ -72,11 +72,12 @@ import { planModePreamble, profileForMode } from "./plan-prompt";
 import { PI_ROOT_LEAF } from "./rollback-service";
 import type {
   AgentRuntime,
+  BackgroundWaitResult,
   CreateAgentRuntimeInput,
   EmitAgentEvent,
   PromptAgentInput,
 } from "./runtime";
-import { deriveSessionTitle, shouldReplaceSessionTitle } from "./session-title";
+import { scheduleSessionTitle, shouldReplaceSessionTitle } from "./session-title";
 import { describeAgentShellForPrompt, resolveAgentShell } from "./shell-resolver";
 import { resolveSubagent, resolveSubagentsPrompt } from "./subagents-config";
 import { registerAppTools } from "./tools/app-tools";
@@ -93,7 +94,8 @@ import {
   runWithAgentToolContext,
   setAgentToolContext,
 } from "./tools/tool-context";
-import { registerVisualTools } from "./tools/visual-tools";
+import { registerVisualTools, VISUAL_AUTHORING_GUIDELINES } from "./tools/visual-tools";
+import { formatWaitedDuration, registerWaitTools } from "./tools/wait-tools";
 import { registerWebTools } from "./tools/web-tools";
 
 /**
@@ -105,12 +107,20 @@ import { registerWebTools } from "./tools/web-tools";
 const RESPONSE_FORMAT_GUIDANCE = `<response_formatting>
 Format substantive answers as clean GitHub-flavored Markdown so they render well in the UI:
 - Separate paragraphs with a blank line. Do not write one long wall of text.
+- Put numbered or bulleted items on their own lines (blank line before a new \`1.\`/\`2.\`/\`- \` item); never continue a list marker on the same line as the previous sentence.
+- For bold/italic, keep \`**\`/\`*\` flush against the text (\`**bold**\`, not \`**bold **\`).
 - Use \`##\`/\`###\` headings to label sections of longer answers.
 - Use \`-\` bullet lists for 3+ related points; keep each bullet to one line.
 - Wrap file paths, commands, code identifiers, and values in backticks.
-- Use fenced code blocks with a language tag for code.
+- Use fenced code blocks with a language tag for code. To show HTML/SVG as source (not a live visual), use \`text\`/\`xml\` or omit the language — do not use language tags \`html\`/\`svg\` for source listings.
 - Draw directory or file trees inside a fenced code block using box-drawing connectors (\`├──\`, \`└──\`, \`│\`), one entry per line, with any trailing \`#\` comments aligned — never depict a tree with bare indentation alone.
 - Prefer short paragraphs and lists over a single dense block.
+- Inline visuals (how the UI streams — prefer this over stuffing large HTML into a tool call):
+  - Static architecture / pipeline / flow / sequence → fenced \`mermaid\` diagram.
+  - Operable HTML/SVG → open a fenced \`html\` or \`svg\` block in the assistant message early and grow it as you write. The UI paints as \`message\` tokens arrive (tool-argument channels are often buffered until complete).
+  - \`visual_write\` is for Plan Mode (visualRef) or updating an existing chat visual via \`visualId\` — do not also emit the same document as an html/svg fence in the same turn.
+  - Authoring quality for operable visuals:
+${VISUAL_AUTHORING_GUIDELINES.map((line) => `    - ${line}`).join("\n")}
 Skip heavy formatting for one-line answers, greetings, or simple confirmations.
 </response_formatting>`;
 
@@ -131,8 +141,9 @@ type RunOutputTracker = {
 
 /**
  * Minimum gap between live `tool.delta` emissions per session. Caps the IPC/
- * render rate while a large tool argument streams; the durable `tool.started`
- * still carries the final args, so throttling never loses the end state.
+ * render rate while a large tool argument streams. Intermediate deltas coalesce
+ * to the latest args-so-far (never dropped); the durable `tool.started` still
+ * carries the final args.
  */
 const TOOL_DELTA_THROTTLE_MS = 100;
 const MAX_SUBAGENTS_PER_SESSION = 6;
@@ -170,7 +181,9 @@ function activeToolNamesForSession(info: AgentSessionInfo, profile: ToolProfileN
   }
   const disabled = new Set<string>();
   if (info.parentSessionId) {
+    // Parent-only orchestration: children neither spawn peers nor wait on them.
     for (const name of SUBAGENT_TOOL_NAMES) disabled.add(name);
+    disabled.add(WAIT_TOOL_NAME);
   }
   if (info.subagentReadOnly) {
     for (const name of active) {
@@ -214,6 +227,19 @@ export class PiSdkRuntime implements AgentRuntime {
   private runOutputTrackers = new Map<string, RunOutputTracker>();
   private cancellingRuns = new Set<string>();
   private parentSessionByChild = new Map<string, string | null>();
+  /**
+   * Background subagents: running until settled. `wait` is the sole harvest path —
+   * results stay here until wait consumes them (never follow-up-injected).
+   */
+  private backgroundChildTasks = new Map<
+    string,
+    {
+      parentSessionId: string;
+      task: string;
+      status: "running" | "completed" | "error";
+      output?: string;
+    }
+  >();
 
   constructor() {
     // Make the agent terminal tools (run/read/list/write/kill), the built-in
@@ -229,6 +255,7 @@ export class PiSdkRuntime implements AgentRuntime {
     registerPlanTools();
     registerQuestionTools();
     registerSubagentTools(this);
+    registerWaitTools(this);
   }
 
   private emitToWindow(window: BrowserWindowType): EmitAgentEvent {
@@ -444,13 +471,23 @@ export class PiSdkRuntime implements AgentRuntime {
         params.emitVolatile(event);
       }
     };
-    // Per-session throttle for live tool-call streaming. `tool.delta` carries
-    // the (growing) partial args, so we cap its rate to keep IPC light; the
-    // durable `tool.started` at execution time always delivers the final args.
+    // Per-session coalesce for live tool-call streaming. Keep the latest
+    // args-so-far and emit at most once per TOOL_DELTA_THROTTLE_MS — never drop
+    // the newest frame. `tool.started` still delivers final args durably.
     let lastToolDeltaAt = 0;
+    let pendingToolDelta: Extract<AgentEvent, { type: "tool.delta" }> | undefined;
+    let toolDeltaTimer: ReturnType<typeof setTimeout> | undefined;
     const hiddenToolCallIds = new Set<string>();
     let runtimeSession: SdkRuntimeSession | undefined;
-    const unsubscribe = session.subscribe((event) => {
+    const flushPendingToolDelta = (): void => {
+      toolDeltaTimer = undefined;
+      if (!pendingToolDelta) return;
+      const event = pendingToolDelta;
+      pendingToolDelta = undefined;
+      lastToolDeltaAt = Date.now();
+      params.emitVolatile(event);
+    };
+    const sessionUnsubscribe = session.subscribe((event) => {
       for (const normalized of normalizePiEvent(event)) {
         if (normalized.type === "tool.delta" || normalized.type === "tool.started") {
           const hiddenProfiles = toolRegistry.getEntry(normalized.toolName)?.ui
@@ -469,13 +506,22 @@ export class PiSdkRuntime implements AgentRuntime {
         }
         this.noteAssistantOutput(normalized);
         if (normalized.type === "tool.delta") {
-          const now = Date.now();
-          if (now - lastToolDeltaAt < TOOL_DELTA_THROTTLE_MS) {
-            continue;
+          pendingToolDelta = normalized;
+          const wait = TOOL_DELTA_THROTTLE_MS - (Date.now() - lastToolDeltaAt);
+          if (wait <= 0) {
+            if (toolDeltaTimer !== undefined) {
+              clearTimeout(toolDeltaTimer);
+              toolDeltaTimer = undefined;
+            }
+            flushPendingToolDelta();
+          } else if (toolDeltaTimer === undefined) {
+            toolDeltaTimer = setTimeout(flushPendingToolDelta, wait);
           }
-          lastToolDeltaAt = now;
-          params.emitVolatile(normalized);
         } else {
+          if (pendingToolDelta || toolDeltaTimer !== undefined) {
+            if (toolDeltaTimer !== undefined) clearTimeout(toolDeltaTimer);
+            flushPendingToolDelta();
+          }
           params.emit(normalized);
         }
       }
@@ -483,6 +529,17 @@ export class PiSdkRuntime implements AgentRuntime {
         publishContextUsage();
       }
     });
+    const unsubscribe = (): void => {
+      if (toolDeltaTimer !== undefined) {
+        clearTimeout(toolDeltaTimer);
+        toolDeltaTimer = undefined;
+      }
+      if (pendingToolDelta) {
+        params.emitVolatile(pendingToolDelta);
+        pendingToolDelta = undefined;
+      }
+      sessionUnsubscribe();
+    };
 
     const metadata: Parameters<typeof updateAgentSessionMetadata>[1] = {
       piSessionId: session.sessionId,
@@ -674,6 +731,12 @@ export class PiSdkRuntime implements AgentRuntime {
       throw failEarlyPrompt(`Agent session not running: ${input.sessionId}`);
     }
 
+    // Activity sort key: bump only on real user turns — never on open/ensure/status.
+    runtimeSession.info = {
+      ...runtimeSession.info,
+      updatedAt: touchAgentSession(input.sessionId),
+    };
+
     const profile = profileForMode(input.mode);
     runtimeSession.profile = profile;
     const toolContext = this.toolContextFor(runtimeSession, window, profile);
@@ -712,11 +775,21 @@ export class PiSdkRuntime implements AgentRuntime {
       return;
     }
 
-    if (shouldReplaceSessionTitle(runtimeSession.info.title)) {
-      const titled = updateAgentSessionTitle(input.sessionId, deriveSessionTitle(input.message));
-      if (titled) {
-        runtimeSession.info = titled;
-      }
+    // AI title: fire-and-forget, never blocks this turn. Placeholder titles
+    // stay until the short streamSimple call lands (or fails silently).
+    if (
+      !runtimeSession.info.parentSessionId &&
+      shouldReplaceSessionTitle(runtimeSession.info.title)
+    ) {
+      scheduleSessionTitle({
+        sessionId: input.sessionId,
+        userText: input.message,
+        modelId: input.model ?? runtimeSession.info.model,
+        emit: runtimeSession.emitVolatile,
+        onApplied: (title) => {
+          runtimeSession.info = { ...runtimeSession.info, title };
+        },
+      });
     }
     const runInput: Parameters<typeof createAgentRun>[0] = {
       sessionId: input.sessionId,
@@ -1099,7 +1172,7 @@ export class PiSdkRuntime implements AgentRuntime {
         isolation?: "shared" | "worktree";
       };
     },
-  ): Promise<{ session: AgentSessionInfo; output?: string }> {
+  ): Promise<{ session: AgentSessionInfo }> {
     const parent = getAgentSession(input.parentSessionId);
     if (!parent) {
       throw new Error(`Parent session not found: ${input.parentSessionId}`);
@@ -1148,49 +1221,229 @@ export class PiSdkRuntime implements AgentRuntime {
       ...(session.model ? { model: session.model } : {}),
     });
 
+    // Always spawn: join is waitBackground / the wait tool — never block the parent turn here.
+    this.backgroundChildTasks.set(session.id, {
+      parentSessionId: parent.id,
+      task: input.task,
+      status: "running",
+    });
+    void this.finishBackgroundSubagent(window, session, input).catch((error) => {
+      console.error("[modus] background subagent failed", session.id, error);
+    });
+    return { session };
+  }
+
+  /**
+   * Run the child and stash the result for `wait` harvest.
+   * Never injects into the parent turn — wait is the only delivery channel.
+   */
+  private async finishBackgroundSubagent(
+    window: BrowserWindowType,
+    session: AgentSessionInfo,
+    input: {
+      task: string;
+      prompt: string;
+      subagent?: { name: string; body: string; model: string };
+    },
+  ): Promise<void> {
+    const childModel =
+      input.subagent?.model.trim() && input.subagent.model.trim() !== "inherit"
+        ? input.subagent.model.trim()
+        : (session.model ?? undefined);
+    let promptError: unknown;
     try {
-      let promptError: unknown;
-      try {
-        await this.prompt(window, {
-          sessionId: session.id,
-          message: composeSubagentPrompt(input),
-          context: [],
-          delivery: "normal",
-          userMessageId: `subagent-user:${randomUUID()}`,
-          ...(childModel ? { model: childModel } : {}),
-        });
-      } catch (error) {
-        promptError = error;
-      }
-      let finalizationError: unknown;
-      if (session.subagentWorktree) {
-        try {
-          const updated = await finishSubagentWorktree(session.subagentWorktree, input.task);
-          updateAgentSessionWorktree(session.id, updated);
-        } catch (error) {
-          finalizationError = error;
-        }
-      }
-      if (promptError) {
-        throw promptError;
-      }
-      if (finalizationError) {
-        throw finalizationError;
-      }
-      const completed = getAgentSession(session.id) ?? session;
-      const childRun = listAgentRuns(session.id).at(-1);
-      if (childRun && childRun.status !== "completed") {
-        throw new Error(childRun.error ?? `Subagent ${childRun.status}.`);
-      }
-      const output = lastAssistantOutput(session.id);
-      return { session: completed, ...(output ? { output } : {}) };
-    } finally {
-      await this.dispose(session.id);
+      await this.prompt(window, {
+        sessionId: session.id,
+        message: composeSubagentPrompt(input),
+        context: [],
+        delivery: "normal",
+        userMessageId: `subagent-user:${randomUUID()}`,
+        ...(childModel ? { model: childModel } : {}),
+      });
+    } catch (error) {
+      promptError = error;
     }
+
+    if (session.subagentWorktree) {
+      try {
+        const updated = await finishSubagentWorktree(session.subagentWorktree, input.task);
+        updateAgentSessionWorktree(session.id, updated);
+      } catch (error) {
+        promptError ??= error;
+      }
+    }
+
+    const meta = this.backgroundChildTasks.get(session.id);
+    if (!meta) {
+      // Registry already gone (parent disposed) — just drop the SDK session.
+      await this.disposeSessionOnly(session.id).catch(() => undefined);
+      return;
+    }
+
+    const childRun = listAgentRuns(session.id).at(-1);
+    const failed =
+      Boolean(promptError) ||
+      (childRun !== undefined && childRun.status !== "completed");
+    const output =
+      lastAssistantOutput(session.id) ??
+      (promptError instanceof Error
+        ? promptError.message
+        : promptError
+          ? String(promptError)
+          : (childRun?.error ?? "Subagent finished without assistant output."));
+
+    this.backgroundChildTasks.set(session.id, {
+      parentSessionId: meta.parentSessionId,
+      task: meta.task,
+      status: failed ? "error" : "completed",
+      output,
+    });
+    await this.cleanupSessionProcesses(session.id);
+    // Keep the stashed result; releaseRuntime / disposeSessionOnly must not clear it.
+    await this.disposeSessionOnly(session.id).catch(() => undefined);
+  }
+
+  async waitBackground(input: {
+    sessionId: string;
+    timeoutMs: number;
+    subagentIds?: string[];
+    terminalIds?: string[];
+    signal?: AbortSignal;
+    onProgress?: (text: string) => void;
+  }): Promise<BackgroundWaitResult> {
+    const startedAt = Date.now();
+    const subagentIds =
+      input.subagentIds ??
+      [...this.backgroundChildTasks.entries()]
+        .filter(([, meta]) => meta.parentSessionId === input.sessionId)
+        .map(([id]) => id);
+    const terminalIds = input.terminalIds ?? [];
+
+    const poll = (): {
+      subagents: BackgroundWaitResult["subagents"];
+      terminals: BackgroundWaitResult["terminals"];
+      pending: number;
+    } => {
+      const subagents: BackgroundWaitResult["subagents"] = subagentIds.map((id) =>
+        this.resolveBackgroundSubagent(input.sessionId, id),
+      );
+
+      const terminals: BackgroundWaitResult["terminals"] = terminalIds.map((id) => {
+        const process = listManagedProcesses({}).find((entry) => entry.id === id);
+        if (!process) {
+          return { id, status: "missing" as const };
+        }
+        return {
+          id,
+          status: process.status === "running" ? ("running" as const) : ("exited" as const),
+          ...(process.exitCode !== undefined ? { exitCode: process.exitCode } : {}),
+          ...(process.label ? { label: process.label } : {}),
+        };
+      });
+
+      const pending =
+        subagents.filter((entry) => entry.status === "running").length +
+        terminals.filter((entry) => entry.status === "running").length;
+      return { subagents, terminals, pending };
+    };
+
+    let snapshot = poll();
+    const reportProgress = (): void => {
+      const remainingMs = Math.max(0, input.timeoutMs - (Date.now() - startedAt));
+      const parts = [formatWaitedDuration(remainingMs)];
+      if (snapshot.pending > 0) {
+        parts.push(`${snapshot.pending} still running`);
+      }
+      input.onProgress?.(parts.join(" · "));
+    };
+    reportProgress();
+
+    // All-done: hold until every watched item settles, or timeout.
+    while (snapshot.pending > 0 && Date.now() - startedAt < input.timeoutMs) {
+      if (input.signal?.aborted) {
+        throw new Error("Wait aborted.");
+      }
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, 200);
+        timer.unref?.();
+      });
+      snapshot = poll();
+      reportProgress();
+    }
+
+    const waitedMs = Date.now() - startedAt;
+    const timedOut = snapshot.pending > 0;
+    for (const child of snapshot.subagents) {
+      if (child.status === "completed" || child.status === "error") {
+        this.backgroundChildTasks.delete(child.id);
+      }
+    }
+
+    return {
+      waitedMs,
+      timedOut,
+      subagents: snapshot.subagents,
+      terminals: snapshot.terminals,
+    };
+  }
+
+  /**
+   * Authority: registry first; if wiped (e.g. releaseRuntime), recover from the
+   * settled child session — never call a finished child "missing".
+   */
+  private resolveBackgroundSubagent(
+    parentSessionId: string,
+    id: string,
+  ): BackgroundWaitResult["subagents"][number] {
+    const meta = this.backgroundChildTasks.get(id);
+    if (meta && meta.parentSessionId === parentSessionId) {
+      return {
+        id,
+        task: meta.task,
+        status: meta.status,
+        ...(meta.output ? { output: meta.output } : {}),
+      };
+    }
+
+    const session = getAgentSession(id);
+    if (session?.parentSessionId !== parentSessionId) {
+      return { id, task: meta?.task ?? id, status: "missing" };
+    }
+    if (isSubagentBusy(session.status)) {
+      return {
+        id,
+        task: session.subagentTask ?? session.title,
+        status: "running",
+      };
+    }
+
+    const output = lastAssistantOutput(id);
+    const task = session.subagentTask ?? session.title;
+    if (session.status === "error" || session.status === "cancelled") {
+      return {
+        id,
+        task,
+        status: "error",
+        ...(output ? { output } : {}),
+      };
+    }
+    if (output) {
+      // Re-stash so a later harvest delete is a no-op-safe consume.
+      this.backgroundChildTasks.set(id, {
+        parentSessionId,
+        task,
+        status: "completed",
+        output,
+      });
+      return { id, task, status: "completed", output };
+    }
+    return { id, task, status: "missing" };
   }
 
   async abort(sessionId: string): Promise<void> {
     await this.closeSubagentTree(sessionId, "Parent session aborted");
+    this.clearBackgroundTasksForParent(sessionId);
+    this.backgroundChildTasks.delete(sessionId);
     await this.abortSessionOnly(sessionId);
   }
 
@@ -1221,7 +1474,24 @@ export class PiSdkRuntime implements AgentRuntime {
   async dispose(sessionId: string): Promise<void> {
     await this.closeSubagentTree(sessionId, "Session disposed");
     await this.cleanupSessionProcesses(sessionId);
+    this.clearBackgroundTasksForParent(sessionId);
+    this.backgroundChildTasks.delete(sessionId);
     await this.disposeSessionOnly(sessionId);
+  }
+
+  async releaseRuntime(sessionId: string): Promise<void> {
+    // View history ≠ consume background results. Pane unmount must not wipe
+    // unharvested wait payloads — only wait() / parent dispose/abort do that.
+    await this.cleanupSessionProcesses(sessionId);
+    await this.disposeSessionOnly(sessionId);
+  }
+
+  private clearBackgroundTasksForParent(parentSessionId: string): void {
+    for (const [id, meta] of this.backgroundChildTasks) {
+      if (meta.parentSessionId === parentSessionId) {
+        this.backgroundChildTasks.delete(id);
+      }
+    }
   }
 
   private async disposeSessionOnly(sessionId: string): Promise<void> {
@@ -1263,6 +1533,7 @@ export class PiSdkRuntime implements AgentRuntime {
       denyPendingPermissionRequestsForSession(child.id, reason);
       denyPendingQuestionRequestsForSession(child.id);
       await this.cleanupSessionProcesses(child.id);
+      this.backgroundChildTasks.delete(child.id);
       await this.disposeSessionOnly(child.id).catch(() => undefined);
     }
   }

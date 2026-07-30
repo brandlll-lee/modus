@@ -301,6 +301,17 @@ export const SUBAGENT_TOOL_UI: Record<SubagentToolName, ToolUiMeta> = {
   },
 };
 
+/**
+ * Same-turn wait for background subagents / terminals. Verb flips in the
+ * renderer: running → "Waiting", complete → "Waited".
+ */
+export const WAIT_TOOL_NAME = "wait";
+
+export const WAIT_TOOL_UI: ToolUiMeta = {
+  verb: "Waited",
+  primaryArgKey: "timeout_ms",
+};
+
 /** Agent-facing web tool names (custom tools registered at runtime). */
 export const WEB_TOOL_NAMES = ["web_search", "web_fetch"] as const;
 
@@ -401,6 +412,9 @@ export function getToolUiMeta(name: string): ToolUiMeta | undefined {
   }
   if (name === ASK_USER_TOOL_NAME) {
     return ASK_USER_TOOL_UI;
+  }
+  if (name === WAIT_TOOL_NAME) {
+    return WAIT_TOOL_UI;
   }
   return (
     getBuiltinToolUiMeta(name) ??

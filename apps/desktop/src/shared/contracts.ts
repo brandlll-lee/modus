@@ -349,6 +349,7 @@ export type AgentEvent =
       activity?: SubagentActivity;
     }
   | { type: "session.status"; sessionId: string; status: SessionRunStatus }
+  | { type: "session.updated"; sessionId: string; title: string }
   | { type: "runtime.error"; sessionId: string; message: string };
 
 export type TerminalStatus = "running" | "exited";

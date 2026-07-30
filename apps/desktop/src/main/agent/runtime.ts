@@ -54,6 +54,7 @@ export type AgentRuntime = {
   create(window: BrowserWindowType, input: CreateAgentRuntimeInput): Promise<AgentSessionInfo>;
   ensure(window: BrowserWindowType, sessionId: string): Promise<AgentSessionInfo>;
   prompt(window: BrowserWindowType, input: PromptAgentInput): Promise<void>;
+  /** Spawn a child subagent and return immediately. Collect results with waitBackground. */
   runSubagent(
     window: BrowserWindowType,
     input: {
@@ -71,10 +72,29 @@ export type AgentRuntime = {
         isolation?: "shared" | "worktree";
       };
     },
-  ): Promise<{ session: AgentSessionInfo; output?: string }>;
+  ): Promise<{ session: AgentSessionInfo }>;
+  /**
+   * Block the current tool call until background subagents / terminals settle
+   * or timeout — keeps the same agent turn open. Sole harvest path for task().
+   */
+  waitBackground(
+    input: {
+      sessionId: string;
+      timeoutMs: number;
+      subagentIds?: string[];
+      terminalIds?: string[];
+      signal?: AbortSignal;
+      onProgress?: (text: string) => void;
+    },
+  ): Promise<BackgroundWaitResult>;
   abort(sessionId: string): Promise<void>;
   listRuns(sessionId: string): Promise<AgentRunInfo[]>;
   dispose(sessionId: string): Promise<void>;
+  /**
+   * Drop this session's in-memory SDK runtime without aborting descendants or
+   * rewriting DB status. Pane unmount / idle eviction — not delete/rollback.
+   */
+  releaseRuntime(sessionId: string): Promise<void>;
   setModel(
     window: BrowserWindowType,
     sessionId: string,
@@ -86,6 +106,23 @@ export type AgentRuntime = {
     sessionId: string | undefined,
     direction?: "forward" | "backward",
   ): Promise<ModelInfo>;
+};
+
+export type BackgroundWaitResult = {
+  waitedMs: number;
+  timedOut: boolean;
+  subagents: Array<{
+    id: string;
+    task: string;
+    status: "running" | "completed" | "error" | "missing";
+    output?: string;
+  }>;
+  terminals: Array<{
+    id: string;
+    status: "running" | "exited" | "missing";
+    exitCode?: number;
+    label?: string;
+  }>;
 };
 
 export type EmitAgentEvent = (event: AgentEvent) => void;

@@ -171,11 +171,13 @@ export function resolveSubagentsPrompt(cwd: string): string {
     return [
       "## Subagents",
       "No configured subagents are available. Use `task` without the `subagent` field for generic delegation; do not invent subagent names.",
+      "`task` starts a child and returns immediately; collect results with `wait` in the same turn — do not block inside `task`.",
     ].join("\n");
   }
   const lines = [
     "## Subagents",
     "Subagents are local Markdown-defined specialists. Set the `subagent` field only to an exact name listed below; otherwise omit it for generic task delegation.",
+    "`task` starts a child and returns immediately; collect results with `wait` in the same turn — do not block inside `task`.",
     "If the user starts a message with `/name` and `name` is listed below, invoke that subagent.",
     "",
     "### Available subagents",

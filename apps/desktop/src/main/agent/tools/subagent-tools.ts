@@ -53,12 +53,15 @@ const taskTool: ToolDefinition = defineTool({
   name: "task",
   label: "Start subagent",
   description:
-    "Run a bounded task in a child subagent with its own context window and return its final answer.",
+    "Start a bounded child subagent with its own context window and return immediately. " +
+    "Collect results later with wait() in the same turn.",
   promptSnippet:
-    "task(description, prompt, subagent?) — delegate a bounded task and wait for its final answer.",
+    "task(description, prompt, subagent?) — spawn a child subagent (returns immediately); " +
+    "call wait() in the same turn to collect results.",
   promptGuidelines: [
     "Use subagents for bounded, parallel, noisy work; keep simple work in this main conversation.",
-    "Independent task calls may run in parallel, but every call returns its subagent's final answer before this turn can finish.",
+    "task always returns immediately. Launch all independent tasks first, do useful main-thread work, then call wait() once to collect ALL results in the SAME turn.",
+    "Results are ONLY available through wait() — never assume auto-delivery. DO NOT sleep or poll.",
     "Set subagent only to an exact available subagent name; for generic delegation, omit subagent.",
     "If the user invokes `/name` and `name` is an available subagent, call task with subagent set to that name.",
     "Give each subagent a clear prompt and expected return format.",
@@ -90,7 +93,14 @@ const taskTool: ToolDefinition = defineTool({
           }
         : {}),
     });
-    return toResult(result.output ?? "Subagent finished without assistant output.", result);
+    return toResult(
+      [
+        `Background task started (id=${result.session.id}): ${params.description.trim()}`,
+        "Continue non-overlapping work, then call wait() in this same turn to collect the result.",
+        "DO NOT sleep, poll for progress, duplicate this work, or expect a new turn.",
+      ].join("\n"),
+      result,
+    );
   },
 });
 

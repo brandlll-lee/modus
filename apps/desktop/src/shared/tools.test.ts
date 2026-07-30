@@ -85,8 +85,10 @@ describe("tool render descriptor (single source of truth)", () => {
     expect(toolRenderKind("plan_write")).toBe("plan");
   });
 
-  it("renders task as the only subagent model-visible tool", () => {
+  it("renders task as the subagent tool and wait as a flat same-turn waiter", () => {
     expect(getToolUiMeta("task")).toEqual(expect.objectContaining({ render: "subagent" }));
+    expect(getToolUiMeta("wait")?.verb).toBe("Waited");
+    expect(toolRenderKind("wait")).toBe("flat");
     expect(getToolUiMeta("wait_agent")).toBeUndefined();
     expect(getToolUiMeta("list_agents")).toBeUndefined();
   });
