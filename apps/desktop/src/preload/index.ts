@@ -35,6 +35,7 @@ const api: ModusApi = {
     listEvents: (sessionId) => ipcRenderer.invoke("agent:list-events", sessionId),
     listRuns: (sessionId) => ipcRenderer.invoke("agent:list-runs", sessionId),
     ensure: (sessionId) => ipcRenderer.invoke("agent:ensure", sessionId),
+    releaseRuntime: (sessionId) => ipcRenderer.invoke("agent:release-runtime", sessionId),
     prompt: (input) => ipcRenderer.invoke("agent:prompt", input),
     abort: (sessionId) => ipcRenderer.invoke("agent:abort", sessionId),
     rollback: (input) => ipcRenderer.invoke("agent:rollback", input),

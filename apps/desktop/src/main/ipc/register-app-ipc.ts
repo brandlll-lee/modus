@@ -442,6 +442,13 @@ export function registerAppIpc({
     );
   });
 
+  ipcMain.handle(IPC_CHANNELS.agentReleaseRuntime, async (event, sessionId: string) => {
+    assertTrustedSender(event);
+    await getAgentRuntime().releaseRuntime(
+      parseIpcInput(sessionIdSchema, sessionId, IPC_CHANNELS.agentReleaseRuntime),
+    );
+  });
+
   ipcMain.handle(IPC_CHANNELS.agentPrompt, async (event, input) => {
     assertTrustedSender(event);
     const parsed = parseIpcInput(agentPromptSchema, input, IPC_CHANNELS.agentPrompt);

@@ -132,6 +132,11 @@ export type ModusApi = {
     ): Promise<Array<{ id: string; event: AgentEvent; createdAt?: string }>>;
     listRuns(sessionId: string): Promise<AgentRunInfo[]>;
     ensure(sessionId: string): Promise<AgentSessionInfo>;
+    /**
+     * Drop in-memory SDK runtime for this session only (no descendant abort /
+     * no DB status rewrite). Used when a ChatPane unmounts while idle.
+     */
+    releaseRuntime(sessionId: string): Promise<void>;
     prompt(input: {
       sessionId: string;
       message: string;

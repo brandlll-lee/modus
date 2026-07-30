@@ -218,8 +218,7 @@ export function updateAgentSessionWorktree(
            subagent_worktree_base_sha = ?,
            subagent_integration_status = ?,
            subagent_changed_files_json = ?,
-           subagent_conflict_files_json = ?,
-           updated_at = ?
+           subagent_conflict_files_json = ?
        where id = ?`,
     )
     .run(
@@ -229,11 +228,22 @@ export function updateAgentSessionWorktree(
       worktree?.integrationStatus ?? null,
       worktree?.changedFiles ? JSON.stringify(worktree.changedFiles) : null,
       worktree?.conflictFiles ? JSON.stringify(worktree.conflictFiles) : null,
-      new Date().toISOString(),
       sessionId,
     );
 
   return getAgentSession(sessionId);
+}
+
+/**
+ * Conversation activity heartbeat — the ONLY writer of `updated_at` after create.
+ * Open/resume/status/metadata/pin/archive must never bump the sort key.
+ */
+export function touchAgentSession(sessionId: string): string {
+  const now = new Date().toISOString();
+  getDatabase()
+    .prepare("update agent_sessions set updated_at = ? where id = ?")
+    .run(now, sessionId);
+  return now;
 }
 
 export function updateAgentSessionStatus(
@@ -241,8 +251,8 @@ export function updateAgentSessionStatus(
   status: AgentSessionInfo["status"],
 ): void {
   getDatabase()
-    .prepare("update agent_sessions set status = ?, updated_at = ? where id = ?")
-    .run(status, new Date().toISOString(), sessionId);
+    .prepare("update agent_sessions set status = ? where id = ?")
+    .run(status, sessionId);
 }
 
 export function updateAgentSessionMetadata(
@@ -254,20 +264,14 @@ export function updateAgentSessionMetadata(
     return undefined;
   }
 
-  const next = { ...existing, ...metadata, updatedAt: new Date().toISOString() };
+  const next = { ...existing, ...metadata };
   getDatabase()
     .prepare(
       `update agent_sessions
-       set model = ?, pi_session_id = ?, pi_session_file = ?, updated_at = ?
+       set model = ?, pi_session_id = ?, pi_session_file = ?
        where id = ?`,
     )
-    .run(
-      next.model ?? null,
-      next.piSessionId ?? null,
-      next.piSessionFile ?? null,
-      next.updatedAt,
-      sessionId,
-    );
+    .run(next.model ?? null, next.piSessionId ?? null, next.piSessionFile ?? null, sessionId);
 
   return next;
 }
@@ -281,10 +285,10 @@ export function updateAgentSessionTitle(
     return undefined;
   }
 
-  const next = { ...existing, title, updatedAt: new Date().toISOString() };
+  const next = { ...existing, title };
   getDatabase()
-    .prepare("update agent_sessions set title = ?, updated_at = ? where id = ?")
-    .run(next.title, next.updatedAt, sessionId);
+    .prepare("update agent_sessions set title = ? where id = ?")
+    .run(next.title, sessionId);
 
   return next;
 }
@@ -354,10 +358,9 @@ export function setAgentSessionPinned(
   sessionId: string,
   pinned: boolean,
 ): AgentSessionInfo | undefined {
-  const now = new Date().toISOString();
   getDatabase()
-    .prepare("update agent_sessions set pinned_at = ?, updated_at = ? where id = ?")
-    .run(pinned ? now : null, now, sessionId);
+    .prepare("update agent_sessions set pinned_at = ? where id = ?")
+    .run(pinned ? new Date().toISOString() : null, sessionId);
   return getAgentSession(sessionId);
 }
 
@@ -365,10 +368,9 @@ export function setAgentSessionArchived(
   sessionId: string,
   archived: boolean,
 ): AgentSessionInfo | undefined {
-  const now = new Date().toISOString();
   getDatabase()
-    .prepare("update agent_sessions set archived_at = ?, updated_at = ? where id = ?")
-    .run(archived ? now : null, now, sessionId);
+    .prepare("update agent_sessions set archived_at = ? where id = ?")
+    .run(archived ? new Date().toISOString() : null, sessionId);
   return getAgentSession(sessionId);
 }
 

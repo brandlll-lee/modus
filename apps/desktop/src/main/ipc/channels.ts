@@ -17,6 +17,7 @@ export const IPC_CHANNELS = {
   agentListEvents: "agent:list-events",
   agentListRuns: "agent:list-runs",
   agentEnsure: "agent:ensure",
+  agentReleaseRuntime: "agent:release-runtime",
   agentPrompt: "agent:prompt",
   agentAbort: "agent:abort",
   agentRollback: "agent:rollback",

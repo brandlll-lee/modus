@@ -5,8 +5,8 @@ import type { SessionActivity } from "./agentEventHub";
 
 /**
  * Sidebar session glyph: ThinkingOrb while running (same package/preset as
- * WorkFold — only size 20|64 are valid), danger/success for needs-input /
- * failed / unread, soft secondary idle dot otherwise.
+ * WorkFold — only size 20|64 are valid), solid danger for needs-input /
+ * failed, success for unread, soft secondary idle dot otherwise.
  */
 export function SessionStatusDot({
   activity,
@@ -45,10 +45,7 @@ export function SessionStatusDot({
   if (activity?.failed) {
     return (
       <span
-        className={cn(
-          "size-1.5 shrink-0 rounded-full border border-danger bg-transparent",
-          className,
-        )}
+        className={cn("size-1.5 shrink-0 rounded-full bg-danger", className)}
         title="Last run failed"
       />
     );
@@ -63,7 +60,7 @@ export function SessionStatusDot({
   }
   return (
     <span
-      className={cn("size-1.5 shrink-0 rounded-full bg-fg-faint/35", className)}
+      className={cn("size-1 shrink-0 rounded-full bg-fg-faint/40", className)}
       title="Idle"
     />
   );

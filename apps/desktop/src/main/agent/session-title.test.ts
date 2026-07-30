@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deriveSessionTitle, shouldReplaceSessionTitle } from "./session-title";
+import { cleanSessionTitleText, shouldReplaceSessionTitle } from "./session-title";
 
 describe("session title helpers", () => {
   it("replaces only empty or default session titles", () => {
@@ -10,18 +10,19 @@ describe("session title helpers", () => {
     expect(shouldReplaceSessionTitle("Investigate markdown rendering")).toBe(false);
   });
 
-  it("derives a compact title from the first prompt", () => {
-    expect(deriveSessionTitle("你好，介绍一下你自己")).toBe("介绍一下你自己");
-    expect(deriveSessionTitle("/investigate 请帮我修复 Markdown 渲染和流式输出问题")).toBe(
-      "请帮我修复 Markdown 渲染和流式输出问题",
+  it("cleans model output into a single-line title", () => {
+    expect(cleanSessionTitleText('  "Nanochat pretraining survey"  ')).toBe(
+      "Nanochat pretraining survey",
     );
+    expect(
+      cleanSessionTitleText("<think>scratch</think>\nDebugging production 500 errors\nextra"),
+    ).toBe("Debugging production 500 errors");
   });
 
-  it("strips noisy blocks and truncates long prompts", () => {
-    const title = deriveSessionTitle(
-      "```ts\nconsole.log('x')\n```\n请全面重构我们的模型设置和 provider 管理界面，确保可维护可扩展可测试",
-    );
-
-    expect(title).toBe("请全面重构我们的模型设置和 provider 管理界面，确保可维护可扩展可测试");
+  it("hard-caps long model titles without ellipsis padding", () => {
+    const long = "A".repeat(80);
+    const cleaned = cleanSessionTitleText(long);
+    expect(cleaned).toBe("A".repeat(50));
+    expect(cleaned?.includes("...")).toBe(false);
   });
 });
