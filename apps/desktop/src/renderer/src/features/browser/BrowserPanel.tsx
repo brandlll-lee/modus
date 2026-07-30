@@ -28,6 +28,7 @@ import {
   type BrowserTabInfo,
 } from "../../../../shared/contracts";
 import { useNativeSurfaceSuppressed } from "../../components/ui/nativeSurface";
+import { EmptyState } from "../../components/ui/Panel";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
 import { computeBrowserViewBounds, sameBrowserBounds } from "./browserBounds";
@@ -610,13 +611,11 @@ function BrowserViewport({
     <div className="relative min-h-0 flex-1 bg-canvas">
       <div className="absolute inset-0" ref={hostRef} />
       {!tabId ? (
-        <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
-          <IconWorld className="toolbar-icon" size={70} stroke={1.35} />
-          <div className="space-y-1">
-            <div className="font-medium text-fg text-sm">开始浏览</div>
-            <div className="text-fg-muted text-xs">输入 URL 以打开页面</div>
-          </div>
-        </div>
+        <EmptyState
+          description="输入 URL 以打开页面"
+          hint="开始浏览"
+          icon={<IconWorld size={36} stroke={1.4} />}
+        />
       ) : null}
       {children}
     </div>
@@ -798,7 +797,7 @@ function resolveDesignTheme() {
     elevated: token("--color-elevated", "#232325"),
     fg: token("--color-fg", "#e4e4e3"),
     fgSubtle: token("--color-fg-subtle", "#8a8a87"),
-    fontFamily: token("--font-sans", '"Inter Variable", "Inter", system-ui, sans-serif'),
+    fontFamily: token("--font-sans", '"Inter Variable", "Inter", "Noto Sans SC Variable", "Noto Sans SC", system-ui, sans-serif'),
     border: token("--color-hairline-strong", "rgba(255,255,255,0.08)"),
     shadow: "rgba(0,0,0,0.5)",
   };

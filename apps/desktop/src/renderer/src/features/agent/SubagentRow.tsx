@@ -74,7 +74,7 @@ export function SubagentRow({
             </span>
           ) : null}
         </span>
-        <span className="mt-1 block truncate text-2xs text-fg-faint leading-snug">
+        <span className="mt-1 block truncate text-sm text-fg-faint leading-snug">
           {activityLabel}
         </span>
       </span>
@@ -83,11 +83,11 @@ export function SubagentRow({
 }
 
 /** Same soft indicators as the sidebar idle/failed dots — no ThinkingOrb / ModusBot. */
-function SubagentSettledDot({ status }: { status: SubagentStatus }) {
+export function SubagentSettledDot({ status }: { status: SubagentStatus }) {
   if (status === "failed") {
     return (
       <span
-        className="size-2 shrink-0 rounded-full border border-danger bg-transparent"
+        className="size-2 shrink-0 rounded-full bg-danger"
         title="Subagent failed"
       />
     );

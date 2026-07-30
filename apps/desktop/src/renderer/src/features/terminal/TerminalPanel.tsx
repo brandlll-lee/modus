@@ -597,7 +597,6 @@ export function TerminalPanel({
         </div>
       ) : (
         <EmptyState
-          className="h-full"
           hint="Open a workspace to use the terminal."
           icon={<IconTerminal2 size={22} stroke={1.4} />}
         />

@@ -24,6 +24,7 @@ import {
 } from "react";
 import type { FileEntry, FileReadResult, FilesChangeEvent, ContextItem } from "../../../../shared/contracts";
 import { CodeViewer, type CodeSelectionRange } from "../../components/code/CodeViewer";
+import { EmptyState } from "../../components/ui/Panel";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
 import { MarkdownExcerptPreview } from "../preview/MarkdownExcerptPreview";
@@ -784,11 +785,11 @@ function FileViewer({
   }
   if (!file) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
-        <IconFolders className="text-fg-faint/55" size={30} stroke={1.4} />
-        <div className="font-medium text-fg-subtle text-sm">No file open</div>
-        <div className="text-fg-faint text-xs">Select a file from the workspace tree</div>
-      </div>
+      <EmptyState
+        description="Select a file from the workspace tree"
+        hint="No file open"
+        icon={<IconFolders size={22} stroke={1.4} />}
+      />
     );
   }
   if (file.binary) {

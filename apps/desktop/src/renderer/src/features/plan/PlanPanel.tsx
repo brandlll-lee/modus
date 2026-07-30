@@ -1,6 +1,7 @@
 import { IconLayoutList } from "@tabler/icons-react";
 import { memo } from "react";
 import type { PlanRef } from "../../../../shared/contracts";
+import { EmptyState } from "../../components/ui/Panel";
 import { MarkdownMessage } from "../agent/MarkdownMessage";
 import { VisualToolCard } from "../agent/VisualToolCard";
 
@@ -8,11 +9,11 @@ import { VisualToolCard } from "../agent/VisualToolCard";
 export const PlanPanel = memo(function PlanPanel({ plan }: { plan: PlanRef | undefined }) {
   if (!plan) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
-        <IconLayoutList className="text-fg-faint/55" size={30} stroke={1.4} />
-        <div className="font-medium text-fg-subtle text-sm">No plan yet</div>
-        <div className="text-fg-faint text-xs">Plan Mode writes a plan here for you to review.</div>
-      </div>
+      <EmptyState
+        description="Plan Mode writes a plan here for you to review."
+        hint="No plan yet"
+        icon={<IconLayoutList size={22} stroke={1.4} />}
+      />
     );
   }
 

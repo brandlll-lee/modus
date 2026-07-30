@@ -520,21 +520,24 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
         ) : null}
 
         {activeCwd && isRepository === false ? (
-          <div className="flex h-full min-h-[360px] flex-col items-center justify-center gap-3 px-6 text-center">
-            <IconGitBranch className="text-fg-faint" size={22} stroke={1.4} />
-            <span className="text-fg-subtle text-xs">Use Git to track changes</span>
-            <button
-              className="rounded-md border-hairline px-3 py-1.5 text-fg text-xs transition-colors hover:bg-hover disabled:opacity-50"
-              disabled={initializingRepository}
-              onClick={() => void initializeRepository()}
-              type="button"
-            >
-              {initializingRepository ? "Initializing..." : "Initialize Repository"}
-            </button>
-          </div>
+          <EmptyState
+            action={
+              <button
+                className="rounded-md border-hairline px-3 py-1.5 text-fg text-xs transition-colors hover:bg-hover disabled:opacity-50"
+                disabled={initializingRepository}
+                onClick={() => void initializeRepository()}
+                type="button"
+              >
+                {initializingRepository ? "Initializing..." : "Initialize Repository"}
+              </button>
+            }
+            className="min-h-[360px]"
+            hint="Use Git to track changes"
+            icon={<IconGitBranch size={22} stroke={1.4} />}
+          />
         ) : count === 0 ? (
           <EmptyState
-            className={activeCwd ? "min-h-[220px]" : "h-full"}
+            className={activeCwd ? "min-h-[220px]" : undefined}
             hint={
               activeCwd
                 ? history

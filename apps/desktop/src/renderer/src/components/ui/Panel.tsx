@@ -11,25 +11,34 @@ export function PanelHeader({ title, children }: { title: string; children?: Rea
   );
 }
 
-/** 空状态占位。 */
+/**
+ * Inspector empty hero — layout matches Git Review (icon + hint + optional CTA).
+ * Pass icons at size={22} stroke={1.4}.
+ */
 export function EmptyState({
   icon,
   hint,
+  description,
+  action,
   className,
 }: {
   icon: ReactNode;
   hint: string;
+  description?: string;
+  action?: ReactNode;
   className?: string;
 }) {
   return (
     <div
       className={cn(
-        "flex flex-col items-center justify-center gap-2 px-6 py-12 text-center",
+        "flex h-full flex-col items-center justify-center gap-3 px-6 text-center",
         className,
       )}
     >
       <span className="text-fg-faint">{icon}</span>
-      <span className="text-xs text-fg-subtle">{hint}</span>
+      <span className="text-fg-subtle text-xs">{hint}</span>
+      {description ? <span className="text-fg-faint text-xs">{description}</span> : null}
+      {action}
     </div>
   );
 }

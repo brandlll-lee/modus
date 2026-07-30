@@ -1,5 +1,5 @@
-import { IconArrowLeft, IconLayoutBoard, IconList, IconSearch } from "@tabler/icons-react";
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { IconArrowLeft, IconGridDots, IconSearch } from "@tabler/icons-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   AgentSessionInfo,
   ContextUsageInfo,
@@ -10,16 +10,16 @@ import type {
   WorkingChangeStats,
   WorkspaceInfo,
 } from "../../../../shared/contracts";
-import { ModusBot } from "../../components/ui/ModusBot";
 import type { AgentEventHub } from "../agent/agentEventHub";
 import { ChatPane } from "../agent/ChatPane";
 import { LineDelta } from "../agent/changes/ChangeStats";
-import { isSubagentSessionLive, subagentColor } from "../agent/subagentUi";
+import { isSubagentSessionLive } from "../agent/subagentUi";
+import { SubagentSettledDot } from "../agent/SubagentRow";
+import { EmptyState } from "../../components/ui/Panel";
+import { VortexMark } from "../../components/ui/VortexMark";
 import { lookupModel, modelIdentityLabel } from "../../lib/modelIdentity";
 
 type PanelView = "overview" | "detail";
-type DisplayMode = "board" | "list";
-type SubagentGroup = "running" | "blocked" | "ready";
 
 type SubagentsPanelProps = {
   parentSessionId?: string | undefined;
@@ -30,7 +30,7 @@ type SubagentsPanelProps = {
   defaultModel: string;
   contextUsageBySession: Record<string, ContextUsageInfo>;
   workspace: WorkspaceInfo | null;
-  onSelect(id: string): void;
+  onSelect(id: string | undefined): void;
   onSessionsChanged(): void;
   onModelChange(model: string): void;
   onModelConfigChange(model: string, thinkingVariant: string): Promise<void> | void;
@@ -59,7 +59,6 @@ export function SubagentsPanel({
   onPlanUpdated,
 }: SubagentsPanelProps) {
   const [view, setView] = useState<PanelView>("overview");
-  const [display, setDisplay] = useState<DisplayMode>("board");
   const [query, setQuery] = useState("");
   const [worktreeBusy, setWorktreeBusy] = useState<string | undefined>();
   const [worktreeError, setWorktreeError] = useState<string | undefined>();
@@ -250,35 +249,34 @@ export function SubagentsPanel({
 
   if (!parentSessionId || subagents.length === 0) {
     return (
-      <div className="flex h-full items-center justify-center px-4 text-center text-fg-faint text-sm">
-        No subagents yet.
-      </div>
+      <EmptyState
+        description="Spawn a subagent from chat to see it here."
+        hint="No subagents yet"
+        icon={<IconGridDots size={22} stroke={1.4} />}
+      />
     );
   }
 
   if (view === "detail" && selected) {
     return (
       <div className="flex h-full min-h-0 flex-col">
-        <div className="flex h-12 shrink-0 items-center gap-2 border-hairline border-b px-3">
+        <div className="flex h-12 shrink-0 items-center gap-2 bg-canvas/85 px-3 backdrop-blur">
           <button
             aria-label="Back to subagents"
             className="flex size-7 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-hover hover:text-fg"
-            onClick={() => setView("overview")}
+            onClick={() => {
+              setView("overview");
+              // Drop live ChatPane ownership so the parent preview may mount again.
+              onSelect(undefined);
+            }}
             type="button"
           >
             <IconArrowLeft size={16} stroke={1.7} />
           </button>
-          <ModusBot
-            active={isSubagentSessionLive(selected.status)}
-            busy={isSubagentSessionLive(selected.status)}
-            className="size-5 shrink-0"
-            color={subagentColor(selected.id)}
-          />
-          <div className="min-w-0 flex-1">
-            <div className="truncate font-medium text-fg text-sm">{subagentTitle(selected)}</div>
-            <div className="truncate text-fg-faint text-xs">{subagentMeta(selected, models)}</div>
+          <SubagentProviderMark models={models} session={selected} />
+          <div className="min-w-0 flex-1 truncate font-medium text-fg text-sm">
+            {subagentTitle(selected)}
           </div>
-          <StatusPill session={selected} />
         </div>
         <div className="min-h-0 flex-1">
           <ChatPane
@@ -320,6 +318,7 @@ export function SubagentsPanel({
             defaultModel={defaultModel}
             hub={hub}
             key={selected.id}
+            lite
             models={models}
             onModelChange={onModelChange}
             onModelConfigChange={onModelConfigChange}
@@ -339,43 +338,27 @@ export function SubagentsPanel({
   return (
     <div className="flex h-full min-h-0 flex-col bg-canvas">
       <div className="shrink-0 px-4 pt-3 pb-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex rounded-md bg-fill p-0.5">
-            <ViewButton active={display === "board"} onClick={() => setDisplay("board")}>
-              <IconLayoutBoard size={14} stroke={1.7} />
-              Board
-            </ViewButton>
-            <ViewButton active={display === "list"} onClick={() => setDisplay("list")}>
-              <IconList size={14} stroke={1.7} />
-              List
-            </ViewButton>
-          </div>
-          <label className="relative ml-auto min-w-[180px] flex-1 sm:max-w-[320px]">
-            <IconSearch
-              className="-translate-y-1/2 pointer-events-none absolute top-1/2 left-2.5 text-fg-faint"
-              size={14}
-              stroke={1.7}
-            />
-            <input
-              className="h-8 w-full rounded-md bg-fill pr-3 pl-8 text-sm outline-none transition-colors placeholder:text-fg-faint focus:bg-canvas"
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search subagents..."
-              value={query}
-            />
-          </label>
-        </div>
+        <label className="relative block w-full">
+          <IconSearch
+            className="-translate-y-1/2 pointer-events-none absolute top-1/2 left-2.5 text-fg-faint"
+            size={14}
+            stroke={1.7}
+          />
+          <input
+            className="h-8 w-full rounded-md bg-fill pr-3 pl-8 text-sm outline-none transition-colors placeholder:text-fg-faint focus:bg-canvas"
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search subagents..."
+            value={query}
+          />
+        </label>
       </div>
 
       <div className="scroll-thin min-h-0 flex-1 overflow-y-auto">
         {filteredSubagents.length === 0 ? (
-          <div className="flex h-full min-h-[220px] items-center justify-center px-4 text-center text-fg-faint text-sm">
-            No matching subagents.
-          </div>
-        ) : display === "board" ? (
-          <SubagentBoard
-            sessions={filteredSubagents}
-            statsBySession={worktreeStatsBySession}
-            onOpen={openDetail}
+          <EmptyState
+            className="min-h-[220px]"
+            hint="No matching subagents"
+            icon={<IconGridDots size={22} stroke={1.4} />}
           />
         ) : (
           <SubagentList
@@ -390,89 +373,24 @@ export function SubagentsPanel({
   );
 }
 
-function ViewButton({
-  active,
-  children,
-  onClick,
-}: {
-  active: boolean;
-  children: ReactNode;
-  onClick(): void;
-}) {
-  return (
-    <button
-      aria-pressed={active}
-      className={`flex h-7 items-center gap-1.5 rounded px-2 text-xs transition-colors ${
-        active ? "bg-canvas text-fg shadow-sm" : "text-fg-subtle hover:text-fg"
-      }`}
-      onClick={onClick}
-      type="button"
-    >
-      {children}
-    </button>
-  );
-}
-
-function SubagentBoard({
-  sessions,
-  statsBySession,
-  onOpen,
-}: {
-  sessions: AgentSessionInfo[];
-  statsBySession: Record<string, WorkingChangeStats>;
-  onOpen(session: AgentSessionInfo): void;
-}) {
-  return (
-    <div className="grid min-h-full content-start gap-4 bg-fill/30 px-5 py-6 sm:grid-cols-2 xl:grid-cols-3">
-      {sessions.map((session) => (
-        <SubagentCard
-          key={session.id}
-          onOpen={onOpen}
-          session={session}
-          stats={statsBySession[session.id]}
-        />
-      ))}
-    </div>
-  );
-}
-
-function SubagentCard({
+/** Same mark contract as chat rows: Vortex while live, settled status dot otherwise. */
+function SubagentProviderMark({
   session,
-  stats,
-  onOpen,
 }: {
   session: AgentSessionInfo;
-  stats?: WorkingChangeStats | undefined;
-  onOpen(session: AgentSessionInfo): void;
+  models: ModelInfo[];
 }) {
-  return (
-    <button
-      className="flex min-h-20 w-full items-center gap-3 rounded-lg border border-hairline-soft bg-panel px-3 py-3 text-left shadow-composer transition-colors hover:bg-hover"
-      onClick={() => onOpen(session)}
-      title={subagentTitle(session)}
-      type="button"
-    >
-      <span className="flex size-10 shrink-0 items-center justify-center rounded-md bg-fill">
-        <ModusBot
-          active={isSubagentSessionLive(session.status)}
-          busy={isSubagentSessionLive(session.status)}
-          className="size-5"
-          color={subagentColor(session.id)}
-        />
+  if (isSubagentSessionLive(session.status)) {
+    return (
+      <span className="flex size-5 shrink-0 items-center justify-center">
+        <VortexMark className="size-4.5" />
       </span>
-      <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 items-start gap-2">
-          <div className="line-clamp-2 flex-1 font-medium text-fg text-sm">
-            {subagentTitle(session)}
-          </div>
-          {stats && stats.fileCount > 0 ? (
-            <LineDelta added={stats.added} removed={stats.removed} />
-          ) : null}
-        </div>
-        <div className="mt-1 truncate text-fg-faint text-xs">{relativeTime(session.updatedAt)}</div>
-      </div>
-      <span className={`size-2 shrink-0 rounded-full ${groupColor(subagentGroup(session))}`} />
-    </button>
+    );
+  }
+  return (
+    <span className="flex size-5 shrink-0 items-center justify-center">
+      <SubagentSettledDot status={session.status} />
+    </span>
   );
 }
 
@@ -499,12 +417,7 @@ function SubagentList({
             title={subagentTitle(session)}
             type="button"
           >
-            <ModusBot
-              active={isSubagentSessionLive(session.status)}
-              busy={isSubagentSessionLive(session.status)}
-              className="size-5 shrink-0"
-              color={subagentColor(session.id)}
-            />
+            <SubagentProviderMark models={models} session={session} />
             <div className="min-w-0 flex-1">
               <div className="flex min-w-0 items-center gap-2">
                 <div className="truncate font-medium text-fg">{subagentTitle(session)}</div>
@@ -514,23 +427,10 @@ function SubagentList({
               </div>
               <div className="truncate text-fg-faint text-xs">{subagentMeta(session, models)}</div>
             </div>
-            <StatusPill session={session} />
           </button>
         );
       })}
     </div>
-  );
-}
-
-function StatusPill({ session }: { session: AgentSessionInfo }) {
-  const group = subagentGroup(session);
-  return (
-    <span
-      aria-label={groupLabel(group)}
-      className={`size-2 shrink-0 rounded-full ${groupColor(group)}`}
-      role="img"
-      title={groupLabel(group)}
-    />
   );
 }
 
@@ -807,20 +707,6 @@ function subagentMeta(session: AgentSessionInfo, models: ModelInfo[]): string {
   return [session.status, info ? modelIdentityLabel(info) : undefined, relativeTime(session.updatedAt)]
     .filter(Boolean)
     .join(" · ");
-}
-
-function subagentGroup(session: AgentSessionInfo): SubagentGroup {
-  if (isSubagentSessionLive(session.status)) return "running";
-  if (session.status === "blocked") return "blocked";
-  return "ready";
-}
-
-function groupLabel(group: SubagentGroup): string {
-  return group === "running" ? "Running" : group === "blocked" ? "Blocked" : "Ready";
-}
-
-function groupColor(group: SubagentGroup): string {
-  return group === "running" ? "bg-accent" : group === "blocked" ? "bg-danger" : "bg-success";
 }
 
 function relativeTime(value: string): string {
