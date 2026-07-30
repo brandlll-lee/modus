@@ -1,5 +1,7 @@
 import { memo, useEffect, useRef, useState } from "react";
-import { attachDomExcerptChrome, pageLocatorFromAnchor } from "../domExcerptChrome";
+import { IconCrop } from "@tabler/icons-react";
+import { pageLocatorFromAnchor } from "../domExcerptChrome";
+import { attachPdfRectExcerpt } from "../pdfRectExcerpt";
 import type { PreviewEngineProps } from "../registry";
 import { shouldSkipPdfRefit } from "./pdfFit";
 
@@ -37,7 +39,9 @@ function waitForLayoutWidth(el: HTMLElement, signal: { cancelled: boolean }): Pr
  */
 function PdfEngine({ bytes, path, onAddToChat }: PreviewEngineProps) {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
-  const indicatorRef = useRef<HTMLDivElement | null>(null);
+  const chromeRef = useRef<HTMLDivElement | null>(null);
+  const labelRef = useRef<HTMLSpanElement | null>(null);
+  const toolRef = useRef<HTMLButtonElement | null>(null);
   const onAddRef = useRef(onAddToChat);
   const pathRef = useRef(path);
   const [error, setError] = useState<string | undefined>();
@@ -47,8 +51,10 @@ function PdfEngine({ bytes, path, onAddToChat }: PreviewEngineProps) {
 
   useEffect(() => {
     const host = scrollerRef.current;
-    const indicator = indicatorRef.current;
-    if (!host || !indicator) return;
+    const chrome = chromeRef.current;
+    const label = labelRef.current;
+    const tool = toolRef.current;
+    if (!host || !chrome || !label || !tool) return;
     const signal = { cancelled: false };
     let intersection: IntersectionObserver | undefined;
     let lastFitWidth = 0;
@@ -58,15 +64,15 @@ function PdfEngine({ bytes, path, onAddToChat }: PreviewEngineProps) {
 
     const setIndicator = (text: string | undefined): void => {
       if (!text) {
-        indicator.style.display = "none";
-        indicator.textContent = "";
+        chrome.style.display = "none";
+        label.textContent = "";
         return;
       }
-      indicator.textContent = text;
-      indicator.style.display = "";
+      label.textContent = text;
+      chrome.style.display = "";
     };
 
-    const detachChrome = attachDomExcerptChrome(host, {
+    const detachRect = attachPdfRectExcerpt(host, tool, {
       getPath: () => pathRef.current,
       getOnAdd: () => onAddRef.current,
       locatorFromAnchor: pageLocatorFromAnchor,
@@ -217,7 +223,7 @@ function PdfEngine({ bytes, path, onAddToChat }: PreviewEngineProps) {
       clearTimeout(resizeTimer);
       resizeObserver.disconnect();
       intersection?.disconnect();
-      detachChrome();
+      detachRect();
       host.replaceChildren();
       setIndicator(undefined);
     };
@@ -233,16 +239,19 @@ function PdfEngine({ bytes, path, onAddToChat }: PreviewEngineProps) {
 
   return (
     <div className="relative h-full min-h-0">
-      <div
-        className="scroll-thin pdf-scroller h-full overflow-auto bg-canvas p-3"
-        ref={scrollerRef}
-      />
-      <div
-        aria-live="polite"
-        className="pdf-page-indicator"
-        ref={indicatorRef}
-        style={{ display: "none" }}
-      />
+      <div className="scroll-thin pdf-scroller h-full overflow-auto bg-canvas p-3" ref={scrollerRef} />
+      <div className="pdf-page-chrome" ref={chromeRef} style={{ display: "none" }}>
+        <button
+          aria-label="Frame select for Add to Chat"
+          aria-pressed="false"
+          className="pdf-rect-tool"
+          ref={toolRef}
+          type="button"
+        >
+          <IconCrop size={14} stroke={1.5} />
+        </button>
+        <span aria-live="polite" className="pdf-page-chrome__label" ref={labelRef} />
+      </div>
     </div>
   );
 }

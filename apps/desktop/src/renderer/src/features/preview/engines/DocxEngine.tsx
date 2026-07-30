@@ -65,7 +65,7 @@ export default function DocxEngine({ bytes, path, onAddToChat }: PreviewEnginePr
   }
   return (
     <div
-      className="scroll-thin modus-docx-host h-full overflow-auto bg-canvas px-4 py-3 text-fg"
+      className="scroll-thin modus-docx-host preview-excerpt-host h-full overflow-auto bg-canvas px-4 py-3 text-fg"
       ref={hostRef}
     />
   );

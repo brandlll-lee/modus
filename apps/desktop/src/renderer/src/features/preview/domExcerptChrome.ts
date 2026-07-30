@@ -13,6 +13,32 @@ export type DomExcerptChromeOptions = {
   locatorFromAnchor?(anchor: Element): string | undefined;
 };
 
+/** Floating Add-to-Chat control shared by selection and PDF rect excerpt. */
+export function createAddToChatWidget(): HTMLButtonElement {
+  const shortcut =
+    typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform)
+      ? "⌘L"
+      : "Ctrl+L";
+  const widget = document.createElement("button");
+  widget.type = "button";
+  widget.className = "modus-add-to-chat";
+  widget.innerHTML = `<span class="label">Add to Chat</span><span class="hint">${shortcut}</span>`;
+  widget.style.display = "none";
+  widget.style.position = "fixed";
+  widget.style.zIndex = "60";
+  document.body.appendChild(widget);
+  return widget;
+}
+
+export function placeAddToChatWidget(
+  widget: HTMLButtonElement,
+  anchor: { left: number; top: number },
+): void {
+  widget.style.display = "inline-flex";
+  widget.style.top = `${Math.max(8, anchor.top - 32)}px`;
+  widget.style.left = `${Math.min(Math.max(8, anchor.left), window.innerWidth - 140)}px`;
+}
+
 /** Resolve a non-empty text selection that lives inside `host`. */
 export function selectionHitInsideHost(
   host: HTMLElement,
@@ -43,8 +69,8 @@ export function selectionHitInsideHost(
 }
 
 /**
- * Shared “Add to Chat” chrome for any DOM-selectable preview (PDF TextLayer,
- * docx-preview HTML, rendered markdown). Emits `excerpt` context items.
+ * Shared “Add to Chat” chrome for DOM-selectable previews (markdown, docx).
+ * Appearance is native ::selection — no fused-band repaint.
  */
 export function attachDomExcerptChrome(
   host: HTMLElement,
@@ -53,32 +79,19 @@ export function attachDomExcerptChrome(
   let pointerSelecting = false;
   const { getPath, getOnAdd, locatorFromAnchor } = options;
 
-  const shortcut =
-    typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform)
-      ? "⌘L"
-      : "Ctrl+L";
-  const widget = document.createElement("button");
-  widget.type = "button";
-  widget.className = "modus-add-to-chat";
-  widget.innerHTML = `<span class="label">Add to Chat</span><span class="hint">${shortcut}</span>`;
-  widget.style.display = "none";
-  widget.style.position = "fixed";
-  widget.style.zIndex = "60";
-  document.body.appendChild(widget);
+  host.classList.add("preview-excerpt-host");
+  const widget = createAddToChatWidget();
 
   const hit = (): DomExcerptHit | undefined =>
     selectionHitInsideHost(host, locatorFromAnchor);
 
   const syncWidget = (): void => {
     const current = hit();
-    const canAdd = Boolean(current && !pointerSelecting && getOnAdd());
-    if (!canAdd || !current) {
+    if (!current || pointerSelecting || !getOnAdd()) {
       widget.style.display = "none";
       return;
     }
-    widget.style.display = "inline-flex";
-    widget.style.top = `${Math.max(8, current.rect.top - 32)}px`;
-    widget.style.left = `${Math.min(Math.max(8, current.rect.left), window.innerWidth - 140)}px`;
+    placeAddToChatWidget(widget, current.rect);
   };
 
   const emitAdd = (): void => {
@@ -101,7 +114,7 @@ export function attachDomExcerptChrome(
   const onPointerDown = (event: PointerEvent): void => {
     if (event.button === 0) {
       pointerSelecting = true;
-      syncWidget();
+      widget.style.display = "none";
     }
   };
   const onPointerUp = (): void => {
@@ -109,9 +122,7 @@ export function attachDomExcerptChrome(
     syncWidget();
   };
   const onSelectionChange = (): void => {
-    if (!pointerSelecting) {
-      syncWidget();
-    }
+    if (!pointerSelecting) syncWidget();
   };
   const onKeyDown = (event: KeyboardEvent): void => {
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "l") {
@@ -120,12 +131,18 @@ export function attachDomExcerptChrome(
       emitAdd();
     }
   };
+  const onScrollOrResize = (): void => {
+    if (!pointerSelecting) syncWidget();
+  };
 
   widget.addEventListener("mousedown", onWidgetMouseDown);
   host.addEventListener("pointerdown", onPointerDown);
   window.addEventListener("pointerup", onPointerUp);
   document.addEventListener("selectionchange", onSelectionChange);
   window.addEventListener("keydown", onKeyDown);
+  host.addEventListener("scroll", onScrollOrResize, { passive: true });
+  window.addEventListener("scroll", onScrollOrResize, { passive: true, capture: true });
+  window.addEventListener("resize", onScrollOrResize);
 
   return () => {
     widget.removeEventListener("mousedown", onWidgetMouseDown);
@@ -133,6 +150,10 @@ export function attachDomExcerptChrome(
     window.removeEventListener("pointerup", onPointerUp);
     document.removeEventListener("selectionchange", onSelectionChange);
     window.removeEventListener("keydown", onKeyDown);
+    host.removeEventListener("scroll", onScrollOrResize);
+    window.removeEventListener("scroll", onScrollOrResize, true);
+    window.removeEventListener("resize", onScrollOrResize);
+    host.classList.remove("preview-excerpt-host");
     widget.remove();
   };
 }

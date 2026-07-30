@@ -42,7 +42,7 @@ export function MarkdownExcerptPreview({
   }, []);
 
   return (
-    <div className="scroll-thin h-full overflow-auto px-4 py-3" ref={hostRef}>
+    <div className="scroll-thin preview-excerpt-host h-full overflow-auto px-4 py-3" ref={hostRef}>
       <MarkdownMessage content={content} />
     </div>
   );
