@@ -7,6 +7,7 @@ import {
   isMcpToolName,
   toolRenderKind,
   VISUAL_TOOL_NAME,
+  WEB_TOOL_NAMES,
 } from "./tools";
 
 describe("MCP tool UI metadata", () => {
@@ -58,11 +59,20 @@ describe("tool render descriptor (single source of truth)", () => {
 
     expect(getToolUiMeta("todo_write")?.render).toBe("todo");
     expect(getToolUiMeta(FAST_CODEBASE_TOOL_NAME)?.render).toBe("live");
-    expect(getToolUiMeta(FAST_CODEBASE_TOOL_NAME)?.activity).toBeUndefined();
+    expect(getToolUiMeta(FAST_CODEBASE_TOOL_NAME)?.summary).toBeUndefined();
     expect(getToolUiMeta(VISUAL_TOOL_NAME)?.render).toBe("visual");
-    expect(getToolUiMeta(VISUAL_TOOL_NAME)?.hiddenFromTimelineInProfiles).toEqual(["plan"]);
+    expect(getToolUiMeta(VISUAL_TOOL_NAME)?.hiddenFromTimelineInProfiles).toBeUndefined();
     expect(getToolUiMeta("plan_write")?.render).toBe("plan");
     expect(getToolUiMeta("plan_write")?.diffSource).toBeUndefined();
+  });
+
+  it("declares activity labels and counting semantics with the tool metadata", () => {
+    expect(getToolUiMeta("edit")?.activeVerb).toBe("Editing");
+    expect(getToolUiMeta("edit")?.summary?.countBy).toBe("target");
+    expect(getToolUiMeta("bash")?.summary?.countBy).toBe("call");
+    for (const name of WEB_TOOL_NAMES) {
+      expect(getToolUiMeta(name)?.summary).toBeDefined();
+    }
   });
 
   it("defaults unknown, MCP, and plain tools to a flat row", () => {

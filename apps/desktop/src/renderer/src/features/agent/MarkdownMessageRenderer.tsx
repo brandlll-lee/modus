@@ -5,10 +5,9 @@ import { createCodePlugin } from "@streamdown/code";
 import { createMathPlugin } from "@streamdown/math";
 import type { MermaidConfig } from "@streamdown/mermaid";
 import { createMermaidPlugin } from "@streamdown/mermaid";
-import { memo, useContext, useLayoutEffect, useMemo, type ReactNode } from "react";
+import { type ReactNode, useContext, useMemo } from "react";
 import remarkBreaks from "remark-breaks";
 import type {
-  BlockProps,
   Components,
   CustomRenderer,
   CustomRendererProps,
@@ -16,7 +15,6 @@ import type {
   StreamdownProps,
 } from "streamdown";
 import {
-  Block,
   defaultRehypePlugins,
   defaultRemarkPlugins,
   Streamdown,
@@ -27,7 +25,6 @@ import { cn } from "../../lib/cn";
 import { type ThemeMode, useTheme } from "../../lib/theme";
 import { FileRefChip, MarkdownFileCode } from "./FileRefChip";
 import { useMarkdownFileNav } from "./markdownFileNav";
-import { createStreamingTailAnimation } from "./streamingTailAnimation";
 import { normalizeMathDelimiters } from "./normalizeMathDelimiters";
 import { Favicon } from "./toolIcons";
 import { VisualToolCard } from "./VisualToolCard";
@@ -145,25 +142,6 @@ const REHYPE_PLUGINS = [
   rehypeWorkspaceFileLinks,
   defaultRehypePlugins.sanitize,
 ];
-
-const StreamingBlock = memo(function StreamingBlock({
-  content,
-  rehypePlugins,
-  ...props
-}: BlockProps) {
-  const { isAnimating } = useContext(StreamdownContext);
-  const tailAnimation = useMemo(createStreamingTailAnimation, []);
-  const tailPlugin = useMemo(
-    () => tailAnimation.plugin(content, isAnimating),
-    [content, isAnimating, tailAnimation],
-  );
-  const plugins = useMemo<NonNullable<BlockProps["rehypePlugins"]>>(
-    () => [...(rehypePlugins ?? []), tailPlugin],
-    [rehypePlugins, tailPlugin],
-  );
-  useLayoutEffect(() => tailAnimation.commit(content), [content, tailAnimation]);
-  return <Block content={content} rehypePlugins={plugins} {...props} />;
-});
 
 /**
  * Streamdown renders incomplete ```mermaid fences mid-stream; mermaid.parse
@@ -339,7 +317,6 @@ export default function MarkdownMessageRenderer({
 
   return (
     <Streamdown
-      BlockComponent={StreamingBlock}
       className={cn("modus-markdown", className)}
       components={components}
       controls={controls}
@@ -348,9 +325,9 @@ export default function MarkdownMessageRenderer({
       linkSafety={LINK_SAFETY}
       lineNumbers={false}
       mermaid={mermaidProp}
-      mode={streaming ? "streaming" : "static"}
+      mode="streaming"
       normalizeHtmlIndentation
-      parseIncompleteMarkdown={streaming}
+      parseIncompleteMarkdown
       plugins={plugins}
       rehypePlugins={REHYPE_PLUGINS}
       remarkPlugins={REMARK_PLUGINS}

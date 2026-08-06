@@ -1,124 +1,109 @@
 import { Menu } from "@base-ui/react/menu";
 import { IconChevronRight, IconDots } from "@tabler/icons-react";
 import { m } from "motion/react";
-import { memo, type ReactNode, useEffect, useRef, useState } from "react";
-import { ThinkingOrb } from "thinking-orbs";
+import { memo, type ReactNode, useEffect, useId, useState } from "react";
 import type { ModelInfo, PlanRef } from "../../../../shared/contracts";
+import { getToolUiMeta, type ToolSummaryMeta } from "../../../../shared/tools";
 import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
 import { ShinyText } from "../../components/ui/ShinyText";
 import { cn } from "../../lib/cn";
-import { useTheme } from "../../lib/theme";
-import { useSmoothStreamingText } from "../../lib/useSmoothStreamingText";
 import { MessageBlock } from "./MessageBlock";
 import { SubagentRow } from "./SubagentRow";
 import { subagentActivityLabel } from "./subagentUi";
-import type { RunBlockItem, WorkFoldItem } from "./Timeline";
+import type {
+  CompactionBlockItem,
+  GroupedWorkActivityItem,
+  RunBlockItem,
+  ThoughtBlockItem,
+  WorkActivityGroupItem,
+  WorkActivityItem,
+  WorkFoldItem,
+} from "./Timeline";
 import { TodosCard } from "./TodosCard";
 import { ToolCard } from "./ToolCard";
 
-/**
- * One thinking segment. While streaming it auto-expands; once done it folds to
- * "Thought for … s" using wall-clock from thinking.delta timestamps.
- */
 export function ThoughtRow({
   text,
   streaming = false,
   startedAt,
   completedAt,
-}: {
-  text: string;
-  streaming?: boolean;
-  startedAt?: number;
-  completedAt?: number;
+  formatElapsed,
+}: Pick<ThoughtBlockItem, "text" | "streaming" | "startedAt" | "completedAt"> & {
+  formatElapsed(end: number, start: number): string;
 }) {
-  const [open, setOpen] = useState(false);
-  const interactedRef = useRef(false);
+  const [manualOpen, setManualOpen] = useState<boolean>();
+  const open = manualOpen ?? streaming;
+  const contentId = useId();
 
-  useEffect(() => {
-    if (!interactedRef.current) {
-      setOpen(streaming);
-    }
-  }, [streaming]);
-
-  const displayText = useSmoothStreamingText(text, streaming);
-
-  if (!streaming && !text.trim()) {
-    return null;
-  }
-
-  const label = streaming
-    ? "Thinking"
-    : startedAt !== undefined
-      ? thoughtLabel(completedAt ?? startedAt, startedAt)
-      : "Thought";
+  if (!streaming && !text.trim()) return null;
+  let label = "Thought";
+  if (streaming) label = "Thinking";
+  else if (startedAt !== undefined)
+    label = `Thought for ${formatElapsed(completedAt ?? startedAt, startedAt)}`;
 
   return (
     <div className="min-w-0">
       <FoldHeader
         active={streaming}
+        controlsId={contentId}
         label={label}
-        onToggle={() => {
-          interactedRef.current = true;
-          setOpen((value) => !value);
-        }}
+        onToggle={() => setManualOpen(!open)}
         open={open}
       />
-      <CollapsibleMotion open={open} preset="timeline">
+      <CollapsibleMotion id={contentId} open={open} preset="timeline">
         <pre className="mt-2 max-w-full whitespace-pre-wrap text-2xs text-fg-faint leading-relaxed">
-          {displayText}
+          {text}
         </pre>
       </CollapsibleMotion>
     </div>
   );
 }
 
-/** Sub-second → "Thought briefly"; otherwise "Thought for 19 s" / "2 m 5 s". */
-function thoughtLabel(end: number, start: number): string {
-  const seconds = Math.max(0, Math.round((end - start) / 1000));
-  if (seconds < 1) {
-    return "Thought briefly";
-  }
-  if (seconds < 60) {
-    return `Thought for ${seconds} s`;
-  }
-  const minutes = Math.floor(seconds / 60);
-  const rest = seconds % 60;
-  return rest === 0
-    ? `Thought for ${minutes} m`
-    : `Thought for ${minutes} m ${rest} s`;
+/** Single-line tool-style compaction status (ShinyText while running). */
+export function CompactionRow({
+  reason,
+  status,
+  detail,
+}: Pick<CompactionBlockItem, "reason" | "status" | "detail">) {
+  const running = status === "running";
+  const trailing = detail ?? (running ? reason : status === "aborted" ? "aborted" : "ended");
+  const danger = status === "aborted" || status === "error";
+  return (
+    <div className="flex min-w-0 items-center gap-2 text-sm">
+      {running ? (
+        <ShinyText className="shrink-0 font-medium">Compaction</ShinyText>
+      ) : (
+        <span className={cn("shrink-0 font-medium", danger ? "text-danger" : "text-fg-muted")}>
+          Compaction
+        </span>
+      )}
+      <span className="min-w-0 truncate text-fg-faint" title={trailing}>
+        {trailing}
+      </span>
+    </div>
+  );
 }
 
 function FoldHeader({
   active = false,
-  showOrb = false,
+  controlsId,
   label,
   onToggle,
   open,
   trailing,
 }: {
   active?: boolean;
-  /** Live WorkFold only — ThoughtRow must not show the agent orb. */
-  showOrb?: boolean;
+  controlsId?: string;
   label: string;
   onToggle(): void;
   open: boolean;
   /** Far-right actions (settled ⋯). Enables flex-1 so the menu sits at the end. */
   trailing?: ReactNode;
 }) {
-  const [mode] = useTheme();
-
   return (
     <div className="flex min-w-0 items-center gap-1.5">
-      {showOrb ? (
-        <ThinkingOrb
-          aria-label="Working"
-          className="shrink-0"
-          size={20}
-          state="solving"
-          theme={mode === "light" ? "light" : "dark"}
-        />
-      ) : null}
       <button
+        aria-controls={controlsId}
         aria-expanded={open}
         className={cn(
           "group/activity flex min-w-0 max-w-full items-center gap-1.5 rounded-md py-0.5 text-left text-sm text-fg-subtle transition-colors hover:text-fg-muted",
@@ -194,9 +179,133 @@ function FoldMoreActions({ answer, elapsedLabel }: { answer?: string; elapsedLab
   );
 }
 
+function toolTarget(item: Extract<WorkActivityItem, { type: "tool" }>): string | undefined {
+  const key = getToolUiMeta(item.name)?.primaryArgKey;
+  if (!key || !item.args || typeof item.args !== "object" || Array.isArray(item.args))
+    return undefined;
+  const value = (item.args as Record<string, unknown>)[key];
+  return typeof value === "string" || typeof value === "number" ? String(value).trim() : undefined;
+}
+
+function isActivityActive(item: GroupedWorkActivityItem): boolean {
+  if (item.type === "tool") return item.isComplete !== true && item.isError !== true;
+  return item.status === "running";
+}
+
+function activeActivityLabel(item: GroupedWorkActivityItem): string {
+  if (item.type === "compaction") return "Compacting context";
+  const meta = getToolUiMeta(item.name);
+  const target = toolTarget(item);
+  return `${meta?.activeVerb ?? meta?.verb ?? "Running"}${target ? ` ${target}` : ""}`;
+}
+
+function settledActivityLabel(items: GroupedWorkActivityItem[]): string {
+  const buckets = new Map<string, ToolSummaryMeta & { keys: Set<string> }>();
+  let unspecifiedTools = 0;
+  for (const item of items) {
+    if (item.type !== "tool") continue;
+    const summary = getToolUiMeta(item.name)?.summary;
+    if (!summary) {
+      unspecifiedTools += 1;
+      continue;
+    }
+    const bucketKey = `${summary.verb}\0${summary.noun.one}\0${summary.noun.other}`;
+    const bucket = buckets.get(bucketKey) ?? { ...summary, keys: new Set<string>() };
+    bucket.keys.add(summary.countBy === "target" ? (toolTarget(item) ?? item.id) : item.id);
+    buckets.set(bucketKey, bucket);
+  }
+  const parts = Array.from(buckets.values(), ({ verb, noun, keys }) => {
+    const count = keys.size;
+    return `${verb} ${count} ${count === 1 ? noun.one : noun.other}`;
+  });
+  if (unspecifiedTools > 0) {
+    parts.push(`used ${unspecifiedTools} ${unspecifiedTools === 1 ? "tool" : "tools"}`);
+  }
+  const label =
+    parts.join(", ") ||
+    `Completed ${items.length} ${items.length === 1 ? "activity" : "activities"}`;
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+export function workActivityPresentation(items: GroupedWorkActivityItem[]) {
+  const activeItem = items.findLast(isActivityActive);
+  const danger = items.some((item) =>
+    item.type === "tool" ? item.isError === true : item.status === "error",
+  );
+  const label = activeItem ? activeActivityLabel(activeItem) : settledActivityLabel(items);
+  return {
+    label: danger && !activeItem ? `Failed: ${label}` : label,
+    active: !!activeItem,
+  };
+}
+
+function WorkActivityGroup({
+  group,
+  children,
+}: {
+  group: WorkActivityGroupItem;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const contentId = useId();
+  const presentation = workActivityPresentation(group.items);
+  return (
+    <div className="min-w-0">
+      <FoldHeader
+        active={presentation.active}
+        controlsId={contentId}
+        label={presentation.label}
+        onToggle={() => setOpen((value) => !value)}
+        open={open}
+      />
+      <CollapsibleMotion id={contentId} open={open} preset="timeline">
+        <div className="mt-1.5 space-y-2.5">{children}</div>
+      </CollapsibleMotion>
+    </div>
+  );
+}
+
+export function WorkActivityRow({
+  item,
+  formatElapsed,
+  models,
+  onOpenFile,
+  onOpenSubagent,
+  onOpenPlan,
+}: {
+  item: WorkActivityItem;
+  formatElapsed(end: number, start: number): string;
+  models?: ModelInfo[];
+  onOpenFile?(path: string): void;
+  onOpenSubagent?(childSessionId: string): void;
+  onOpenPlan?(plan: PlanRef): void;
+}) {
+  if (item.type === "thought") return <ThoughtRow {...item} formatElapsed={formatElapsed} />;
+  if (item.type === "todos") return <TodosCard {...item} />;
+  if (item.type === "subagent") {
+    return (
+      <SubagentRow
+        {...item}
+        activityLabel={subagentActivityLabel(item.status, item.activity)}
+        modelId={item.model}
+        models={models}
+        onClick={() => onOpenSubagent?.(item.childSessionId)}
+      />
+    );
+  }
+  if (item.type === "compaction") return <CompactionRow {...item} />;
+  return (
+    <ToolCard
+      {...item}
+      {...(onOpenFile ? { onOpenFile } : {})}
+      {...(item.plan && onOpenPlan ? { onOpenPlan, plan: item.plan } : {})}
+    />
+  );
+}
+
 /**
  * Cursor-style turn work fold: one header for the whole run's work.
- * Live → expanded "Working for…"; settled → collapsed "Worked for…".
+ * A live turn mounts open; its authoritative settled transition closes it once.
  */
 export const WorkFold = memo(function WorkFold({
   run,
@@ -216,15 +325,10 @@ export const WorkFold = memo(function WorkFold({
   onOpenPlan?(plan: PlanRef): void;
 }) {
   const active = run.status === "running" || run.status === "blocked";
-  const [open, setOpen] = useState(active);
-  const interactedRef = useRef(false);
+  const [disclosure, setDisclosure] = useState({ active, open: active });
+  const open = disclosure.active === active ? disclosure.open : active;
+  const contentId = useId();
   const [, setTick] = useState(0);
-
-  useEffect(() => {
-    if (!interactedRef.current) {
-      setOpen(active);
-    }
-  }, [active]);
 
   useEffect(() => {
     if (!active) return undefined;
@@ -248,14 +352,10 @@ export const WorkFold = memo(function WorkFold({
   return (
     <div className="min-w-0 text-sm">
       <FoldHeader
-        active={active}
+        controlsId={contentId}
         label={label}
-        onToggle={() => {
-          interactedRef.current = true;
-          setOpen((value) => !value);
-        }}
+        onToggle={() => setDisclosure({ active, open: !open })}
         open={open}
-        showOrb={active}
         trailing={
           !active ? (
             <FoldMoreActions
@@ -265,53 +365,37 @@ export const WorkFold = memo(function WorkFold({
           ) : undefined
         }
       />
-      <CollapsibleMotion open={open} preset="timeline">
-        <div className="mt-0.5 ml-[6px] border-hairline-strong border-l pl-3">
+      <CollapsibleMotion id={contentId} open={open} preset="timeline">
+        <div className="mt-0.5">
           <div className="space-y-2.5 pt-1.5 pb-2">
             {items.map((item) => {
-              if (item.type === "thought") {
+              if (item.type === "work-activity-group") {
                 return (
-                  <ThoughtRow
-                    key={item.id}
-                    streaming={item.streaming ?? false}
-                    text={item.text}
-                    {...(item.startedAt !== undefined ? { startedAt: item.startedAt } : {})}
-                    {...(item.completedAt !== undefined ? { completedAt: item.completedAt } : {})}
-                  />
+                  <WorkActivityGroup group={item} key={item.id}>
+                    {item.items.map((activity) => (
+                      <WorkActivityRow
+                        formatElapsed={formatElapsed}
+                        item={activity}
+                        key={activity.id}
+                        {...(models ? { models } : {})}
+                        {...(onOpenFile ? { onOpenFile } : {})}
+                        {...(onOpenPlan ? { onOpenPlan } : {})}
+                        {...(onOpenSubagent ? { onOpenSubagent } : {})}
+                      />
+                    ))}
+                  </WorkActivityGroup>
                 );
               }
-              if (item.type === "tool") {
+              if (item.type !== "notice" && item.type !== "message") {
                 return (
-                  <ToolCard
-                    args={item.args}
-                    isComplete={item.isComplete ?? false}
-                    isError={item.isError ?? false}
+                  <WorkActivityRow
+                    formatElapsed={formatElapsed}
+                    item={item}
                     key={item.id}
-                    name={item.name}
-                    output={item.output}
-                    {...(onOpenFile ? { onOpenFile } : {})}
-                    {...(item.plan && onOpenPlan ? { onOpenPlan, plan: item.plan } : {})}
-                    {...(item.questionAnswers ? { questionAnswers: item.questionAnswers } : {})}
-                    {...(item.questionRequest ? { questionRequest: item.questionRequest } : {})}
-                    {...(item.questionSkipped !== undefined
-                      ? { questionSkipped: item.questionSkipped }
-                      : {})}
-                  />
-                );
-              }
-              if (item.type === "todos") {
-                return <TodosCard key={item.id} todos={item.todos} updating={item.updating} />;
-              }
-              if (item.type === "subagent") {
-                return (
-                  <SubagentRow
-                    activityLabel={subagentActivityLabel(item.status, item.activity)}
-                    key={item.id}
-                    {...(item.model ? { modelId: item.model } : {})}
                     {...(models ? { models } : {})}
-                    onClick={() => onOpenSubagent?.(item.childSessionId)}
-                    status={item.status}
-                    task={item.task}
+                    {...(onOpenFile ? { onOpenFile } : {})}
+                    {...(onOpenPlan ? { onOpenPlan } : {})}
+                    {...(onOpenSubagent ? { onOpenSubagent } : {})}
                   />
                 );
               }

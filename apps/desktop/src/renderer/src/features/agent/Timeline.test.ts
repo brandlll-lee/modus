@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AgentEvent, PlanRef } from "../../../../shared/contracts";
 import { PLAN_TOOL_NAME, VISUAL_TOOL_NAME } from "../../../../shared/tools";
+import { workActivityPresentation } from "./ActivityGroup";
 import { optimisticUserPromptEvents } from "./agentEventHub";
 import { subagentColor } from "./subagentUi";
 import {
@@ -9,9 +10,10 @@ import {
   buildBlocks,
   formatElapsedVerbose,
   groupTurnWork,
+  groupWorkItems,
   segmentTurns,
-  turnHasLiveStream,
   type TimelineBlock,
+  turnHasLiveStream,
 } from "./Timeline";
 
 function item(id: string, event: AgentEvent) {
@@ -55,53 +57,6 @@ describe("buildBlocks", () => {
     ]);
   });
 
-  it("captures the active run's live phase (tool > thinking > writing, latest wins)", () => {
-    const run = (events: Parameters<typeof buildBlocks>[0]) =>
-      buildBlocks(events).find((block) => block.type === "run");
-    const start = item("1", {
-      type: "run.started",
-      sessionId: "s",
-      runId: "r",
-      delivery: "normal",
-    });
-
-    expect(
-      run([
-        start,
-        item("2", { type: "thinking.delta", sessionId: "s", messageId: "m", delta: "…" }),
-      ]),
-    ).toEqual(expect.objectContaining({ activity: { kind: "thinking" } }));
-
-    expect(
-      run([
-        start,
-        item("2", { type: "tool.started", sessionId: "s", toolCallId: "t", toolName: "read" }),
-      ]),
-    ).toEqual(expect.objectContaining({ activity: { kind: "tool", name: "read" } }));
-
-    expect(
-      run([
-        start,
-        item("2", { type: "message.started", sessionId: "s", messageId: "a", role: "assistant" }),
-        item("3", { type: "message.delta", sessionId: "s", messageId: "a", delta: "answer" }),
-      ]),
-    ).toEqual(expect.objectContaining({ activity: { kind: "writing" } }));
-  });
-
-  it("never tags a settled run with a live activity", () => {
-    const blocks = buildBlocks([
-      item("1", { type: "run.started", sessionId: "s", runId: "r", delivery: "normal" }),
-      item("2", { type: "tool.started", sessionId: "s", toolCallId: "t", toolName: "read" }),
-      item("3", { type: "tool.ended", sessionId: "s", toolCallId: "t", isError: false }),
-      item("4", { type: "run.completed", sessionId: "s", runId: "r" }),
-      // A late stray delta must not re-tag the already-completed run.
-      item("5", { type: "message.delta", sessionId: "s", messageId: "a", delta: "x" }),
-    ]);
-    const run = blocks.find((block) => block.type === "run");
-    expect(run).toEqual(expect.objectContaining({ status: "completed" }));
-    expect((run as { activity?: unknown }).activity).toEqual({ kind: "tool", name: "read" });
-  });
-
   it("replaces tool output on each update (full partialResult)", () => {
     const blocks = buildBlocks([
       item("1", { type: "tool.started", sessionId: "s", toolCallId: "t", toolName: "bash" }),
@@ -116,7 +71,11 @@ describe("buildBlocks", () => {
     ]);
 
     expect(blocks[0]).toEqual(
-      expect.objectContaining({ type: "tool", output: "Waited 12s for subagent\n", isError: false }),
+      expect.objectContaining({
+        type: "tool",
+        output: "Waited 12s for subagent\n",
+        isError: false,
+      }),
     );
   });
 
@@ -171,6 +130,29 @@ describe("buildBlocks", () => {
         plan,
       }),
     ]);
+  });
+
+  it("ignores title-tool partial deltas until tool.started", () => {
+    const delta = {
+      type: "tool.delta" as const,
+      sessionId: "s",
+      toolCallId: "t",
+      toolName: "bash",
+      args: { command: "l" },
+    };
+    expect(buildBlocks([item("1", delta)])).toEqual([]);
+    expect(
+      buildBlocks([
+        item("1", delta),
+        item("2", {
+          type: "tool.started",
+          sessionId: "s",
+          toolCallId: "t",
+          toolName: "bash",
+          args: { command: "ls -la" },
+        }),
+      ])[0],
+    ).toEqual(expect.objectContaining({ args: { command: "ls -la" } }));
   });
 
   it("updates the first visual block when a later visual reuses its visualId", () => {
@@ -374,13 +356,18 @@ describe("buildBlocks", () => {
         delta: "plan",
       }),
       item("4", {
+        type: "thinking.completed",
+        sessionId: "s",
+        messageId: "assistant-1",
+      }),
+      item("5", {
         type: "message.delta",
         sessionId: "s",
         messageId: "assistant-1",
         delta: "answer",
       }),
-      item("5", { type: "message.completed", sessionId: "s", messageId: "assistant-1" }),
-      item("6", { type: "run.completed", sessionId: "s", runId: "r" }),
+      item("6", { type: "message.completed", sessionId: "s", messageId: "assistant-1" }),
+      item("7", { type: "run.completed", sessionId: "s", runId: "r" }),
     ]);
 
     const thought = blocks.find((block) => block.type === "thought");
@@ -395,8 +382,8 @@ describe("buildBlocks", () => {
     expect(thought).not.toEqual(expect.objectContaining({ streaming: true }));
   });
 
-  it("keeps the live thought shimmering while the turn is still running", () => {
-    const blocks = buildBlocks([
+  it("keeps only an unfinished thought streaming", () => {
+    const events = [
       item("1", { type: "run.started", sessionId: "s", runId: "r", delivery: "normal" }),
       item("2", {
         type: "message.started",
@@ -410,11 +397,23 @@ describe("buildBlocks", () => {
         messageId: "assistant-1",
         delta: "thinking hard",
       }),
-    ]);
+    ];
+    const blocks = buildBlocks(events);
 
     expect(blocks.find((block) => block.type === "thought")).toEqual(
       expect.objectContaining({ type: "thought", text: "thinking hard", streaming: true }),
     );
+    expect(
+      buildBlocks([
+        ...events,
+        item("4", {
+          type: "thinking.completed",
+          sessionId: "s",
+          messageId: "assistant-1",
+        }),
+        item("5", { type: "tool.started", sessionId: "s", toolCallId: "t", toolName: "read" }),
+      ]).find((block) => block.type === "thought"),
+    ).toEqual(expect.objectContaining({ streaming: false }));
   });
 
   it("routes orphan thinking deltas to the active assistant message's thought", () => {
@@ -534,6 +533,34 @@ describe("buildBlocks", () => {
         followUp: ["## Skills\n- browser"],
       }),
     ]);
+    expect(blocks.filter((block) => block.type === "notice")).toEqual([]);
+  });
+
+  it("upserts compaction started/ended into one tool-like row", () => {
+    const blocks = buildBlocks([
+      item("1", {
+        type: "compaction.started",
+        sessionId: "s",
+        reason: "threshold",
+      }),
+      item("2", {
+        type: "compaction.ended",
+        sessionId: "s",
+        reason: "threshold",
+        aborted: false,
+        willRetry: false,
+      }),
+    ]);
+    const compaction = blocks.filter((block) => block.type === "compaction");
+    expect(compaction).toHaveLength(1);
+    expect(compaction[0]).toEqual(
+      expect.objectContaining({
+        type: "compaction",
+        reason: "threshold",
+        status: "done",
+        detail: "ended",
+      }),
+    );
     expect(blocks.filter((block) => block.type === "notice")).toEqual([]);
   });
 
@@ -759,7 +786,7 @@ describe("groupTurnWork", () => {
       }),
     );
     if (fold?.type === "work-fold") {
-      expect(fold.items.map((item) => item.type)).toEqual(["thought", "tool", "tool"]);
+      expect(fold.items.map((item) => item.type)).toEqual(["thought", "work-activity-group"]);
       expect(fold.run.runId).toBe("r");
     }
     expect(result[2]).toEqual(
@@ -778,7 +805,7 @@ describe("groupTurnWork", () => {
     const fold = result.find((block) => block.type === "work-fold");
     expect(fold?.type).toBe("work-fold");
     if (fold?.type === "work-fold") {
-      expect(fold.items.map((item) => item.id)).toEqual(["mid", "1"]);
+      expect(fold.items.map((item) => item.id)).toEqual(["mid", "work-activity:1"]);
     }
     expect(result.at(-1)).toEqual(
       expect.objectContaining({ type: "message", id: "final", content: "found it" }),
@@ -796,7 +823,7 @@ describe("groupTurnWork", () => {
     expect(result.map((block) => block.type)).toEqual(["work-fold", "message"]);
     const fold = result[0];
     if (fold?.type === "work-fold") {
-      expect(fold.items.map((item) => item.type)).toEqual(["tool", "todos"]);
+      expect(fold.items[0]).toEqual(expect.objectContaining({ type: "work-activity-group" }));
     }
   });
 
@@ -810,7 +837,7 @@ describe("groupTurnWork", () => {
     }
   });
 
-  it("keeps a steered mid-run user message inside the live fold", () => {
+  it("keeps active assistant text and a steered user message inside the live fold", () => {
     const result = groupTurnWork([
       msg("u1", "go", "user"),
       runningRun("r1"),
@@ -819,14 +846,32 @@ describe("groupTurnWork", () => {
       msg("mid", "ok"),
     ] as Blocks);
 
-    // Steer stays in the fold; assistant after the last work anchor is the
-    // (streaming) final answer and sits outside — same rule as settled turns.
-    expect(result.map((block) => block.type)).toEqual(["message", "work-fold", "message"]);
+    expect(result.map((block) => block.type)).toEqual(["message", "work-fold"]);
     const fold = result[1];
     if (fold?.type === "work-fold") {
-      expect(fold.items.map((item) => item.id)).toEqual(["1", "steer"]);
+      expect(fold.items.map((item) => item.id)).toEqual(["work-activity:1", "steer", "mid"]);
     }
-    expect(result[2]).toEqual(expect.objectContaining({ id: "mid", content: "ok" }));
+  });
+
+  it("does not reparent active assistant text when a later tool arrives", () => {
+    const beforeTool = groupTurnWork([
+      runningRun("r"),
+      tool("1", "read"),
+      msg("mid", "checking"),
+    ] as Blocks);
+    const afterTool = groupTurnWork([
+      runningRun("r"),
+      tool("1", "read"),
+      msg("mid", "checking"),
+      tool("2", "edit"),
+    ] as Blocks);
+
+    const itemIds = (blocks: TimelineBlock[]) => {
+      const fold = blocks.find((block) => block.type === "work-fold");
+      return fold?.type === "work-fold" ? fold.items.map((item) => item.id) : [];
+    };
+    expect(itemIds(beforeTool)).toContain("mid");
+    expect(itemIds(afterTool)).toContain("mid");
   });
 
   it("stops a settled turn at the next user message", () => {
@@ -869,10 +914,7 @@ describe("groupTurnWork", () => {
 
     const fold = result.find((block) => block.type === "work-fold");
     if (fold?.type === "work-fold") {
-      expect(fold.items.map((item) => (item.type === "tool" ? item.name : item.type))).toEqual([
-        "write",
-        "edit",
-      ]);
+      expect(fold.items).toHaveLength(1);
     }
     expect(result.filter((block) => block.type === "work-fold")).toHaveLength(1);
     expect(result.some((block) => block.type === "run")).toBe(false);
@@ -881,6 +923,46 @@ describe("groupTurnWork", () => {
   it("drops a settled empty run with no work and no final text", () => {
     const result = groupTurnWork([msg("u", "hi", "user"), completedRun("r")] as Blocks);
     expect(result.map((block) => block.type)).toEqual(["message"]);
+  });
+});
+
+describe("local work activity groups", () => {
+  it("uses messages as hard boundaries between consecutive activity", () => {
+    const result = groupWorkItems([
+      tool("a", "read"),
+      tool("b", "edit"),
+      msg("boundary"),
+      thought("reasoning"),
+      todos("todo"),
+      tool("question", "ask_user"),
+      tool("plan", PLAN_TOOL_NAME),
+      tool("c", "bash"),
+    ]);
+    expect(result.map((entry) => entry.type).join(",")).toBe(
+      "work-activity-group,message,thought,todos,tool,tool,work-activity-group",
+    );
+  });
+
+  it("summarizes declared target and call counting semantics", () => {
+    const activities = [
+      { ...tool("e1", "edit"), args: { path: "a.ts" } },
+      { ...tool("e2", "edit"), args: { path: "b.ts" } },
+      { ...tool("e3", "edit"), args: { path: "b.ts" } },
+      { ...tool("cmd", "bash"), args: { command: "arbitrary command" } },
+      { ...tool("read", "read"), args: { path: "a.ts" } },
+      { ...tool("search-1", "web_search"), args: { query: "first" } },
+      { ...tool("search-2", "web_search"), args: { query: "second" } },
+      { ...tool("fetch", "web_fetch"), args: { url: "https://example.com" } },
+    ];
+    expect(workActivityPresentation(activities).label).toBe(
+      "Edited 2 files, ran 1 command, read 1 file, ran 2 web searches, fetched 1 page",
+    );
+  });
+
+  it("uses the latest authoritative in-flight item and safely summarizes unknown tools", () => {
+    const activities = [tool("future", "brand_new_tool"), tool("live", "bash", false)];
+    expect(workActivityPresentation(activities).label).toBe("Running");
+    expect(workActivityPresentation([tool("future", "brand_new_tool")]).label).toBe("Used 1 tool");
   });
 });
 
@@ -1014,7 +1096,7 @@ describe("turnHasLiveStream", () => {
       { id: "a1", type: "message", role: "assistant", content: "hi", streaming: true },
     ];
     const [turn] = segmentTurns(blocks, blockRenderKeys(blocks));
-    expect(turnHasLiveStream(turn!)).toBe(true);
+    expect(turn ? turnHasLiveStream(turn) : undefined).toBe(true);
   });
 
   it("is settled when the turn has no in-flight stream or work", () => {
@@ -1023,7 +1105,7 @@ describe("turnHasLiveStream", () => {
       { id: "a1", type: "message", role: "assistant", content: "done" },
     ];
     const [turn] = segmentTurns(blocks, blockRenderKeys(blocks));
-    expect(turnHasLiveStream(turn!)).toBe(false);
+    expect(turn ? turnHasLiveStream(turn) : undefined).toBe(false);
   });
 
   it("is live while a work-fold run is still running", () => {
@@ -1043,6 +1125,6 @@ describe("turnHasLiveStream", () => {
       },
     ];
     const [turn] = segmentTurns(blocks, blockRenderKeys(blocks));
-    expect(turnHasLiveStream(turn!)).toBe(true);
+    expect(turn ? turnHasLiveStream(turn) : undefined).toBe(true);
   });
 });

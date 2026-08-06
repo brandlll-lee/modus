@@ -1,108 +1,57 @@
 import { AnimatePresence, m, useReducedMotion } from "motion/react";
-import { createContext, type ReactNode, useContext, useEffect, useMemo, useRef } from "react";
+import type { ReactNode } from "react";
 import { cn } from "../../lib/cn";
 
 type CollapsibleMotionPreset = "default" | "compact" | "timeline";
-type CollapsibleMotionState = "opening" | "closing";
-
-type CollapsibleMotionContextValue = {
-  notifyLayoutAnimationStart(durationMs: number, state: CollapsibleMotionState): void;
-};
-
-const CollapsibleMotionContext = createContext<CollapsibleMotionContextValue>({
-  notifyLayoutAnimationStart: () => {},
-});
 
 const COLLAPSIBLE_MOTION = {
-  compact: {
-    heightDuration: 0.24,
-    opacityDuration: 0.18,
-    scrollPauseMs: 320,
-  },
-  default: {
-    heightDuration: 0.3,
-    opacityDuration: 0.2,
-    scrollPauseMs: 400,
-  },
-  timeline: {
-    heightDuration: 0.34,
-    opacityDuration: 0.22,
-    scrollPauseMs: 460,
-  },
-} satisfies Record<
-  CollapsibleMotionPreset,
-  { heightDuration: number; opacityDuration: number; scrollPauseMs: number }
->;
+  compact: 0.18,
+  default: 0.2,
+  timeline: 0.22,
+} satisfies Record<CollapsibleMotionPreset, number>;
 
 const COLLAPSIBLE_EASE = [0.22, 1, 0.36, 1] as const;
-
-export function CollapsibleMotionProvider({
-  children,
-  onLayoutAnimationStart,
-}: {
-  children: ReactNode;
-  onLayoutAnimationStart?(durationMs: number, state: CollapsibleMotionState): void;
-}) {
-  const value = useMemo<CollapsibleMotionContextValue>(
-    () => ({
-      notifyLayoutAnimationStart(durationMs, state) {
-        onLayoutAnimationStart?.(durationMs, state);
-      },
-    }),
-    [onLayoutAnimationStart],
-  );
-
-  return (
-    <CollapsibleMotionContext.Provider value={value}>{children}</CollapsibleMotionContext.Provider>
-  );
-}
 
 export function CollapsibleMotion({
   children,
   className,
+  id,
   open,
   preset = "default",
 }: {
   children: ReactNode;
   className?: string;
+  id?: string;
   open: boolean;
   preset?: CollapsibleMotionPreset;
 }) {
   const reduceMotion = useReducedMotion();
-  const firstRenderRef = useRef(true);
-  const { notifyLayoutAnimationStart } = useContext(CollapsibleMotionContext);
-  const config = COLLAPSIBLE_MOTION[preset];
-
-  useEffect(() => {
-    if (firstRenderRef.current) {
-      firstRenderRef.current = false;
-      return;
-    }
-    notifyLayoutAnimationStart(config.scrollPauseMs, open ? "opening" : "closing");
-  }, [config.scrollPauseMs, notifyLayoutAnimationStart, open]);
+  const duration = reduceMotion ? 0 : COLLAPSIBLE_MOTION[preset];
 
   return (
-    <AnimatePresence initial={false}>
-      {open ? (
-        <m.div
-          animate={{ height: "auto", opacity: 1 }}
-          className={cn("overflow-hidden", className)}
-          data-collapsible-motion
-          exit={{ height: 0, opacity: 0 }}
-          initial={{ height: 0, opacity: 0 }}
-          style={{ transformOrigin: "top" }}
-          transition={
-            reduceMotion
-              ? { duration: 0 }
-              : {
-                  height: { duration: config.heightDuration, ease: COLLAPSIBLE_EASE },
-                  opacity: { duration: config.opacityDuration, ease: "easeOut" },
-                }
-          }
-        >
-          {children}
-        </m.div>
-      ) : null}
-    </AnimatePresence>
+    <m.div
+      className={cn("relative overflow-hidden", className)}
+      data-collapsible-motion
+      id={id}
+      layout={reduceMotion ? false : "size"}
+      layoutDependency={open}
+      style={{ transformOrigin: "top" }}
+      transition={{ layout: { duration, ease: COLLAPSIBLE_EASE } }}
+    >
+      <AnimatePresence initial={false} mode="popLayout">
+        {open ? (
+          <m.div
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
+            initial={{ opacity: 0, y: -4 }}
+            layout={reduceMotion ? false : "position"}
+            layoutDependency={open}
+            transition={{ duration, ease: "easeOut" }}
+          >
+            {children}
+          </m.div>
+        ) : null}
+      </AnimatePresence>
+    </m.div>
   );
 }

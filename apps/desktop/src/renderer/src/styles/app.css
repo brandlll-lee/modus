@@ -647,24 +647,6 @@ body {
   }
 }
 
-@keyframes modus-stream-tail-fade-a {
-  from {
-    opacity: 0.62;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
-@keyframes modus-stream-tail-fade-b {
-  from {
-    opacity: 0.62;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
 @layer utilities {
   /**
    * Bottom dissolve on a clipped viewport (fixed max-height + overflow).
@@ -923,10 +905,6 @@ body {
   .effort-energy-stop,
   .effort-energy-thumb {
     transition: none;
-  }
-
-  .modus-markdown [data-sd-animate] {
-    animation: none;
   }
 }
 

@@ -1,8 +1,8 @@
 import { IconAlertCircle, IconCircleDashed, IconListCheck } from "@tabler/icons-react";
-import { m } from "motion/react";
 import { useMemo } from "react";
+import type { AgentEventItem } from "../../../../shared/agent-events";
 import type {
-  AgentEvent,
+  CompactionReason,
   ContextItem,
   MessageContextChip,
   ModelInfo,
@@ -15,16 +15,12 @@ import type {
   SubagentStatus,
   TodoItem,
 } from "../../../../shared/contracts";
-import { toolRenderKind } from "../../../../shared/tools";
-import { ThoughtRow, WorkFold } from "./ActivityGroup";
+import { getToolUiMeta, toolRenderKind } from "../../../../shared/tools";
+import { WorkActivityRow, WorkFold } from "./ActivityGroup";
 import { MessageBlock } from "./MessageBlock";
-import { SubagentRow } from "./SubagentRow";
-import { subagentActivityLabel } from "./subagentUi";
-import { TodosCard } from "./TodosCard";
-import { ToolCard } from "./ToolCard";
 
 type TimelineProps = {
-  agentEvents: Array<{ id: string; event: AgentEvent; createdAt?: string }>;
+  agentEvents: AgentEventItem[];
   precomputedBlocks?: TimelineBlock[];
   /** Session cwd — file chips / markdown file nav resolve against the workspace. */
   cwd?: string | undefined;
@@ -102,8 +98,6 @@ export type ToolBlockItem = {
 export type ThoughtBlockItem = {
   id: string;
   type: "thought";
-  /** Run that produced this thinking segment, when known. */
-  runId?: string;
   text: string;
   /** True while the segment is still being produced — label shimmers, body live. */
   streaming?: boolean;
@@ -111,17 +105,6 @@ export type ThoughtBlockItem = {
   startedAt?: number;
   completedAt?: number;
 };
-
-/**
- * The current in-flight phase of an active run, captured from the authoritative
- * event stream (latest signal wins). It drives the live status label in the
- * turn footer — "Reading files" / "Thinking" / "Writing the response" — and is
- * meaningful only while `status === "running"`.
- */
-export type RunActivity =
-  | { kind: "tool"; name: string }
-  | { kind: "thinking" }
-  | { kind: "writing" };
 
 export type RunBlockItem = {
   id: string;
@@ -132,8 +115,6 @@ export type RunBlockItem = {
   body?: string;
   startedAt: number;
   completedAt?: number;
-  /** Live phase of a still-running turn; ignored once the run settles. */
-  activity?: RunActivity;
   /**
    * The whole turn's aggregated assistant markdown, attached once the run
    * settles. The turn footer is the single copy surface for the answer (there
@@ -149,6 +130,15 @@ type NoticeBlockItem = {
   title: string;
   body: string;
   isError?: boolean;
+};
+
+export type CompactionBlockItem = {
+  id: string;
+  type: "compaction";
+  reason: CompactionReason;
+  status: "running" | "done" | "aborted" | "error";
+  /** Trailing status text (reason while running; ended/aborted/error detail when settled). */
+  detail?: string;
 };
 
 type TodosBlockItem = {
@@ -170,12 +160,24 @@ export type SubagentBlockItem = {
   activity?: SubagentActivity;
 };
 
-/** Block kinds that can live inside a {@link WorkFoldBlockItem}. */
-export type WorkFoldItem =
+export type WorkActivityItem =
   | ThoughtBlockItem
   | ToolBlockItem
   | TodosBlockItem
   | SubagentBlockItem
+  | CompactionBlockItem;
+
+export type GroupedWorkActivityItem = ToolBlockItem | CompactionBlockItem;
+
+export type WorkActivityGroupItem = {
+  id: string;
+  type: "work-activity-group";
+  items: GroupedWorkActivityItem[];
+};
+
+export type WorkFoldItem =
+  | WorkActivityGroupItem
+  | WorkActivityItem
   | NoticeBlockItem
   | MessageBlockItem;
 
@@ -196,6 +198,7 @@ export type TimelineBlock =
   | ThoughtBlockItem
   | RunBlockItem
   | NoticeBlockItem
+  | CompactionBlockItem
   | WorkFoldBlockItem
   | TodosBlockItem
   | SubagentBlockItem;
@@ -207,6 +210,8 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
   const todoToolCallIds = new Set<string>();
   const subagentToolCallIds = new Set<string>();
   const subagentsByChild = new Map<string, SubagentBlockItem>();
+  /** Open compaction row id so started/ended upsert into one tool-like line. */
+  let openCompactionId: string | undefined;
   const questionToolByRequest = new Map<string, string>();
   const visualToolById = new Map<string, ToolBlockItem>();
   const planToolByHash = new Map<string, ToolBlockItem>();
@@ -224,8 +229,6 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
   const thoughtByMessage = new Map<string, ThoughtBlockItem>();
   const assistantSegmentByMessage = new Map<string, MessageBlockItem>();
   const assistantSegmentCountByMessage = new Map<string, number>();
-  let activeThoughtId: string | undefined;
-
   function appendMessageBlock(block: MessageBlockItem): MessageBlockItem {
     blocks.push(block);
     blockById.set(block.id, block);
@@ -278,22 +281,6 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
     assistantSegmentByMessage.set(messageId, segment);
     activeAssistantMessageId = messageId;
     return segment;
-  }
-
-  /**
-   * Record the live phase of the active run from the event currently being
-   * processed. Latest signal wins (events are in order), and only a still-running
-   * run is touched — settled runs no longer surface an activity label. This is
-   * the authoritative feed for the live turn footer's status text.
-   */
-  function setRunActivity(activity: RunActivity): void {
-    if (activeRunId === undefined) {
-      return;
-    }
-    const runBlock = blockById.get(activeRunId);
-    if (runBlock?.type === "run" && runBlock.status === "running") {
-      runBlock.activity = activity;
-    }
   }
 
   function upsertToolBlock(toolCallId: string, toolName: string, args: unknown): ToolBlockItem {
@@ -490,7 +477,6 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
     }
 
     if (event.type === "message.delta") {
-      setRunActivity({ kind: "writing" });
       const block = blockById.get(event.messageId);
       if (block?.type === "message" && block.role === "user") {
         block.content += event.delta;
@@ -505,7 +491,6 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
     }
 
     if (event.type === "thinking.delta") {
-      setRunActivity({ kind: "thinking" });
       // Route to a dedicated thought block (orphan deltas from old logs attach to
       // the active assistant message). Keep thoughts above their sibling answer
       // by splicing in just before the message block when it already exists.
@@ -522,7 +507,6 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
           streaming: true,
           startedAt: eventAt,
           completedAt: eventEndAt,
-          ...(activeRunId !== undefined ? { runId: activeRunId } : {}),
         };
         thoughtByMessage.set(targetId, thought);
         blockById.set(thought.id, thought);
@@ -537,7 +521,15 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
       thought.text += event.delta;
       thought.streaming = true;
       thought.completedAt = eventEndAt;
-      activeThoughtId = thought.id;
+      continue;
+    }
+
+    if (event.type === "thinking.completed") {
+      const thought = thoughtByMessage.get(event.messageId);
+      if (thought) {
+        thought.streaming = false;
+        thought.completedAt = eventAt;
+      }
       continue;
     }
 
@@ -553,32 +545,32 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
     }
 
     if (event.type === "tool.delta") {
-      setRunActivity({ kind: "tool", name: event.toolName });
-      // Live streaming of a tool call before it executes: show the card now and
-      // keep its args fresh so the diff grows in real time.
-      if (toolRenderKind(event.toolName) === "todo") {
+      const deltaKind = toolRenderKind(event.toolName);
+      if (deltaKind === "todo") {
         if (!todoToolCallIds.has(event.toolCallId)) {
           todoToolCallIds.add(event.toolCallId);
           todoUpdatesInFlight += 1;
         }
         continue;
       }
-      if (toolRenderKind(event.toolName) === "subagent") {
+      if (deltaKind === "subagent") {
         subagentToolCallIds.add(event.toolCallId);
         continue;
       }
-      if (toolRenderKind(event.toolName) === "question") {
+      if (deltaKind === "question") {
         activeQuestionToolId = event.toolCallId;
       }
-      if (toolRenderKind(event.toolName) === "plan") {
+      if (deltaKind === "plan") {
         activePlanToolId = event.toolCallId;
       }
-      upsertToolBlock(event.toolCallId, event.toolName, event.args);
+      // Diff/visual bind live partial args; title-facing tools wait for tool.started.
+      if (deltaKind === "diff" || deltaKind === "visual") {
+        upsertToolBlock(event.toolCallId, event.toolName, event.args);
+      }
       continue;
     }
 
     if (event.type === "tool.started") {
-      setRunActivity({ kind: "tool", name: event.toolName });
       // todo_write surfaces through TodosCard snapshots instead of a tool row.
       if (toolRenderKind(event.toolName) === "todo") {
         if (!todoToolCallIds.has(event.toolCallId)) {
@@ -811,13 +803,46 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
       continue;
     }
 
-    if (event.type === "compaction.started" || event.type === "compaction.ended") {
-      blocks.push({
-        body: event.type === "compaction.started" ? event.reason : (event.summary ?? "done"),
-        id,
-        title: event.type.replace(".", " "),
-        type: "notice",
-      });
+    if (event.type === "compaction.started") {
+      const compactionId = `compaction:${id}`;
+      openCompactionId = compactionId;
+      const block: CompactionBlockItem = {
+        id: compactionId,
+        type: "compaction",
+        reason: event.reason,
+        status: "running",
+        detail: event.reason,
+      };
+      blocks.push(block);
+      blockById.set(compactionId, block);
+      continue;
+    }
+
+    if (event.type === "compaction.ended") {
+      const existing = openCompactionId ? blockById.get(openCompactionId) : undefined;
+      const status = event.aborted ? "aborted" : event.failed ? "error" : "done";
+      const detail = event.aborted
+        ? "aborted"
+        : event.failed
+          ? (event.summary ?? "failed")
+          : "ended";
+      if (existing?.type === "compaction") {
+        existing.reason = event.reason;
+        existing.status = status;
+        existing.detail = detail;
+      } else {
+        const compactionId = `compaction:${id}`;
+        const block: CompactionBlockItem = {
+          id: compactionId,
+          type: "compaction",
+          reason: event.reason,
+          status,
+          detail,
+        };
+        blocks.push(block);
+        blockById.set(compactionId, block);
+      }
+      openCompactionId = undefined;
     }
   }
 
@@ -835,18 +860,9 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
     }
   }
 
-  // Finalize thought streaming: only the live thought of a still-running turn
-  // whose answer hasn't begun keeps shimmering ("Thinking"); everything else
-  // settles to a foldable "Thought for Xs".
-  for (const thought of thoughtByMessage.values()) {
-    thought.streaming = false;
-  }
-  if (runStillRunning && activeThoughtId) {
-    const live = blockById.get(activeThoughtId);
-    const sibling = blockById.get(activeThoughtId.slice("thought:".length));
-    const hasAnswer = sibling?.type === "message" && sibling.content.trim().length > 0;
-    if (live?.type === "thought" && !hasAnswer) {
-      live.streaming = true;
+  if (!runStillRunning) {
+    for (const thought of thoughtByMessage.values()) {
+      thought.streaming = false;
     }
   }
 
@@ -955,16 +971,50 @@ function isWorkAnchor(block: TimelineBlock): boolean {
     block.type === "thought" ||
     block.type === "todos" ||
     block.type === "subagent" ||
+    block.type === "compaction" ||
     block.type === "notice"
   );
+}
+
+function isWorkActivity(block: TimelineBlock): block is WorkActivityItem {
+  return (
+    block.type === "tool" ||
+    block.type === "thought" ||
+    block.type === "todos" ||
+    block.type === "subagent" ||
+    block.type === "compaction"
+  );
+}
+
+function isGroupedWorkActivity(item: TimelineBlock): item is GroupedWorkActivityItem {
+  if (item.type === "tool") return getToolUiMeta(item.name)?.groupInTimeline !== false;
+  return item.type === "compaction";
+}
+
+/** Messages, notices, and standalone activities bound local activity folds. */
+export function groupWorkItems(
+  items: Array<WorkActivityItem | NoticeBlockItem | MessageBlockItem>,
+): WorkFoldItem[] {
+  const result: WorkFoldItem[] = [];
+  for (const item of items) {
+    if (!isGroupedWorkActivity(item)) {
+      result.push(item);
+      continue;
+    }
+    const current = result.at(-1);
+    if (current?.type === "work-activity-group") current.items.push(item);
+    else
+      result.push({ id: `work-activity:${item.id}`, type: "work-activity-group", items: [item] });
+  }
+  return result;
 }
 
 /**
  * Fold an entire run's work into one Cursor-style WorkFold.
  *
  * Authority: `run.status` + turn boundary (next run, or next user when settled).
- * Final assistant text = messages after the last work anchor; earlier assistant
- * segments ride inside the fold. Steered user mid-run stays inside the fold.
+ * Settled final text follows the last work anchor. While a run is active its
+ * assistant segments stay in the fold, so later tools cannot reparent them.
  */
 export function groupTurnWork(blocks: TimelineBlock[]): TimelineBlock[] {
   const result: TimelineBlock[] = [];
@@ -1002,6 +1052,7 @@ export function groupTurnWork(blocks: TimelineBlock[]): TimelineBlock[] {
       index += 1;
     }
 
+    const active = run.status === "running" || run.status === "blocked";
     let lastWork = -1;
     for (let j = 0; j < turnContent.length; j += 1) {
       const candidate = turnContent[j];
@@ -1010,7 +1061,7 @@ export function groupTurnWork(blocks: TimelineBlock[]): TimelineBlock[] {
       }
     }
 
-    const items: WorkFoldItem[] = [];
+    const items: Array<WorkActivityItem | NoticeBlockItem | MessageBlockItem> = [];
     const after: TimelineBlock[] = [];
 
     for (let j = 0; j < turnContent.length; j += 1) {
@@ -1019,8 +1070,8 @@ export function groupTurnWork(blocks: TimelineBlock[]): TimelineBlock[] {
 
       if (entry.type === "message" && entry.role === "assistant") {
         if (!entry.content.trim()) continue;
-        if (j > lastWork) after.push(entry);
-        else items.push(entry);
+        if (active || j <= lastWork) items.push(entry);
+        else after.push(entry);
         continue;
       }
 
@@ -1029,20 +1080,19 @@ export function groupTurnWork(blocks: TimelineBlock[]): TimelineBlock[] {
         continue;
       }
 
-      if (isWorkAnchor(entry) || entry.type === "message") {
-        items.push(entry as WorkFoldItem);
+      if (isWorkActivity(entry) || entry.type === "notice" || entry.type === "message") {
+        items.push(entry);
       } else {
         after.push(entry);
       }
     }
 
-    const active = run.status === "running" || run.status === "blocked";
     if (items.length > 0 || active) {
       result.push({
         id: `work-fold:${run.runId}`,
         type: "work-fold",
         run,
-        items,
+        items: groupWorkItems(items),
       });
     }
     result.push(...after);
@@ -1200,16 +1250,7 @@ export function Timeline({
               }
 
               return (
-                <m.div
-                  animate={{ opacity: 1 }}
-                  // Inset from the user bubble/composer frame (Cursor-style): padding
-                  // inside the SAME .chat-column, not a second competing max-width —
-                  // stays a constant 4rem narrower at any pane size, never inverts.
-                  className="w-full px-8"
-                  initial={{ opacity: 0 }}
-                  key={key}
-                  transition={{ duration: 0.15, ease: "easeOut" }}
-                >
+                <div className="w-full px-8" key={key}>
                   {block.type === "work-fold" ? (
                     <WorkFold
                       formatElapsed={formatElapsedVerbose}
@@ -1243,72 +1284,24 @@ export function Timeline({
                       workspaceId={workspaceId}
                     />
                   ) : null}
-                  {block.type === "tool" ? (
-                    <ToolCard
-                      args={block.args}
-                      isComplete={block.isComplete ?? false}
-                      isError={block.isError ?? false}
-                      name={block.name}
+                  {block.type === "notice" ? <Notice {...block} /> : null}
+                  {isWorkActivity(block) ? (
+                    <WorkActivityRow
+                      formatElapsed={formatElapsedVerbose}
+                      item={block}
+                      {...(models ? { models } : {})}
                       {...(onOpenFile ? { onOpenFile } : {})}
                       {...(onOpenPlan ? { onOpenPlan } : {})}
-                      output={block.output}
-                      {...(block.plan ? { plan: block.plan } : {})}
-                      {...(block.questionAnswers ? { questionAnswers: block.questionAnswers } : {})}
-                      {...(block.questionRequest ? { questionRequest: block.questionRequest } : {})}
-                      {...(block.questionSkipped !== undefined
-                        ? { questionSkipped: block.questionSkipped }
-                        : {})}
-                    />
-                  ) : null}
-                  {block.type === "thought" ? (
-                    <ThoughtRow
-                      streaming={block.streaming ?? false}
-                      text={block.text}
-                      {...(block.startedAt !== undefined ? { startedAt: block.startedAt } : {})}
-                      {...(block.completedAt !== undefined
-                        ? { completedAt: block.completedAt }
-                        : {})}
-                    />
-                  ) : null}
-                  {block.type === "notice" ? <Notice {...block} /> : null}
-                  {block.type === "todos" ? (
-                    <TodosCard todos={block.todos} updating={block.updating} />
-                  ) : null}
-                  {block.type === "subagent" ? (
-                    <SubagentCard
-                      block={block}
-                      {...(models ? { models } : {})}
                       {...(onOpenSubagent ? { onOpenSubagent } : {})}
                     />
                   ) : null}
-                </m.div>
+                </div>
               );
             })}
           </section>
         ))}
       </div>
     </div>
-  );
-}
-
-function SubagentCard({
-  block,
-  models,
-  onOpenSubagent,
-}: {
-  block: SubagentBlockItem;
-  models?: ModelInfo[];
-  onOpenSubagent?: (childSessionId: string) => void;
-}) {
-  return (
-    <SubagentRow
-      activityLabel={subagentActivityLabel(block.status, block.activity)}
-      {...(block.model ? { modelId: block.model } : {})}
-      {...(models ? { models } : {})}
-      onClick={() => onOpenSubagent?.(block.childSessionId)}
-      status={block.status}
-      task={block.task}
-    />
   );
 }
 

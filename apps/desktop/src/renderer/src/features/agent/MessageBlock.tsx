@@ -24,7 +24,6 @@ import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
 import { formatClock } from "../../lib/formatClock";
 import { useClipFade } from "../../lib/useClipFade";
-import { useSmoothStreamingText } from "../../lib/useSmoothStreamingText";
 import {
   Composer,
   COMPOSER_RADIUS_CLASS,
@@ -103,7 +102,6 @@ export const MessageBlock = memo(function MessageBlock({
   compactClip = false,
 }: MessageBlockProps) {
   const [editing, setEditing] = useState(false);
-  const displayContent = useSmoothStreamingText(content, streaming);
   // Pause measurement while the edit composer owns the slot — remounting the
   // clip surface must re-run the observer (active flip), not reuse a stale one.
   const { boxRef, contentRef, clipped } = useClipFade(!editing);
@@ -237,7 +235,7 @@ export const MessageBlock = memo(function MessageBlock({
     <div className="min-w-0 max-w-full text-sm leading-relaxed">
       {content ? (
         <MarkdownMessage
-          content={displayContent}
+          content={content}
           cwd={cwd}
           onOpenFile={onOpenFile}
           streaming={streaming}

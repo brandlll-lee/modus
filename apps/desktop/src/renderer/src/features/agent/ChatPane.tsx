@@ -1,4 +1,5 @@
 import { IconArrowDown } from "@tabler/icons-react";
+import { m } from "motion/react";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   AgentMode,
@@ -19,7 +20,6 @@ import type {
   WorkingChangeStats,
   WorkspaceInfo,
 } from "../../../../shared/contracts";
-import { CollapsibleMotionProvider } from "../../components/ui/CollapsibleMotion";
 import { VortexMark } from "../../components/ui/VortexMark";
 import { lookupModel } from "../../lib/modelIdentity";
 import {
@@ -59,8 +59,8 @@ import {
   subagentActivityLabel,
 } from "./subagentUi";
 import { buildVisibleTimelineBlocks, Timeline } from "./Timeline";
-import { WorkingSubagentBar } from "./WorkingSubagentBar";
 import { useAutoScroll } from "./useAutoScroll";
+import { WorkingSubagentBar } from "./WorkingSubagentBar";
 
 /**
  * Full conversation surface bound to one active session.
@@ -535,13 +535,6 @@ export function ChatPane({
   );
   const visibleBlocks = useMemo(() => buildVisibleTimelineBlocks(agentEvents), [agentEvents]);
 
-  useEffect(() => {
-    if (agentEvents.length === 0) {
-      return;
-    }
-    autoScroll.scrollToBottom();
-  }, [agentEvents, autoScroll.scrollToBottom]);
-
   // The latest plan written/updated in this session. Keep the inspector's data
   // current without opening it; only the timeline card's expand action opens it.
   const latestPlan = useMemo<PlanRef | undefined>(() => {
@@ -948,7 +941,7 @@ export function ChatPane({
         </div>
       ) : null}
 
-      <CollapsibleMotionProvider>
+      <>
         <div className="relative flex min-h-0 min-w-0 flex-1">
           {isLite ? null : (
             <ConversationTimeline blocks={visibleBlocks} scrollContainer={scrollContainer} />
@@ -987,10 +980,7 @@ export function ChatPane({
                   isSubagentSessionLive(previewSession.status) ? (
                     <VortexMark className="size-4.5" />
                   ) : (
-                    <SubagentPreviewProviderMark
-                      modelId={previewSession.model}
-                      models={models}
-                    />
+                    <SubagentPreviewProviderMark modelId={previewSession.model} models={models} />
                   )
                 ) : undefined
               }
@@ -1020,7 +1010,7 @@ export function ChatPane({
             </SubagentPreviewSheet>
           ) : null}
         </div>
-      </CollapsibleMotionProvider>
+      </>
 
       {hideComposer ? null : (
         <div className="min-w-0 max-w-full shrink-0 px-4 pb-4">
@@ -1151,15 +1141,16 @@ function ChatViewport({
   contentRef: (el: HTMLElement | null) => void;
 }) {
   return (
-    <div
+    <m.div
       className="scroll-thin min-h-0 min-w-0 max-w-full flex-1 overflow-y-auto overflow-x-clip overscroll-contain [scrollbar-gutter:stable_both-edges]"
+      layoutScroll
       onScroll={onScroll}
       ref={scrollRef}
     >
       <div className="flex min-h-full min-w-0 w-full max-w-full flex-col" ref={contentRef}>
         {children}
       </div>
-    </div>
+    </m.div>
   );
 }
 

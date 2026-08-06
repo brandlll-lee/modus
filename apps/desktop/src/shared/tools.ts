@@ -62,21 +62,26 @@ export type ToolRenderKind =
  */
 export type DiffSource = "edits" | "newFile";
 
+export type ToolSummaryMeta = {
+  verb: string;
+  noun: { one: string; other: string };
+  countBy: "call" | "target";
+};
+
 export type ToolUiMeta = {
   /** Leading row icon. Absent ⇒ the row leads with its verb label, no icon. */
   iconName?: ToolIconName;
   verb: string;
   /** Argument key used to derive the default target label shown after the verb. */
   primaryArgKey?: string;
+  /** Present-tense label while a call is in flight. */
+  activeVerb?: string;
   /** Which renderer card this tool's calls use. Absent ⇒ `flat`. */
   render?: ToolRenderKind;
-  /** Which timeline activity fold this flat tool joins. Absent ⇒ standalone. */
-  activity?: "explore" | "browser" | "shell";
-  /**
-   * Noun this call counts as in the sealed fold digest ("Explored 2 files,
-   * 1 search"). Distinct primary-arg targets count once. Absent ⇒ not counted.
-   */
-  summaryNoun?: string;
+  /** Whether this tool joins local timeline activity groups. Defaults to true. */
+  groupInTimeline?: boolean;
+  /** Declarative completed-call digest; counting semantics come from the tool owner. */
+  summary?: ToolSummaryMeta;
   /** Profiles where the tool is an intermediate artifact and should not create a timeline row. */
   hiddenFromTimelineInProfiles?: ToolProfileName[];
   /** For `render: "diff"` — how to build the diff from the call's arguments. */
@@ -115,7 +120,12 @@ export const BUILTIN_TOOL_CATALOG: ToolCatalogEntry[] = [
     profiles: ["chat", "review", "plan"],
     permission: { danger: "safe" },
     capabilities: ["read"],
-    ui: { verb: "Read", primaryArgKey: "path", activity: "explore", summaryNoun: "file" },
+    ui: {
+      verb: "Read",
+      activeVerb: "Reading",
+      primaryArgKey: "path",
+      summary: { verb: "read", noun: { one: "file", other: "files" }, countBy: "target" },
+    },
   },
   {
     name: "bash",
@@ -125,10 +135,11 @@ export const BUILTIN_TOOL_CATALOG: ToolCatalogEntry[] = [
     capabilities: ["shell", "process"],
     ui: {
       verb: "Ran",
+      activeVerb: "Running",
       primaryArgKey: "command",
       render: "terminal",
       terminalFramed: false,
-      activity: "shell",
+      summary: { verb: "ran", noun: { one: "command", other: "commands" }, countBy: "call" },
     },
   },
   {
@@ -139,9 +150,11 @@ export const BUILTIN_TOOL_CATALOG: ToolCatalogEntry[] = [
     capabilities: ["write"],
     ui: {
       verb: "Edited",
+      activeVerb: "Editing",
       primaryArgKey: "path",
       render: "diff",
       diffSource: "edits",
+      summary: { verb: "edited", noun: { one: "file", other: "files" }, countBy: "target" },
     },
   },
   {
@@ -152,9 +165,11 @@ export const BUILTIN_TOOL_CATALOG: ToolCatalogEntry[] = [
     capabilities: ["write"],
     ui: {
       verb: "Created",
+      activeVerb: "Creating",
       primaryArgKey: "path",
       render: "diff",
       diffSource: "newFile",
+      summary: { verb: "created", noun: { one: "file", other: "files" }, countBy: "target" },
     },
   },
   {
@@ -163,7 +178,7 @@ export const BUILTIN_TOOL_CATALOG: ToolCatalogEntry[] = [
     profiles: ["chat", "review", "plan"],
     permission: { danger: "safe" },
     capabilities: ["read"],
-    ui: { verb: "Grepped", primaryArgKey: "pattern", activity: "explore", summaryNoun: "search" },
+    ui: { verb: "Grepped", activeVerb: "Searching", primaryArgKey: "pattern" },
   },
   {
     name: "find",
@@ -171,7 +186,7 @@ export const BUILTIN_TOOL_CATALOG: ToolCatalogEntry[] = [
     profiles: ["chat", "review", "plan"],
     permission: { danger: "safe" },
     capabilities: ["read"],
-    ui: { verb: "Searched", primaryArgKey: "pattern", activity: "explore", summaryNoun: "search" },
+    ui: { verb: "Searched", activeVerb: "Searching", primaryArgKey: "pattern" },
   },
   {
     name: "ls",
@@ -179,7 +194,7 @@ export const BUILTIN_TOOL_CATALOG: ToolCatalogEntry[] = [
     profiles: ["chat", "review", "plan"],
     permission: { danger: "safe" },
     capabilities: ["read"],
-    ui: { verb: "Listed", primaryArgKey: "path", activity: "explore", summaryNoun: "listing" },
+    ui: { verb: "Listed", activeVerb: "Listing", primaryArgKey: "path" },
   },
 ];
 
@@ -202,22 +217,21 @@ export type TerminalToolName = (typeof TERMINAL_TOOL_NAMES)[number];
 export const TERMINAL_TOOL_UI: Record<TerminalToolName, ToolUiMeta> = {
   terminal_run: {
     verb: "Terminal",
+    activeVerb: "Running",
     primaryArgKey: "command",
     render: "terminal",
     terminalFramed: true,
-    activity: "shell",
+    summary: { verb: "ran", noun: { one: "command", other: "commands" }, countBy: "call" },
   },
   terminal_read: {
     verb: "Read terminal",
+    activeVerb: "Reading terminal",
     primaryArgKey: "terminal_id",
     render: "terminal",
     terminalFramed: true,
-    activity: "shell",
   },
   terminal_list: {
     verb: "Listed terminals",
-    activity: "explore",
-    summaryNoun: "terminal check",
   },
   terminal_write: {
     verb: "Sent input",
@@ -256,7 +270,6 @@ export const VISUAL_TOOL_UI: ToolUiMeta = {
   verb: "Visual",
   primaryArgKey: "title",
   render: "visual",
-  hiddenFromTimelineInProfiles: ["plan"],
 };
 
 /** Agent-facing to-do tool (custom tool registered at runtime). */
@@ -274,6 +287,7 @@ export const PLAN_TOOL_UI: ToolUiMeta = {
   verb: "Plan",
   primaryArgKey: "title",
   render: "plan",
+  groupInTimeline: false,
 };
 
 /** Agent-facing interactive question tool — asks the user, blocks on the answer. */
@@ -286,6 +300,7 @@ export const ASK_USER_TOOL_NAME = "ask_user";
 export const ASK_USER_TOOL_UI: ToolUiMeta = {
   verb: "Asking",
   render: "question",
+  groupInTimeline: false,
 };
 
 /** Agent-facing subagent delegation tool (custom tool registered at runtime). */
@@ -327,15 +342,13 @@ export const WEB_TOOL_UI: Record<WebToolName, ToolUiMeta> = {
     iconName: "globe",
     verb: "Searched the web",
     primaryArgKey: "query",
-    activity: "explore",
-    summaryNoun: "web lookup",
+    summary: { verb: "ran", noun: { one: "web search", other: "web searches" }, countBy: "call" },
   },
   web_fetch: {
     iconName: "favicon",
     verb: "Fetched",
     primaryArgKey: "url",
-    activity: "explore",
-    summaryNoun: "page",
+    summary: { verb: "fetched", noun: { one: "page", other: "pages" }, countBy: "target" },
   },
 };
 
@@ -354,18 +367,14 @@ export const BROWSER_TOOL_UI: Record<BrowserToolName, ToolUiMeta> = {
   browser_tabs: {
     verb: "Browser tabs",
     primaryArgKey: "action",
-    activity: "browser",
-    summaryNoun: "tab action",
   },
   browser_cdp: {
     verb: "Sent CDP",
     primaryArgKey: "method",
-    activity: "browser",
-    summaryNoun: "CDP command",
   },
-  browser_events: { verb: "Read browser events", activity: "browser", summaryNoun: "event drain" },
-  browser_snapshot: { verb: "Captured snapshot", activity: "browser", summaryNoun: "snapshot" },
-  browser_screenshot: { verb: "Captured page", activity: "browser", summaryNoun: "capture" },
+  browser_events: { verb: "Read browser events" },
+  browser_snapshot: { verb: "Captured snapshot" },
+  browser_screenshot: { verb: "Captured page" },
 };
 
 /** Tool names belonging to a profile, derived from a catalog. */
