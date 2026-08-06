@@ -80,6 +80,7 @@ import { reportRendererStartup } from "./startup-report";
  * this is always reserved — the chat can't be crushed to an unreadable sliver.
  */
 const MAIN_MIN_WIDTH = 480;
+const WORKSPACE_GUTTER = 8;
 const loadChatPane = () => import("../features/agent/ChatPane");
 const loadInspector = () => import("../features/inspector/Inspector");
 const loadSettingsPanel = () => import("../features/settings/SettingsPanel");
@@ -718,18 +719,21 @@ export function App() {
   // accounted for. Until the row is measured, allow the panels' own caps.
   const sidebarSpace = sidebarOpen ? sidebarWidth : 0;
   const inspectorSpace = hasSession && inspectorOpen ? inspectorWidth : 0;
+  const workspaceChrome = WORKSPACE_GUTTER * (inspectorSpace > 0 ? 3 : 2);
+  const mainSpace = MAIN_MIN_WIDTH + workspaceChrome;
   const inspectorFits =
-    layoutWidth === 0 || layoutWidth >= sidebarSpace + inspectorWidth + MAIN_MIN_WIDTH;
-  const sidebarFits = layoutWidth === 0 || layoutWidth >= sidebarWidth + MAIN_MIN_WIDTH;
+    layoutWidth === 0 || layoutWidth >= sidebarSpace + inspectorWidth + mainSpace;
+  const sidebarFits =
+    layoutWidth === 0 || layoutWidth >= sidebarWidth + MAIN_MIN_WIDTH + WORKSPACE_GUTTER * 2;
   const responsiveInspectorOpen = hasSession && inspectorOpen && inspectorFits;
   const responsiveSidebarOpen = sidebarOpen && sidebarFits;
   const sidebarMaxWidth =
     layoutWidth > 0
-      ? Math.max(SIDEBAR_MIN_WIDTH, layoutWidth - inspectorSpace - MAIN_MIN_WIDTH)
+      ? Math.max(SIDEBAR_MIN_WIDTH, layoutWidth - inspectorSpace - mainSpace)
       : Number.POSITIVE_INFINITY;
   const inspectorMaxWidth =
     layoutWidth > 0
-      ? Math.max(INSPECTOR_MIN_WIDTH, layoutWidth - sidebarSpace - MAIN_MIN_WIDTH)
+      ? Math.max(INSPECTOR_MIN_WIDTH, layoutWidth - sidebarSpace - mainSpace)
       : Number.POSITIVE_INFINITY;
 
   // When the window (or the other panel) shrinks, pull an over-wide panel back
@@ -820,10 +824,22 @@ export function App() {
       <TooltipProvider>
         <NativeSurfaceProvider>
           <ImageViewerProvider>
-            <div className="app-root flex h-screen flex-col bg-canvas text-fg">
+            <div className="app-root flex h-screen flex-col bg-panel text-fg">
               <MenuBar />
 
-              <div className="flex min-h-0 min-w-0 flex-1 bg-panel" ref={layoutRowRef}>
+              <div
+                className="flex min-h-0 min-w-0 flex-1 bg-panel"
+                ref={layoutRowRef}
+                style={
+                  settingsOpen
+                    ? undefined
+                    : {
+                        gap: WORKSPACE_GUTTER,
+                        padding: WORKSPACE_GUTTER,
+                        paddingLeft: responsiveSidebarOpen ? 0 : WORKSPACE_GUTTER,
+                      }
+                }
+              >
                 {settingsOpen ? (
                   <Suspense fallback={<ModusLoadingFallback />}>
                     <SettingsPanel
@@ -868,8 +884,7 @@ export function App() {
                       workspaces={workspaces}
                     />
 
-                    {/* Vertical seam only — the full-width top hairline lives on MenuBar. */}
-                    <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-hairline-strong border-l bg-canvas">
+                    <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-hairline-strong bg-canvas">
                       <header className="toolbar-row relative flex shrink-0 items-center px-3">
                         <div className="app-no-drag flex min-w-0 flex-1 items-center gap-1.5">
                           <AnimatePresence initial={false}>
@@ -1041,7 +1056,7 @@ export function App() {
                       <Suspense
                         fallback={
                           <div
-                            className="flex min-h-0 min-w-0 shrink-0"
+                            className="flex min-h-0 min-w-0 shrink-0 overflow-hidden rounded-lg border border-hairline-strong bg-canvas"
                             style={{ width: inspectorWidth }}
                           >
                             <ModusLoadingFallback />
@@ -1106,7 +1121,7 @@ export function App() {
  */
 function MenuBar() {
   return (
-    <div className="app-drag flex h-11 shrink-0 items-center border-hairline-strong border-b bg-panel">
+    <div className="app-drag flex h-11 shrink-0 items-center bg-panel">
       <div className="flex flex-1 items-center gap-0.5 pl-2.5">
         <BrandMark />
         <MenuItem>File</MenuItem>

@@ -609,7 +609,8 @@ function BrowserViewport({
 
   return (
     <div className="relative min-h-0 flex-1 bg-canvas">
-      <div className="absolute inset-0" ref={hostRef} />
+      {/* Native WebContentsView is rectangular; keep it inside the rounded shell. */}
+      <div className="absolute inset-x-1 top-0 bottom-1" ref={hostRef} />
       {!tabId ? (
         <EmptyState
           description="输入 URL 以打开页面"

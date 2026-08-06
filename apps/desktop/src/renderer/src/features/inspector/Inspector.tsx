@@ -279,10 +279,7 @@ export function Inspector({
 
   return (
     <m.aside
-      className={cn(
-        "relative flex min-w-0 shrink-0 flex-col overflow-hidden bg-canvas",
-        open && "border-hairline-strong border-l",
-      )}
+      className="relative flex min-w-0 shrink-0 flex-col overflow-hidden rounded-lg border border-hairline-strong bg-canvas"
       style={{ width: panelWidth }}
     >
       {open ? (
