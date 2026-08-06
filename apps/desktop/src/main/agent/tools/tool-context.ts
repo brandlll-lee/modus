@@ -18,12 +18,6 @@ export type AgentToolContext = {
   profile?: ToolProfileName;
   parentSessionId?: string;
   window?: BrowserWindowType;
-  visualDraft?: {
-    ref: string;
-    title: string;
-    kind: "html" | "svg";
-    content: string;
-  };
   /** Persists + pushes an agent event (recordAgentEvent + webContents.send). */
   emit?: EmitAgentEvent;
 };

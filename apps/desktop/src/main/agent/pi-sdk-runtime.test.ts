@@ -121,6 +121,7 @@ vi.mock("./model-service", () => ({
   })),
   getModelThinkingVariant: vi.fn(() => "off"),
   getModelRegistry: vi.fn(() => ({ authStorage: {} })),
+  listModels: vi.fn(() => [{ id: "mock/model" }]),
   listScopedModels: vi.fn(() => [{ model: mocks.model, thinkingLevel: "off" }]),
   modelToId: (model: typeof mocks.model) => `${model.provider}/${model.id}`,
   resolveModelThinking: vi.fn((model: typeof mocks.model, variant?: string) => ({
@@ -279,30 +280,74 @@ describe("PiSdkRuntime", () => {
     expect(toolRegistry.resolveActiveTools("chat")).not.toContain("close_agent");
   });
 
-  it("keeps intermediate plan visuals out of the persisted timeline", async () => {
+  it("re-prompts after threshold compaction so the Modus run continues", async () => {
+    const sessionId = `session-${crypto.randomUUID()}`;
+    const workspaceId = `workspace-${crypto.randomUUID()}`;
+    insertSession(sessionId, workspaceId, join(userData, "missing.jsonl"), "New chat");
+    let promptCalls = 0;
+    const session = createMockPiSession({
+      prompt: vi.fn(async () => {
+        promptCalls += 1;
+        if (promptCalls === 1) {
+          mocks.emitPiEvent({ type: "message_start", message: { role: "assistant" } });
+          mocks.emitPiEvent({
+            type: "message_update",
+            message: { role: "assistant" },
+            assistantMessageEvent: { type: "text_delta", delta: "working" },
+          });
+          mocks.emitPiEvent({ type: "message_end", message: { role: "assistant" } });
+          mocks.emitPiEvent({
+            type: "compaction_start",
+            reason: "threshold",
+          });
+          mocks.emitPiEvent({
+            type: "compaction_end",
+            reason: "threshold",
+            result: { summary: "## Next Steps\n1. Finish", firstKeptEntryId: "e1", tokensBefore: 9 },
+            aborted: false,
+            willRetry: false,
+          });
+          return;
+        }
+        mocks.emitPiEvent({ type: "message_start", message: { role: "assistant" } });
+        mocks.emitPiEvent({
+          type: "message_update",
+          message: { role: "assistant" },
+          assistantMessageEvent: { type: "text_delta", delta: "continued" },
+        });
+        mocks.emitPiEvent({ type: "message_end", message: { role: "assistant" } });
+      }),
+    });
+    mocks.createAgentSession.mockImplementationOnce(async () => ({ session }));
+    const runtime = new PiSdkRuntime();
+
+    await runtime.prompt(createWindowStub(), {
+      context: [],
+      delivery: "normal",
+      message: "long task",
+      sessionId,
+      userMessageId: "local-user-compact-continue",
+    });
+
+    expect(promptCalls).toBe(2);
+    const promptFn = session.prompt as ReturnType<typeof vi.fn>;
+    expect(promptFn.mock.calls[1]?.[0]).toContain("Context was compacted");
+    const types = (
+      getDatabase()
+        .prepare("select type from agent_events where session_id = ? order by created_at asc, rowid asc")
+        .all(sessionId) as Array<{ type: string }>
+    ).map((row) => row.type);
+    expect(types).toContain("compaction.started");
+    expect(types).toContain("compaction.ended");
+    expect(types).toContain("run.completed");
+  });
+
+  it("activates plan_write without visual_write in plan mode", async () => {
     const sessionId = `session-${crypto.randomUUID()}`;
     const workspaceId = `workspace-${crypto.randomUUID()}`;
     insertSession(sessionId, workspaceId, join(userData, "missing.jsonl"), "New chat");
     const session = createMockPiSession({
       prompt: vi.fn(async () => {
-        mocks.emitPiEvent({
-          type: "tool_execution_start",
-          toolCallId: "visual-call",
-          toolName: "visual_write",
-          args: { title: "Flow", kind: "svg", content: "<svg />" },
-        });
-        mocks.emitPiEvent({
-          type: "tool_execution_update",
-          toolCallId: "visual-call",
-          toolName: "visual_write",
-          partialResult: { content: [{ type: "text", text: "visual ready" }] },
-        });
-        mocks.emitPiEvent({
-          type: "tool_execution_end",
-          toolCallId: "visual-call",
-          toolName: "visual_write",
-          isError: false,
-        });
         mocks.emitPiEvent({ type: "message_start", message: { role: "assistant" } });
         mocks.emitPiEvent({
           type: "message_update",
@@ -321,20 +366,15 @@ describe("PiSdkRuntime", () => {
       message: "plan this",
       mode: "plan",
       sessionId,
-      userMessageId: "local-user-plan-visual",
+      userMessageId: "local-user-plan-tools",
     });
 
-    const types = (
-      getDatabase()
-        .prepare("select type from agent_events where session_id = ?")
-        .all(sessionId) as Array<{ type: string }>
-    ).map((event) => event.type);
-    expect(types).not.toContain("tool.started");
-    expect(types).not.toContain("tool.output");
-    expect(types).not.toContain("tool.ended");
     expect(session.setActiveToolsByName).toHaveBeenCalledWith(
-      expect.arrayContaining(["visual_write", "plan_write"]),
+      expect.arrayContaining(["plan_write"]),
     );
+    const setActiveToolsByName = session.setActiveToolsByName as ReturnType<typeof vi.fn>;
+    const activeTools = setActiveToolsByName.mock.calls.at(-1)?.[0] as string[];
+    expect(activeTools).not.toContain("visual_write");
   });
 
   it("task tool returns immediately; wait harvests the child output", async () => {
@@ -1808,7 +1848,7 @@ describe("PiSdkRuntime", () => {
       sessionId,
       title: "Feat",
       overview: "Build the thing.",
-      blocks: [{ type: "markdown", content: "# Feat\n" }],
+      content: "# Feat\n",
       todos: [{ content: "Step one" }, { content: "Step two" }],
     });
     expect(plan.buildStatus).toBe("not_built");
@@ -1868,7 +1908,7 @@ describe("PiSdkRuntime", () => {
       sessionId,
       title: "Feat",
       overview: "o",
-      blocks: [{ type: "markdown", content: "# Feat\n" }],
+      content: "# Feat\n",
       todos: [{ content: "Step one" }],
     });
 

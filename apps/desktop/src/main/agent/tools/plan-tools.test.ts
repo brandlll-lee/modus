@@ -4,12 +4,11 @@ import { join } from "node:path";
 import { Value } from "typebox/value";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentEvent } from "../../../shared/contracts";
-import { PLAN_TOOL_NAME, VISUAL_TOOL_NAME } from "../../../shared/tools";
+import { PLAN_TOOL_NAME } from "../../../shared/tools";
 import { readPlan } from "../../plan/plan-store";
 import { registerPlanTools } from "./plan-tools";
 import { toolRegistry } from "./registry";
 import { type AgentToolContext, runWithAgentToolContext } from "./tool-context";
-import { registerVisualTools } from "./visual-tools";
 
 const testState = vi.hoisted(() => ({ userData: "" }));
 
@@ -21,7 +20,6 @@ vi.mock("electron", () => ({
 
 beforeEach(async () => {
   testState.userData = await mkdtemp(join(tmpdir(), "modus-plan-tool-test-"));
-  registerVisualTools();
   registerPlanTools();
 });
 
@@ -39,18 +37,8 @@ function planTool() {
   return tool;
 }
 
-function visualTool() {
-  const tool = toolRegistry
-    .getCustomToolDefinitions("plan")
-    .find((definition) => definition.name === VISUAL_TOOL_NAME);
-  if (!tool?.execute) {
-    throw new Error("visual_write tool not registered");
-  }
-  return tool;
-}
-
 describe("plan_write", () => {
-  it("writes plan.md from write-like args and persists string todos as PlanTodo items", async () => {
+  it("writes plan.md from markdown content and persists string todos as PlanTodo items", async () => {
     const cwd = "plan-cwd";
     const events: AgentEvent[] = [];
     const context: AgentToolContext = {
@@ -61,41 +49,20 @@ describe("plan_write", () => {
       emit: (event) => events.push(event),
     };
 
-    const result = await runWithAgentToolContext(context, async () => {
-      await visualTool().execute(
-        "visual-call",
-        {
-          title: "请求流程",
-          kind: "html",
-          content: '<button type="button">查看请求流程</button>',
-        },
-        new AbortController().signal,
-        undefined,
-        { cwd } as Parameters<ReturnType<typeof visualTool>["execute"]>[4],
-      );
-      return planTool().execute(
+    const result = await runWithAgentToolContext(context, async () =>
+      planTool().execute(
         "plan-call",
         {
           title: "Plan Tool",
           overview: "Use constrained write semantics.",
           todos: ["Update the schema", "Reuse the diff card"],
-          blocks: [
-            {
-              type: "markdown",
-              content: '# Plan Tool\n\n```ts\nconst path = "C:\\\\Users\\\\ASUS";\n```\n',
-            },
-            {
-              type: "visual",
-              visualRef: "visual-call",
-              fallback: "浏览器请求 POST /api/realtime/token；server.ts 保留 OPENAI_API_KEY。",
-            },
-          ],
+          content: '# Plan Tool\n\n```ts\nconst path = "C:\\\\Users\\\\ASUS";\n```\n',
         },
         new AbortController().signal,
         undefined,
         { cwd } as Parameters<ReturnType<typeof planTool>["execute"]>[4],
-      );
-    });
+      ),
+    );
 
     expect(result.content[0]?.type).toBe("text");
     const plan = readPlan(join(testState.userData, "plans"), "session");
@@ -106,14 +73,12 @@ describe("plan_write", () => {
       "Update the schema",
       "Reuse the diff card",
     ]);
-    expect(plan?.blocks[1]).toEqual({
-      type: "visual",
-      title: "请求流程",
-      kind: "html",
-      content: '<button type="button">查看请求流程</button>',
-      fallback: "浏览器请求 POST /api/realtime/token；server.ts 保留 OPENAI_API_KEY。",
-    });
-    expect(context.visualDraft).toBeUndefined();
+    expect(plan?.blocks).toEqual([
+      {
+        type: "markdown",
+        content: '# Plan Tool\n\n```ts\nconst path = "C:\\\\Users\\\\ASUS";\n```',
+      },
+    ]);
     expect(events).toEqual([
       expect.objectContaining({
         type: "plan.updated",
@@ -130,38 +95,23 @@ describe("plan_write", () => {
       title: "Plan Tool",
       overview: "Use constrained write semantics.",
       todos: ["Update the schema"],
-      blocks: [
-        { type: "markdown", content: "# Plan\n" },
-        {
-          type: "visual",
-          visualRef: "visual-call",
-          fallback: "Request flow.",
-        },
-      ],
+      content: "# Plan\n",
     };
     expect(Value.Check(schema, valid)).toBe(true);
     expect(Value.Check(schema, { ...valid, unexpected: "extra data" })).toBe(false);
     expect(
       Value.Check(schema, {
         ...valid,
-        blocks: [
-          {
-            type: "visual",
-            title: "Flow",
-            kind: "svg",
-            content: "<svg />",
-            fallback: "Request flow.",
-          },
-        ],
+        blocks: [{ type: "markdown", content: "# Plan\n" }],
       }),
     ).toBe(false);
   });
 
-  it("rejects plans without exactly one current visual_write reference", async () => {
+  it("rejects plans without a workspace/session context", async () => {
     const context: AgentToolContext = {
-      workspaceId: "workspace",
+      workspaceId: "",
       cwd: "plan-cwd",
-      sessionId: "session",
+      sessionId: "",
       profile: "plan",
     };
     await expect(
@@ -172,13 +122,13 @@ describe("plan_write", () => {
             title: "Plan Tool",
             overview: "Use constrained write semantics.",
             todos: ["Update the schema"],
-            blocks: [{ type: "markdown", content: "# Plan\n" }],
+            content: "# Plan\n",
           },
           new AbortController().signal,
           undefined,
           { cwd: "plan-cwd" } as Parameters<ReturnType<typeof planTool>["execute"]>[4],
         ),
       ),
-    ).rejects.toThrow("Plan must reference exactly one visual_write result.");
+    ).rejects.toThrow("No active Modus workspace for this plan.");
   });
 });

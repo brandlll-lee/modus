@@ -109,20 +109,73 @@ describe("normalizePiEvent", () => {
     ).toEqual([]);
   });
 
-  it("omits absent optional compaction summary fields", () => {
+  it("maps compaction_end with reason, willRetry, and optional summary preview", () => {
     expect(
       normalizePiEvent(
         "session-1",
         event({
           type: "compaction_end",
+          reason: "threshold",
           aborted: false,
+          willRetry: false,
+          result: { summary: "  ## Goal\nKeep going  ", firstKeptEntryId: "e1", tokensBefore: 1 },
         }),
       ),
     ).toEqual([
       {
         type: "compaction.ended",
         sessionId: "session-1",
+        reason: "threshold",
         aborted: false,
+        willRetry: false,
+        summary: "## Goal Keep going",
+      },
+    ]);
+  });
+
+  it("omits absent optional compaction summary fields", () => {
+    expect(
+      normalizePiEvent(
+        "session-1",
+        event({
+          type: "compaction_end",
+          reason: "overflow",
+          aborted: false,
+          willRetry: true,
+        }),
+      ),
+    ).toEqual([
+      {
+        type: "compaction.ended",
+        sessionId: "session-1",
+        reason: "overflow",
+        aborted: false,
+        willRetry: true,
+      },
+    ]);
+  });
+
+  it("marks failed compaction when PI reports errorMessage", () => {
+    expect(
+      normalizePiEvent(
+        "session-1",
+        event({
+          type: "compaction_end",
+          reason: "threshold",
+          aborted: false,
+          willRetry: false,
+          errorMessage: "Auto-compaction failed: boom",
+        }),
+      ),
+    ).toEqual([
+      {
+        type: "compaction.ended",
+        sessionId: "session-1",
+        reason: "threshold",
+        aborted: false,
+        willRetry: false,
+        failed: true,
+        summary: "Auto-compaction failed: boom",
       },
     ]);
   });
@@ -156,6 +209,16 @@ describe("normalizePiEvent", () => {
         }),
       ),
     ).toEqual([{ type: "thinking.delta", sessionId: "session-1", messageId: id, delta: "plan" }]);
+
+    expect(
+      normalize(
+        event({
+          type: "message_update",
+          message: { role: "assistant", content: [] },
+          assistantMessageEvent: { type: "thinking_end", content: "plan" },
+        }),
+      ),
+    ).toEqual([{ type: "thinking.completed", sessionId: "session-1", messageId: id }]);
 
     expect(
       normalize(

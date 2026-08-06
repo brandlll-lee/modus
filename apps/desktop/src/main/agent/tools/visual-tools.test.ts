@@ -4,15 +4,12 @@ import { toolRegistry } from "./registry";
 import { registerVisualTools } from "./visual-tools";
 
 describe("registerVisualTools", () => {
-  it("registers visual_write for chat and plan but keeps plan drafts off the timeline", () => {
+  it("registers visual_write for chat only", () => {
     registerVisualTools();
 
     expect(toolRegistry.resolveActiveTools("chat")).toContain(VISUAL_TOOL_NAME);
     expect(toolRegistry.resolveActiveTools("review")).not.toContain(VISUAL_TOOL_NAME);
-    expect(toolRegistry.resolveActiveTools("plan")).toContain(VISUAL_TOOL_NAME);
-    expect(toolRegistry.getEntry(VISUAL_TOOL_NAME)?.ui.hiddenFromTimelineInProfiles).toEqual([
-      "plan",
-    ]);
+    expect(toolRegistry.resolveActiveTools("plan")).not.toContain(VISUAL_TOOL_NAME);
   });
 
   it("keeps visual_write safe but mutating", () => {

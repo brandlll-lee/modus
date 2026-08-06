@@ -17,6 +17,7 @@ import type {
   UpdateSubagentInput,
 } from "../../shared/contracts";
 import { normalizeSkillName, parseFrontmatter } from "../skills/skills-config";
+import { listModels } from "./model-service";
 
 const USER_AGENT_FAMILIES = [".codex", ".claude", ".cursor", ".modus"] as const;
 const WORKSPACE_AGENT_FAMILIES = [".codex", ".claude", ".cursor", ".modus"] as const;
@@ -165,13 +166,31 @@ export function listSubagents(cwd: string, home: string = homedir()): SubagentIn
   return loadSubagentsForSettings(cwd, home).map(toSubagentInfo);
 }
 
-export function resolveSubagentsPrompt(cwd: string): string {
+function composerModelsForPrompt(): Array<{ id: string; name: string }> {
+  try {
+    return listModels().map((model) => ({ id: model.id, name: model.name }));
+  } catch {
+    return [];
+  }
+}
+
+export function resolveSubagentsPrompt(
+  cwd: string,
+  models: ReadonlyArray<{ id: string; name: string }> = composerModelsForPrompt(),
+): string {
   const subagents = loadWorkspaceSubagents(cwd);
+  const modelLines = [
+    "### Available models",
+    "Optional `task.model` must be an exact catalog id from this composer list; omit to inherit the parent model.",
+    ...models.map((model) => `- ${model.id} — ${model.name}`),
+  ];
   if (subagents.length === 0) {
     return [
       "## Subagents",
       "No configured subagents are available. Use `task` without the `subagent` field for generic delegation; do not invent subagent names.",
       "`task` starts a child and returns immediately; collect results with `wait` in the same turn — do not block inside `task`.",
+      "",
+      ...modelLines,
     ].join("\n");
   }
   const lines = [
@@ -193,6 +212,8 @@ export function resolveSubagentsPrompt(cwd: string): string {
         ? `- ${agent.name}: ${agent.description} (${flags.join(", ")})`
         : `- ${agent.name}: (${flags.join(", ")})`;
     }),
+    "",
+    ...modelLines,
   ];
   const kept: string[] = [];
   let used = 0;

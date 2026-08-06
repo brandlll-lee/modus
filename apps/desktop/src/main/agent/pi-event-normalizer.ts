@@ -79,6 +79,14 @@ function stringify(value: unknown): string {
   return JSON.stringify(value, null, 2);
 }
 
+/** Short preview for timeline; full summary stays in the PI session entry. */
+function compactionSummaryPreview(summary: string | undefined): string | undefined {
+  if (!summary) return undefined;
+  const trimmed = summary.trim().replace(/\s+/g, " ");
+  if (!trimmed) return undefined;
+  return trimmed.length > 120 ? `${trimmed.slice(0, 117)}…` : trimmed;
+}
+
 type StreamingToolCall = { id: string; name: string; arguments: Record<string, unknown> };
 
 /**
@@ -162,6 +170,15 @@ export function normalizePiEvent(
           },
         ];
       }
+      if (event.assistantMessageEvent.type === "thinking_end") {
+        return [
+          {
+            type: "thinking.completed",
+            sessionId,
+            messageId: messageId(event.message, "assistant", state),
+          },
+        ];
+      }
       // Streaming tool call: surface the partial call (id + name + best-effort
       // parsed args) so the tool card appears the instant the model starts
       // emitting it, and its diff grows live as arguments stream. pi parses the
@@ -238,17 +255,23 @@ export function normalizePiEvent(
       ];
     case "compaction_start":
       return [{ type: "compaction.started", sessionId, reason: event.reason }];
-    case "compaction_end":
-      return event.errorMessage
-        ? [
-            {
-              type: "compaction.ended",
-              sessionId,
-              aborted: event.aborted,
-              summary: event.errorMessage,
-            },
-          ]
-        : [{ type: "compaction.ended", sessionId, aborted: event.aborted }];
+    case "compaction_end": {
+      const failed = Boolean(event.errorMessage);
+      const summary = event.errorMessage
+        ? event.errorMessage
+        : compactionSummaryPreview(event.result?.summary);
+      return [
+        {
+          type: "compaction.ended",
+          sessionId,
+          reason: event.reason,
+          aborted: event.aborted,
+          willRetry: event.willRetry,
+          ...(failed ? { failed: true } : {}),
+          ...(summary ? { summary } : {}),
+        },
+      ];
+    }
     case "auto_retry_start":
       // The runtime hit a transient error and will retry — the turn is still
       // working. Report it as an authoritative `retry` status (drives the

@@ -2,7 +2,6 @@ import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent
 import { type Static, Type } from "typebox";
 import { VISUAL_TOOL_NAME, VISUAL_TOOL_UI } from "../../../shared/tools";
 import { toolRegistry } from "./registry";
-import { resolveAgentToolContext } from "./tool-context";
 
 const visualParams = Type.Object({
   visualId: Type.Optional(
@@ -38,40 +37,22 @@ const visualTool: ToolDefinition<typeof visualParams> = defineTool({
   name: VISUAL_TOOL_NAME,
   label: "Stage / update visual",
   description:
-    "Stage a Plan visualRef or update an existing chat visual via visualId. " +
-    "Channel for new live chat visuals: see response_formatting (fenced html/svg).",
+    "Update an existing chat visual via visualId. Channel for new live chat visuals: see " +
+    "response_formatting (fenced html/svg).",
   promptSnippet:
-    "visual_write(title, kind, content, visualId?) — Plan visualRef, or chat update via visualId. New live chat visuals: fenced html/svg per response_formatting.",
+    "visual_write(title, kind, content, visualId?) — update an existing chat visual via visualId. " +
+    "New live chat visuals: fenced html/svg per response_formatting.",
   promptGuidelines: [
     "Channel selection for new chat visuals is defined in response_formatting — do not restate it here.",
-    "Use this tool in Plan Mode to stage a visualRef for plan_write, or in chat to update an existing visual via visualId.",
+    "Use this tool in chat to update an existing visual via visualId.",
     ...VISUAL_AUTHORING_GUIDELINES,
     "Prefer HTML with inline CSS/JS for operable models (sliders, toggles, live calculations). Use SVG only for a small static relationship inset — never as a full-page architecture poster standing in for the primary visual.",
     "For charts, label axes, units, ticks, and legends clearly.",
     "When changing an existing visual in this session, reuse its visualId and send the full updated HTML/SVG.",
-    "Return complete HTML/SVG in content. Plan Mode passes the returned visualRef to plan_write.",
+    "Return complete HTML/SVG in content.",
   ],
   parameters: visualParams,
-  execute: async (toolCallId, params: Static<typeof visualParams>, _signal, _onUpdate, ctx) => {
-    const context = resolveAgentToolContext(ctx.cwd);
-    if (context.profile === "plan") {
-      const ref = params.visualId?.trim() || toolCallId;
-      context.visualDraft = {
-        ref,
-        title: params.title,
-        kind: params.kind,
-        content: params.content,
-      };
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Plan visual ready. Reference it as visualRef "${ref}" in plan_write.`,
-          },
-        ],
-        details: { title: params.title, kind: params.kind, visualRef: ref },
-      };
-    }
+  execute: async (_toolCallId, params: Static<typeof visualParams>) => {
     return {
       content: [{ type: "text", text: `Rendered visual: ${params.title}` }],
       details: { title: params.title, kind: params.kind },
@@ -91,7 +72,7 @@ export function registerVisualTools(): void {
   toolRegistry.registerTool({
     entry: {
       name: VISUAL_TOOL_NAME,
-      profiles: ["chat", "plan"],
+      profiles: ["chat"],
       permission: { danger: "safe" },
       capabilities: ["write"],
       readOnly: false,

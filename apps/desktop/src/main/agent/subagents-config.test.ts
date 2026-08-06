@@ -104,13 +104,14 @@ describe("loadWorkspaceSubagents", () => {
   });
 
   it("renders an empty manifest that prevents invented subagent names", () => {
-    const prompt = resolveSubagentsPrompt(cwd);
+    const prompt = resolveSubagentsPrompt(cwd, [{ id: "openai/gpt-5.5", name: "GPT 5.5" }]);
 
     expect(prompt).toContain("No configured subagents are available");
     expect(prompt).toContain("without the `subagent` field");
     expect(prompt).toContain("do not invent subagent names");
     expect(prompt).toContain("returns immediately");
     expect(prompt).toContain("`wait`");
+    expect(prompt).toContain("openai/gpt-5.5");
   });
 
   it("creates, updates, deletes, and renders the manifest without bodies", () => {

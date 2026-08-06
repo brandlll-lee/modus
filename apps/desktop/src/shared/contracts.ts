@@ -57,6 +57,9 @@ export type ContextUsageInfo = {
   percent: number | null;
 };
 
+/** Why PI started/finished an auto or manual compaction (authoritative from the SDK). */
+export type CompactionReason = "manual" | "threshold" | "overflow";
+
 export type AgentRunInfo = {
   id: string;
   sessionId: string;
@@ -283,6 +286,7 @@ export type AgentEvent =
   | { type: "message.delta"; sessionId: string; messageId: string; delta: string }
   | { type: "message.completed"; sessionId: string; messageId: string }
   | { type: "thinking.delta"; sessionId: string; messageId: string; delta: string }
+  | { type: "thinking.completed"; sessionId: string; messageId: string }
   | {
       type: "tool.started";
       sessionId: string;
@@ -323,8 +327,19 @@ export type AgentEvent =
       skipped: boolean;
     }
   | { type: "queue.updated"; sessionId: string; steering: string[]; followUp: string[] }
-  | { type: "compaction.started"; sessionId: string; reason: string }
-  | { type: "compaction.ended"; sessionId: string; summary?: string; aborted: boolean }
+  | { type: "compaction.started"; sessionId: string; reason: CompactionReason }
+  | {
+      type: "compaction.ended";
+      sessionId: string;
+      reason: CompactionReason;
+      aborted: boolean;
+      /** PI overflow recovery continues the same prompt; threshold does not. */
+      willRetry: boolean;
+      /** True when PI reported errorMessage (failed compact). */
+      failed?: boolean;
+      /** Error text, or a short preview of the compaction summary. */
+      summary?: string;
+    }
   | { type: "context.updated"; sessionId: string; usage: ContextUsageInfo }
   | { type: "review.started"; sessionId: string; reviewId: string }
   | { type: "review.completed"; sessionId: string; review: AgentReviewResult }
@@ -1390,16 +1405,8 @@ export type PlanTodo = { id: string; content: string; status: "pending" | "compl
  */
 export type PlanBuildStatus = "not_built" | "building" | "built";
 
-export type PlanBlock =
-  | { type: "markdown"; content: string }
-  | {
-      type: "visual";
-      title: string;
-      kind: "html" | "svg";
-      content: string;
-      /** Textual source of truth used by the executor when the visual is not rendered. */
-      fallback: string;
-    };
+/** Markdown segment of a plan body. New writes store a single markdown block. */
+export type PlanBlock = { type: "markdown"; content: string };
 
 export type PlanRef = {
   /** Stable id of the owning session. */
@@ -1413,9 +1420,9 @@ export type PlanRef = {
   hash: string;
   workspaceId: string;
   sessionId: string;
-  /** Ordered presentation blocks shown in the timeline and Plan panel. */
+  /** Markdown presentation blocks (normalized; legacy visual blocks are projected to text). */
   blocks: PlanBlock[];
-  /** Markdown projection used as the executor's non-visual source of truth. */
+  /** Markdown plan body — executor source of truth (`plan.md`). */
   content: string;
   /** Structured task list used by the approval/build flow. */
   todos: PlanTodo[];

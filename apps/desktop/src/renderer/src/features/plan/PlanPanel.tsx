@@ -3,7 +3,6 @@ import { memo } from "react";
 import type { PlanRef } from "../../../../shared/contracts";
 import { EmptyState } from "../../components/ui/Panel";
 import { MarkdownMessage } from "../agent/MarkdownMessage";
-import { VisualToolCard } from "../agent/VisualToolCard";
 
 /** Read-only Plan document shown in the Inspector. */
 export const PlanPanel = memo(function PlanPanel({ plan }: { plan: PlanRef | undefined }) {
@@ -28,24 +27,11 @@ export const PlanPanel = memo(function PlanPanel({ plan }: { plan: PlanRef | und
       </div>
 
       <div className="scroll-thin min-h-0 flex-1 overflow-y-auto px-[clamp(1.5rem,6%,4rem)] py-7">
-        <div className="mx-auto w-full max-w-[920px] space-y-8">
-          <h1 className="mx-auto w-full max-w-[760px] font-bold text-[2rem] text-fg leading-tight tracking-[-0.03em]">
+        <div className="mx-auto w-full max-w-[760px] space-y-8">
+          <h1 className="font-bold text-[2rem] text-fg leading-tight tracking-[-0.03em]">
             {plan.title}
           </h1>
-          {plan.blocks.map((block) =>
-            block.type === "markdown" ? (
-              <div
-                className="mx-auto w-full max-w-[760px]"
-                key={`${plan.hash}:markdown:${block.content}`}
-              >
-                <MarkdownMessage className="modus-plan-markdown" content={block.content} />
-              </div>
-            ) : (
-              <div className="w-full" key={`${plan.hash}:visual:${block.title}:${block.content}`}>
-                <VisualToolCard args={block} isComplete />
-              </div>
-            ),
-          )}
+          <MarkdownMessage className="modus-plan-markdown" content={plan.content} />
         </div>
       </div>
     </div>

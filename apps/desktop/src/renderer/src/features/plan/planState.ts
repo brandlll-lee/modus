@@ -2,7 +2,7 @@ import type { PlanBuildStatus, PlanRef } from "../../../../shared/contracts";
 
 /**
  * The concise instruction sent when the user approves the session plan. The
- * internal plan.md contains Markdown plus every visual block's textual fallback.
+ * internal plan.md is the Markdown source of truth for execution.
  */
 export function buildPlanMessage(plan: PlanRef): string {
   const todoLines = plan.todos.map((todo, index) => `${index + 1}. ${todo.content}`).join("\n");

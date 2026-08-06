@@ -104,7 +104,8 @@ import { registerWebTools } from "./tools/web-tools";
  * to emit one dense paragraph (single newlines collapse to spaces in Markdown).
  * This mirrors the structured-output guidance Codex/ChatGPT use.
  */
-const RESPONSE_FORMAT_GUIDANCE = `<response_formatting>
+/** Markdown hygiene shared by every turn (system prompt). */
+const RESPONSE_FORMAT_BASE = `<response_formatting>
 Format substantive answers as clean GitHub-flavored Markdown so they render well in the UI:
 - Separate paragraphs with a blank line. Do not write one long wall of text.
 - Put numbered or bulleted items on their own lines (blank line before a new \`1.\`/\`2.\`/\`- \` item); never continue a list marker on the same line as the previous sentence.
@@ -115,14 +116,21 @@ Format substantive answers as clean GitHub-flavored Markdown so they render well
 - Use fenced code blocks with a language tag for code. To show HTML/SVG as source (not a live visual), use \`text\`/\`xml\` or omit the language — do not use language tags \`html\`/\`svg\` for source listings.
 - Draw directory or file trees inside a fenced code block using box-drawing connectors (\`├──\`, \`└──\`, \`│\`), one entry per line, with any trailing \`#\` comments aligned — never depict a tree with bare indentation alone.
 - Prefer short paragraphs and lists over a single dense block.
-- Inline visuals (how the UI streams — prefer this over stuffing large HTML into a tool call):
-  - Static architecture / pipeline / flow / sequence → fenced \`mermaid\` diagram.
-  - Operable HTML/SVG → open a fenced \`html\` or \`svg\` block in the assistant message early and grow it as you write. The UI paints as \`message\` tokens arrive (tool-argument channels are often buffered until complete).
-  - \`visual_write\` is for Plan Mode (visualRef) or updating an existing chat visual via \`visualId\` — do not also emit the same document as an html/svg fence in the same turn.
-  - Authoring quality for operable visuals:
-${VISUAL_AUTHORING_GUIDELINES.map((line) => `    - ${line}`).join("\n")}
 Skip heavy formatting for one-line answers, greetings, or simple confirmations.
 </response_formatting>`;
+
+/**
+ * Chat/build-only: operable inline visuals. Injected per turn from `mode`
+ * (sessions switch plan↔build without recreating the system prompt).
+ */
+const RESPONSE_FORMAT_INLINE_VISUALS = `<inline_visuals>
+Inline visuals (how the UI streams — prefer this over stuffing large HTML into a tool call):
+- Static architecture / pipeline / flow / sequence → fenced \`mermaid\` diagram.
+- Operable HTML/SVG → open a fenced \`html\` or \`svg\` block in the assistant message early and grow it as you write. The UI paints as \`message\` tokens arrive (tool-argument channels are often buffered until complete).
+- \`visual_write\` updates an existing chat visual via \`visualId\` — do not also emit the same document as an html/svg fence in the same turn.
+- Authoring quality for operable visuals:
+${VISUAL_AUTHORING_GUIDELINES.map((line) => `- ${line}`).join("\n")}
+</inline_visuals>`;
 
 type SdkRuntimeSession = {
   info: AgentSessionInfo;
@@ -131,7 +139,23 @@ type SdkRuntimeSession = {
   unsubscribe: () => void;
   emit: EmitAgentEvent;
   emitVolatile: EmitAgentEvent;
+  /** Last compaction.ended seen on this session (for threshold continue). */
+  lastCompactionEnd:
+    | {
+        reason: "manual" | "threshold" | "overflow";
+        willRetry: boolean;
+        aborted: boolean;
+      }
+    | undefined;
 };
+
+/**
+ * After PI threshold compaction (willRetry=false), Modus re-prompts so long
+ * tasks are not stranded. Bound prevents compact→continue loops.
+ */
+const MAX_THRESHOLD_CONTINUES = 2;
+const CONTINUE_AFTER_COMPACTION =
+  "Context was compacted. Continue any unfinished work from the summary Next Steps. If already complete, briefly confirm done.";
 
 type RunOutputTracker = {
   runId: string;
@@ -402,7 +426,7 @@ export class PiSdkRuntime implements AgentRuntime {
       settingsManager,
       appendSystemPrompt: [
         describeAgentShellForPrompt(shell),
-        RESPONSE_FORMAT_GUIDANCE,
+        RESPONSE_FORMAT_BASE,
         ...(globalGuidancePrompt ? [globalGuidancePrompt] : []),
         ...(rulesPrompt ? [rulesPrompt] : []),
       ],
@@ -505,6 +529,13 @@ export class PiSdkRuntime implements AgentRuntime {
           continue;
         }
         this.noteAssistantOutput(normalized);
+        if (normalized.type === "compaction.ended" && runtimeSession) {
+          runtimeSession.lastCompactionEnd = {
+            reason: normalized.reason,
+            willRetry: normalized.willRetry,
+            aborted: normalized.aborted,
+          };
+        }
         if (normalized.type === "tool.delta") {
           pendingToolDelta = normalized;
           const wait = TOOL_DELTA_THROTTLE_MS - (Date.now() - lastToolDeltaAt);
@@ -564,6 +595,7 @@ export class PiSdkRuntime implements AgentRuntime {
       unsubscribe,
       emit: params.emit,
       emitVolatile: params.emitVolatile,
+      lastCompactionEnd: undefined,
     };
     this.sessions.set(params.info.id, runtimeSession);
     publishContextUsage();
@@ -890,17 +922,43 @@ export class PiSdkRuntime implements AgentRuntime {
         `[modus-timing] composeTurnMessage done +${Date.now() - outputTracker.startedAt}ms`,
       );
       const images = buildTurnImages(input);
-      await runWithAgentToolContext(toolContext, () =>
-        runtimeSession.session.prompt(message, {
-          source: "rpc",
-          ...(images.length > 0 ? { images } : {}),
-          ...(delivery === "normal"
-            ? {}
-            : { streamingBehavior: delivery === "follow-up" ? "followUp" : "steer" }),
-        }),
-      );
-      console.info(`[modus-timing] prompt() resolved +${Date.now() - outputTracker.startedAt}ms`);
-      this.emitContextUsage(runtimeSession);
+      let turnMessage = message;
+      let thresholdContinues = 0;
+      let isFirstPrompt = true;
+      while (true) {
+        await runWithAgentToolContext(toolContext, () =>
+          runtimeSession.session.prompt(turnMessage, {
+            source: "rpc",
+            ...(isFirstPrompt && images.length > 0 ? { images } : {}),
+            ...(isFirstPrompt && delivery !== "normal"
+              ? { streamingBehavior: delivery === "follow-up" ? "followUp" : "steer" }
+              : {}),
+          }),
+        );
+        isFirstPrompt = false;
+        console.info(`[modus-timing] prompt() resolved +${Date.now() - outputTracker.startedAt}ms`);
+        this.emitContextUsage(runtimeSession);
+        // Consume after prompt so TS does not narrow the field from a pre-await clear.
+        const compact = runtimeSession.lastCompactionEnd;
+        runtimeSession.lastCompactionEnd = undefined;
+        const stillRunning = getAgentRun(run.id)?.status === "running";
+        if (
+          stillRunning &&
+          compact &&
+          compact.reason === "threshold" &&
+          !compact.willRetry &&
+          !compact.aborted &&
+          thresholdContinues < MAX_THRESHOLD_CONTINUES
+        ) {
+          thresholdContinues += 1;
+          turnMessage = CONTINUE_AFTER_COMPACTION;
+          console.info(
+            `[modus-timing] threshold compaction continue ${thresholdContinues}/${MAX_THRESHOLD_CONTINUES}`,
+          );
+          continue;
+        }
+        break;
+      }
       const currentRun = getAgentRun(run.id);
       if (currentRun?.status === "running") {
         // Authoritative end-of-turn outcome, read from pi's own record: if the
@@ -1094,6 +1152,8 @@ export class PiSdkRuntime implements AgentRuntime {
       : resolveSubagentsPrompt(runtimeSession.info.cwd);
     return [
       planModePreamble(input.mode),
+      // Plan turns forbid inline visuals via planModePreamble; chat/build get the channel here.
+      input.mode === "plan" ? "" : RESPONSE_FORMAT_INLINE_VISUALS,
       skillsText,
       subagentsText,
       contextText,

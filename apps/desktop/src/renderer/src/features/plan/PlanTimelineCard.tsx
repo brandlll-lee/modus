@@ -12,24 +12,6 @@ function textArg(args: unknown, key: string): string {
   return typeof value === "string" ? value : "";
 }
 
-function previewArg(args: unknown): string {
-  if (!args || typeof args !== "object") return "";
-  const blocks = (args as Record<string, unknown>).blocks;
-  if (!Array.isArray(blocks)) return "";
-  return blocks
-    .map((block) => {
-      if (!block || typeof block !== "object") return "";
-      const value = block as Record<string, unknown>;
-      if (value.type === "markdown") return typeof value.content === "string" ? value.content : "";
-      if (value.type !== "visual") return "";
-      const title = typeof value.title === "string" ? `### ${value.title}` : "";
-      const fallback = typeof value.fallback === "string" ? value.fallback : "";
-      return [title, fallback].filter(Boolean).join("\n\n");
-    })
-    .filter(Boolean)
-    .join("\n\n");
-}
-
 export function PlanTimelineCard({
   args,
   isComplete,
@@ -45,7 +27,7 @@ export function PlanTimelineCard({
 }) {
   const title = plan?.title ?? textArg(args, "title");
   const overview = plan?.overview ?? textArg(args, "overview");
-  const content = plan?.content ?? previewArg(args);
+  const content = plan?.content ?? textArg(args, "content");
   const preview = content || overview;
   const ready = isComplete && !isError && plan !== undefined;
   const { boxRef, contentRef, clipped } = useClipFade();
