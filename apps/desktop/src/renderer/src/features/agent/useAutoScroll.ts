@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 /**
  * Stick-to-bottom scrolling, ported from opencode's `createAutoScroll`
@@ -12,10 +12,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
  *
  *   - `userScrolled` is a sticky flag set the moment the user scrolls up and
  *     cleared only when they return to the bottom. User intent wins.
- *   - Auto-follow only runs while `active()` (the agent is working, or a short
- *     settle window after it stops). When idle, resizes never move the view, so
- *     viewing/scrolling a finished conversation is inert — no snap-back, no
- *     forced-layout thrash.
+ *   - Auto-follow runs only while working. Idle restores native overflow
+ *     anchoring, preserving position without a guessed settle window.
  *   - `markAuto`/`isAuto` tag our own programmatic scrolls so the scroll handler
  *     doesn't mistake them for the user scrolling away.
  *
@@ -24,7 +22,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
  */
 
 const BOTTOM_THRESHOLD = 10;
-const SETTLE_MS = 300;
 const AUTO_MARK_MS = 1500;
 
 export const distanceFromBottom = (el: HTMLElement): number =>
@@ -35,6 +32,15 @@ const canScroll = (el: HTMLElement): boolean => el.scrollHeight - el.clientHeigh
 export function shouldShowScrollToLatest(distance: number, viewportHeight: number): boolean {
   return viewportHeight > 0 && distance > viewportHeight;
 }
+
+export const shouldAutoFollow = (working: boolean, userScrolled: boolean): boolean =>
+  working && !userScrolled;
+
+export const shouldPinOnEnd = (
+  wasWorking: boolean,
+  working: boolean,
+  userScrolled: boolean,
+): boolean => wasWorking && !working && !userScrolled;
 
 export type AutoScroll = {
   /** Callback ref for the scroll container. */
@@ -59,18 +65,23 @@ export function useAutoScroll(working: boolean): AutoScroll {
   const [showScrollToLatest, setShowScrollToLatest] = useState(false);
 
   const userScrolledRef = useRef(false);
-  const settlingRef = useRef(false);
   const autoRef = useRef<{ smooth: boolean; top: number; time: number } | undefined>(undefined);
-  const settleTimerRef = useRef<number | undefined>(undefined);
   const autoTimerRef = useRef<number | undefined>(undefined);
   const workingRef = useRef(working);
+  const wasWorkingRef = useRef(working);
   workingRef.current = working;
 
-  const active = useCallback((): boolean => workingRef.current || settlingRef.current, []);
+  const active = useCallback(
+    (): boolean => shouldAutoFollow(workingRef.current, userScrolledRef.current),
+    [],
+  );
 
-  const updateOverflowAnchor = useCallback((el: HTMLElement): void => {
-    el.style.overflowAnchor = userScrolledRef.current ? "auto" : "none";
-  }, []);
+  const updateOverflowAnchor = useCallback(
+    (el: HTMLElement): void => {
+      el.style.overflowAnchor = active() ? "none" : "auto";
+    },
+    [active],
+  );
 
   const updateScrollToLatestVisibility = useCallback((el: HTMLElement | null): void => {
     setShowScrollToLatest(
@@ -81,9 +92,10 @@ export function useAutoScroll(working: boolean): AutoScroll {
   const setScrollRef = useCallback(
     (el: HTMLDivElement | null): void => {
       setScrollEl(el);
+      if (el) updateOverflowAnchor(el);
       updateScrollToLatestVisibility(el);
     },
-    [updateScrollToLatestVisibility],
+    [updateOverflowAnchor, updateScrollToLatestVisibility],
   );
 
   const markAuto = useCallback((el: HTMLElement, smooth: boolean): void => {
@@ -126,7 +138,7 @@ export function useAutoScroll(working: boolean): AutoScroll {
       if (force) {
         setShowScrollToLatest(false);
       }
-      if (!force && (!active() || userScrolledRef.current)) {
+      if (!force && !active()) {
         return;
       }
       markAuto(el, behavior === "smooth");
@@ -232,14 +244,14 @@ export function useAutoScroll(working: boolean): AutoScroll {
     return () => scrollEl.removeEventListener("wheel", onWheel);
   }, [scrollEl, stop]);
 
-  // Content growth pins the bottom only while active; idle resizes are inert.
+  // Content growth pins the bottom only while the run is authoritatively live.
   useEffect(() => {
     if (!contentEl) {
       return;
     }
     const observer = new ResizeObserver(() => {
       const el = scrollEl;
-      if (!el || !active() || userScrolledRef.current) {
+      if (!el || !active()) {
         return;
       }
       updateScrollToLatestVisibility(el);
@@ -253,34 +265,22 @@ export function useAutoScroll(working: boolean): AutoScroll {
       observer.observe(scrollEl);
     }
     return () => observer.disconnect();
-  }, [
-    contentEl,
-    scrollEl,
-    active,
-    scrollToBottom,
-    updateScrollToLatestVisibility,
-  ]);
+  }, [contentEl, scrollEl, active, scrollToBottom, updateScrollToLatestVisibility]);
 
-  // Work start glues to the bottom (unless the user scrolled away); a short
-  // settle window after work ends keeps late layout shifts pinned.
-  useEffect(() => {
-    settlingRef.current = false;
-    window.clearTimeout(settleTimerRef.current);
-    if (working) {
-      if (!userScrolledRef.current) {
-        scrollToBottom(true);
-      }
-      return;
+  // Correct the authoritative run boundary before WorkFold's resize is painted.
+  useLayoutEffect(() => {
+    const wasWorking = wasWorkingRef.current;
+    wasWorkingRef.current = working;
+    if (scrollEl) updateOverflowAnchor(scrollEl);
+    if (shouldPinOnEnd(wasWorking, working, userScrolledRef.current)) {
+      scrollToBottom(true);
+    } else if (working) {
+      scrollToBottom(false);
     }
-    settlingRef.current = true;
-    settleTimerRef.current = window.setTimeout(() => {
-      settlingRef.current = false;
-    }, SETTLE_MS);
-  }, [working, scrollToBottom]);
+  }, [working, scrollEl, scrollToBottom, updateOverflowAnchor]);
 
   useEffect(
     () => () => {
-      window.clearTimeout(settleTimerRef.current);
       window.clearTimeout(autoTimerRef.current);
     },
     [],

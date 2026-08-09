@@ -128,7 +128,7 @@ const waitTool: ToolDefinition = defineTool({
       ...(params.terminal_ids ? { terminalIds: params.terminal_ids } : {}),
       ...(signal ? { signal } : {}),
       onProgress: (text) => {
-        onUpdate?.({ content: [{ type: "text", text }] });
+        onUpdate?.(toResult(text, undefined));
       },
     });
 

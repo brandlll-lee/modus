@@ -107,7 +107,7 @@ export function appendAgentEvents<T extends AgentEventItem>(events: T[], nextIte
 }
 
 /** Fold a complete event list (e.g. a session's persisted history) in one pass. */
-export function foldAgentEvents<T extends AgentEventItem>(items: T[]): T[] {
+export function foldAgentEvents<T extends AgentEventItem>(items: T[]): Array<T & AgentEventItem> {
   return appendAgentEvents([], items);
 }
 

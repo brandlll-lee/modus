@@ -16,12 +16,14 @@ import type {
   TodoItem,
 } from "../../../../shared/contracts";
 import { getToolUiMeta, toolRenderKind } from "../../../../shared/tools";
+import { CopyButton } from "../../components/ui/CopyButton";
+import { formatClock } from "../../lib/formatClock";
 import { WorkActivityRow, WorkFold } from "./ActivityGroup";
 import { MessageBlock } from "./MessageBlock";
 
 type TimelineProps = {
-  agentEvents: AgentEventItem[];
-  precomputedBlocks?: TimelineBlock[];
+  /** Blocks built by the owner (ChatPane) — the single authority for this list. */
+  blocks: TimelineBlock[];
   /** Session cwd — file chips / markdown file nav resolve against the workspace. */
   cwd?: string | undefined;
   /** Active pane model — needed so inline edit can mount the shared Composer. */
@@ -203,7 +205,7 @@ export type TimelineBlock =
   | TodosBlockItem
   | SubagentBlockItem;
 
-export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): TimelineBlock[] {
+export function buildBlocks(agentEvents: AgentEventItem[]): TimelineBlock[] {
   const blocks: TimelineBlock[] = [];
   const blockById = new Map<string, TimelineBlock>();
   /** todo_write tool calls render through the TodosCard, not as tool rows. */
@@ -822,10 +824,10 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
       const existing = openCompactionId ? blockById.get(openCompactionId) : undefined;
       const status = event.aborted ? "aborted" : event.failed ? "error" : "done";
       const detail = event.aborted
-        ? "aborted"
+        ? "Context compaction stopped"
         : event.failed
-          ? (event.summary ?? "failed")
-          : "ended";
+          ? (event.summary ?? "Context compaction failed")
+          : "Context compacted";
       if (existing?.type === "compaction") {
         existing.reason = event.reason;
         existing.status = status;
@@ -873,7 +875,7 @@ export function buildBlocks(agentEvents: TimelineProps["agentEvents"]): Timeline
  * A single agent turn (one run) can produce SEVERAL assistant message segments
  * interleaved with tool calls. We want exactly one copy surface per turn — so we
  * aggregate the whole turn's assistant markdown onto the turn's RUN block
- * (`answer`) once it has settled. WorkFold exposes Copy from that answer.
+ * (`answer`) once it has settled. The turn footer copies from that answer.
  */
 export function attachTurnActions(blocks: TimelineBlock[]): TimelineBlock[] {
   let run: RunBlockItem | undefined;
@@ -940,38 +942,13 @@ export function segmentTurns(blocks: TimelineBlock[], keys: string[]): TimelineT
   return turns;
 }
 
-/**
- * Authority: in-flight stream/work on the turn. Live turns skip
- * content-visibility so rapid height growth doesn't fight layout.
- */
-export function turnHasLiveStream(turn: TimelineTurn): boolean {
-  for (const { block } of turn.blocks) {
-    if (block.type === "message" && block.streaming) {
-      return true;
-    }
-    if (block.type === "thought" && block.streaming) {
-      return true;
-    }
-    if (block.type === "work-fold" && block.run.status === "running") {
-      return true;
-    }
-    if (block.type === "tool" && block.isComplete === false) {
-      return true;
-    }
-    if (block.type === "todos" && block.updating) {
-      return true;
-    }
-  }
-  return false;
-}
-
 function isWorkAnchor(block: TimelineBlock): boolean {
   return (
     block.type === "tool" ||
     block.type === "thought" ||
     block.type === "todos" ||
     block.type === "subagent" ||
-    block.type === "compaction" ||
+    (block.type === "compaction" && block.reason !== "manual") ||
     block.type === "notice"
   );
 }
@@ -1068,6 +1045,11 @@ export function groupTurnWork(blocks: TimelineBlock[]): TimelineBlock[] {
       const entry = turnContent[j];
       if (!entry) continue;
 
+      if (entry.type === "compaction" && entry.reason === "manual") {
+        after.push(entry);
+        continue;
+      }
+
       if (entry.type === "message" && entry.role === "assistant") {
         if (!entry.content.trim()) continue;
         if (active || j <= lastWork) items.push(entry);
@@ -1116,21 +1098,8 @@ export function visibleTimelineBlocks(blocks: TimelineBlock[]): TimelineBlock[] 
   });
 }
 
-export function buildVisibleTimelineBlocks(
-  agentEvents: TimelineProps["agentEvents"],
-): TimelineBlock[] {
+export function buildVisibleTimelineBlocks(agentEvents: AgentEventItem[]): TimelineBlock[] {
   return visibleTimelineBlocks(groupTurnWork(attachTurnActions(buildBlocks(agentEvents))));
-}
-
-/** Spell a duration ("1 second" / "37 seconds" / "2m 5s"). */
-export function formatElapsedVerbose(end: number, start: number): string {
-  const seconds = Math.max(0, Math.round((end - start) / 1000));
-  if (seconds < 60) {
-    return `${seconds} second${seconds === 1 ? "" : "s"}`;
-  }
-  const minutes = Math.floor(seconds / 60);
-  const rest = seconds % 60;
-  return rest === 0 ? `${minutes} minute${minutes === 1 ? "" : "s"}` : `${minutes}m ${rest}s`;
 }
 
 /**
@@ -1170,9 +1139,29 @@ function Notice({ body, isError = false, title }: NoticeBlockItem) {
   );
 }
 
+function TurnFooter({ turn }: { turn: TimelineTurn }) {
+  const fold = turn.blocks.find(({ block }) => block.type === "work-fold")?.block;
+  if (fold?.type !== "work-fold" || !fold.run.answer) {
+    return null;
+  }
+  const clock = formatClock(fold.run.completedAt);
+  return (
+    <div className="pointer-events-none flex h-6 w-full items-center gap-1 px-8 opacity-0 transition-opacity duration-150 group-hover/turn:pointer-events-auto group-hover/turn:opacity-100 group-focus-within/turn:pointer-events-auto group-focus-within/turn:opacity-100">
+      <CopyButton label="Copy response" text={fold.run.answer} />
+      {clock && fold.run.completedAt !== undefined ? (
+        <time
+          className="text-2xs text-fg-faint tabular-nums"
+          dateTime={new Date(fold.run.completedAt).toISOString()}
+        >
+          {clock}
+        </time>
+      ) : null}
+    </div>
+  );
+}
+
 export function Timeline({
-  agentEvents,
-  precomputedBlocks,
+  blocks,
   cwd,
   model,
   models,
@@ -1184,14 +1173,10 @@ export function Timeline({
   onOpenFile,
   embedded = false,
 }: TimelineProps) {
-  const visibleBlocks = useMemo(
-    () => precomputedBlocks ?? buildVisibleTimelineBlocks(agentEvents),
-    [agentEvents, precomputedBlocks],
-  );
-  const renderKeys = useMemo(() => blockRenderKeys(visibleBlocks), [visibleBlocks]);
-  const turns = useMemo(() => segmentTurns(visibleBlocks, renderKeys), [visibleBlocks, renderKeys]);
+  const renderKeys = useMemo(() => blockRenderKeys(blocks), [blocks]);
+  const turns = useMemo(() => segmentTurns(blocks, renderKeys), [blocks, renderKeys]);
 
-  if (visibleBlocks.length === 0) {
+  if (blocks.length === 0) {
     return null;
   }
 
@@ -1208,11 +1193,7 @@ export function Timeline({
       <div className="chat-column relative">
         {turns.map((turn) => (
           <section
-            className={
-              turnHasLiveStream(turn)
-                ? "timeline-block timeline-block--live w-full min-w-0 space-y-6 pb-6"
-                : "timeline-block w-full min-w-0 space-y-6 pb-6"
-            }
+            className="group/turn timeline-block w-full min-w-0 space-y-6 pb-6"
             data-turn={turn.key}
             key={turn.key}
           >
@@ -1236,7 +1217,6 @@ export function Timeline({
                     content={block.content}
                     cwd={cwd}
                     {...(onOpenFile ? { onOpenFile } : {})}
-                    {...(block.createdAt !== undefined ? { createdAt: block.createdAt } : {})}
                     editable={block.editable ?? false}
                     messageId={block.id}
                     {...(onEditResend ? { onEditResend } : {})}
@@ -1253,7 +1233,6 @@ export function Timeline({
                 <div className="w-full px-8" key={key}>
                   {block.type === "work-fold" ? (
                     <WorkFold
-                      formatElapsed={formatElapsedVerbose}
                       items={block.items}
                       {...(models ? { models } : {})}
                       run={block.run}
@@ -1275,7 +1254,6 @@ export function Timeline({
                       content={block.content}
                       cwd={cwd}
                       {...(onOpenFile ? { onOpenFile } : {})}
-                      {...(block.createdAt !== undefined ? { createdAt: block.createdAt } : {})}
                       editable={block.editable ?? false}
                       messageId={block.id}
                       {...(onEditResend ? { onEditResend } : {})}
@@ -1287,7 +1265,6 @@ export function Timeline({
                   {block.type === "notice" ? <Notice {...block} /> : null}
                   {isWorkActivity(block) ? (
                     <WorkActivityRow
-                      formatElapsed={formatElapsedVerbose}
                       item={block}
                       {...(models ? { models } : {})}
                       {...(onOpenFile ? { onOpenFile } : {})}
@@ -1298,6 +1275,7 @@ export function Timeline({
                 </div>
               );
             })}
+            <TurnFooter turn={turn} />
           </section>
         ))}
       </div>

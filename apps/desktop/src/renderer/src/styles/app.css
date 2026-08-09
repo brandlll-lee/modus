@@ -176,8 +176,7 @@
     0 1px 10px -6px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--color-focus-ring),
     0 0 16px -3px rgba(133, 63, 244, 0.4);
   /* 浮层纵深：接触影 + 环境影。边界主要由光影暗示，描边只作极淡轮廓。 */
-  --shadow-popup:
-    0 1px 2px rgba(0, 0, 0, 0.28), 0 8px 24px -6px rgba(0, 0, 0, 0.55);
+  --shadow-popup: 0 1px 2px rgba(0, 0, 0, 0.28), 0 8px 24px -6px rgba(0, 0, 0, 0.55);
 
   --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
 
@@ -423,8 +422,7 @@
     0 1px 10px -6px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--color-focus-ring),
     0 0 16px -3px rgba(133, 63, 244, 0.36);
   --color-popup-border: rgba(255, 255, 255, 0.07);
-  --shadow-popup:
-    0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px -6px rgba(0, 0, 0, 0.5);
+  --shadow-popup: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px -6px rgba(0, 0, 0, 0.5);
 }
 
 /*
@@ -589,18 +587,11 @@ body {
      Applied per turn (user bubble + its reply) so sticky user bubbles stick
      inside their own turn and get pushed out by the next. Unlike virtualization
      the React tree stays mounted, so nothing re-parses on scroll.
-     `contain-intrinsic-size: auto` remembers each turn's last height so the
-     scrollbar never jumps; 120px is only the never-yet-rendered fallback.
-     Live (still-streaming) turns opt out — rapid height growth must not fight
-     content-visibility intrinsic-size estimates. */
+     `contain-intrinsic-size: auto` remembers each rendered turn's last height;
+     120px is only the never-yet-rendered fallback. */
   .timeline-block {
     content-visibility: auto;
     contain-intrinsic-size: auto 120px;
-  }
-
-  .timeline-block--live {
-    content-visibility: visible;
-    contain-intrinsic-size: none;
   }
 }
 
@@ -890,6 +881,9 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .modus-markdown [data-sd-animate] {
+    animation: none;
+  }
   .modus-shine-border {
     animation: none;
   }
@@ -988,9 +982,16 @@ body {
 }
 
 /* Heading after-gap is authoritative; don't double with the next block's top margin. */
-.modus-markdown
-  :where(h1, h2, h3, h4, h5, h6)
-  + :where(p, ul, ol, blockquote, [data-streamdown="code-block"], [data-streamdown="table-wrapper"], [data-streamdown="mermaid-block"]) {
+.modus-markdown :where(h1, h2, h3, h4, h5, h6)
+  + :where(
+    p,
+    ul,
+    ol,
+    blockquote,
+    [data-streamdown="code-block"],
+    [data-streamdown="table-wrapper"],
+    [data-streamdown="mermaid-block"]
+  ) {
   margin-top: 0;
 }
 
@@ -1345,15 +1346,15 @@ body {
  */
 .modus-markdown [data-streamdown="table-wrapper"] > div:not(:has(table)),
 .modus-markdown [data-streamdown="code-block"] > div:has(> [data-streamdown="code-block-actions"]),
-.modus-markdown [data-streamdown="mermaid-block"] > div:has(> [data-streamdown="mermaid-block-actions"]) {
+.modus-markdown
+  [data-streamdown="mermaid-block"]
+  > div:has(> [data-streamdown="mermaid-block-actions"]) {
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.15s ease;
 }
 
-.modus-markdown
-  [data-streamdown="table-wrapper"]:is(:hover, :focus-within)
-  > div:not(:has(table)),
+.modus-markdown [data-streamdown="table-wrapper"]:is(:hover, :focus-within) > div:not(:has(table)),
 .modus-markdown
   [data-streamdown="code-block"]:is(:hover, :focus-within)
   > div:has(> [data-streamdown="code-block-actions"]),
@@ -1474,8 +1475,7 @@ body {
 }
 
 /* Loading-only: collapse Streamdown min-h shells before SVG exists. */
-.modus-markdown
-  [data-streamdown="mermaid-block"]
+.modus-markdown [data-streamdown="mermaid-block"]
   > div:last-child:not(:has([data-streamdown="mermaid"]))
   [class*="min-h-"] {
   min-height: 0;
@@ -1579,8 +1579,7 @@ body
 }
 
 /* Zoom± / Reset: move from bottom-left column → top-right row, left of Close. */
-body
-  > div.fixed.inset-0:has([data-streamdown="mermaid"])
+body > div.fixed.inset-0:has([data-streamdown="mermaid"])
   [data-streamdown="mermaid"]
   [class*="absolute"][class*="rounded-md"] {
   top: 1rem !important;
@@ -1733,7 +1732,9 @@ body
   font-size: 12px;
   line-height: 1;
   white-space: nowrap;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 2px 8px rgba(0, 0, 0, 0.06);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.04),
+    0 2px 8px rgba(0, 0, 0, 0.06);
   cursor: pointer;
 }
 .modus-add-to-chat .label {
@@ -1744,7 +1745,9 @@ body
   font-weight: 400;
 }
 :root[data-theme="light"] .modus-add-to-chat {
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 2px 6px rgba(0, 0, 0, 0.04);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.05),
+    0 2px 6px rgba(0, 0, 0, 0.04);
 }
 
 /* PDF.js TextLayer — scoped under .pdf-page (official layout, z-index above canvas). */
@@ -1844,7 +1847,9 @@ body
   font-size: 12px;
   font-weight: 500;
   letter-spacing: 0.01em;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 4px 14px rgba(0, 0, 0, 0.08);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.04),
+    0 4px 14px rgba(0, 0, 0, 0.08);
   backdrop-filter: blur(8px);
 }
 .pdf-page-chrome__label {

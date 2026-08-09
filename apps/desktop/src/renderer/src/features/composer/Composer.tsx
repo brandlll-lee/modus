@@ -37,11 +37,7 @@ import type {
 import { ImageThumb } from "../../components/ui/ImageViewer";
 import { ShineBorder } from "../../components/ui/ShineBorder";
 import { cn } from "../../lib/cn";
-import {
-  ContextUsageRing,
-  contextUsagePercent,
-  formatUsagePercent,
-} from "../../lib/contextUsage";
+import { ContextUsageRing, contextUsagePercent, formatUsagePercent } from "../../lib/contextUsage";
 import {
   modelThinkingOptions,
   selectedThinkingLabel,
@@ -58,7 +54,7 @@ import {
   useComposerImages,
 } from "./useComposerImages";
 import { type MentionRow, useComposerMentions } from "./useComposerMentions";
-import { type SlashItem, useComposerSlash } from "./useComposerSlash";
+import { type SlashActionItem, type SlashItem, useComposerSlash } from "./useComposerSlash";
 
 const COMPOSER_PLACEHOLDER = "What will you build with Modus?";
 
@@ -79,6 +75,7 @@ type ComposerProps = {
   canSubmit: boolean;
   isRunning?: boolean;
   footer?: ReactNode;
+  trailingActions?: ReactNode;
   onModelChange(model: string): void;
   onModelConfigChange?(model: string, thinkingVariant: string): Promise<void> | void;
   onContextChange(items: ContextItem[]): void;
@@ -90,6 +87,7 @@ type ComposerProps = {
     skills?: SkillSelection[],
     mode?: AgentMode,
   ): void | Promise<void>;
+  onCompact?(): Promise<void>;
   onAbort?(): void;
   /**
    * When set, this instance is an inline edit-resend surface (same chrome as
@@ -171,11 +169,13 @@ export function Composer({
   cwd,
   canSubmit,
   footer,
+  trailingActions,
   isRunning = false,
   onAbort,
   onModelChange,
   onModelConfigChange,
   onContextChange,
+  onCompact,
   onSubmit,
   onCancel,
   mode: controlledMode,
@@ -262,7 +262,23 @@ export function Composer({
     value: textBeforeCaret,
     workspaceId,
   });
-  const slash = useComposerSlash({ cwd, value: textBeforeCaret });
+  const usagePercent = contextUsagePercent(contextUsage);
+  const usageLabel =
+    usagePercent === undefined ? "" : ` (${formatUsagePercent(usagePercent)} full)`;
+  const slashActions: SlashActionItem[] = onCompact
+    ? [
+        {
+          kind: "action",
+          key: "action:compact",
+          name: "Compact",
+          description: `Compact this chat's context${usageLabel}`,
+          disabled: isRunning,
+          leading: <ContextUsageRing percent={usagePercent} />,
+          run: onCompact,
+        },
+      ]
+    : [];
+  const slash = useComposerSlash({ actions: slashActions, cwd, value: textBeforeCaret });
 
   function send(delivery: PromptDelivery = isRunning ? "follow-up" : "normal"): void {
     if (!hasContent || !canSubmit || submitting || models.length === 0 || !model) {
@@ -325,6 +341,17 @@ export function Composer({
   }
 
   function selectSlashItem(item: SlashItem): void {
+    if (item.kind === "action") {
+      if (item.disabled) return;
+      editorRef.current?.deleteBeforeCaret((slash.query?.length ?? 0) + 1);
+      setSubmitError(undefined);
+      void item
+        .run()
+        .catch((cause: unknown) =>
+          setSubmitError(cause instanceof Error ? cause.message : String(cause)),
+        );
+      return;
+    }
     if (item.kind === "skill") {
       if (selectedSkills.some((skill) => skill.path === item.skill.path)) {
         editorRef.current?.deleteBeforeCaret((slash.query?.length ?? 0) + 1);
@@ -531,7 +558,7 @@ export function Composer({
         className={cn(
           "relative border border-composer-border bg-surface shadow-composer-edge transition-[border-color] duration-150",
           COMPOSER_RADIUS_CLASS,
-          footer && "z-10",
+          Boolean(footer) && "z-10",
           // No focus glow: only text focus or drag nudges the border one notch brighter.
           !isRunning && "focus-within:border-composer-border-strong",
           dragging && "border-composer-border-strong",
@@ -646,7 +673,7 @@ export function Composer({
 
           <div className="flex-1" />
 
-          {isInlineEdit && submitError ? (
+          {submitError ? (
             <span className="min-w-0 truncate text-2xs text-danger" title={submitError}>
               {submitError}
             </span>
@@ -654,10 +681,14 @@ export function Composer({
 
           {!isInlineEdit ? (
             <ContextUsageIndicator
-              {...(currentModel?.contextWindow ? { contextWindow: currentModel.contextWindow } : {})}
+              {...(currentModel?.contextWindow
+                ? { contextWindow: currentModel.contextWindow }
+                : {})}
               {...(contextUsage ? { usage: contextUsage } : {})}
             />
           ) : null}
+
+          {trailingActions}
 
           {onCancel ? (
             <button

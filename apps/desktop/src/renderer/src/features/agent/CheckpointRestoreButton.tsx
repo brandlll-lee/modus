@@ -11,12 +11,6 @@ type CheckpointRestoreButtonProps = {
 
 type Phase = "idle" | "confirming" | "restoring" | "done";
 
-/**
- * The timeline's rollback affordance, shown on hover next to user messages
- * that have a pre-run snapshot. Destructive, so it uses a two-step inline
- * confirm (no modal): first click arms it, second click restores. Arms
- * auto-disarm after a few seconds.
- */
 export function CheckpointRestoreButton({ checkpointId, onRestore }: CheckpointRestoreButtonProps) {
   const [phase, setPhase] = useState<Phase>("idle");
   const disarmTimer = useRef<number | undefined>(undefined);

@@ -1,19 +1,17 @@
 import { describe, expect, it } from "vitest";
 import type { AgentEvent, PlanRef } from "../../../../shared/contracts";
 import { PLAN_TOOL_NAME, VISUAL_TOOL_NAME } from "../../../../shared/tools";
-import { workActivityPresentation } from "./ActivityGroup";
+import { formatElapsed, thoughtLabel, workActivityPresentation } from "./ActivityGroup";
 import { optimisticUserPromptEvents } from "./agentEventHub";
 import { subagentColor } from "./subagentUi";
 import {
   attachTurnActions,
   blockRenderKeys,
   buildBlocks,
-  formatElapsedVerbose,
   groupTurnWork,
   groupWorkItems,
   segmentTurns,
   type TimelineBlock,
-  turnHasLiveStream,
 } from "./Timeline";
 
 function item(id: string, event: AgentEvent) {
@@ -558,7 +556,7 @@ describe("buildBlocks", () => {
         type: "compaction",
         reason: "threshold",
         status: "done",
-        detail: "ended",
+        detail: "Context compacted",
       }),
     );
     expect(blocks.filter((block) => block.type === "notice")).toEqual([]);
@@ -794,6 +792,22 @@ describe("groupTurnWork", () => {
     );
   });
 
+  it("keeps manual compaction after the settled answer", () => {
+    const result = groupTurnWork([
+      completedRun("r"),
+      tool("read", "read"),
+      msg("final", "done"),
+      {
+        id: "compact",
+        type: "compaction",
+        reason: "manual",
+        status: "done",
+      },
+    ] as Blocks);
+
+    expect(result.map((block) => block.id)).toEqual(["work-fold:r", "final", "compact"]);
+  });
+
   it("puts assistant segments before the last work anchor inside the fold", () => {
     const result = groupTurnWork([
       completedRun("r"),
@@ -979,6 +993,10 @@ describe("attachTurnActions", () => {
     ] as Blocks);
 
     expect(findRun(result)).toEqual(expect.objectContaining({ answer: "first\n\nsecond" }));
+    const fold = groupTurnWork(result).find((block) => block.type === "work-fold");
+    expect(fold).toEqual(
+      expect.objectContaining({ run: expect.objectContaining({ answer: "first\n\nsecond" }) }),
+    );
   });
 
   it("attaches no answer while the run is still streaming", () => {
@@ -1000,11 +1018,17 @@ describe("attachTurnActions", () => {
   });
 });
 
-describe("formatElapsedVerbose", () => {
-  it("spells seconds and minute mixes", () => {
-    expect(formatElapsedVerbose(5000, 0)).toBe("5 seconds");
-    expect(formatElapsedVerbose(1000, 0)).toBe("1 second");
-    expect(formatElapsedVerbose(125000, 0)).toBe("2m 5s");
+describe("activity duration labels", () => {
+  it("uses compact duration units", () => {
+    expect(formatElapsed(5000, 0)).toBe("5s");
+    expect(formatElapsed(120000, 0)).toBe("2m");
+    expect(formatElapsed(125000, 0)).toBe("2m 5s");
+  });
+
+  it("derives thought copy from lifecycle state and event time", () => {
+    expect(thoughtLabel(true, 0, 12000)).toBe("Thinking");
+    expect(thoughtLabel(false, 0, 0)).toBe("Thought brief");
+    expect(thoughtLabel(false, 0, 12000)).toBe("Thought for 12s");
   });
 });
 
@@ -1086,45 +1110,5 @@ describe("segmentTurns", () => {
     ];
     const turns = segmentTurns(blocks, blockRenderKeys(blocks));
     expect(turns.map((turn) => turn.key)).toEqual(["repeat", "repeat#2"]);
-  });
-});
-
-describe("turnHasLiveStream", () => {
-  it("is live while an assistant message is still streaming", () => {
-    const blocks: TimelineBlock[] = [
-      { id: "u1", type: "message", role: "user", content: "go" },
-      { id: "a1", type: "message", role: "assistant", content: "hi", streaming: true },
-    ];
-    const [turn] = segmentTurns(blocks, blockRenderKeys(blocks));
-    expect(turn ? turnHasLiveStream(turn) : undefined).toBe(true);
-  });
-
-  it("is settled when the turn has no in-flight stream or work", () => {
-    const blocks: TimelineBlock[] = [
-      { id: "u1", type: "message", role: "user", content: "go" },
-      { id: "a1", type: "message", role: "assistant", content: "done" },
-    ];
-    const [turn] = segmentTurns(blocks, blockRenderKeys(blocks));
-    expect(turn ? turnHasLiveStream(turn) : undefined).toBe(false);
-  });
-
-  it("is live while a work-fold run is still running", () => {
-    const blocks: TimelineBlock[] = [
-      { id: "u1", type: "message", role: "user", content: "go" },
-      {
-        id: "fold",
-        type: "work-fold",
-        run: {
-          id: "run",
-          type: "run",
-          runId: "r1",
-          status: "running",
-          startedAt: 1,
-        },
-        items: [],
-      },
-    ];
-    const [turn] = segmentTurns(blocks, blockRenderKeys(blocks));
-    expect(turn ? turnHasLiveStream(turn) : undefined).toBe(true);
   });
 });

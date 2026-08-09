@@ -33,7 +33,7 @@ export function TodosCard({ todos, updating }: { todos: TodoItem[]; updating: bo
         type="button"
       >
         <IconListCheck className="shrink-0 text-fg-subtle" size={14} stroke={1.7} />
-        <span className="shrink-0 text-sm text-fg-muted">To-dos</span>
+        <span className="shrink-0 text-sm text-fg-subtle">To-dos</span>
         <span className="shrink-0 text-sm text-fg-faint tabular-nums">{todos.length}</span>
         {updating ? (
           <span className="min-w-0 truncate text-xs">

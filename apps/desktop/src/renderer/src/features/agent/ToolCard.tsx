@@ -10,7 +10,6 @@ import {
 import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
 import { ShinyText } from "../../components/ui/ShinyText";
 import { cn } from "../../lib/cn";
-import { useSmoothStreamingText } from "../../lib/useSmoothStreamingText";
 import { PlanTimelineCard } from "../plan/PlanTimelineCard";
 import { DiffToolCard } from "./diff/DiffToolCard";
 import { QuestionToolCard } from "./QuestionToolCard";
@@ -153,10 +152,6 @@ export const ToolCard = memo(
 type FlatToolRowProps = ToolCardProps;
 
 const LIVE_AUTO_COLLAPSE_MS = 800;
-const LIVE_OUTPUT_PACING = {
-  paceMs: 16,
-  maxStep: 36,
-} as const;
 
 function LiveToolCard({
   name,
@@ -167,45 +162,31 @@ function LiveToolCard({
 }: FlatToolRowProps) {
   const running = !isComplete && !isError;
   const [open, setOpen] = useState(() => running || isError);
-  const [smoothOutput, setSmoothOutput] = useState(() => running);
   const sawRunningRef = useRef(false);
   const scrollRef = useRef<HTMLPreElement>(null);
   const view = describeTool(name, args);
   const status = running ? liveStatus(output) || "Starting" : isError ? "Failed" : "Complete";
   const rawDetail = clampTailDetail(output.trimEnd());
-  const visibleRawDetail = useSmoothStreamingText(
-    rawDetail,
-    smoothOutput && open && !isError && rawDetail.length > 0,
-    LIVE_OUTPUT_PACING,
-  );
-  const playbackComplete = !rawDetail || visibleRawDetail === rawDetail;
   const fallbackDetail = running || isError ? status : "";
-  const detail = isError
-    ? rawDetail || fallbackDetail
-    : rawDetail
-      ? visibleRawDetail
-      : fallbackDetail;
+  const detail = rawDetail || fallbackDetail;
   const bodyOpen = open && Boolean(detail.trim());
 
   useEffect(() => {
     if (running) {
       sawRunningRef.current = true;
-      setSmoothOutput(true);
       setOpen(true);
       return;
     }
     if (isError) {
-      setSmoothOutput(false);
       setOpen(true);
       return;
     }
-    if (sawRunningRef.current && isComplete && playbackComplete) {
-      setSmoothOutput(false);
+    if (sawRunningRef.current && isComplete) {
       const timeout = globalThis.setTimeout(() => setOpen(false), LIVE_AUTO_COLLAPSE_MS);
       return () => globalThis.clearTimeout(timeout);
     }
     return undefined;
-  }, [running, isComplete, isError, playbackComplete]);
+  }, [running, isComplete, isError]);
 
   useEffect(() => {
     if (!bodyOpen || !detail || !scrollRef.current) return undefined;
@@ -225,7 +206,7 @@ function LiveToolCard({
         {running ? (
           <ShinyText className="shrink-0">{view.verb}</ShinyText>
         ) : (
-          <span className={cn("shrink-0", isError ? "text-danger" : "text-fg-muted")}>
+          <span className={cn("shrink-0", isError ? "text-danger" : "text-fg-subtle")}>
             {view.verb}
           </span>
         )}
@@ -295,7 +276,7 @@ function FlatToolRow({
         </>
       ) : (
         <>
-          <span className={cn("shrink-0", isError ? "text-danger" : "text-fg-muted")}>
+          <span className={cn("shrink-0", isError ? "text-danger" : "text-fg-subtle")}>
             {view.verb}
           </span>
           <span className="min-w-0 flex-1 truncate text-fg-subtle" title={view.target}>
@@ -346,12 +327,7 @@ function FlatToolRow({
   );
 }
 
-function describeTool(
-  name: string,
-  args: unknown,
-  running = false,
-  output = "",
-): ToolView {
+function describeTool(name: string, args: unknown, running = false, output = ""): ToolView {
   const a = (args && typeof args === "object" ? args : {}) as Record<string, unknown>;
   if (name === WAIT_TOOL_NAME) {
     if (running) {

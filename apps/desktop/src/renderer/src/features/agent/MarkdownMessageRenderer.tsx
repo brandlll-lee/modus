@@ -5,9 +5,10 @@ import { createCodePlugin } from "@streamdown/code";
 import { createMathPlugin } from "@streamdown/math";
 import type { MermaidConfig } from "@streamdown/mermaid";
 import { createMermaidPlugin } from "@streamdown/mermaid";
-import { type ReactNode, useContext, useMemo } from "react";
+import { type ComponentProps, useContext, useMemo } from "react";
 import remarkBreaks from "remark-breaks";
 import type {
+  AnimateOptions,
   Components,
   CustomRenderer,
   CustomRendererProps,
@@ -128,6 +129,12 @@ function buildMermaidConfig(theme: ThemeMode): MermaidConfig {
 
 const LINK_SAFETY: NonNullable<StreamdownProps["linkSafety"]> = { enabled: false };
 
+const ANIMATED: AnimateOptions = {
+  animation: "fadeIn",
+  duration: 70,
+  easing: "ease-out",
+};
+
 /* Render a single `\n` as a hard line break (GFM soft breaks otherwise collapse
  * lines into one paragraph). Stable module-level reference to preserve memo. */
 const REMARK_PLUGINS = [...Object.values(defaultRemarkPlugins), remarkBreaks];
@@ -137,11 +144,9 @@ const REMARK_PLUGINS = [...Object.values(defaultRemarkPlugins), remarkBreaks];
  * Omit default harden: its indicator policy appends " [blocked]" after sanitize
  * strips `f:` drive-letter hrefs. Sanitize already gates link protocols.
  */
-const REHYPE_PLUGINS = [
-  defaultRehypePlugins.raw,
-  rehypeWorkspaceFileLinks,
-  defaultRehypePlugins.sanitize,
-];
+const { raw, sanitize } = defaultRehypePlugins;
+if (!raw || !sanitize) throw new Error("Streamdown rehype defaults are incomplete.");
+const REHYPE_PLUGINS = [raw, rehypeWorkspaceFileLinks, sanitize];
 
 /**
  * Streamdown renders incomplete ```mermaid fences mid-stream; mermaid.parse
@@ -212,11 +217,7 @@ function InlineCodeWithFileNav({
   className,
   node: _node,
   ...props
-}: {
-  children?: ReactNode;
-  className?: string;
-  node?: unknown;
-} & Record<string, unknown>) {
+}: ComponentProps<"code"> & { node?: unknown }) {
   const { cwd, onOpenFile } = useMarkdownFileNav();
   return (
     <MarkdownFileCode className={className} cwd={cwd} onOpenFile={onOpenFile} {...props}>
@@ -242,11 +243,7 @@ function MarkdownAnchor({
   href,
   node: _node,
   ...props
-}: {
-  children?: ReactNode;
-  href?: string;
-  node?: unknown;
-} & Record<string, unknown>) {
+}: ComponentProps<"a"> & { node?: unknown }) {
   const { onOpenFile } = useMarkdownFileNav();
   const path = parseModusFileHref(href);
   if (path) {
@@ -293,7 +290,7 @@ export default function MarkdownMessageRenderer({
 
   // Rebuild syntax-highlight + diagram plugins only when the theme flips
   // (rare, deliberate) — stable across streamed frames so Streamdown's memo
-  // holds and the typewriter stays smooth.
+  // holds and the streaming animation stays smooth.
   const mermaidConfig = useMemo(() => buildMermaidConfig(theme), [theme]);
   const codePlugin = theme === "dark-plus" ? codeDarkPlus : codeDark;
   const plugins = useMemo(
@@ -317,6 +314,7 @@ export default function MarkdownMessageRenderer({
 
   return (
     <Streamdown
+      animated={ANIMATED}
       className={cn("modus-markdown", className)}
       components={components}
       controls={controls}

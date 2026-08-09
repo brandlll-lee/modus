@@ -20,19 +20,17 @@ import type {
 } from "../../../../shared/contracts";
 import { CopyButton } from "../../components/ui/CopyButton";
 import { ImageThumb } from "../../components/ui/ImageViewer";
-import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
-import { formatClock } from "../../lib/formatClock";
 import { useClipFade } from "../../lib/useClipFade";
 import {
-  Composer,
   COMPOSER_RADIUS_CLASS,
   COMPOSER_SHELL_CLASS,
+  Composer,
   type ComposerDraft,
   createEmptyComposerDraft,
 } from "../composer/Composer";
-import type { ComposerImage } from "../composer/useComposerImages";
 import { InspectGlyph, SkillTokenContent } from "../composer/composerTokens";
+import type { ComposerImage } from "../composer/useComposerImages";
 import { materialIconForFile } from "../files/fileIcons";
 import { CheckpointRestoreButton } from "./CheckpointRestoreButton";
 import { MarkdownMessage } from "./MarkdownMessage";
@@ -43,8 +41,6 @@ type MessageBlockProps = {
   messageId: string;
   content: string;
   streaming?: boolean;
-  /** Epoch ms — user send time. */
-  createdAt?: number;
   /** User only: pre-run snapshot this message can roll the files back to. */
   checkpointId?: string;
   onRestoreCheckpoint?(checkpointId: string): Promise<void> | void;
@@ -73,10 +69,6 @@ type MessageBlockProps = {
   contextItems?: ContextItem[];
   /** User only: selected skills attached to the prompt. */
   skills?: SkillSelection[];
-  /**
-   * Preview sheet: hide hover actions (edit/copy chrome). Sticky user bubble
-   * still pins like the main session — same ChatViewport scroll ancestor.
-   */
   compactClip?: boolean | undefined;
 };
 
@@ -85,7 +77,6 @@ export const MessageBlock = memo(function MessageBlock({
   messageId,
   content,
   streaming = false,
-  createdAt,
   checkpointId,
   onRestoreCheckpoint,
   editable = false,
@@ -126,13 +117,15 @@ export const MessageBlock = memo(function MessageBlock({
         {hasText || hasInlineTokens ? (
           <div className="whitespace-pre-wrap wrap-break-word">
             {contextChips
-              ?.filter((chip): chip is MessageContextChip => chip != null && typeof chip.kind === "string")
+              ?.filter(
+                (chip): chip is MessageContextChip => chip != null && typeof chip.kind === "string",
+              )
               .map((chip) => (
-              <InlineContextToken
-                chip={chip}
-                key={`${chip.kind}:${chip.label}:${chip.detail ?? ""}`}
-              />
-            ))}
+                <InlineContextToken
+                  chip={chip}
+                  key={`${chip.kind}:${chip.label}:${chip.detail ?? ""}`}
+                />
+              ))}
             {(skills ?? []).map((skill) => (
               <InlineSkillToken key={skill.path} name={skill.name} />
             ))}
@@ -145,11 +138,8 @@ export const MessageBlock = memo(function MessageBlock({
     return (
       <div
         className={cn(
-          "group/user-msg sticky top-0 z-10 block w-full min-w-0",
+          "sticky top-0 z-10 block w-full min-w-0",
           COMPOSER_RADIUS_CLASS,
-          // Sticky chrome + absolutely-positioned hover actions: one timeline
-          // child so turn `space-y-6` / `pb-6` keep equal air above and below
-          // the bubble (in-flow ghost action rows used to double the gap below).
           // Preview sheet is elevated; main chat is canvas.
           compactClip ? "bg-elevated" : "bg-canvas",
         )}
@@ -164,12 +154,15 @@ export const MessageBlock = memo(function MessageBlock({
             messageId={messageId}
             model={model}
             models={models}
+            checkpointId={checkpointId}
             onCancel={() => setEditing(false)}
             onEditResend={onEditResend}
+            onRestoreCheckpoint={onRestoreCheckpoint}
             {...(skills ? { skills } : {})}
             workspaceId={workspaceId}
           />
         ) : (
+          /* biome-ignore lint/a11y: The conditional control can contain nested image buttons. */
           <div
             aria-label={canEdit ? "Edit message" : undefined}
             className={cn(
@@ -206,27 +199,6 @@ export const MessageBlock = memo(function MessageBlock({
             </div>
           </div>
         )}
-        {!showEditor && !compactClip ? (
-          <div className="pointer-events-none absolute top-full left-0 z-10 mt-1 flex h-6 max-w-full items-center gap-1 opacity-0 transition-opacity duration-150 group-hover/user-msg:pointer-events-auto group-hover/user-msg:opacity-100 group-focus-within/user-msg:pointer-events-auto group-focus-within/user-msg:opacity-100">
-            <span className="text-2xs text-fg-faint tabular-nums">{formatClock(createdAt)}</span>
-            {checkpointId && onRestoreCheckpoint ? (
-              <CheckpointRestoreButton checkpointId={checkpointId} onRestore={onRestoreCheckpoint} />
-            ) : null}
-            {hasText ? <CopyButton label="Copy message" text={content} /> : null}
-            {canEdit ? (
-              <Tooltip content="Edit" side="top" sideOffset={6}>
-                <button
-                  aria-label="Edit message"
-                  className="flex size-6 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-hover hover:text-fg-muted"
-                  onClick={() => setEditing(true)}
-                  type="button"
-                >
-                  <IconPencil size={13} stroke={1.8} />
-                </button>
-              </Tooltip>
-            ) : null}
-          </div>
-        ) : null}
       </div>
     );
   }
@@ -257,8 +229,10 @@ function InlineEditComposer({
   models,
   cwd,
   workspaceId,
+  checkpointId,
   onCancel,
   onEditResend,
+  onRestoreCheckpoint,
 }: {
   messageId: string;
   content: string;
@@ -270,6 +244,7 @@ function InlineEditComposer({
   models: ModelInfo[];
   cwd: string | undefined;
   workspaceId: string | undefined;
+  checkpointId: string | undefined;
   onCancel(): void;
   onEditResend(
     messageId: string,
@@ -278,6 +253,7 @@ function InlineEditComposer({
     contextItems?: ContextItem[],
     skills?: SkillSelection[],
   ): Promise<void>;
+  onRestoreCheckpoint: ((checkpointId: string) => Promise<void> | void) | undefined;
 }) {
   const [draft, setDraft] = useState<ComposerDraft>(() => ({
     ...createEmptyComposerDraft(),
@@ -291,6 +267,14 @@ function InlineEditComposer({
 
   return (
     <Composer
+      trailingActions={
+        <>
+          <CopyButton label="Copy message" text={draft.value} />
+          {checkpointId && onRestoreCheckpoint ? (
+            <CheckpointRestoreButton checkpointId={checkpointId} onRestore={onRestoreCheckpoint} />
+          ) : null}
+        </>
+      }
       canSubmit={Boolean(model)}
       contextItems={editContextItems}
       cwd={cwd}
@@ -381,9 +365,7 @@ function contextItemsFromChips(
 
 function InlineContextToken({ chip }: { chip: MessageContextChip }) {
   const fileIcon =
-    chip.kind === "file" || chip.kind === "excerpt"
-      ? materialIconForFile(chip.label)
-      : undefined;
+    chip.kind === "file" || chip.kind === "excerpt" ? materialIconForFile(chip.label) : undefined;
   return (
     <span
       className="mr-1 inline-flex max-w-[260px] items-center gap-1 align-[-0.15em] font-medium text-link text-sm"
@@ -398,7 +380,9 @@ function InlineContextToken({ chip }: { chip: MessageContextChip }) {
         <ContextKindIcon kind={chip.kind} />
       )}
       <span className="truncate">{chip.label}</span>
-      {chip.detail ? <span className="shrink-0 font-normal text-fg-muted">{chip.detail}</span> : null}
+      {chip.detail ? (
+        <span className="shrink-0 font-normal text-fg-muted">{chip.detail}</span>
+      ) : null}
     </span>
   );
 }

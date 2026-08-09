@@ -66,9 +66,6 @@ import { WorkingSubagentBar } from "./WorkingSubagentBar";
  * Full conversation surface bound to one active session.
  */
 
-/** Coalesce streamed events into ~25fps of React commits (AI SDK guidance). */
-const AGENT_EVENT_FLUSH_MS = 40;
-
 type ChatPaneProps = {
   session: AgentSessionInfo;
   hub: AgentEventHub;
@@ -507,7 +504,8 @@ export function ChatPane({
   );
 
   const queuedRef = useRef<AgentEventItem[]>([]);
-  const flushTimerRef = useRef<number | undefined>(undefined);
+  /** Pending frame-clock flush handle (requestAnimationFrame id). */
+  const flushFrameRef = useRef<number | undefined>(undefined);
   const statsTimerRef = useRef<number | undefined>(undefined);
   const statsCwdRef = useRef(session.cwd);
   statsCwdRef.current = session.cwd;
@@ -598,7 +596,7 @@ export function ChatPane({
   );
 
   const flushQueued = useCallback((): void => {
-    flushTimerRef.current = undefined;
+    flushFrameRef.current = undefined;
     const queued = queuedRef.current;
     if (queued.length === 0) {
       return;
@@ -609,9 +607,9 @@ export function ChatPane({
 
   const clearQueued = useCallback((): void => {
     queuedRef.current = [];
-    if (flushTimerRef.current !== undefined) {
-      window.clearTimeout(flushTimerRef.current);
-      flushTimerRef.current = undefined;
+    if (flushFrameRef.current !== undefined) {
+      cancelAnimationFrame(flushFrameRef.current);
+      flushFrameRef.current = undefined;
     }
   }, []);
 
@@ -637,8 +635,8 @@ export function ChatPane({
         return;
       }
       queuedRef.current.push(item);
-      if (flushTimerRef.current === undefined) {
-        flushTimerRef.current = window.setTimeout(flushQueued, AGENT_EVENT_FLUSH_MS);
+      if (flushFrameRef.current === undefined) {
+        flushFrameRef.current = requestAnimationFrame(flushQueued);
       }
       // Keep the changes strip live while the agent edits files mid-run.
       if (event.type === "tool.ended") {
@@ -952,7 +950,7 @@ export function ChatPane({
             scrollRef={setChatScrollRef}
           >
             <Timeline
-              agentEvents={agentEvents}
+              blocks={visibleBlocks}
               cwd={activeCwd}
               {...(isLite ? { embedded: true } : {})}
               model={paneModel}
@@ -969,7 +967,6 @@ export function ChatPane({
                 await window.modus.checkpoint.restore({ checkpointId });
                 refreshStats();
               }}
-              precomputedBlocks={visibleBlocks}
               workspaceId={workspace?.id}
             />
           </ChatViewport>
@@ -1107,6 +1104,7 @@ export function ChatPane({
                         models={models}
                         {...(contextUsage ? { contextUsage } : {})}
                         onAbort={() => void abortPrompt()}
+                        onCompact={() => window.modus.agent.compact(sessionId)}
                         onContextChange={setContextItems}
                         onDraftChange={setComposerFields}
                         onModeChange={setComposerMode}

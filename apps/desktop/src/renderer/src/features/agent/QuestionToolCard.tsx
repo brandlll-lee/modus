@@ -93,7 +93,7 @@ export const QuestionToolCard = memo(function QuestionToolCard({
     <div className="min-w-0 text-sm">
       <button
         aria-expanded={open}
-        className="flex min-w-0 items-center gap-1.5 rounded-md py-0.5 text-left text-fg-muted transition-colors hover:text-fg"
+        className="flex min-w-0 items-center gap-1.5 rounded-md py-0.5 text-left text-fg-subtle transition-colors hover:text-fg-muted"
         onClick={() => setOpen((value) => !value)}
         type="button"
       >

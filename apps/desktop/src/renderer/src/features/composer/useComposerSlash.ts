@@ -1,9 +1,18 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import type { SkillInfo } from "../../../../shared/contracts";
 
 type UseComposerSlashInput = {
   value: string;
   cwd: string | undefined;
+  actions: SlashActionItem[];
+};
+
+export type SlashActionItem = Omit<SlashCommand, "prefix"> & {
+  kind: "action";
+  key: string;
+  disabled?: boolean;
+  leading: ReactNode;
+  run(): Promise<void>;
 };
 
 /**
@@ -44,6 +53,7 @@ export const BUILTIN_COMMANDS: SlashCommand[] = [
 ];
 
 export type SlashItem =
+  | SlashActionItem
   | { kind: "skill"; key: string; name: string; description: string; skill: SkillInfo }
   | { kind: "command"; key: string; name: string; description: string; command: SlashCommand };
 
@@ -56,7 +66,7 @@ export function getSlashQuery(value: string): { start: number; query: string } |
   return { start: match.index + match[0].indexOf("/"), query: match[1] ?? "" };
 }
 
-export function useComposerSlash({ value, cwd }: UseComposerSlashInput) {
+export function useComposerSlash({ value, cwd, actions }: UseComposerSlashInput) {
   const slash = useMemo(() => getSlashQuery(value), [value]);
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -115,6 +125,12 @@ export function useComposerSlash({ value, cwd }: UseComposerSlashInput) {
 
   const items = useMemo<SlashItem[]>(
     () => [
+      ...actions.filter(
+        (action) =>
+          !query ||
+          action.name.toLowerCase().includes(query) ||
+          action.description.toLowerCase().includes(query),
+      ),
       ...filteredSkills.map(
         (skill): SlashItem => ({
           kind: "skill",
@@ -134,7 +150,7 @@ export function useComposerSlash({ value, cwd }: UseComposerSlashInput) {
         }),
       ),
     ],
-    [filteredSkills, filteredCommands],
+    [actions, filteredSkills, filteredCommands, query],
   );
 
   useEffect(() => {

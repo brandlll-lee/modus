@@ -128,7 +128,7 @@ export const DiffToolCard = memo(
               <ShinyText className="min-w-0 truncate">{progressPhrase(meta, fileName)}</ShinyText>
             ) : (
               <>
-                <span className={cn("shrink-0", isError ? "text-danger" : "text-fg-muted")}>
+                <span className={cn("shrink-0", isError ? "text-danger" : "text-fg-subtle")}>
                   {doneVerb}
                 </span>
                 <span className="min-w-0 truncate text-fg-subtle text-sm">{fileName}</span>

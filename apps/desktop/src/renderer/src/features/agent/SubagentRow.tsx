@@ -1,4 +1,4 @@
-import type { ModelInfo, SubagentStatus } from "../../../../shared/contracts";
+import type { AgentSessionInfo, ModelInfo, SubagentStatus } from "../../../../shared/contracts";
 import { VortexMark } from "../../components/ui/VortexMark";
 import { cn } from "../../lib/cn";
 import { lookupModel } from "../../lib/modelIdentity";
@@ -48,10 +48,7 @@ export function SubagentRow({
       onClick={onClick}
       type="button"
     >
-      <span
-        aria-label={running ? "Subagent running" : undefined}
-        className="mt-1 flex size-5 shrink-0 items-center justify-center"
-      >
+      <span className="mt-1 flex size-5 shrink-0 items-center justify-center">
         {running ? (
           <VortexMark className="size-4.5" />
         ) : (
@@ -60,7 +57,7 @@ export function SubagentRow({
       </span>
       <span className="min-w-0 flex-1">
         <span className="flex min-w-0 items-center gap-2 overflow-hidden">
-          <span className="min-w-0 truncate text-sm text-fg leading-snug">{task}</span>
+          <span className="min-w-0 truncate text-sm text-fg-subtle leading-snug">{task}</span>
           {model ? (
             <span className="inline-flex min-w-0 shrink-0 items-center gap-1 text-xs text-fg-faint">
               <ProviderLogo
@@ -83,8 +80,8 @@ export function SubagentRow({
 }
 
 /** Same soft indicators as the sidebar idle/failed dots — no ThinkingOrb / ModusBot. */
-export function SubagentSettledDot({ status }: { status: SubagentStatus }) {
-  if (status === "failed") {
+export function SubagentSettledDot({ status }: { status: AgentSessionInfo["status"] }) {
+  if (status === "failed" || status === "error") {
     return (
       <span
         className="size-2 shrink-0 rounded-full bg-danger"

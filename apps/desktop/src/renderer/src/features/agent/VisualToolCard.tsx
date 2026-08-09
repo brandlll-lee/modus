@@ -544,7 +544,7 @@ function VisualFullscreen({
   return createPortal(
     <div className="fixed inset-0 z-[100] flex flex-col bg-canvas/95 backdrop-blur">
       <div className="flex h-12 shrink-0 items-center justify-between border-hairline border-b px-3">
-        <div className="min-w-0 truncate text-fg-muted text-sm">{title}</div>
+        <div className="min-w-0 truncate text-fg-subtle text-sm">{title}</div>
         <div className="flex items-center gap-1 popup-chrome p-1">
           <VisualAction
             icon={<IconMinus size={14} stroke={1.8} />}

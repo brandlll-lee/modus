@@ -1,5 +1,4 @@
-import { Menu } from "@base-ui/react/menu";
-import { IconChevronRight, IconDots } from "@tabler/icons-react";
+import { IconChevronRight } from "@tabler/icons-react";
 import { m } from "motion/react";
 import { memo, type ReactNode, useEffect, useId, useState } from "react";
 import type { ModelInfo, PlanRef } from "../../../../shared/contracts";
@@ -22,24 +21,34 @@ import type {
 import { TodosCard } from "./TodosCard";
 import { ToolCard } from "./ToolCard";
 
+export function formatElapsed(end: number, start: number): string {
+  const seconds = Math.max(0, Math.round((end - start) / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return rest === 0 ? `${minutes}m` : `${minutes}m ${rest}s`;
+}
+
+export function thoughtLabel(streaming: boolean, startedAt?: number, completedAt?: number): string {
+  if (streaming) return "Thinking";
+  if (startedAt === undefined) return "Thought";
+  const end = completedAt ?? startedAt;
+  const seconds = Math.max(0, Math.round((end - startedAt) / 1000));
+  return seconds === 0 ? "Thought brief" : `Thought for ${formatElapsed(end, startedAt)}`;
+}
+
 export function ThoughtRow({
   text,
   streaming = false,
   startedAt,
   completedAt,
-  formatElapsed,
-}: Pick<ThoughtBlockItem, "text" | "streaming" | "startedAt" | "completedAt"> & {
-  formatElapsed(end: number, start: number): string;
-}) {
+}: Pick<ThoughtBlockItem, "text" | "streaming" | "startedAt" | "completedAt">) {
   const [manualOpen, setManualOpen] = useState<boolean>();
   const open = manualOpen ?? streaming;
   const contentId = useId();
 
   if (!streaming && !text.trim()) return null;
-  let label = "Thought";
-  if (streaming) label = "Thinking";
-  else if (startedAt !== undefined)
-    label = `Thought for ${formatElapsed(completedAt ?? startedAt, startedAt)}`;
+  const label = thoughtLabel(streaming, startedAt, completedAt);
 
   return (
     <div className="min-w-0">
@@ -60,26 +69,19 @@ export function ThoughtRow({
 }
 
 /** Single-line tool-style compaction status (ShinyText while running). */
-export function CompactionRow({
-  reason,
-  status,
-  detail,
-}: Pick<CompactionBlockItem, "reason" | "status" | "detail">) {
+export function CompactionRow({ status, detail }: Pick<CompactionBlockItem, "status" | "detail">) {
   const running = status === "running";
-  const trailing = detail ?? (running ? reason : status === "aborted" ? "aborted" : "ended");
   const danger = status === "aborted" || status === "error";
+  const label = running ? "Compacting context" : (detail ?? "Context compacted");
   return (
     <div className="flex min-w-0 items-center gap-2 text-sm">
       {running ? (
-        <ShinyText className="shrink-0 font-medium">Compaction</ShinyText>
+        <ShinyText className="shrink-0 font-medium">{label}</ShinyText>
       ) : (
-        <span className={cn("shrink-0 font-medium", danger ? "text-danger" : "text-fg-muted")}>
-          Compaction
+        <span className={cn("shrink-0 font-medium", danger ? "text-danger" : "text-fg-subtle")}>
+          {label}
         </span>
       )}
-      <span className="min-w-0 truncate text-fg-faint" title={trailing}>
-        {trailing}
-      </span>
     </div>
   );
 }
@@ -90,32 +92,26 @@ function FoldHeader({
   label,
   onToggle,
   open,
-  trailing,
 }: {
   active?: boolean;
   controlsId?: string;
   label: string;
   onToggle(): void;
   open: boolean;
-  /** Far-right actions (settled ⋯). Enables flex-1 so the menu sits at the end. */
-  trailing?: ReactNode;
 }) {
   return (
     <div className="flex min-w-0 items-center gap-1.5">
       <button
         aria-controls={controlsId}
         aria-expanded={open}
-        className={cn(
-          "group/activity flex min-w-0 max-w-full items-center gap-1.5 rounded-md py-0.5 text-left text-sm text-fg-subtle transition-colors hover:text-fg-muted",
-          trailing ? "flex-1" : undefined,
-        )}
+        className="group/activity flex min-w-0 max-w-full items-center gap-1.5 rounded-md py-0.5 text-left text-sm text-fg-subtle transition-colors hover:text-fg-muted"
         onClick={onToggle}
         type="button"
       >
         {active ? (
           <ShinyText className="min-w-0 truncate">{label}</ShinyText>
         ) : (
-          <span className="min-w-0 truncate text-fg-muted">{label}</span>
+          <span className="min-w-0 truncate text-fg-subtle">{label}</span>
         )}
         <m.span
           animate={{ rotate: open ? 90 : 0 }}
@@ -125,57 +121,7 @@ function FoldHeader({
           <IconChevronRight size={12} stroke={1.8} />
         </m.span>
       </button>
-      {trailing}
     </div>
-  );
-}
-
-function FoldMoreActions({ answer, elapsedLabel }: { answer?: string; elapsedLabel: string }) {
-  const [copied, setCopied] = useState(false);
-
-  function copyAnswer(): void {
-    if (!answer || typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
-      return;
-    }
-    void navigator.clipboard.writeText(answer).then(() => {
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1600);
-    });
-  }
-
-  const rowClass =
-    "flex h-7 cursor-default items-center rounded-sm px-2 text-sm outline-none select-none";
-
-  return (
-    <Menu.Root>
-      <Menu.Trigger
-        aria-label="More actions"
-        className={cn(
-          "flex size-6 shrink-0 items-center justify-center rounded-sm text-fg-faint outline-none transition-colors",
-          "hover:bg-hover hover:text-fg-muted data-popup-open:bg-hover data-popup-open:text-fg",
-        )}
-        title="More actions"
-      >
-        <IconDots size={15} stroke={1.8} />
-      </Menu.Trigger>
-      <Menu.Portal>
-        <Menu.Positioner align="end" side="bottom" sideOffset={4}>
-          <Menu.Popup className="origin-(--transform-origin) min-w-[132px] popup-chrome p-0.5">
-            {answer !== undefined && answer.length > 0 ? (
-              <Menu.Item
-                className={cn(rowClass, "text-fg data-highlighted:bg-hover")}
-                onClick={copyAnswer}
-              >
-                {copied ? "Copied" : "Copy"}
-              </Menu.Item>
-            ) : null}
-            <div className={cn(rowClass, "text-fg-muted tabular-nums")} role="note">
-              {elapsedLabel}
-            </div>
-          </Menu.Popup>
-        </Menu.Positioner>
-      </Menu.Portal>
-    </Menu.Root>
   );
 }
 
@@ -267,20 +213,18 @@ function WorkActivityGroup({
 
 export function WorkActivityRow({
   item,
-  formatElapsed,
   models,
   onOpenFile,
   onOpenSubagent,
   onOpenPlan,
 }: {
   item: WorkActivityItem;
-  formatElapsed(end: number, start: number): string;
   models?: ModelInfo[];
   onOpenFile?(path: string): void;
   onOpenSubagent?(childSessionId: string): void;
   onOpenPlan?(plan: PlanRef): void;
 }) {
-  if (item.type === "thought") return <ThoughtRow {...item} formatElapsed={formatElapsed} />;
+  if (item.type === "thought") return <ThoughtRow {...item} />;
   if (item.type === "todos") return <TodosCard {...item} />;
   if (item.type === "subagent") {
     return (
@@ -311,7 +255,6 @@ export const WorkFold = memo(function WorkFold({
   run,
   items,
   models,
-  formatElapsed,
   onOpenFile,
   onOpenSubagent,
   onOpenPlan,
@@ -319,7 +262,6 @@ export const WorkFold = memo(function WorkFold({
   run: RunBlockItem;
   items: WorkFoldItem[];
   models?: ModelInfo[];
-  formatElapsed: (end: number, start: number) => string;
   onOpenFile?(path: string): void;
   onOpenSubagent?(childSessionId: string): void;
   onOpenPlan?(plan: PlanRef): void;
@@ -356,14 +298,6 @@ export const WorkFold = memo(function WorkFold({
         label={label}
         onToggle={() => setDisclosure({ active, open: !open })}
         open={open}
-        trailing={
-          !active ? (
-            <FoldMoreActions
-              {...(run.answer !== undefined ? { answer: run.answer } : {})}
-              elapsedLabel={elapsed}
-            />
-          ) : undefined
-        }
       />
       <CollapsibleMotion id={contentId} open={open} preset="timeline">
         <div className="mt-0.5">
@@ -374,7 +308,6 @@ export const WorkFold = memo(function WorkFold({
                   <WorkActivityGroup group={item} key={item.id}>
                     {item.items.map((activity) => (
                       <WorkActivityRow
-                        formatElapsed={formatElapsed}
                         item={activity}
                         key={activity.id}
                         {...(models ? { models } : {})}
@@ -389,7 +322,6 @@ export const WorkFold = memo(function WorkFold({
               if (item.type !== "notice" && item.type !== "message") {
                 return (
                   <WorkActivityRow
-                    formatElapsed={formatElapsed}
                     item={item}
                     key={item.id}
                     {...(models ? { models } : {})}
