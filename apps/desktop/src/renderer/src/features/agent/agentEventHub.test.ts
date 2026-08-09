@@ -283,6 +283,31 @@ describe("AgentEventHub", () => {
     expect(second).toHaveBeenCalledTimes(1);
   });
 
+  it("hands prepared events to the first subscriber exactly once", () => {
+    const hub = new AgentEventHub();
+    const event = item({ type: "run.started", sessionId: "s", runId: "r", delivery: "normal" });
+    hub.prepare("s");
+    hub.publish(event);
+
+    const first = vi.fn();
+    hub.subscribe("s", first);
+    expect(first).toHaveBeenCalledWith(event);
+
+    const second = vi.fn();
+    hub.subscribe("s", second);
+    expect(second).not.toHaveBeenCalled();
+  });
+
+  it("drops events after a prepared handoff is cancelled", () => {
+    const hub = new AgentEventHub();
+    const subscriber = vi.fn();
+    hub.prepare("s");
+    hub.cancelPrepare("s");
+    hub.publish(item({ type: "run.completed", sessionId: "s", runId: "r" }));
+    hub.subscribe("s", subscriber);
+    expect(subscriber).not.toHaveBeenCalled();
+  });
+
   it("keeps parent and subagent chat streams isolated", () => {
     const hub = new AgentEventHub();
     const parent = vi.fn();

@@ -105,11 +105,27 @@ type Subscriber = (item: AgentEventItem) => void;
  */
 export class AgentEventHub {
   private subscribers = new Map<string, Set<Subscriber>>();
+  private prepared = new Map<string, AgentEventItem[]>();
+
+  prepare(sessionId: string): void {
+    if (!this.subscribers.has(sessionId) && !this.prepared.has(sessionId)) {
+      this.prepared.set(sessionId, []);
+    }
+  }
+
+  cancelPrepare(sessionId: string): void {
+    this.prepared.delete(sessionId);
+  }
 
   subscribe(sessionId: string, subscriber: Subscriber): () => void {
     const set = this.subscribers.get(sessionId) ?? new Set<Subscriber>();
     set.add(subscriber);
     this.subscribers.set(sessionId, set);
+    const prepared = this.prepared.get(sessionId);
+    this.prepared.delete(sessionId);
+    for (const item of prepared ?? []) {
+      subscriber(item);
+    }
     return () => {
       set.delete(subscriber);
       if (set.size === 0) {
@@ -121,6 +137,7 @@ export class AgentEventHub {
   publish(item: AgentEventItem): void {
     const set = this.subscribers.get(item.event.sessionId);
     if (!set) {
+      this.prepared.get(item.event.sessionId)?.push(item);
       return;
     }
     for (const subscriber of set) {

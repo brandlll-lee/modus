@@ -19,7 +19,7 @@ import {
   IconTrash,
   IconX,
 } from "@tabler/icons-react";
-import { animate, m, useMotionValue } from "motion/react";
+import { m, useMotionValue, useReducedMotion } from "motion/react";
 import {
   type MouseEvent,
   type PointerEvent,
@@ -34,11 +34,11 @@ import { SessionStatusDot } from "../features/agent/SessionStatusDot";
 import { cn } from "../lib/cn";
 import { useScrollFade } from "../lib/useScrollFade";
 import { CollapsibleMotion } from "./ui/CollapsibleMotion";
-import { ToolbarButton, TOOLBAR_ICON } from "./ui/ToolbarButton";
+import { TOOLBAR_ICON, ToolbarButton } from "./ui/ToolbarButton";
 
 export const SIDEBAR_MIN_WIDTH = 240;
 const SIDEBAR_MAX_WIDTH = 480;
-const SIDEBAR_TRANSITION = { duration: 0.18, ease: [0.22, 1, 0.36, 1] } as const;
+export const SIDEBAR_TRANSITION = { duration: 0.18, ease: [0.22, 1, 0.36, 1] } as const;
 
 /**
  * Sidebar density contract — one icon rail for nav / folder / session dots.
@@ -120,32 +120,12 @@ export function Sidebar({
 
   const dragStartRef = useRef<{ x: number; width: number } | null>(null);
   const latestWidthRef = useRef(width);
-  // Width is a motion value, not React state: a drag calls `.set()` which writes
-  // straight to the DOM without re-rendering App + the heavy Timeline on every
-  // pointermove. `contentWidth` keeps the inner content laid out at a stable
-  // width so the panel *clips* (instead of reflowing) while it slides shut —
-  // exactly how the right inspector behaves.
-  const panelWidth = useMotionValue(open ? width : 0);
-  const contentWidth = useMotionValue(width);
+  const reduceMotion = useReducedMotion();
+  const panelWidth = useMotionValue(width);
 
-  // Drive the open/close animation and keep the motion value in sync with an
-  // externally committed width. Never re-animate mid-drag (the pointer owns it).
   useEffect(() => {
-    if (dragStartRef.current) {
-      return;
-    }
-    latestWidthRef.current = width;
-    if (open) {
-      contentWidth.set(width);
-      const controls = animate(panelWidth, width, SIDEBAR_TRANSITION);
-      return () => controls.stop();
-    }
-    // Freeze content at its current visible width, then slide the panel to 0 so
-    // the text clips away cleanly with no last-frame reflow or snap.
-    contentWidth.set(Math.max(panelWidth.get(), 1));
-    const controls = animate(panelWidth, 0, SIDEBAR_TRANSITION);
-    return () => controls.stop();
-  }, [open, width, panelWidth, contentWidth]);
+    if (!dragStartRef.current) panelWidth.set(width);
+  }, [width, panelWidth]);
 
   const startResize = (event: PointerEvent<HTMLButtonElement>): void => {
     event.preventDefault();
@@ -171,7 +151,6 @@ export function Sidebar({
     );
     latestWidthRef.current = nextWidth;
     panelWidth.set(nextWidth);
-    contentWidth.set(nextWidth);
   };
 
   const stopResize = (): void => {
@@ -188,9 +167,17 @@ export function Sidebar({
   return (
     <m.aside
       className="relative flex shrink-0 flex-col overflow-hidden bg-panel"
-      style={{ width: panelWidth }}
+      layout={reduceMotion ? false : "size"}
+      layoutDependency={open}
+      style={{ transformOrigin: "left", width: open ? panelWidth : 0 }}
+      transition={{ layout: SIDEBAR_TRANSITION }}
     >
-      <m.div className="flex h-full flex-col bg-panel" style={{ width: contentWidth }}>
+      <m.div
+        className="flex h-full flex-col bg-panel"
+        layout={reduceMotion ? false : "position"}
+        style={{ width: panelWidth }}
+        transition={{ layout: SIDEBAR_TRANSITION }}
+      >
         <div className="px-2 pt-3 pb-1">
           <NavRow
             disabled={!canCreateSession}
@@ -500,9 +487,7 @@ function SessionRow({
       className={cn(
         SB_SESSION,
         "group",
-        isActive
-          ? "bg-active text-fg-muted"
-          : "text-fg-subtle hover:bg-hover hover:text-fg-muted",
+        isActive ? "bg-active text-fg-muted" : "text-fg-subtle hover:bg-hover hover:text-fg-muted",
       )}
       layout
       onBlurCapture={(event) => {

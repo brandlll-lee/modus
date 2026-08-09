@@ -26,7 +26,7 @@ export function EmptyState({
   hint: string;
   description?: string;
   action?: ReactNode;
-  className?: string;
+  className?: string | undefined;
 }) {
   return (
     <div

@@ -16,7 +16,7 @@ import {
   IconSourceCode,
   IconVersions,
 } from "@tabler/icons-react";
-import { AnimatePresence, domAnimation, LazyMotion, m } from "motion/react";
+import { AnimatePresence, domMax, LazyMotion, m, useReducedMotion } from "motion/react";
 import {
   lazy,
   type ReactNode,
@@ -45,7 +45,7 @@ import type {
   WorkspaceInfo,
 } from "../../../shared/contracts";
 import modusLogo from "../assets/modus-logo.png";
-import { SIDEBAR_MIN_WIDTH, Sidebar } from "../components/Sidebar";
+import { SIDEBAR_MIN_WIDTH, SIDEBAR_TRANSITION, Sidebar } from "../components/Sidebar";
 import { ImageViewerProvider } from "../components/ui/ImageViewer";
 import { ModusBot } from "../components/ui/ModusBot";
 import { ModusLoadingFallback } from "../components/ui/ModusLoadingMark";
@@ -103,6 +103,7 @@ function logInitialHydrationError(resource: string, error: unknown): void {
 }
 
 export function App() {
+  const reduceMotion = useReducedMotion();
   const [securityState, setSecurityState] = useState<SecurityState | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([]);
   const [activeWorkspace, setActiveWorkspace] = useState<WorkspaceInfo | null>(null);
@@ -436,6 +437,7 @@ export function App() {
         ...(model ? { model } : {}),
         title: "New chat",
       });
+      hubRef.current.prepare(session.id);
       setSessionCreateError(undefined);
       setActiveWorkspace(workspace);
       setAgentSessions((current) => {
@@ -655,7 +657,8 @@ export function App() {
           sessionId: session.id,
           status: { type: "idle" },
         });
-      });
+      })
+      .finally(() => hubRef.current.cancelPrepare(session.id));
   }
 
   async function changeDefaultModel(nextModel: string): Promise<void> {
@@ -820,7 +823,7 @@ export function App() {
   }, []);
 
   return (
-    <LazyMotion features={domAnimation} strict>
+    <LazyMotion features={domMax} strict>
       <TooltipProvider>
         <NativeSurfaceProvider>
           <ImageViewerProvider>
@@ -884,16 +887,20 @@ export function App() {
                       workspaces={workspaces}
                     />
 
-                    <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-hairline-strong bg-canvas">
+                    <m.main
+                      className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-hairline-strong bg-canvas"
+                      layout={!reduceMotion}
+                      layoutDependency={responsiveSidebarOpen}
+                      transition={{ layout: SIDEBAR_TRANSITION }}
+                    >
                       <header className="toolbar-row relative flex shrink-0 items-center px-3">
                         <div className="app-no-drag flex min-w-0 flex-1 items-center gap-1.5">
                           <AnimatePresence initial={false}>
                             {!responsiveSidebarOpen ? (
                               <m.div
-                                animate={{ opacity: 1, width: "auto" }}
-                                className="overflow-hidden"
-                                exit={{ opacity: 0, width: 0 }}
-                                initial={{ opacity: 0, width: 0 }}
+                                animate={{ opacity: 1, x: 0 }}
+                                exit={{ opacity: 0, x: -4 }}
+                                initial={{ opacity: 0, x: -4 }}
                                 transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
                               >
                                 <ToolbarButton
@@ -947,7 +954,9 @@ export function App() {
                             exit={{ opacity: 0 }}
                             initial={{ opacity: 0 }}
                             key="conversation"
-                            transition={{ duration: 0.12, ease: "easeOut" }}
+                            layout={reduceMotion ? false : "position"}
+                            layoutDependency={responsiveSidebarOpen}
+                            transition={{ ...SIDEBAR_TRANSITION, layout: SIDEBAR_TRANSITION }}
                           >
                             <Suspense fallback={<ModusLoadingFallback />}>
                               <ChatPane
@@ -1050,7 +1059,7 @@ export function App() {
                           </m.div>
                         )}
                       </AnimatePresence>
-                    </main>
+                    </m.main>
 
                     {responsiveInspectorOpen ? (
                       <Suspense
