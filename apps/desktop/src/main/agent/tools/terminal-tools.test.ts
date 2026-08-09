@@ -90,11 +90,11 @@ describe("formatRun — authoritative signals still produce notes", () => {
     expect(hasNote(text)).toBe(true);
   });
 
-  it("explains foreground timeout promotion to a background terminal", () => {
+  it("explains foreground yield promotion to a background terminal", () => {
     const text = formatRun(
       result({ status: "running", timedOut: true, durationMs: 120_000 }),
       "npm install",
     );
-    expect(text).toContain("still running past the foreground timeout");
+    expect(text).toContain("still running after the foreground yield");
   });
 });

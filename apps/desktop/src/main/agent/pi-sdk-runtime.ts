@@ -1555,9 +1555,7 @@ export class PiSdkRuntime implements AgentRuntime {
   }
 
   async releaseRuntime(sessionId: string): Promise<void> {
-    // View history ≠ consume background results. Pane unmount must not wipe
-    // unharvested wait payloads — only wait() / parent dispose/abort do that.
-    await this.cleanupSessionProcesses(sessionId);
+    // A pane owns the SDK cache, never the session's managed processes.
     await this.disposeSessionOnly(sessionId);
   }
 

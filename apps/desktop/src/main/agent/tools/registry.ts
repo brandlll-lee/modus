@@ -75,110 +75,8 @@ export function classifyShellCommand(command: string): ToolClassification {
   return { action: "shell.execute", dangerous: isMutatingShellCommand(command) };
 }
 
-/**
- * Detect "detaching launchers" — shell constructs that spawn a process which
- * escapes Modus's PTY (a separate, backgrounded, or fire-and-forget child).
- * When one is used, the PTY shell exits immediately with the *launcher's* code
- * (usually 0), so Modus can never observe whether the real program started,
- * stayed alive, or crashed. That is exactly how an "exited 0" launcher gets
- * misread as "started successfully". Returns the matched construct (for the
- * guidance message), or undefined when the command is safe to run tracked.
- */
-export function detectDetachedLaunch(command: string): string | undefined {
-  const c = command.trim();
-  if (!c) {
-    return undefined;
-  }
-  // PowerShell detach: Start-Process / Start-Job / Start-ThreadJob.
-  if (/\bStart-(Process|Job|ThreadJob)\b/i.test(c)) {
-    return /\bStart-Process\b/i.test(c)
-      ? "Start-Process"
-      : /\bStart-ThreadJob\b/i.test(c)
-        ? "Start-ThreadJob"
-        : "Start-Job";
-  }
-  // POSIX detach helpers.
-  if (/\bnohup\b/i.test(c)) {
-    return "nohup";
-  }
-  if (/\bdisown\b/i.test(c)) {
-    return "disown";
-  }
-  if (/\bsetsid\b/i.test(c)) {
-    return "setsid";
-  }
-  // cmd.exe `start` (also via `cmd /c start`), at command start or after a separator.
-  if (/\bcmd(?:\.exe)?\s+\/c\s+start\b/i.test(c)) {
-    return "cmd /c start";
-  }
-  if (/(?:^|[;&|]\s*)start\b/i.test(c)) {
-    return "start";
-  }
-  // A single trailing `&` backgrounds the job (POSIX); `&&` is sequential and fine.
-  if (/(?:^|[^&])&\s*$/.test(c)) {
-    return "trailing &";
-  }
-  return undefined;
-}
-
 /** Built-in bash classifier: only git-write / mutating commands require approval. */
 const bashClassifier: ToolClassifier = (event) => classifyShellCommand(getToolTarget(event));
-
-function abortError(): Error {
-  const error = new Error("Tool call aborted by user.");
-  error.name = "AbortError";
-  return error;
-}
-
-/**
- * Resolve `run()` normally, but reject as soon as `signal` aborts. PI passes a
- * per-call AbortSignal to every tool's `execute`; built-in tools honor it, but a
- * custom tool that ignores it (a browser click/wait, a web fetch, a terminal
- * read) keeps running after the user hits Stop. Because `AgentSession.abort()`
- * waits for the agent to go idle, that one un-cancellable tool blocks the whole
- * abort and the run appears stuck on "Working". Racing the work against the
- * signal lets abort settle immediately.
- */
-function raceAbort<T>(signal: AbortSignal | undefined, run: () => Promise<T>): Promise<T> {
-  if (!signal) {
-    return run();
-  }
-  if (signal.aborted) {
-    return Promise.reject(abortError());
-  }
-  return new Promise<T>((resolve, reject) => {
-    const onAbort = (): void => reject(abortError());
-    signal.addEventListener("abort", onAbort, { once: true });
-    run().then(
-      (value) => {
-        signal.removeEventListener("abort", onAbort);
-        resolve(value);
-      },
-      (error) => {
-        signal.removeEventListener("abort", onAbort);
-        reject(error);
-      },
-    );
-  });
-}
-
-/**
- * Make a custom tool's `execute` cancellable by honoring the AbortSignal PI hands
- * it (the third argument). Applied once at registration so every custom tool —
- * present and future — is abortable without per-tool changes. Definitions without
- * an `execute` (e.g. test stubs) pass through untouched.
- */
-function makeToolAbortable(definition: ToolDefinition): ToolDefinition {
-  const execute = definition.execute;
-  if (typeof execute !== "function") {
-    return definition;
-  }
-  return {
-    ...definition,
-    execute: (...args: Parameters<typeof execute>) =>
-      raceAbort(args[2] as AbortSignal | undefined, () => execute(...args)),
-  };
-}
 
 export class ToolRegistry {
   private readonly entries = new Map<string, ToolCatalogEntry>();
@@ -196,8 +94,7 @@ export class ToolRegistry {
   registerTool(input: RegisterToolInput): void {
     const entry: ToolCatalogEntry = { ...input.entry, kind: "custom" };
     this.entries.set(entry.name, entry);
-    // Wrap once so every custom tool honors the abort signal (see makeToolAbortable).
-    this.definitions.set(entry.name, makeToolAbortable(input.definition));
+    this.definitions.set(entry.name, input.definition);
     if (input.classify) {
       this.classifiers.set(entry.name, input.classify);
     }

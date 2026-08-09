@@ -17,12 +17,7 @@ import {
   type TerminalRead,
   writeTerminal,
 } from "../../terminal/terminal-service";
-import {
-  classifyShellCommand,
-  detectDetachedLaunch,
-  getToolTarget,
-  toolRegistry,
-} from "./registry";
+import { classifyShellCommand, getToolTarget, toolRegistry } from "./registry";
 import { resolveAgentToolContext } from "./tool-context";
 
 /**
@@ -66,7 +61,7 @@ export function formatRun(result: RunCommandResult, command: string): string {
     // rendering it like an ordinary completed command.
     status = result.background ? `${base} — the launched process did NOT stay running` : base;
   } else if (result.timedOut) {
-    status = `still running past the foreground timeout (${durStr}) — kept alive as a background terminal. ${followUpHint(result.terminalId)}`;
+    status = `still running after the foreground yield (${durStr}) — kept alive as a background terminal. ${followUpHint(result.terminalId)}`;
   } else if (result.background) {
     if (result.reused) {
       status = `already running (reused the existing terminal for this command instead of starting a duplicate). ${followUpHint(result.terminalId)}`;
@@ -126,11 +121,11 @@ const runTool: ToolDefinition = defineTool({
   label: "Run terminal command",
   description:
     "Run a shell command in a managed terminal that appears in the Modus terminal panel.\n" +
-    "- One-shot commands (build, test, install, git): run in the foreground (default). Success is exit 0; a non-zero exit is a failure. The result always reports the exit code and how long it ran.\n" +
+    "- Foreground commands wait briefly for completion, then return a terminal id while continuing to run.\n" +
     "- Long-lived processes (dev servers, apps, watchers): set background:true and pass the program DIRECTLY. Modus watches it for a short window and reports whether it stayed running (ALIVE) or exited. Add ready_when to verify it is actually serving (a port opening, a log line, or an HTTP 2xx) — not just alive.\n" +
-    "Do NOT use detaching launchers (Start-Process, start, trailing &, nohup, disown): they hand back the launcher's exit code, not the program's, so Modus cannot tell if it really started. Observe background processes with terminal_read.",
+    "Observe running commands with terminal_read; send input with terminal_write.",
   promptSnippet:
-    "terminal_run(command, background?, timeout_ms?, yield_time_ms?, ready_when?, reuse?) — run a command in a panel terminal; use background:true (+ ready_when) for servers/apps/watchers.",
+    "terminal_run(command, background?, yield_time_ms?, ready_when?, reuse?) — run a command in a panel terminal; use background:true (+ ready_when) for servers/apps/watchers.",
   promptGuidelines: [
     "To start a long-lived process (dev server, app, watcher), use background:true and pass the program directly (e.g. `npm run dev`). NEVER wrap it in Start-Process / start / nohup / a trailing & — those detach the process so Modus cannot verify it started or stays alive.",
     "Treat a foreground command that exits when you intended to start a long-lived process (server/app/watcher) as a FAILURE, not success — it should have kept running. Verify with terminal_read / terminal_list before claiming anything is running.",
@@ -148,16 +143,10 @@ const runTool: ToolDefinition = defineTool({
           "Run as a long-lived background process (servers, apps, watchers). Modus watches it for a yield window and reports ALIVE/EXITED. Default false.",
       }),
     ),
-    timeout_ms: Type.Optional(
-      Type.Number({
-        description:
-          "Foreground only: wait in ms before the command is promoted to a background terminal. Default 120000, max 600000.",
-      }),
-    ),
     yield_time_ms: Type.Optional(
       Type.Number({
         description:
-          "Background only: how long (ms) to watch the process for liveness/readiness before returning. Default 2500, range 500–30000.",
+          "How long (ms) to wait before returning a still-running terminal. Defaults to 10000 foreground / 2500 background; max 30000.",
       }),
     ),
     ready_when: Type.Optional(
@@ -192,17 +181,7 @@ const runTool: ToolDefinition = defineTool({
       }),
     ),
   }),
-  execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
-    const detached = detectDetachedLaunch(params.command);
-    if (detached) {
-      throw new Error(
-        `This command uses "${detached}", which detaches the process so it escapes Modus's terminal. ` +
-          `The exit code you'd get back is the launcher's (usually 0), not the program's, so Modus cannot tell whether the program actually started, stayed running, or crashed — this is exactly how a failed launch gets misreported as success. ` +
-          `Instead, run the program directly with background:true so Modus owns and watches it, e.g. ` +
-          `terminal_run({ command: "<program> <args>", background: true, ready_when: { port: <port> } }). ` +
-          `Then confirm with terminal_read / terminal_list.`,
-      );
-    }
+  execute: async (_toolCallId, params, signal, _onUpdate, ctx) => {
     const context = resolveContext(ctx.cwd);
     const readyWhen = toReadyWhen(params.ready_when);
     const result = await runAgentCommand({
@@ -211,10 +190,10 @@ const runTool: ToolDefinition = defineTool({
       sessionId: context.sessionId,
       command: params.command,
       background: params.background ?? false,
-      ...(params.timeout_ms !== undefined ? { timeoutMs: params.timeout_ms } : {}),
       ...(params.yield_time_ms !== undefined ? { yieldMs: params.yield_time_ms } : {}),
       ...(readyWhen ? { readyWhen } : {}),
       ...(params.reuse !== undefined ? { reuse: params.reuse } : {}),
+      ...(!params.background && signal ? { signal } : {}),
       ...(context.window ? { window: context.window } : {}),
     });
     return toResult(formatRun(result, params.command), result);
@@ -248,6 +227,12 @@ const readToolParams = Type.Object({
       description: "Only return output produced after this cursor (from a previous read).",
     }),
   ),
+  yield_time_ms: Type.Optional(
+    Type.Number({
+      description:
+        "Wait this long for new output when the cursor is current. Default 5000, max 30000.",
+    }),
+  ),
 });
 
 const readTool: ToolDefinition = defineTool({
@@ -258,12 +243,14 @@ const readTool: ToolDefinition = defineTool({
     "since_cursor from a previous read to get only new output. Use this to monitor background " +
     "processes started with terminal_run.",
   promptSnippet:
-    "terminal_read(terminal_id, since_cursor?) — read a terminal's latest output and status.",
+    "terminal_read(terminal_id, since_cursor?, yield_time_ms?) — read new output, waiting briefly when caught up.",
   parameters: readToolParams,
-  execute: async (_toolCallId, params: Static<typeof readToolParams>) => {
-    const read = readTerminal({
+  execute: async (_toolCallId, params: Static<typeof readToolParams>, signal) => {
+    const read = await readTerminal({
       terminalId: params.terminal_id,
       ...(params.since_cursor !== undefined ? { sinceCursor: params.since_cursor } : {}),
+      ...(params.yield_time_ms !== undefined ? { yieldMs: params.yield_time_ms } : {}),
+      ...(signal ? { signal } : {}),
     });
     if (!read) {
       throw new Error(`No terminal with id ${params.terminal_id}.`);
@@ -331,7 +318,7 @@ const writeTool: ToolDefinition = defineTool({
   promptSnippet: "terminal_write(terminal_id, input, submit?) — send input to a running terminal.",
   parameters: writeToolParams,
   execute: async (_toolCallId, params: Static<typeof writeToolParams>) => {
-    const read = readTerminal({ terminalId: params.terminal_id });
+    const read = await readTerminal({ terminalId: params.terminal_id });
     if (!read) {
       throw new Error(`No terminal with id ${params.terminal_id}.`);
     }

@@ -666,6 +666,8 @@ describe("PiSdkRuntime", () => {
     await runtime.releaseRuntime(parentSessionId);
 
     expect(parentPi.dispose).toHaveBeenCalled();
+    expect(mocks.listManagedProcesses).not.toHaveBeenCalled();
+    expect(mocks.killManagedProcess).not.toHaveBeenCalled();
     const child = getDatabase()
       .prepare("select status from agent_sessions where id = ?")
       .get(childSessionId) as { status: string };

@@ -2,7 +2,7 @@ import type { ToolCallEvent } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 import { PLAN_TOOL_UI, type ToolCatalogEntry } from "../../../shared/tools";
 import { registerBrowserTools } from "./browser-tools";
-import { detectDetachedLaunch, ToolRegistry, toolRegistry } from "./registry";
+import { ToolRegistry, toolRegistry } from "./registry";
 
 function toolEvent(toolName: string, input: Record<string, unknown>): ToolCallEvent {
   return { type: "tool_call", toolCallId: "t1", toolName, input } as ToolCallEvent;
@@ -76,37 +76,6 @@ describe("ToolRegistry custom tools", () => {
     expect(registry.getCustomToolDefinitions("review")).not.toContain(definition);
   });
 
-  it("rejects a registered tool's execute promptly when its abort signal fires", async () => {
-    const registry = new ToolRegistry();
-    // A tool whose work never settles on its own — only an abort can end it.
-    const hang = new Promise<{ output: string }>(() => {});
-    registry.registerTool({
-      entry: {
-        name: "slow",
-        profiles: ["chat"],
-        permission: { danger: "safe" },
-        ui: { verb: "Slow" },
-      },
-      definition: { name: "slow", execute: () => hang } as never,
-    });
-
-    const [wrapped] = registry.getCustomToolDefinitions("chat") as Array<{
-      execute: (
-        id: string,
-        params: unknown,
-        signal: AbortSignal,
-        onUpdate: undefined,
-        ctx: unknown,
-      ) => Promise<unknown>;
-    }>;
-    if (!wrapped) throw new Error("slow tool was not registered");
-    const controller = new AbortController();
-    const pending = wrapped.execute("call-1", {}, controller.signal, undefined, {});
-    controller.abort();
-
-    await expect(pending).rejects.toThrow(/aborted/i);
-  });
-
   it("applies a custom dynamic classifier for a registered tool", () => {
     const registry = new ToolRegistry();
     registry.registerTool({
@@ -177,39 +146,6 @@ describe("ToolRegistry classify", () => {
       dangerous: true,
     });
     expect(registry.classify(toolEvent("unknown_tool", {})).dangerous).toBe(false);
-  });
-});
-
-describe("detectDetachedLaunch", () => {
-  it("flags PowerShell detach launchers", () => {
-    expect(detectDetachedLaunch("Start-Process -FilePath 'C:/app.exe'")).toBe("Start-Process");
-    expect(detectDetachedLaunch("Start-Job { npm run dev }")).toBe("Start-Job");
-    expect(detectDetachedLaunch("Start-ThreadJob { node server.js }")).toBe("Start-ThreadJob");
-  });
-
-  it("flags POSIX detach helpers", () => {
-    expect(detectDetachedLaunch("nohup npm run dev &")).toBe("nohup");
-    expect(detectDetachedLaunch("node server.js & disown")).toBe("disown");
-    expect(detectDetachedLaunch("setsid ./server")).toBe("setsid");
-  });
-
-  it("flags cmd start and a trailing background ampersand", () => {
-    expect(detectDetachedLaunch("start notepad.exe")).toBe("start");
-    expect(detectDetachedLaunch("cmd /c start app.exe")).toBe("cmd /c start");
-    expect(detectDetachedLaunch("node server.js &")).toBe("trailing &");
-  });
-
-  it("does not flag normal commands or sequential && chains", () => {
-    expect(detectDetachedLaunch("npm run dev")).toBeUndefined();
-    expect(detectDetachedLaunch("git add . && git commit -m wip")).toBeUndefined();
-    expect(detectDetachedLaunch("npm run build && npm start")).toBeUndefined();
-    expect(detectDetachedLaunch("echo done")).toBeUndefined();
-    expect(detectDetachedLaunch("")).toBeUndefined();
-  });
-
-  it("does not misfire on 'start' as a substring of another word", () => {
-    expect(detectDetachedLaunch("npm run start")).toBeUndefined();
-    expect(detectDetachedLaunch("./restart.sh")).toBeUndefined();
   });
 });
 

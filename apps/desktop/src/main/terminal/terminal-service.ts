@@ -21,10 +21,9 @@ import {
   matchesReadyLog,
   shellCommandArgs,
   sliceSince,
+  stripAnsi,
   tailText,
 } from "./terminal-output";
-
-type ExitWaiter = (exitCode: number) => void;
 
 type TerminalRecord = {
   info: TerminalInfo;
@@ -34,8 +33,9 @@ type TerminalRecord = {
    * redraws collapse instead of duplicating. Backs all agent reads + persist.
    */
   grid: TerminalGrid;
-  /** Foreground awaiters resolved when the process exits. */
-  waiters: ExitWaiter[];
+  /** Bounded raw PTY stream for stable, byte-cursor agent reads. */
+  output: { text: string; produced: number };
+  waiters: Set<(change: "data" | "exit") => void>;
   exited: boolean;
 };
 
@@ -76,9 +76,10 @@ const AGENT_COMMAND_ENV: Record<string, string> = {
   GIT_PAGER: "cat",
   GIT_TERMINAL_PROMPT: "0",
 };
-/** Default foreground wait before a command is promoted to a background terminal. */
-export const DEFAULT_COMMAND_TIMEOUT_MS = 120_000;
-export const MAX_COMMAND_TIMEOUT_MS = 600_000;
+/** Default foreground yield before a still-running command returns its terminal id. */
+export const DEFAULT_COMMAND_YIELD_MS = 10_000;
+export const MAX_COMMAND_YIELD_MS = 30_000;
+const MIN_COMMAND_YIELD_MS = 250;
 /**
  * Default "yield window" for a background launch: spawn the process, watch it
  * for this long, then report whether it stayed ALIVE or already EXITED. This is
@@ -94,6 +95,8 @@ const BACKGROUND_POLL_MS = 150;
 // burst of output (think `npm install`) fires one synchronous upsert per chunk
 // on the main process and visibly stalls every terminal.
 const PERSIST_THROTTLE_MS = 600;
+const MAX_AGENT_OUTPUT_BYTES = 1024 * 1024;
+export const DEFAULT_READ_YIELD_MS = 5_000;
 
 /** First match for `exe` across the PATH dirs, or undefined. */
 function resolveOnPath(exe: string): string | undefined {
@@ -223,9 +226,12 @@ function appendOutput(terminalId: string, data: string): void {
   if (!terminal) {
     return;
   }
-  // Feed raw bytes (ANSI included) into the headless VT screen; it applies
-  // cursor moves / clears so the agent later reads the rendered result.
+  terminal.output = {
+    text: tailText(terminal.output.text + data, MAX_AGENT_OUTPUT_BYTES).text,
+    produced: terminal.output.produced + Buffer.byteLength(data, "utf8"),
+  };
   terminal.grid.write(data);
+  for (const waiter of terminal.waiters) waiter("data");
   schedulePersist(terminalId);
 }
 
@@ -258,10 +264,7 @@ function markExited(terminalId: string, exitCode: number): void {
   terminal.info.exitCode = exitCode;
   terminal.info.endedAt = new Date().toISOString();
   flushPersist(terminalId);
-  const waiters = terminal.waiters.splice(0);
-  for (const waiter of waiters) {
-    waiter(exitCode);
-  }
+  for (const waiter of terminal.waiters) waiter("exit");
   pruneExited();
   publishManagedProcessChange();
 }
@@ -292,10 +295,12 @@ function handleHostEvent(event: HostEvent): void {
   }
 
   if (event.type === "error" && event.id) {
+    const data = `\r\n[pty-host error] ${event.message}\r\n`;
+    appendOutput(event.id, data);
     emit({
       type: "terminal.data",
       terminalId: event.id,
-      data: `\r\n[pty-host error] ${event.message}\r\n`,
+      data,
     });
   }
 }
@@ -389,7 +394,8 @@ function spawnTerminal(input: SpawnTerminalInput): TerminalRecord {
   const record: TerminalRecord = {
     info,
     grid: new TerminalGrid(input.cols, input.rows),
-    waiters: [],
+    output: { text: "", produced: 0 },
+    waiters: new Set(),
     exited: false,
   };
   terminals.set(id, record);
@@ -446,33 +452,41 @@ export function createTerminal(
   return { ...record.info };
 }
 
-function waitForExit(record: TerminalRecord, timeoutMs: number): Promise<"exited" | "timeout"> {
-  if (record.exited) {
-    return Promise.resolve("exited");
+function abortError(): Error {
+  const error = new Error("Tool call aborted by user.");
+  error.name = "AbortError";
+  return error;
+}
+
+function waitForExit(
+  record: TerminalRecord,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<"exited" | "timeout"> {
+  if (signal?.aborted) {
+    killTerminal(record.info.id);
+    return Promise.reject(abortError());
   }
-  return new Promise((resolve) => {
-    let settled = false;
-    const timer = setTimeout(() => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      const index = record.waiters.indexOf(waiter);
-      if (index >= 0) {
-        record.waiters.splice(index, 1);
-      }
-      resolve("timeout");
-    }, timeoutMs);
-    timer.unref?.();
-    const waiter: ExitWaiter = () => {
-      if (settled) {
-        return;
-      }
-      settled = true;
+  if (record.exited) return Promise.resolve("exited");
+  return new Promise((resolve, reject) => {
+    const finish = (outcome?: "exited" | "timeout", error?: Error): void => {
       clearTimeout(timer);
-      resolve("exited");
+      record.waiters.delete(waiter);
+      signal?.removeEventListener("abort", onAbort);
+      error ? reject(error) : resolve(outcome ?? "timeout");
     };
-    record.waiters.push(waiter);
+    const timer = setTimeout(() => finish("timeout"), timeoutMs);
+    timer.unref?.();
+    const waiter = (change: "data" | "exit"): void => {
+      if (change === "exit") finish("exited");
+    };
+    const onAbort = (): void => {
+      killTerminal(record.info.id);
+      finish(undefined, abortError());
+    };
+    record.waiters.add(waiter);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
   });
 }
 
@@ -480,7 +494,7 @@ export type RunCommandResult = {
   terminalId: string;
   status: TerminalStatus;
   background: boolean;
-  /** True when a foreground command outran its timeout and was kept running. */
+  /** True when a foreground command outran its yield window and was kept running. */
   timedOut: boolean;
   exitCode?: number;
   output: string;
@@ -657,7 +671,7 @@ function findReusableBackgroundTerminal(input: {
 /**
  * Run a command in a managed PTY terminal that shows up in the side panel.
  *
- * - `background: false` waits up to `timeoutMs` for completion. If it finishes,
+ * - `background: false` waits up to `yieldMs` for completion. If it finishes,
  *   the exit code + output are returned. If it outruns the timeout it is left
  *   running (promoted to a background terminal) so the agent never loses a
  *   long-lived process — matching Cursor's behaviour.
@@ -673,13 +687,13 @@ export async function runAgentCommand(input: {
   command: string;
   background: boolean;
   sessionId?: string;
-  timeoutMs?: number;
   yieldMs?: number;
   readyWhen?: ReadyWhen;
   reuse?: boolean;
   cols?: number;
   rows?: number;
   outputBytes?: number;
+  signal?: AbortSignal;
   window?: BrowserWindowType;
 }): Promise<RunCommandResult> {
   const outputBytes = input.outputBytes ?? 12 * 1024;
@@ -698,7 +712,7 @@ export async function runAgentCommand(input: {
       ...(record.info.exitCode !== undefined ? { exitCode: record.info.exitCode } : {}),
       output: tail.text,
       truncated: tail.truncated,
-      cursor: record.grid.produced,
+      cursor: record.output.produced,
       durationMs: Date.now() - startedAt,
       ...(record.info.pid !== undefined ? { pid: record.info.pid } : {}),
       ...extra,
@@ -731,6 +745,7 @@ export async function runAgentCommand(input: {
   }
 
   const shell = defaultShell();
+  input.signal?.throwIfAborted();
   const record = spawnTerminal({
     workspaceId: input.workspaceId,
     cwd: input.cwd,
@@ -773,8 +788,11 @@ export async function runAgentCommand(input: {
     }
   }
 
-  const timeoutMs = Math.min(input.timeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS, MAX_COMMAND_TIMEOUT_MS);
-  const outcome = await waitForExit(record, timeoutMs);
+  const yieldMs = Math.min(
+    Math.max(input.yieldMs ?? DEFAULT_COMMAND_YIELD_MS, MIN_COMMAND_YIELD_MS),
+    MAX_COMMAND_YIELD_MS,
+  );
+  const outcome = await waitForExit(record, yieldMs, input.signal);
   await record.grid.flush();
   return resultFor(record, { timedOut: outcome === "timeout" });
 }
@@ -814,6 +832,7 @@ export function removeTerminal(terminalId: string): void {
   if (!terminal.exited) {
     writeHost({ type: "kill", id: terminalId });
   }
+  for (const waiter of terminal.waiters) waiter("exit");
   flushPersist(terminalId);
   terminal.grid.dispose();
   terminals.delete(terminalId);
@@ -839,43 +858,62 @@ export type TerminalRead = {
   truncated: boolean;
 };
 
-/** Read a terminal's output incrementally from `sinceCursor`. */
-export function readTerminal(input: {
+function waitForChange(
+  terminal: TerminalRecord,
+  yieldMs: number,
+  signal?: AbortSignal,
+  abortAction?: () => void,
+): Promise<void> {
+  if (yieldMs <= 0) return Promise.resolve();
+  if (signal?.aborted) {
+    abortAction?.();
+    return Promise.reject(abortError());
+  }
+  return new Promise((resolve, reject) => {
+    const finish = (error?: unknown): void => {
+      clearTimeout(timer);
+      terminal.waiters.delete(onChange);
+      signal?.removeEventListener("abort", onSignalAbort);
+      error ? reject(error) : resolve();
+    };
+    const timer = setTimeout(finish, yieldMs);
+    timer.unref?.();
+    const onChange = (): void => finish();
+    const onSignalAbort = (): void => {
+      abortAction?.();
+      finish(abortError());
+    };
+    terminal.waiters.add(onChange);
+    signal?.addEventListener("abort", onSignalAbort, { once: true });
+    if (signal?.aborted) onSignalAbort();
+  });
+}
+
+/** Read stable incremental output, optionally waiting for the next change. */
+export async function readTerminal(input: {
   terminalId: string;
   sinceCursor?: number;
   maxBytes?: number;
-}): TerminalRead | undefined {
+  yieldMs?: number;
+  signal?: AbortSignal;
+}): Promise<TerminalRead | undefined> {
   const terminal = terminals.get(input.terminalId);
-  if (!terminal) {
-    const stored = getTerminalOutput(input.terminalId);
-    if (!stored) {
-      return undefined;
+  if (!terminal) return undefined;
+
+  if (input.sinceCursor !== undefined) {
+    const yieldMs = Math.min(Math.max(input.yieldMs ?? DEFAULT_READ_YIELD_MS, 0), 30_000);
+    if (!terminal.exited && terminal.output.produced <= input.sinceCursor) {
+      await waitForChange(terminal, yieldMs, input.signal);
     }
-    return {
-      terminalId: input.terminalId,
-      status: "exited",
-      origin: "user",
-      cwd: "",
-      shell: "",
-      startedAt: "",
-      output: stored,
-      cursor: Buffer.byteLength(stored, "utf8"),
-      truncated: false,
-    };
   }
 
   const maxBytes = input.maxBytes ?? 16 * 1024;
-  // New committed history since the cursor, then the live viewport appended.
-  // The viewport is volatile (it redraws in place), so it is always returned
-  // fresh; committed scrollback bytes are the stable cursor space.
-  const { text: history, truncated } = sliceSince({
-    output: terminal.grid.scrollback,
-    produced: terminal.grid.produced,
+  const { text, truncated } = sliceSince({
+    output: terminal.output.text,
+    produced: terminal.output.produced,
     sinceCursor: input.sinceCursor,
     maxBytes,
   });
-  const screen = terminal.grid.screen();
-  const slice = screen ? (history ? `${history}${screen}` : screen) : history;
 
   return {
     terminalId: terminal.info.id,
@@ -888,8 +926,8 @@ export function readTerminal(input: {
     ...(terminal.info.exitCode !== undefined ? { exitCode: terminal.info.exitCode } : {}),
     startedAt: terminal.info.startedAt,
     ...(terminal.info.endedAt !== undefined ? { endedAt: terminal.info.endedAt } : {}),
-    output: slice,
-    cursor: terminal.grid.produced,
+    output: stripAnsi(text),
+    cursor: terminal.output.produced,
     truncated,
   };
 }
