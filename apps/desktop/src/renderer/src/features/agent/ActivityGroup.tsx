@@ -93,11 +93,7 @@ function toolTarget(item: Extract<WorkActivityItem, { type: "tool" }>): string |
   return typeof value === "string" || typeof value === "number" ? String(value).trim() : undefined;
 }
 
-const thoughtPreview = (text: string) => {
-  const characters = Array.from(text.trim().replace(/\s+/g, " "));
-  const preview = characters.slice(0, 20).join("");
-  return characters.length > 20 ? `${preview}…` : preview;
-};
+const thoughtText = (text: string) => text.trim().replace(/\s+/g, " ");
 
 function isActivityActive(item: GroupedWorkActivityItem): boolean {
   if (item.type === "thought") return item.streaming === true;
@@ -107,7 +103,7 @@ function isActivityActive(item: GroupedWorkActivityItem): boolean {
 
 function activeActivityLabel(item: GroupedWorkActivityItem): string {
   if (item.type === "thought") {
-    const preview = thoughtPreview(item.text);
+    const preview = thoughtText(item.text);
     return preview ? `Thinking · ${preview}` : "Thinking";
   }
   if (item.type === "compaction") return "Compacting context";
@@ -141,9 +137,7 @@ function settledActivityLabel(items: GroupedWorkActivityItem[]): string {
   const thought = items.findLast((item) => item.type === "thought" && item.text.trim());
   const label =
     parts.join(", ") ||
-    (thought?.type === "thought"
-      ? `Thought · ${thoughtPreview(thought.text)}`
-      : "Completed activity");
+    (thought?.type === "thought" ? `Thought · ${thoughtText(thought.text)}` : "Completed activity");
   return label.charAt(0).toUpperCase() + label.slice(1);
 }
 

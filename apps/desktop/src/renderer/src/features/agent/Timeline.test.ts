@@ -973,9 +973,9 @@ describe("local work activity groups", () => {
     );
   });
 
-  it("uses the latest authoritative in-flight item and safely summarizes unknown tools", () => {
+  it("uses the full latest authoritative item and safely summarizes unknown tools", () => {
     const activities = [tool("live", "bash", false), thought("th", "123456789012345678901", true)];
-    expect(workActivityPresentation(activities).label).toBe("Thinking · 12345678901234567890…");
+    expect(workActivityPresentation(activities).label).toBe("Thinking · 123456789012345678901");
     expect(workActivityPresentation([tool("future", "brand_new_tool")]).label).toBe("Used 1 tool");
     expect(workActivityPresentation([thought("d", "plan")]).label).toBe("Thought · plan");
   });
