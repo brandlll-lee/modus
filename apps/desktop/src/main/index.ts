@@ -4,6 +4,7 @@ import { IPC_CHANNELS } from "./ipc/channels";
 import { registerAppIpc } from "./ipc/register-app-ipc";
 import { disposeAllMcp } from "./mcp/mcp-service";
 import { createStartupTimeline } from "./startup/startup-timeline";
+import { shutdownTerminals } from "./terminal/terminal-service";
 import { createMainWindow } from "./windows/main-window";
 
 let mainWindow: BrowserWindowType | null = null;
@@ -67,6 +68,7 @@ if (!app.requestSingleInstanceLock()) {
   // Close MCP transports on quit so stdio servers never outlive the app.
   app.on("before-quit", () => {
     stopRemoteModelCatalog();
+    shutdownTerminals();
     void disposeAllMcp();
   });
 }

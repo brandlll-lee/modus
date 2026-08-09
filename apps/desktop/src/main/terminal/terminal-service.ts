@@ -932,6 +932,11 @@ export async function readTerminal(input: {
   };
 }
 
+export function shutdownTerminals(): void {
+  for (const id of terminals.keys()) flushPersist(id);
+  if (host && !host.killed) writeHost({ type: "shutdown" });
+}
+
 export function getTerminalOutput(terminalId: string): string {
   const active = terminals.get(terminalId)?.grid.render();
   if (active !== undefined) {

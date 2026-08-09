@@ -297,7 +297,13 @@ fn handle_command(command: HostCommand, sessions: &Sessions, writer: &HostWriter
                 let _ = session.killer.kill();
             }
         }
-        HostCommand::Shutdown => return Ok(false),
+        HostCommand::Shutdown => {
+            for (_, mut session) in sessions.lock().expect("session lock poisoned").drain() {
+                kill_process_tree(session.pid);
+                let _ = session.killer.kill();
+            }
+            return Ok(false);
+        }
     }
 
     Ok(true)
