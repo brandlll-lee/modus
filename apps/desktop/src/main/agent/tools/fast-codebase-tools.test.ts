@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { registerFastCodebaseTools } from "./fast-codebase-tools";
 import { toolRegistry } from "./registry";
+import { setAgentToolContext } from "./tool-context";
 
 const runFastCodebase = vi.hoisted(() => vi.fn());
 
@@ -10,6 +11,7 @@ vi.mock("../../fast-codebase/fast-codebase-service", () => ({
 
 describe("fast_codebase tool", () => {
   beforeEach(() => {
+    setAgentToolContext({ workspaceId: "workspace", sessionId: "session", cwd: "F:\\repo" });
     runFastCodebase.mockReset();
   });
 
