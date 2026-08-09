@@ -133,6 +133,7 @@ const ANIMATED: AnimateOptions = {
   animation: "fadeIn",
   duration: 70,
   easing: "ease-out",
+  stagger: 0,
 };
 
 /* Render a single `\n` as a hard line break (GFM soft breaks otherwise collapse
