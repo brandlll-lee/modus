@@ -30,6 +30,13 @@ const catalog = {
   piVersion: "1.0.0",
   providers: { "synthetic-provider": [model] },
 };
+const previousCatalog = parseModelCatalog({
+  ...catalog,
+  generatedAt: "2026-07-11T00:00:00.000Z",
+});
+function options(cachePath: string, onCatalog = vi.fn(), baseline = previousCatalog) {
+  return { cachePath, currentCatalog: baseline, onCatalog };
+}
 
 let stopUpdates: (() => void) | undefined;
 
@@ -115,8 +122,22 @@ describe("model catalog", () => {
     );
 
     try {
-      await expect(updateModelCatalog({ cachePath, onCatalog }, true)).resolves.toBe(true);
+      await expect(updateModelCatalog(options(cachePath, onCatalog), true)).resolves.toBe(true);
       expect(onCatalog).toHaveBeenCalledWith(parseModelCatalog(catalog));
+      expect(JSON.parse(await readFile(cachePath, "utf8"))).toEqual(catalog);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("surfaces forced refresh failures without replacing the cache", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "modus-model-catalog-"));
+    const cachePath = join(directory, "models.json");
+    await writeFile(cachePath, JSON.stringify(catalog), "utf8");
+    vi.stubGlobal("fetch", async () => new Response("", { status: 400 }));
+    try {
+      const refresh = updateModelCatalog(options(cachePath), true);
+      await expect(refresh).rejects.toThrow("400");
       expect(JSON.parse(await readFile(cachePath, "utf8"))).toEqual(catalog);
     } finally {
       await rm(directory, { recursive: true, force: true });
@@ -134,7 +155,7 @@ describe("model catalog", () => {
     );
 
     try {
-      stopUpdates = startModelCatalogUpdates({ cachePath, onCatalog });
+      stopUpdates = startModelCatalogUpdates(options(cachePath, onCatalog));
       await forceModelCatalogRefresh();
       expect(JSON.parse(await readFile(cachePath, "utf8"))).toEqual(catalog);
       expect(onCatalog).toHaveBeenCalledWith(parseModelCatalog(catalog));
@@ -156,10 +177,27 @@ describe("model catalog", () => {
     );
 
     try {
-      stopUpdates = startModelCatalogUpdates({ cachePath, onCatalog });
-      await forceModelCatalogRefresh();
+      stopUpdates = startModelCatalogUpdates(options(cachePath, onCatalog));
+      await expect(forceModelCatalogRefresh()).rejects.toThrow("unsupported runtime capability");
       await expect(stat(cachePath)).rejects.toMatchObject({ code: "ENOENT" });
-      expect(onCatalog).toHaveBeenCalled();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a newer bundled catalog over older cached and remote catalogs", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "modus-model-catalog-"));
+    const cachePath = join(directory, "models.json");
+    const onCatalog = vi.fn();
+    const text = JSON.stringify(previousCatalog);
+    await writeFile(cachePath, text, "utf8");
+    vi.stubGlobal("fetch", async () => new Response(text, { status: 200 }));
+
+    try {
+      const current = parseModelCatalog(catalog);
+      stopUpdates = startModelCatalogUpdates(options(cachePath, onCatalog, current));
+      await expect(forceModelCatalogRefresh()).resolves.toBe(false);
+      await expect(stat(cachePath)).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

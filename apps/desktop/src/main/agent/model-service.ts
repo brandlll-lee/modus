@@ -287,6 +287,7 @@ export function startRemoteModelCatalog(onChanged: () => void): void {
   applyModelCatalog(modelRegistry, activeCatalog);
   stopCatalogUpdates = startModelCatalogUpdates({
     cachePath: catalogPath(),
+    currentCatalog: activeCatalog,
     onCatalog: (catalog) => {
       applyModelCatalog(modelRegistry, catalog);
       onChanged();
@@ -743,40 +744,14 @@ function modelToInfo(model: Model<Api>, available: boolean, config?: ModelConfig
   };
 }
 
-function configToInfo(config: ModelConfigRow, available: boolean): ModelInfo {
-  const thinking = thinkingStateForModel(undefined, config);
-  const contextWindow = config.context_window ?? undefined;
-  const maxTokens = config.max_tokens ?? undefined;
-  return {
-    id: config.id,
-    provider: config.provider_id,
-    providerName: getModelRegistry().getProviderDisplayName(config.provider_id),
-    name: config.display_name,
-    available,
-    enabled: Boolean(config.enabled),
-    configured: true,
-    source: config.source,
-    ...(contextWindow !== undefined ? { contextWindow } : {}),
-    ...(maxTokens !== undefined ? { maxTokens } : {}),
-    supportsThinking: Boolean(config.reasoning) || thinking.levels.some((level) => level !== "off"),
-    thinkingLevel: thinking.selected.level,
-    thinkingLevels: thinking.levels,
-    thinkingVariant: thinking.selected.value,
-    thinkingOptions: thinking.options,
-    ...(thinking.budget ? { thinkingBudget: thinking.budget } : {}),
-  };
-}
-
 function listModelsFromRegistry(modelRegistry: ModelRegistry): ModelInfo[] {
   const configs = new Map(listModelConfigRows().map((row) => [row.id, row]));
   const availableIds = new Set(modelRegistry.getAvailable().map(modelToId));
-  const allModels = new Map(modelRegistry.getAll().map((model) => [modelToId(model), model]));
-  const configuredInfos = [...configs.values()]
-    .map((config) => {
-      const model = allModels.get(config.id);
-      return model
-        ? modelToInfo(model, availableIds.has(config.id), config)
-        : configToInfo(config, Boolean(config.enabled));
+  const configuredInfos = modelRegistry
+    .getAll()
+    .map((model) => {
+      const id = modelToId(model);
+      return modelToInfo(model, availableIds.has(id), configs.get(id));
     })
     .filter((model) => model.enabled && model.available);
 
@@ -797,53 +772,29 @@ export function listModels(): ModelInfo[] {
 export function listAllProviderModels(provider: string): ProviderModelConfig[] {
   const modelRegistry = refreshRegistry();
   const configs = new Map(listModelConfigRows().map((row) => [row.id, row]));
-  const models = modelRegistry.getAll().filter((model) => model.provider === provider);
-  const items = new Map<string, ProviderModelConfig>();
-
-  for (const model of models) {
-    const id = modelToId(model);
-    const config = configs.get(id);
-    const thinking = thinkingStateForModel(model, config);
-    const contextWindow = config?.context_window ?? model.contextWindow;
-    const maxTokens = config?.max_tokens ?? model.maxTokens;
-    items.set(model.id, {
-      id: model.id,
-      name: config?.display_name ?? model.name ?? model.id,
-      enabled: Boolean(config?.enabled),
-      ...(contextWindow !== undefined ? { contextWindow } : {}),
-      ...(maxTokens !== undefined ? { maxTokens } : {}),
-      reasoning: config?.reasoning ? true : Boolean(model.reasoning),
-      thinkingLevel: thinking.selected.level,
-      thinkingLevels: thinking.levels,
-      thinkingVariant: thinking.selected.value,
-      thinkingOptions: thinking.options,
-      ...(thinking.budget ? { thinkingBudget: thinking.budget } : {}),
-    });
-  }
-
-  for (const config of configs.values()) {
-    if (config.provider_id !== provider || items.has(config.model_id)) {
-      continue;
-    }
-    const thinking = thinkingStateForModel(undefined, config);
-    const contextWindow = config.context_window ?? undefined;
-    const maxTokens = config.max_tokens ?? undefined;
-    items.set(config.model_id, {
-      id: config.model_id,
-      name: config.display_name,
-      enabled: Boolean(config.enabled),
-      ...(contextWindow !== undefined ? { contextWindow } : {}),
-      ...(maxTokens !== undefined ? { maxTokens } : {}),
-      reasoning: Boolean(config.reasoning),
-      thinkingLevel: thinking.selected.level,
-      thinkingLevels: thinking.levels,
-      thinkingVariant: thinking.selected.value,
-      thinkingOptions: thinking.options,
-      ...(thinking.budget ? { thinkingBudget: thinking.budget } : {}),
-    });
-  }
-
-  return [...items.values()].sort((a, b) => a.name.localeCompare(b.name));
+  return modelRegistry
+    .getAll()
+    .filter((model) => model.provider === provider)
+    .map((model) => {
+      const config = configs.get(modelToId(model));
+      const thinking = thinkingStateForModel(model, config);
+      const contextWindow = config?.context_window ?? model.contextWindow;
+      const maxTokens = config?.max_tokens ?? model.maxTokens;
+      return {
+        id: model.id,
+        name: config?.display_name ?? model.name ?? model.id,
+        enabled: Boolean(config?.enabled),
+        ...(contextWindow !== undefined ? { contextWindow } : {}),
+        ...(maxTokens !== undefined ? { maxTokens } : {}),
+        reasoning: config?.reasoning ? true : Boolean(model.reasoning),
+        thinkingLevel: thinking.selected.level,
+        thinkingLevels: thinking.levels,
+        thinkingVariant: thinking.selected.value,
+        thinkingOptions: thinking.options,
+        ...(thinking.budget ? { thinkingBudget: thinking.budget } : {}),
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 function providerSortIndex(provider: string): number {
@@ -865,6 +816,7 @@ function listProvidersFromRegistry(modelRegistry: ModelRegistry): ModelProviderI
   const providers = [...providerIds].map((provider) => {
     const row = providerConfigs.get(provider);
     const providerModels = modelRegistry.getAll().filter((model) => model.provider === provider);
+    const providerModelIds = new Set(providerModels.map(modelToId));
     const configuredModels = modelConfigs.filter((config) => config.provider_id === provider);
     const authStatus = modelRegistry.getProviderAuthStatus(provider);
     const credential =
@@ -889,7 +841,8 @@ function listProvidersFromRegistry(modelRegistry: ModelRegistry): ModelProviderI
     const configured =
       authStatus.configured || (row?.source === "custom" && configuredModels.length > 0);
     const enabledModelCount = configured
-      ? configuredModels.filter((config) => config.enabled).length
+      ? configuredModels.filter((config) => config.enabled && providerModelIds.has(config.id))
+          .length
       : 0;
     const loadError = modelRegistry.getError();
     const info: ModelProviderInfo = {
@@ -1710,7 +1663,7 @@ export function updateModelConfig(input: UpdateModelConfigInput): ModelInfo {
 
   const model = findModel(input.model);
   const existing = getModelConfig(input.model);
-  if (!model && !existing) {
+  if (!model) {
     throw new Error(`Unknown model: ${input.model}`);
   }
 
@@ -1751,27 +1704,14 @@ export function updateModelConfig(input: UpdateModelConfigInput): ModelInfo {
   if (!updated) {
     throw new Error(`Unable to update model: ${input.model}`);
   }
-  const available = model ? getModelRegistry().hasConfiguredAuth(model) : Boolean(updated.enabled);
-  return model ? modelToInfo(model, available, updated) : configToInfo(updated, available);
+  return modelToInfo(model, getModelRegistry().hasConfiguredAuth(model), updated);
 }
 
 export function getModelInfo(modelId: string | undefined): ModelInfo | undefined {
-  const parsed = splitModelId(modelId);
-  if (!parsed) {
-    return undefined;
-  }
   const model = findModel(modelId);
-  const config = getModelConfig(modelConfigId(parsed.provider, parsed.id));
-  if (!model && !config) {
-    return undefined;
-  }
-  if (model) {
-    return modelToInfo(model, getModelRegistry().hasConfiguredAuth(model), config);
-  }
-  if (!config) {
-    return undefined;
-  }
-  return configToInfo(config, Boolean(config.enabled));
+  if (!model) return undefined;
+  const config = getModelConfig(modelToId(model));
+  return modelToInfo(model, getModelRegistry().hasConfiguredAuth(model), config);
 }
 
 export function listScopedModels(): Array<{

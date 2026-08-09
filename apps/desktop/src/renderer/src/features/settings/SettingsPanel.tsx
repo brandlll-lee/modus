@@ -72,7 +72,7 @@ type SettingsPanelProps = {
   state: ModelSettingsState | null;
   onClose(): void;
   onRefresh(): void;
-  onRefreshCatalog(): void;
+  onRefreshCatalog(): Promise<void>;
   /** Active workspace root — enables the MCP section's config + sync actions. */
   workspaceCwd?: string | undefined;
   /** Recent workspaces — used as project MCP scopes. */
@@ -767,7 +767,7 @@ function ModelProviderSettingsPanel({
   onProviderConnectionClose(): void;
   onProviderAuthRespond(value: string | undefined): void;
   onOpenProviderConnection(provider: ModelProviderInfo): void;
-  onRefreshCatalog(): void;
+  onRefreshCatalog(): Promise<void>;
   onSelectProvider(provider: ModelProviderInfo): void;
   onToggleModel(model: ProviderModelConfig, enabled: boolean): void;
 }) {
@@ -787,7 +787,12 @@ function ModelProviderSettingsPanel({
               <button
                 aria-label="Refresh providers"
                 className="flex size-8 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-hover hover:text-fg"
-                onClick={onRefreshCatalog}
+                onClick={() => {
+                  onError(undefined);
+                  void onRefreshCatalog().catch((error) =>
+                    onError(error instanceof Error ? error.message : String(error)),
+                  );
+                }}
                 type="button"
               >
                 <IconRefresh size={15} stroke={1.7} />

@@ -4,7 +4,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 
 const DEFAULT_CATALOG_URL =
-  "https://raw.githubusercontent.com/brandlll-lee/modus/main/catalog/models.json";
+  "https://raw.githubusercontent.com/brandlll-lee/modus/automation/model-catalog/catalog/models.json";
 const CATALOG_TTL_MS = 5 * 60_000;
 const REFRESH_INTERVAL_MS = 60 * 60_000;
 const FETCH_TIMEOUT_MS = 10_000;
@@ -87,7 +87,7 @@ const catalogModelSchema = z
 const modelCatalogSchema = z
   .object({
     schemaVersion: z.literal(2),
-    generatedAt: z.string().min(1),
+    generatedAt: z.string().datetime(),
     piVersion: z.string().min(1),
     providers: z.record(z.string(), z.array(catalogModelSchema).min(1)),
   })
@@ -110,6 +110,7 @@ export type ModelCatalog = z.infer<typeof modelCatalogSchema>;
 
 type CatalogUpdateOptions = {
   cachePath: string;
+  currentCatalog: ModelCatalog;
   onCatalog(catalog: ModelCatalog): void;
 };
 
@@ -174,6 +175,14 @@ function writeCatalog(path: string, text: string): void {
   }
 }
 
+function applyCatalog(options: CatalogUpdateOptions, catalog: ModelCatalog): boolean {
+  if (Date.parse(catalog.generatedAt) < Date.parse(options.currentCatalog.generatedAt))
+    return false;
+  options.onCatalog(catalog);
+  options.currentCatalog = catalog;
+  return true;
+}
+
 export async function updateModelCatalog(
   options: CatalogUpdateOptions,
   force = false,
@@ -194,15 +203,11 @@ export async function updateModelCatalog(
         }
       })();
       if (text === previous) {
-        writeCatalog(options.cachePath, text);
         return false;
       }
-      options.onCatalog(catalog);
+      if (!applyCatalog(options, catalog)) return false;
       writeCatalog(options.cachePath, text);
       return true;
-    } catch (error) {
-      console.warn("Failed to refresh the model catalog.", error);
-      return false;
     } finally {
       refreshPromise = undefined;
     }
@@ -217,7 +222,7 @@ export function startModelCatalogUpdates(options: CatalogUpdateOptions): () => v
   const cached = readModelCatalog(options.cachePath);
   if (cached) {
     try {
-      options.onCatalog(cached);
+      if (!applyCatalog(options, cached)) rmSync(options.cachePath, { force: true });
     } catch (error) {
       rmSync(options.cachePath, { force: true });
       console.warn("Ignored an incompatible cached model catalog.", error);
@@ -225,8 +230,10 @@ export function startModelCatalogUpdates(options: CatalogUpdateOptions): () => v
   } else {
     rmSync(options.cachePath, { force: true });
   }
-  void updateModelCatalog(options);
-  refreshTimer = setInterval(() => void updateModelCatalog(options), REFRESH_INTERVAL_MS);
+  const refresh = () =>
+    void updateModelCatalog(options).catch((error) => console.warn("Catalog refresh:", error));
+  refresh();
+  refreshTimer = setInterval(refresh, REFRESH_INTERVAL_MS);
   refreshTimer.unref?.();
 
   return () => {

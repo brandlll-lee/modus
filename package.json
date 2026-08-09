@@ -21,7 +21,6 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.16",
-    "@biomejs/cli-win32-x64": "^2.4.16",
     "vite": "^7.3.3"
   }
 }

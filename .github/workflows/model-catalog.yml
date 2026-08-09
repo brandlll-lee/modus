@@ -3,11 +3,10 @@ name: Refresh model catalog
 on:
   workflow_dispatch:
   schedule:
-    - cron: "17 3 * * *"
+    - cron: "17 * * * *"
 
 permissions:
   contents: write
-  pull-requests: write
 
 jobs:
   refresh:
@@ -21,19 +20,14 @@ jobs:
         run: |
           npm install --no-save --package-lock=false --ignore-scripts @earendil-works/pi-ai@latest
           node scripts/generate-model-catalog.mjs
-      - name: Open catalog update
-        env:
-          GH_TOKEN: ${{ github.token }}
+          npx vitest run --root . apps/desktop/src/main/agent/model-catalog-service.test.ts
+      - name: Publish catalog update
         run: |
-          if git diff --quiet -- catalog/models.json; then exit 0; fi
           branch=automation/model-catalog
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git fetch origin "$branch:refs/remotes/origin/$branch" || true
           git switch -C "$branch"
           git add catalog/models.json
-          git commit -m "chore(models): refresh runtime catalog"
+          git diff --cached --quiet || git commit -m "chore(models): refresh runtime catalog"
           git push --force-with-lease origin "HEAD:$branch"
-          if [ "$(gh pr list --head "$branch" --state open --json number --jq length)" = "0" ]; then
-            gh pr create --base main --head "$branch" --title "chore(models): refresh runtime catalog" --body "Automated refresh from the latest compatible pi-ai catalog."
-          fi

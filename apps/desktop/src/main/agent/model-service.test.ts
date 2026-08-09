@@ -520,7 +520,7 @@ describe("provider disconnection", () => {
 });
 
 describe("runtime model catalog", () => {
-  it("adds compatible models without enabling them or replacing a custom provider", async () => {
+  it("projects added and retired catalog models from the runtime registry", async () => {
     const shippedPath = fileURLToPath(
       new URL("../../../../../catalog/models.json", import.meta.url),
     );
@@ -529,9 +529,10 @@ describe("runtime model catalog", () => {
     };
     const anthropicModels = catalog.providers.anthropic;
     const anthropicModel = anthropicModels?.[0];
-    if (!anthropicModel) throw new Error("expected an Anthropic model in the shipped catalog");
+    if (!anthropicModel || typeof anthropicModel.id !== "string")
+      throw new Error("expected an Anthropic model in the shipped catalog");
     catalog.providers.anthropic = [
-      ...anthropicModels,
+      ...anthropicModels.slice(1),
       {
         ...anthropicModel,
         id: "future-model",
@@ -583,6 +584,12 @@ describe("runtime model catalog", () => {
       expect(getProviderDetail("anthropic")?.models).toContainEqual(
         expect.objectContaining({ id: "future-model", enabled: false }),
       );
+      expect(
+        getProviderDetail("anthropic")?.models.some((model) => model.id === anthropicModel.id),
+      ).toBe(false);
+      expect(listModels().some((model) => model.id === "anthropic/future-model")).toBe(false);
+      updateModelConfig({ model: "anthropic/future-model", enabled: true });
+      expect(listModels().some((model) => model.id === "anthropic/future-model")).toBe(true);
       expect(
         getProviderDetail("anthropic")?.models.find((model) => model.id === "future-model")
           ?.thinkingOptions,
