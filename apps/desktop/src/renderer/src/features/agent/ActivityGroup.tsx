@@ -13,7 +13,6 @@ import type {
   CompactionBlockItem,
   GroupedWorkActivityItem,
   RunBlockItem,
-  ThoughtBlockItem,
   WorkActivityGroupItem,
   WorkActivityItem,
   WorkFoldItem,
@@ -27,45 +26,6 @@ export function formatElapsed(end: number, start: number): string {
   const minutes = Math.floor(seconds / 60);
   const rest = seconds % 60;
   return rest === 0 ? `${minutes}m` : `${minutes}m ${rest}s`;
-}
-
-export function thoughtLabel(streaming: boolean, startedAt?: number, completedAt?: number): string {
-  if (streaming) return "Thinking";
-  if (startedAt === undefined) return "Thought";
-  const end = completedAt ?? startedAt;
-  const seconds = Math.max(0, Math.round((end - startedAt) / 1000));
-  return seconds === 0 ? "Thought brief" : `Thought for ${formatElapsed(end, startedAt)}`;
-}
-
-export function ThoughtRow({
-  text,
-  streaming = false,
-  startedAt,
-  completedAt,
-}: Pick<ThoughtBlockItem, "text" | "streaming" | "startedAt" | "completedAt">) {
-  const [manualOpen, setManualOpen] = useState<boolean>();
-  const open = manualOpen ?? streaming;
-  const contentId = useId();
-
-  if (!streaming && !text.trim()) return null;
-  const label = thoughtLabel(streaming, startedAt, completedAt);
-
-  return (
-    <div className="min-w-0">
-      <FoldHeader
-        active={streaming}
-        controlsId={contentId}
-        label={label}
-        onToggle={() => setManualOpen(!open)}
-        open={open}
-      />
-      <CollapsibleMotion id={contentId} open={open} preset="timeline">
-        <pre className="mt-2 max-w-full whitespace-pre-wrap text-2xs text-fg-faint leading-relaxed">
-          {text}
-        </pre>
-      </CollapsibleMotion>
-    </div>
-  );
 }
 
 /** Single-line tool-style compaction status (ShinyText while running). */
@@ -133,12 +93,23 @@ function toolTarget(item: Extract<WorkActivityItem, { type: "tool" }>): string |
   return typeof value === "string" || typeof value === "number" ? String(value).trim() : undefined;
 }
 
+const thoughtPreview = (text: string) => {
+  const characters = Array.from(text.trim().replace(/\s+/g, " "));
+  const preview = characters.slice(0, 20).join("");
+  return characters.length > 20 ? `${preview}…` : preview;
+};
+
 function isActivityActive(item: GroupedWorkActivityItem): boolean {
+  if (item.type === "thought") return item.streaming === true;
   if (item.type === "tool") return item.isComplete !== true && item.isError !== true;
   return item.status === "running";
 }
 
 function activeActivityLabel(item: GroupedWorkActivityItem): string {
+  if (item.type === "thought") {
+    const preview = thoughtPreview(item.text);
+    return preview ? `Thinking · ${preview}` : "Thinking";
+  }
   if (item.type === "compaction") return "Compacting context";
   const meta = getToolUiMeta(item.name);
   const target = toolTarget(item);
@@ -167,16 +138,21 @@ function settledActivityLabel(items: GroupedWorkActivityItem[]): string {
   if (unspecifiedTools > 0) {
     parts.push(`used ${unspecifiedTools} ${unspecifiedTools === 1 ? "tool" : "tools"}`);
   }
+  const thought = items.findLast((item) => item.type === "thought" && item.text.trim());
   const label =
     parts.join(", ") ||
-    `Completed ${items.length} ${items.length === 1 ? "activity" : "activities"}`;
+    (thought?.type === "thought"
+      ? `Thought · ${thoughtPreview(thought.text)}`
+      : "Completed activity");
   return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
 export function workActivityPresentation(items: GroupedWorkActivityItem[]) {
   const activeItem = items.findLast(isActivityActive);
   const danger = items.some((item) =>
-    item.type === "tool" ? item.isError === true : item.status === "error",
+    item.type === "tool"
+      ? item.isError === true
+      : item.type === "compaction" && item.status === "error",
   );
   const label = activeItem ? activeActivityLabel(activeItem) : settledActivityLabel(items);
   return {
@@ -224,7 +200,14 @@ export function WorkActivityRow({
   onOpenSubagent?(childSessionId: string): void;
   onOpenPlan?(plan: PlanRef): void;
 }) {
-  if (item.type === "thought") return <ThoughtRow {...item} />;
+  if (item.type === "thought") {
+    if (!item.streaming && !item.text.trim()) return null;
+    return (
+      <pre className="max-w-full whitespace-pre-wrap text-2xs text-fg-faint leading-relaxed">
+        {item.text}
+      </pre>
+    );
+  }
   if (item.type === "todos") return <TodosCard {...item} />;
   if (item.type === "subagent") {
     return (

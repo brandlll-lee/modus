@@ -101,11 +101,8 @@ export type ThoughtBlockItem = {
   id: string;
   type: "thought";
   text: string;
-  /** True while the segment is still being produced — label shimmers, body live. */
+  /** True while the segment is still being produced. */
   streaming?: boolean;
-  /** Wall-clock from first / last thinking.delta (via event createdAt/updatedAt). */
-  startedAt?: number;
-  completedAt?: number;
 };
 
 export type RunBlockItem = {
@@ -169,7 +166,7 @@ export type WorkActivityItem =
   | SubagentBlockItem
   | CompactionBlockItem;
 
-export type GroupedWorkActivityItem = ToolBlockItem | CompactionBlockItem;
+export type GroupedWorkActivityItem = ThoughtBlockItem | ToolBlockItem | CompactionBlockItem;
 
 export type WorkActivityGroupItem = {
   id: string;
@@ -499,7 +496,6 @@ export function buildBlocks(agentEvents: AgentEventItem[]): TimelineBlock[] {
       const targetId = blockById.has(event.messageId)
         ? event.messageId
         : (activeAssistantMessageId ?? event.messageId);
-      const eventEndAt = eventTime(item.updatedAt ?? item.createdAt, order);
       let thought = thoughtByMessage.get(targetId);
       if (!thought) {
         thought = {
@@ -507,8 +503,6 @@ export function buildBlocks(agentEvents: AgentEventItem[]): TimelineBlock[] {
           type: "thought",
           text: "",
           streaming: true,
-          startedAt: eventAt,
-          completedAt: eventEndAt,
         };
         thoughtByMessage.set(targetId, thought);
         blockById.set(thought.id, thought);
@@ -522,7 +516,6 @@ export function buildBlocks(agentEvents: AgentEventItem[]): TimelineBlock[] {
       }
       thought.text += event.delta;
       thought.streaming = true;
-      thought.completedAt = eventEndAt;
       continue;
     }
 
@@ -530,7 +523,6 @@ export function buildBlocks(agentEvents: AgentEventItem[]): TimelineBlock[] {
       const thought = thoughtByMessage.get(event.messageId);
       if (thought) {
         thought.streaming = false;
-        thought.completedAt = eventAt;
       }
       continue;
     }
@@ -965,7 +957,7 @@ function isWorkActivity(block: TimelineBlock): block is WorkActivityItem {
 
 function isGroupedWorkActivity(item: TimelineBlock): item is GroupedWorkActivityItem {
   if (item.type === "tool") return getToolUiMeta(item.name)?.groupInTimeline !== false;
-  return item.type === "compaction";
+  return item.type === "thought" || item.type === "compaction";
 }
 
 /** Messages, notices, and standalone activities bound local activity folds. */
