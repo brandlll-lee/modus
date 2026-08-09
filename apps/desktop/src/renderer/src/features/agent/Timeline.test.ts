@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AgentEvent, PlanRef } from "../../../../shared/contracts";
 import { PLAN_TOOL_NAME, VISUAL_TOOL_NAME } from "../../../../shared/tools";
-import { formatElapsed, thoughtLabel, workActivityPresentation } from "./ActivityGroup";
+import { formatElapsed, workActivityPresentation } from "./ActivityGroup";
 import { optimisticUserPromptEvents } from "./agentEventHub";
 import { subagentColor } from "./subagentUi";
 import {
@@ -784,7 +784,7 @@ describe("groupTurnWork", () => {
       }),
     );
     if (fold?.type === "work-fold") {
-      expect(fold.items.map((item) => item.type)).toEqual(["thought", "work-activity-group"]);
+      expect(fold.items.map((item) => item.type)).toEqual(["work-activity-group"]);
       expect(fold.run.runId).toBe("r");
     }
     expect(result[2]).toEqual(
@@ -953,7 +953,7 @@ describe("local work activity groups", () => {
       tool("c", "bash"),
     ]);
     expect(result.map((entry) => entry.type).join(",")).toBe(
-      "work-activity-group,message,thought,todos,tool,tool,work-activity-group",
+      "work-activity-group,message,work-activity-group,todos,tool,tool,work-activity-group",
     );
   });
 
@@ -974,9 +974,10 @@ describe("local work activity groups", () => {
   });
 
   it("uses the latest authoritative in-flight item and safely summarizes unknown tools", () => {
-    const activities = [tool("future", "brand_new_tool"), tool("live", "bash", false)];
-    expect(workActivityPresentation(activities).label).toBe("Running");
+    const activities = [tool("live", "bash", false), thought("th", "123456789012345678901", true)];
+    expect(workActivityPresentation(activities).label).toBe("Thinking · 12345678901234567890…");
     expect(workActivityPresentation([tool("future", "brand_new_tool")]).label).toBe("Used 1 tool");
+    expect(workActivityPresentation([thought("d", "plan")]).label).toBe("Thought · plan");
   });
 });
 
@@ -1023,12 +1024,6 @@ describe("activity duration labels", () => {
     expect(formatElapsed(5000, 0)).toBe("5s");
     expect(formatElapsed(120000, 0)).toBe("2m");
     expect(formatElapsed(125000, 0)).toBe("2m 5s");
-  });
-
-  it("derives thought copy from lifecycle state and event time", () => {
-    expect(thoughtLabel(true, 0, 12000)).toBe("Thinking");
-    expect(thoughtLabel(false, 0, 0)).toBe("Thought brief");
-    expect(thoughtLabel(false, 0, 12000)).toBe("Thought for 12s");
   });
 });
 
