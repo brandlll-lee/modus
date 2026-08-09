@@ -152,6 +152,7 @@ export type ModusApi = {
       /** Set when this prompt is a "Build this plan" action; binds the turn to the plan. */
       planId?: string;
     }): Promise<void>;
+    compact(sessionId: string): Promise<void>;
     abort(sessionId: string): Promise<void>;
     /**
      * Rewind the session to just before one of its user messages: restores

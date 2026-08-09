@@ -52,6 +52,7 @@ import {
   touchAgentSession,
   updateAgentSessionMetadata,
   updateAgentSessionStatus,
+  updateAgentSessionTitle,
   updateAgentSessionWorktree,
 } from "./agent-store";
 import { createCheckpoint } from "./checkpoint-service";
@@ -77,7 +78,7 @@ import type {
   EmitAgentEvent,
   PromptAgentInput,
 } from "./runtime";
-import { scheduleSessionTitle, shouldReplaceSessionTitle } from "./session-title";
+import { deriveSessionTitle, shouldReplaceSessionTitle } from "./session-title";
 import { describeAgentShellForPrompt, resolveAgentShell } from "./shell-resolver";
 import { resolveSubagent, resolveSubagentsPrompt } from "./subagents-config";
 import { registerAppTools } from "./tools/app-tools";
@@ -807,21 +808,16 @@ export class PiSdkRuntime implements AgentRuntime {
       return;
     }
 
-    // AI title: fire-and-forget, never blocks this turn. Placeholder titles
-    // stay until the short streamSimple call lands (or fails silently).
     if (
       !runtimeSession.info.parentSessionId &&
       shouldReplaceSessionTitle(runtimeSession.info.title)
     ) {
-      scheduleSessionTitle({
-        sessionId: input.sessionId,
-        userText: input.message,
-        modelId: input.model ?? runtimeSession.info.model,
-        emit: runtimeSession.emitVolatile,
-        onApplied: (title) => {
-          runtimeSession.info = { ...runtimeSession.info, title };
-        },
-      });
+      const title = deriveSessionTitle(input.message);
+      const updated = updateAgentSessionTitle(input.sessionId, title);
+      if (updated) {
+        runtimeSession.info = updated;
+        runtimeSession.emitVolatile({ type: "session.updated", sessionId: input.sessionId, title });
+      }
     }
     const runInput: Parameters<typeof createAgentRun>[0] = {
       sessionId: input.sessionId,
@@ -1083,6 +1079,25 @@ export class PiSdkRuntime implements AgentRuntime {
       if (session?.workspaceId) {
         releaseAgentBrowserControl(session.workspaceId);
       }
+    }
+  }
+
+  async compact(window: BrowserWindowType, sessionId: string): Promise<void> {
+    const runtimeSession = await this.getOrResume(window, sessionId);
+    if (!runtimeSession) {
+      throw new Error(`Agent session not found: ${sessionId}`);
+    }
+    if (!runtimeSession.session.isIdle) {
+      throw new Error("Context can only be compacted while Modus is idle.");
+    }
+
+    updateAgentSessionStatus(sessionId, "running");
+    runtimeSession.emit({ type: "session.status", sessionId, status: { type: "busy" } });
+    try {
+      await runtimeSession.session.compact();
+    } finally {
+      updateAgentSessionStatus(sessionId, "idle");
+      runtimeSession.emit({ type: "session.status", sessionId, status: { type: "idle" } });
     }
   }
 

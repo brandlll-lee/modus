@@ -280,6 +280,42 @@ describe("PiSdkRuntime", () => {
     expect(toolRegistry.resolveActiveTools("chat")).not.toContain("close_agent");
   });
 
+  it("compacts an idle session without creating a prompt run", async () => {
+    const sessionId = `session-${crypto.randomUUID()}`;
+    insertSession(sessionId, `workspace-${crypto.randomUUID()}`, join(userData, "missing.jsonl"));
+    const compact = vi.fn(async () => {
+      mocks.emitPiEvent({ type: "compaction_start", reason: "manual" });
+      mocks.emitPiEvent({ type: "compaction_end", reason: "manual", aborted: false, willRetry: false });
+    });
+    mocks.createAgentSession.mockImplementationOnce(async () => ({
+      session: createMockPiSession({ compact, isIdle: true }),
+    }));
+    const runtime = new PiSdkRuntime();
+    await runtime.compact(createWindowStub(), sessionId);
+
+    expect(await runtime.listRuns(sessionId)).toEqual([]);
+    const rows = getDatabase()
+      .prepare("select type from agent_events where session_id = ? order by rowid")
+      .all(sessionId) as Array<{ type: string }>;
+    expect(rows.map(({ type }) => type)).toEqual([
+      "session.status", "compaction.started", "compaction.ended", "session.status",
+    ]);
+  });
+
+  it("never lets manual compaction abort a busy session", async () => {
+    const sessionId = `session-${crypto.randomUUID()}`;
+    insertSession(sessionId, `workspace-${crypto.randomUUID()}`, join(userData, "missing.jsonl"));
+    const compact = vi.fn();
+    mocks.createAgentSession.mockImplementationOnce(async () => ({
+      session: createMockPiSession({ compact, isIdle: false }),
+    }));
+
+    await expect(new PiSdkRuntime().compact(createWindowStub(), sessionId)).rejects.toThrow(
+      "while Modus is idle",
+    );
+    expect(compact).not.toHaveBeenCalled();
+  });
+
   it("re-prompts after threshold compaction so the Modus run continues", async () => {
     const sessionId = `session-${crypto.randomUUID()}`;
     const workspaceId = `workspace-${crypto.randomUUID()}`;
@@ -690,8 +726,12 @@ describe("PiSdkRuntime", () => {
     const session = getDatabase()
       .prepare("select title from agent_sessions where id = ?")
       .get(sessionId) as { title: string };
-    // Title is AI-generated asynchronously; placeholder stays until that lands.
-    expect(session.title).toBe("New chat");
+    expect(session.title).toBe("介绍一下你自己");
+    expect(window.webContents.send).toHaveBeenCalledWith("agent:event", {
+      type: "session.updated",
+      sessionId,
+      title: "介绍一下你自己",
+    });
   });
 
   it("publishes context usage snapshots without persisting them to the timeline", async () => {

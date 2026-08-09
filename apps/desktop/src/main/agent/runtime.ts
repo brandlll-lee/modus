@@ -54,6 +54,7 @@ export type AgentRuntime = {
   create(window: BrowserWindowType, input: CreateAgentRuntimeInput): Promise<AgentSessionInfo>;
   ensure(window: BrowserWindowType, sessionId: string): Promise<AgentSessionInfo>;
   prompt(window: BrowserWindowType, input: PromptAgentInput): Promise<void>;
+  compact(window: BrowserWindowType, sessionId: string): Promise<void>;
   /** Spawn a child subagent and return immediately. Collect results with waitBackground. */
   runSubagent(
     window: BrowserWindowType,

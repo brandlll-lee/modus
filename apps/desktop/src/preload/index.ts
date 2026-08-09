@@ -37,6 +37,7 @@ const api: ModusApi = {
     ensure: (sessionId) => ipcRenderer.invoke("agent:ensure", sessionId),
     releaseRuntime: (sessionId) => ipcRenderer.invoke("agent:release-runtime", sessionId),
     prompt: (input) => ipcRenderer.invoke("agent:prompt", input),
+    compact: (sessionId) => ipcRenderer.invoke("agent:compact", sessionId),
     abort: (sessionId) => ipcRenderer.invoke("agent:abort", sessionId),
     rollback: (input) => ipcRenderer.invoke("agent:rollback", input),
     pin: (input) => ipcRenderer.invoke("agent:pin", input),

@@ -468,6 +468,14 @@ export function registerAppIpc({
     });
   });
 
+  ipcMain.handle(IPC_CHANNELS.agentCompact, async (event, sessionId: string) => {
+    assertTrustedSender(event);
+    await getAgentRuntime().compact(
+      getSenderWindow(event),
+      parseIpcInput(sessionIdSchema, sessionId, IPC_CHANNELS.agentCompact),
+    );
+  });
+
   ipcMain.handle(IPC_CHANNELS.agentAbort, async (event, sessionId: string) => {
     assertTrustedSender(event);
     await getAgentRuntime().abort(
