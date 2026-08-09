@@ -1382,7 +1382,6 @@ export class PiSdkRuntime implements AgentRuntime {
     sessionId: string;
     timeoutMs: number;
     subagentIds?: string[];
-    terminalIds?: string[];
     signal?: AbortSignal;
     onProgress?: (text: string) => void;
   }): Promise<BackgroundWaitResult> {
@@ -1392,34 +1391,16 @@ export class PiSdkRuntime implements AgentRuntime {
       [...this.backgroundChildTasks.entries()]
         .filter(([, meta]) => meta.parentSessionId === input.sessionId)
         .map(([id]) => id);
-    const terminalIds = input.terminalIds ?? [];
 
     const poll = (): {
       subagents: BackgroundWaitResult["subagents"];
-      terminals: BackgroundWaitResult["terminals"];
       pending: number;
     } => {
       const subagents: BackgroundWaitResult["subagents"] = subagentIds.map((id) =>
         this.resolveBackgroundSubagent(input.sessionId, id),
       );
-
-      const terminals: BackgroundWaitResult["terminals"] = terminalIds.map((id) => {
-        const process = listManagedProcesses({}).find((entry) => entry.id === id);
-        if (!process) {
-          return { id, status: "missing" as const };
-        }
-        return {
-          id,
-          status: process.status === "running" ? ("running" as const) : ("exited" as const),
-          ...(process.exitCode !== undefined ? { exitCode: process.exitCode } : {}),
-          ...(process.label ? { label: process.label } : {}),
-        };
-      });
-
-      const pending =
-        subagents.filter((entry) => entry.status === "running").length +
-        terminals.filter((entry) => entry.status === "running").length;
-      return { subagents, terminals, pending };
+      const pending = subagents.filter((entry) => entry.status === "running").length;
+      return { subagents, pending };
     };
 
     let snapshot = poll();
@@ -1458,7 +1439,6 @@ export class PiSdkRuntime implements AgentRuntime {
       waitedMs,
       timedOut,
       subagents: snapshot.subagents,
-      terminals: snapshot.terminals,
     };
   }
 

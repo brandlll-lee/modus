@@ -8,20 +8,18 @@ describe("formatWaitHeadline", () => {
         waitedMs: 12_000,
         timedOut: false,
         subagents: [{}],
-        terminals: [],
       }),
     ).toBe("Waited 12s for subagent");
   });
 
-  it("pluralizes subagents and terminals from counts", () => {
+  it("pluralizes subagents from the authoritative count", () => {
     expect(
       formatWaitHeadline({
         waitedMs: 65_000,
         timedOut: false,
         subagents: [{}, {}],
-        terminals: [{}],
       }),
-    ).toBe("Waited 1m 5s for 2 subagents, 1 terminal");
+    ).toBe("Waited 1m 5s for 2 subagents");
   });
 
   it("marks timeout without losing the subject", () => {
@@ -30,7 +28,6 @@ describe("formatWaitHeadline", () => {
         waitedMs: 120_000,
         timedOut: true,
         subagents: [{}, {}, {}],
-        terminals: [],
       }),
     ).toBe("Waited 2m for 3 subagents (timed out)");
   });
@@ -41,7 +38,6 @@ describe("formatWaitHeadline", () => {
         waitedMs: 0,
         timedOut: false,
         subagents: [],
-        terminals: [],
       }),
     ).toBe(`Waited ${formatWaitedDuration(0)}`);
   });

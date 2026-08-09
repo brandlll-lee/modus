@@ -52,19 +52,10 @@ export function formatWaitHeadline(result: {
   waitedMs: number;
   timedOut: boolean;
   subagents: readonly unknown[];
-  terminals: readonly unknown[];
 }): string {
   const dur = formatWaitedDuration(result.waitedMs);
   const nSub = result.subagents.length;
-  const nTerm = result.terminals.length;
-  const subjects: string[] = [];
-  if (nSub === 1 && nTerm === 0) subjects.push("subagent");
-  else if (nSub === 1) subjects.push("1 subagent");
-  else if (nSub > 1) subjects.push(`${nSub} subagents`);
-  if (nTerm === 1 && nSub === 0) subjects.push("terminal");
-  else if (nTerm === 1) subjects.push("1 terminal");
-  else if (nTerm > 1) subjects.push(`${nTerm} terminals`);
-  const forWhat = subjects.length > 0 ? ` for ${subjects.join(", ")}` : "";
+  const forWhat = nSub > 0 ? ` for ${nSub === 1 ? "subagent" : `${nSub} subagents`}` : "";
   const timedOut = result.timedOut ? " (timed out)" : "";
   return `Waited ${dur}${forWhat}${timedOut}`;
 }
@@ -89,28 +80,21 @@ const waitParams = Type.Object({
         "Background subagent ids to wait for. Omit to wait for all background subagents of this session.",
     }),
   ),
-  terminal_ids: Type.Optional(
-    Type.Array(Type.String({ minLength: 1 }), {
-      description:
-        "Terminal ids to wait until exited. Omit to skip terminals (do not wait forever on servers).",
-    }),
-  ),
 });
 
 const waitTool: ToolDefinition = defineTool({
   name: WAIT_TOOL_NAME,
   label: "Wait",
   description:
-    "Block this turn until all watched background subagents/terminals settle, or until timeout. " +
+    "Block this turn until all watched background subagents settle, or until timeout. " +
     "Keeps the same turn open so you can use every result without a new message.",
   promptSnippet:
-    "wait(timeout_ms?, subagent_ids?, terminal_ids?) — hold this turn until all watched background work finishes (or timeout).",
+    "wait(timeout_ms?, subagent_ids?) — hold this turn until watched background subagents finish (or timeout).",
   promptGuidelines: [
     "After launching tasks, first do any useful main-thread work (read/grep/explore) that does not need those results — then call wait.",
     "Do NOT call wait immediately after task() unless you truly have nothing else useful to do in parallel.",
     "wait returns when ALL watched items settle (completed/error/exited), or when timeout_ms elapses.",
     "Omit subagent_ids to watch every background subagent of this session; pass ids for a subset.",
-    "Pass terminal_ids only when you need those terminals to exit. Do not wait on long-lived servers.",
     "On timeout, still-running work remains — call wait again if needed. DO NOT sleep or poll.",
     "Background results are ONLY available through wait — they are never auto-injected into the chat. Open the subagent preview for the full report.",
   ],
@@ -125,7 +109,6 @@ const waitTool: ToolDefinition = defineTool({
       sessionId: context.parentSessionId ?? context.sessionId,
       timeoutMs,
       ...(params.subagent_ids ? { subagentIds: params.subagent_ids } : {}),
-      ...(params.terminal_ids ? { terminalIds: params.terminal_ids } : {}),
       ...(signal ? { signal } : {}),
       onProgress: (text) => {
         onUpdate?.(toResult(text, undefined));
@@ -133,7 +116,7 @@ const waitTool: ToolDefinition = defineTool({
     });
 
     const lines = [formatWaitHeadline(result), ""];
-    if (result.subagents.length === 0 && result.terminals.length === 0) {
+    if (result.subagents.length === 0) {
       lines.push("Nothing to wait for.");
     }
     for (const child of result.subagents) {
@@ -143,13 +126,6 @@ const waitTool: ToolDefinition = defineTool({
         lines.push("---");
       }
     }
-    for (const terminal of result.terminals) {
-      const exit =
-        terminal.exitCode !== undefined ? ` exit=${terminal.exitCode}` : "";
-      const label = terminal.label ? ` ${terminal.label}` : "";
-      lines.push(`terminal ${terminal.id} [${terminal.status}${exit}]${label}`);
-    }
-
     const final = toResult(lines.join("\n").trimEnd(), result);
     onUpdate?.(final);
     return final;

@@ -10,7 +10,6 @@ import {
   type AgentToolContext,
   resolveAgentToolContext,
   runWithAgentToolContext,
-  setAgentToolContext,
 } from "./tool-context";
 
 const testState = vi.hoisted(() => ({ userData: "" }));
@@ -38,6 +37,10 @@ function context(
 }
 
 describe("agent tool context", () => {
+  it("rejects a tool call without an explicit session owner", () => {
+    expect(() => resolveAgentToolContext("same-cwd")).toThrow(/owning Modus session/);
+  });
+
   it("keeps overlapping sessions with the same cwd isolated", async () => {
     const cwd = "same-cwd";
     const parent = context("parent-session", cwd);
@@ -46,7 +49,6 @@ describe("agent tool context", () => {
     await expect(
       Promise.all([
         runWithAgentToolContext(parent, async () => {
-          setAgentToolContext(child);
           await Promise.resolve();
           return resolveAgentToolContext(cwd).sessionId;
         }),
@@ -58,7 +60,7 @@ describe("agent tool context", () => {
     ).resolves.toEqual(["parent-session", "child-session"]);
   });
 
-  it("emits todo updates to the active async session, not the cwd fallback", async () => {
+  it("emits todo updates to the active async session", async () => {
     registerTodoTools();
     const todoTool = toolRegistry
       .getCustomToolDefinitions("chat")
@@ -71,8 +73,6 @@ describe("agent tool context", () => {
     const events: AgentEvent[] = [];
     const parent = context("parent-session", cwd, (event) => events.push(event));
     const child = context("child-session", cwd);
-    setAgentToolContext(child);
-
     await runWithAgentToolContext(parent, async () => {
       await todoTool.execute(
         "todo-call",

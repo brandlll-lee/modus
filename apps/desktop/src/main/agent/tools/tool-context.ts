@@ -9,7 +9,7 @@ import type { EmitAgentEvent } from "../runtime";
  * Custom tools are registered once and shared across every agent session, so a
  * tool's `execute` has no Modus session identity of its own. During a prompt,
  * AsyncLocalStorage carries the owning session through the real async execution
- * chain; the cwd cache is only a fallback for older call paths.
+ * chain. Missing ownership is an error; cwd is not a session identity.
  */
 export type AgentToolContext = {
   workspaceId: string;
@@ -22,31 +22,21 @@ export type AgentToolContext = {
   emit?: EmitAgentEvent;
 };
 
-const contextByCwd = new Map<string, AgentToolContext>();
 const activeContext = new AsyncLocalStorage<AgentToolContext>();
-let lastContext: AgentToolContext | undefined;
 
 export function setAgentToolContext(context: AgentToolContext): void {
-  contextByCwd.set(context.cwd, context);
-  lastContext = context;
+  activeContext.enterWith(context);
 }
 
 export function runWithAgentToolContext<T>(
   context: AgentToolContext,
   fn: () => Promise<T>,
 ): Promise<T> {
-  setAgentToolContext(context);
   return activeContext.run(context, fn);
 }
 
-export function resolveAgentToolContext(cwd: string): AgentToolContext {
-  return (
-    activeContext.getStore() ??
-    contextByCwd.get(cwd) ??
-    lastContext ?? {
-      workspaceId: "",
-      cwd,
-      sessionId: "",
-    }
-  );
+export function resolveAgentToolContext(_cwd: string): AgentToolContext {
+  const context = activeContext.getStore();
+  if (!context) throw new Error("Agent tool has no owning Modus session.");
+  return context;
 }
