@@ -16,7 +16,7 @@ describe("registerVisualTools", () => {
     registerVisualTools();
 
     expect(toolRegistry.classify({ toolName: VISUAL_TOOL_NAME, input: {} } as never)).toEqual({
-      action: "mcp.call",
+      action: "tool.execute",
       dangerous: false,
     });
     expect(toolRegistry.isReadOnlySafe(VISUAL_TOOL_NAME)).toBe(false);

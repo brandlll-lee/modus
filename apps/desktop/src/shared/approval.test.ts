@@ -7,7 +7,7 @@ const ALL_ACTIONS: PermissionAction[] = [
   "file.write",
   "file.delete",
   "git.write",
-  "mcp.call",
+  "tool.execute",
   "external.open",
   "browser.control",
 ];
@@ -21,7 +21,7 @@ describe("actionRisk", () => {
   it("rates ordinary writes, commands, and calls as medium risk", () => {
     expect(actionRisk("file.write")).toBe("medium");
     expect(actionRisk("shell.execute")).toBe("medium");
-    expect(actionRisk("mcp.call")).toBe("medium");
+    expect(actionRisk("tool.execute")).toBe("high");
     expect(actionRisk("external.open")).toBe("medium");
     expect(actionRisk("browser.control")).toBe("medium");
   });
@@ -47,7 +47,7 @@ describe("shouldPrompt", () => {
     expect(shouldPrompt("auto", "git.write", true)).toBe(true);
     expect(shouldPrompt("auto", "file.write", true)).toBe(false);
     expect(shouldPrompt("auto", "shell.execute", true)).toBe(false);
-    expect(shouldPrompt("auto", "mcp.call", true)).toBe(false);
+    expect(shouldPrompt("auto", "tool.execute", true)).toBe(true);
   });
 
   it("full-access never prompts even for high-risk dangerous actions", () => {

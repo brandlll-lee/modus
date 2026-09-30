@@ -14,6 +14,8 @@ import {
   IconFilter,
   IconGavel,
   IconKey,
+  IconLogin,
+  IconLogout,
   IconMoon,
   IconMoonStars,
   IconPalette,
@@ -357,11 +359,17 @@ export function SettingsPanel({
     }
   }
 
-  async function startProviderAuth(provider: ModelProviderInfo): Promise<void> {
+  async function startProviderAuth(
+    provider: ModelProviderInfo,
+    method: "oauth" | "api_key" = "oauth",
+  ): Promise<void> {
     setBusy(true);
     setError(undefined);
     try {
-      const operation = await window.modus.model.startProviderAuth({ provider: provider.id });
+      const operation = await window.modus.model.startProviderAuth({
+        provider: provider.id,
+        method,
+      });
       setConnectionProvider(undefined);
       setAuthOperation(operation);
     } catch (err) {
@@ -492,14 +500,8 @@ export function SettingsPanel({
                   return;
                 }
                 const provider = connectionProvider;
-                if (method.kind === "oauth") {
-                  setConnectionProvider(undefined);
-                  void startProviderAuth(provider);
-                  return;
-                }
                 setConnectionProvider(undefined);
-                setCredentialEditorProvider(provider.id);
-                setProviderDetailOpen(true);
+                void startProviderAuth(provider, method.kind === "oauth" ? "oauth" : "api_key");
               }}
               onCredentialEditorClose={() => setCredentialEditorProvider(undefined)}
               onCustomCancel={() => {
@@ -1244,7 +1246,8 @@ function ProviderAuthDialog({
             onSubmit={(event) => {
               event.preventDefault();
               if (canSubmit) {
-                onRespond(value.trim() || undefined);
+                onRespond(value);
+                setValue("");
               }
             }}
           >
@@ -1252,7 +1255,7 @@ function ProviderAuthDialog({
               className="h-9 min-w-0 flex-1 rounded-md border border-hairline bg-panel px-3 text-sm text-fg outline-none placeholder:text-fg-faint focus:border-hairline-strong"
               onChange={(event) => setValue(event.target.value)}
               placeholder={operation.placeholder}
-              type="text"
+              type={operation.secret ? "password" : "text"}
               value={value}
             />
             <button
@@ -1474,9 +1477,7 @@ function PersonalizationSettingsPanel() {
 }
 
 const MCP_STATUS_STYLE: Record<McpServerInfo["status"], { dot: string; label: string }> = {
-  connected: { dot: "bg-success", label: "Connected" },
-  connecting: { dot: "bg-focus-ring-soft", label: "Connecting" },
-  failed: { dot: "bg-danger", label: "Failed" },
+  configured: { dot: "bg-focus-ring-soft", label: "Configured" },
   disabled: { dot: "bg-fg-faint", label: "Disabled" },
 };
 
@@ -1507,6 +1508,7 @@ type McpFormState = {
   env: KeyValuePair[];
   headers: KeyValuePair[];
   enabled: boolean;
+  exposure: NonNullable<import("../../../../shared/contracts").McpServerUpsertInput["exposure"]>;
 };
 
 const emptyMcpForm = (scope: McpScope = "project", projectCwd = ""): McpFormState => ({
@@ -1520,6 +1522,7 @@ const emptyMcpForm = (scope: McpScope = "project", projectCwd = ""): McpFormStat
   env: [],
   headers: [],
   enabled: true,
+  exposure: "codemode",
 });
 
 const pair = (key = "", value = ""): KeyValuePair => ({ id: crypto.randomUUID(), key, value });
@@ -1563,18 +1566,9 @@ function mcpCount(count: number, label: string): string {
 
 function mcpServerSummary(server: McpServerInfo): string {
   if (server.status === "disabled") return "Disabled";
-  if (server.status === "connecting") return "Connecting";
-  if (server.status === "failed") {
-    return server.error?.toLowerCase().includes("auth") ? "Needs authentication" : "Failed";
-  }
-  return server.tools.length > 0 ? mcpCount(server.tools.length, "tool") : "Connected";
+  return server.tools.length > 0 ? mcpCount(server.tools.length, "tool") : "Configured";
 }
 
-/**
- * MCP server management — fully graphical. Add/edit/toggle/delete servers
- * without touching JSON; Modus writes the Cursor-compatible mcp.json behind
- * the scenes (the file stays available for power users).
- */
 function McpSettingsPanel({
   cwd,
   workspaces,
@@ -1583,6 +1577,10 @@ function McpSettingsPanel({
   workspaces: WorkspaceInfo[];
 }) {
   const [serverList, setServerList] = useState<McpServerInfo[]>([]);
+  const [reports, setReports] = useState<Array<{ sessionId: string; report: string }>>([]);
+  const [runtimeSessionId, setRuntimeSessionId] = useState("");
+  const [commandReport, setCommandReport] = useState("");
+  const [commandBusy, setCommandBusy] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [mcpError, setMcpError] = useState<string | undefined>();
@@ -1605,19 +1603,52 @@ function McpSettingsPanel({
     [activeScope, effectiveProjectCwd, serverList],
   );
 
-  async function refresh(targetCwd: string): Promise<void> {
+  const currentCwd = useRef(effectiveProjectCwd);
+  currentCwd.current = effectiveProjectCwd;
+  const refreshGeneration = useRef(0);
+
+  async function refresh(targetCwd: string, reload = false): Promise<void> {
+    const generation = ++refreshGeneration.current;
+    setMcpError(undefined);
+    setSyncing(true);
+    try {
+      const servers =
+        reload && targetCwd
+          ? await window.modus.mcp.sync(targetCwd)
+          : await window.modus.mcp.list(targetCwd || undefined);
+      const nextReports: Array<{ sessionId: string; report: string }> = targetCwd
+        ? await window.modus.mcp.status(targetCwd)
+        : [];
+      if (currentCwd.current !== targetCwd || generation !== refreshGeneration.current) return;
+      setServerList(servers);
+      setReports(nextReports);
+      setRuntimeSessionId((id) =>
+        nextReports.some((report) => report.sessionId === id)
+          ? id
+          : (nextReports[0]?.sessionId ?? ""),
+      );
+    } catch (err) {
+      if (currentCwd.current === targetCwd && generation === refreshGeneration.current)
+        setMcpError(err instanceof Error ? err.message : String(err));
+    } finally {
+      if (generation === refreshGeneration.current) setSyncing(false);
+    }
+  }
+
+  async function runCommand(name: string, action: "login" | "logout" | "reconnect"): Promise<void> {
+    if (!runtimeSessionId || commandBusy) return;
+    const targetCwd = effectiveProjectCwd;
+    setCommandBusy(true);
     setMcpError(undefined);
     try {
-      if (targetCwd) {
-        setSyncing(true);
-        setServerList(await window.modus.mcp.sync(targetCwd));
-      } else {
-        setServerList(await window.modus.mcp.list());
-      }
-    } catch (err) {
-      setMcpError(err instanceof Error ? err.message : String(err));
+      const report = await window.modus.mcp.command({ sessionId: runtimeSessionId, name, action });
+      if (currentCwd.current === targetCwd) setCommandReport(report);
+      await refresh(targetCwd);
+    } catch (error) {
+      if (currentCwd.current === targetCwd)
+        setMcpError(error instanceof Error ? error.message : String(error));
     } finally {
-      setSyncing(false);
+      setCommandBusy(false);
     }
   }
 
@@ -1629,7 +1660,13 @@ function McpSettingsPanel({
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: reload when the selected config scope changes.
   useEffect(() => {
+    setServerList([]);
+    setReports([]);
+    setCommandReport("");
     void refresh(effectiveProjectCwd);
+    return window.modus.skills.onChanged((changedCwd: string) => {
+      if (changedCwd === effectiveProjectCwd) void refresh(effectiveProjectCwd);
+    });
   }, [effectiveProjectCwd]);
 
   async function openEdit(server: McpServerInfo): Promise<void> {
@@ -1654,6 +1691,7 @@ function McpSettingsPanel({
         env: recordToPairs(entry.env),
         headers: recordToPairs(entry.headers),
         enabled: server.status !== "disabled",
+        exposure: (entry.exposure as McpFormState["exposure"] | undefined) ?? "codemode",
       });
     } catch (err) {
       setMcpError(err instanceof Error ? err.message : String(err));
@@ -1675,6 +1713,7 @@ function McpSettingsPanel({
           scope: current.scope,
           transport: current.transport,
           enabled: current.enabled,
+          exposure: current.exposure,
           ...(current.transport === "stdio"
             ? { command: command ?? "", args, env: pairsToRecord(current.env) }
             : { url: current.url.trim(), headers: pairsToRecord(current.headers) }),
@@ -1734,11 +1773,11 @@ function McpSettingsPanel({
             <button
               className="flex h-8 items-center gap-1.5 rounded-md border border-hairline bg-surface px-2.5 text-xs text-fg transition-colors hover:bg-hover disabled:opacity-40"
               disabled={!effectiveProjectCwd || syncing}
-              onClick={() => void refresh(effectiveProjectCwd)}
+              onClick={() => void refresh(effectiveProjectCwd, true)}
               type="button"
             >
               <IconRefresh size={14} stroke={1.7} />
-              {syncing ? <ShinyText>Connecting…</ShinyText> : "Reload"}
+              {syncing ? <ShinyText>Refreshing…</ShinyText> : "Reload"}
             </button>
             <button
               className="flex h-8 items-center gap-1.5 rounded-md bg-fg px-2.5 text-canvas text-xs transition-colors hover:bg-fg-muted disabled:opacity-40"
@@ -1852,12 +1891,7 @@ function McpSettingsPanel({
                         {sourceBadge(server.source)}
                       </span>
                     </div>
-                    <div
-                      className={cn(
-                        "flex items-center gap-1 text-xs",
-                        server.status === "failed" ? "text-danger" : "text-fg-muted",
-                      )}
-                    >
+                    <div className="flex items-center gap-1 text-xs text-fg-muted">
                       <span>{mcpServerSummary(server)}</span>
                       {server.tools.length > 0 ? <IconChevronRight size={12} stroke={1.8} /> : null}
                     </div>
@@ -1874,6 +1908,27 @@ function McpSettingsPanel({
                       </button>
                     ) : (
                       <>
+                        {server.status !== "disabled"
+                          ? (["login", "logout", "reconnect"] as const).map((action) => (
+                              <Tooltip key={action} content={action} side="bottom" sideOffset={6}>
+                                <button
+                                  type="button"
+                                  aria-label={`${action} ${server.name}`}
+                                  disabled={!runtimeSessionId || commandBusy}
+                                  className="flex size-7 items-center justify-center rounded-md text-fg-muted hover:bg-hover disabled:opacity-40"
+                                  onClick={() => void runCommand(server.name, action)}
+                                >
+                                  {action === "reconnect" ? (
+                                    <IconRefresh size={14} />
+                                  ) : action === "login" ? (
+                                    <IconLogin size={14} />
+                                  ) : (
+                                    <IconLogout size={14} />
+                                  )}
+                                </button>
+                              </Tooltip>
+                            ))
+                          : null}
                         <Tooltip content="Edit server" side="bottom" sideOffset={6}>
                           <button
                             aria-label={`Edit ${server.name}`}
@@ -1895,6 +1950,7 @@ function McpSettingsPanel({
                           </button>
                         </Tooltip>
                         <Switch.Root
+                          aria-label={`Enable ${server.name}`}
                           checked={server.status !== "disabled"}
                           className="ml-1 flex h-5 w-9 shrink-0 cursor-pointer rounded-full bg-chip-strong p-0.5 transition-colors data-checked:bg-success/70"
                           onCheckedChange={(checked) => void toggleServer(server, checked)}
@@ -1953,6 +2009,28 @@ function McpSettingsPanel({
             </button>
           ) : null}
         </div>
+      </SettingsSection>
+      <SettingsSection title="Session Status">
+        {reports.length > 0 ? (
+          <>
+            <SelectField
+              label="Session"
+              value={runtimeSessionId}
+              onChange={setRuntimeSessionId}
+              options={reports.map(({ sessionId }) => ({ label: sessionId, value: sessionId }))}
+            />
+            <pre className="scroll-thin max-h-80 overflow-auto whitespace-pre-wrap break-words font-mono text-xs text-fg-muted">
+              {reports.find(({ sessionId }) => sessionId === runtimeSessionId)?.report}
+            </pre>
+          </>
+        ) : (
+          <p className="text-sm text-fg-muted">No open agent session.</p>
+        )}
+        {commandReport ? (
+          <pre className="whitespace-pre-wrap break-words font-mono text-xs text-fg">
+            {commandReport}
+          </pre>
+        ) : null}
       </SettingsSection>
     </>
   );
@@ -2073,14 +2151,14 @@ function McpServerForm({
         />
         <McpTypeCard
           active={form.transport === "http"}
-          description="Connects to a hosted MCP endpoint over HTTP or SSE."
+          description="Connects to a hosted MCP endpoint over Streamable HTTP."
           icon={<IconWorld size={16} stroke={1.7} />}
           label="Remote URL"
           onClick={() => set({ transport: "http" })}
         />
       </div>
 
-      <McpField hint="Shown in tool calls, e.g. “linear”. Letters, numbers, - _ ." label="Name">
+      <McpField hint="Letters, numbers, dash and underscore." label="Name">
         <input
           className="h-9 w-full rounded-md border border-hairline-soft bg-surface px-3 font-mono text-sm text-fg outline-none placeholder:text-fg-faint focus:border-focus-ring"
           onChange={(event) => set({ name: event.target.value })}
@@ -2088,6 +2166,19 @@ function McpServerForm({
           value={form.name}
         />
       </McpField>
+
+      <SelectField
+        label="Tool exposure"
+        value={form.exposure}
+        onChange={(exposure) => set({ exposure: exposure as McpFormState["exposure"] })}
+        options={[
+          { value: "codemode", label: "Code Mode" },
+          { value: "direct", label: "Direct" },
+          { value: "deferred", label: "Tool Search" },
+          { value: "codemode-deferred", label: "Code Mode + Tool Search" },
+          { value: "hidden", label: "Hidden" },
+        ]}
+      />
 
       {form.transport === "stdio" ? (
         <>
@@ -2104,12 +2195,12 @@ function McpServerForm({
           </McpField>
           <McpKeyValueRows
             addLabel="Add variable"
-            hint="Secrets the server needs. Use ${env:NAME} to reference your system environment."
+            hint="System environment variables use ${NAME}."
             label="Environment variables"
             onChange={(env) => set({ env })}
             pairs={form.env}
             placeholderKey="API_KEY"
-            placeholderValue="value or ${env:MY_KEY}"
+            placeholderValue="value or ${MY_KEY}"
           />
         </>
       ) : (
@@ -2129,7 +2220,7 @@ function McpServerForm({
             onChange={(headers) => set({ headers })}
             pairs={form.headers}
             placeholderKey="Authorization"
-            placeholderValue="Bearer ${env:MY_TOKEN}"
+            placeholderValue="Bearer ${MY_TOKEN}"
           />
         </>
       )}
@@ -2503,7 +2594,11 @@ function SkillsSettingsPanel({ cwd }: { cwd: string | undefined }) {
   const [draftBody, setDraftBody] = useState("");
   const [saving, setSaving] = useState(false);
 
-  async function refresh(): Promise<void> {
+  const resourceCwd = useRef(cwd);
+  resourceCwd.current = cwd;
+  const skillsGeneration = useRef(0);
+  async function refresh(reload = false): Promise<void> {
+    const generation = ++skillsGeneration.current;
     if (!cwd) {
       setSkills([]);
       return;
@@ -2511,17 +2606,25 @@ function SkillsSettingsPanel({ cwd }: { cwd: string | undefined }) {
     setLoading(true);
     setSkillsError(undefined);
     try {
-      setSkills(await window.modus.skills.list(cwd));
+      const items = await (reload
+        ? window.modus.skills.refresh(cwd)
+        : window.modus.skills.list(cwd));
+      if (resourceCwd.current === cwd && generation === skillsGeneration.current) setSkills(items);
     } catch (error) {
-      setSkillsError(error instanceof Error ? error.message : String(error));
+      if (resourceCwd.current === cwd && generation === skillsGeneration.current)
+        setSkillsError(error instanceof Error ? error.message : String(error));
     } finally {
-      setLoading(false);
+      if (generation === skillsGeneration.current) setLoading(false);
     }
   }
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refresh is recreated each render; cwd is the real trigger.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: cwd owns the subscription.
   useEffect(() => {
+    setSkills([]);
     void refresh();
+    return window.modus.skills.onChanged((changedCwd: string) => {
+      if (changedCwd === cwd) void refresh();
+    });
   }, [cwd]);
 
   async function saveSkill(): Promise<void> {
@@ -2550,10 +2653,7 @@ function SkillsSettingsPanel({ cwd }: { cwd: string | undefined }) {
   }
 
   function scopeBadge(skill: SkillInfo): string {
-    if (skill.scope === "builtin") {
-      return "builtin";
-    }
-    return skill.scope === "user" ? `user · ${skill.source}` : `project · ${skill.source}`;
+    return `${skill.scope} · ${skill.source}`;
   }
 
   return (
@@ -2561,6 +2661,15 @@ function SkillsSettingsPanel({ cwd }: { cwd: string | undefined }) {
       <SettingsPageHeader
         actions={
           <>
+            <button
+              type="button"
+              aria-label="Refresh skills"
+              disabled={!cwd || loading}
+              onClick={() => void refresh(true)}
+              className="flex size-8 items-center justify-center rounded-md border border-hairline text-fg hover:bg-hover disabled:opacity-40"
+            >
+              <IconRefresh size={14} />
+            </button>
             <button
               className="flex h-8 items-center gap-1.5 rounded-md border border-hairline bg-surface px-2.5 text-xs text-fg transition-colors hover:bg-hover disabled:opacity-40"
               disabled={!cwd}
@@ -3716,30 +3825,14 @@ function ModelRow({
   const thinkingOptions = useMemo(() => modelThinkingOptions(model), [model]);
   const thinkingSelection = selectedThinkingOption(model);
   const thinkingLabel = selectedThinkingLabel(model);
-  const canEditThinking = thinkingOptions.length > 1 || Boolean(model.thinkingBudget);
+  const canEditThinking = thinkingOptions.length > 1;
   const expandable = canEditThinking || editableLimits;
-  const [budgetDraft, setBudgetDraft] = useState(
-    model.thinkingLevel !== "off" && model.thinkingVariant
-      ? model.thinkingVariant
-      : model.thinkingBudget?.min !== undefined
-        ? String(model.thinkingBudget.min)
-        : "",
-  );
   const [contextDraft, setContextDraft] = useState(
     model.contextWindow ? String(model.contextWindow) : "",
   );
   const [maxTokensDraft, setMaxTokensDraft] = useState(
     model.maxTokens ? String(model.maxTokens) : "",
   );
-  useEffect(() => {
-    setBudgetDraft(
-      model.thinkingLevel !== "off" && model.thinkingVariant
-        ? model.thinkingVariant
-        : model.thinkingBudget?.min !== undefined
-          ? String(model.thinkingBudget.min)
-          : "",
-    );
-  }, [model.thinkingBudget?.min, model.thinkingLevel, model.thinkingVariant]);
 
   function saveLimits(): void {
     const patch: { contextWindow?: number; maxTokens?: number } = {};
@@ -3754,21 +3847,6 @@ function ModelRow({
     if (patch.contextWindow !== undefined || patch.maxTokens !== undefined) {
       onEditModel(model, patch);
     }
-  }
-
-  function saveBudget(): void {
-    const tokens = Number(budgetDraft);
-    const budget = model.thinkingBudget;
-    if (
-      !budget ||
-      !Number.isSafeInteger(tokens) ||
-      tokens < 0 ||
-      (budget.min !== undefined && tokens < budget.min) ||
-      (budget.max !== undefined && tokens > budget.max)
-    ) {
-      return;
-    }
-    onEditModel(model, { thinkingVariant: String(tokens) });
   }
 
   return (
@@ -3821,32 +3899,7 @@ function ModelRow({
 
       <CollapsibleMotion open={open && expandable} preset="default">
         <div className="mt-3 grid gap-4 border-hairline-soft border-t pt-4">
-          {model.thinkingBudget ? (
-            <div className="grid max-w-sm grid-cols-[minmax(0,1fr)_auto_auto] items-end gap-2">
-              <Field
-                label="Thinking budget (tokens)"
-                onChange={setBudgetDraft}
-                placeholder={model.thinkingBudget.min?.toString() ?? "Tokens"}
-                value={budgetDraft}
-              />
-              <button
-                className="flex h-10 items-center justify-center rounded-md bg-fg px-3 text-sm text-canvas transition-colors hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={busy}
-                onClick={saveBudget}
-                type="button"
-              >
-                Apply
-              </button>
-              <button
-                className="flex h-10 items-center justify-center rounded-md px-3 text-fg-muted text-sm transition-colors hover:bg-hover hover:text-fg"
-                disabled={busy || model.thinkingLevel === "off"}
-                onClick={() => onEditModel(model, { thinkingVariant: "off" })}
-                type="button"
-              >
-                Off
-              </button>
-            </div>
-          ) : canEditThinking ? (
+          {canEditThinking ? (
             <div className="grid max-w-xs gap-2">
               <SelectField
                 label="Default thinking level"

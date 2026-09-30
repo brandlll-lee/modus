@@ -19,6 +19,7 @@ import { VisualToolCard } from "./VisualToolCard";
 
 type ToolCardProps = {
   name: string;
+  label?: string | undefined;
   args?: unknown;
   output: string;
   isError?: boolean;
@@ -45,6 +46,7 @@ type ToolView = {
 export const ToolCard = memo(
   function ToolCard({
     name,
+    label,
     args,
     output,
     isComplete = false,
@@ -127,6 +129,7 @@ export const ToolCard = memo(
 
     return (
       <FlatToolRow
+        label={label}
         args={args}
         isComplete={isComplete}
         isError={isError}
@@ -137,6 +140,7 @@ export const ToolCard = memo(
   },
   (prev, next) =>
     prev.name === next.name &&
+    prev.label === next.label &&
     prev.output === next.output &&
     prev.isComplete === next.isComplete &&
     prev.isError === next.isError &&
@@ -250,6 +254,7 @@ function LiveToolCard({
 
 function FlatToolRow({
   name,
+  label,
   args,
   output,
   isComplete = false,
@@ -258,6 +263,7 @@ function FlatToolRow({
   const [open, setOpen] = useState(false);
   const running = !isComplete && !isError;
   const view = describeTool(name, args, running, output);
+  if (label) view.verb = label;
   const status = running ? liveStatus(output) : "";
   const detail = running ? "" : toolDetail(name, args, output);
   const expandable = detail.trim().length > 0;

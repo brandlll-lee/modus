@@ -2,29 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   BROWSER_TOOL_NAMES,
   FAST_CODEBASE_TOOL_NAME,
-  getMcpToolUiMeta,
   getToolUiMeta,
-  isMcpToolName,
   toolRenderKind,
   VISUAL_TOOL_NAME,
   WEB_TOOL_NAMES,
 } from "./tools";
 
-describe("MCP tool UI metadata", () => {
-  it("detects MCP-bridged tool names", () => {
-    expect(isMcpToolName("mcp_linear_create_issue")).toBe(true);
-    expect(isMcpToolName("bash")).toBe(false);
-    expect(isMcpToolName("terminal_run")).toBe(false);
-  });
-
-  it("uses the server name as the verb", () => {
-    expect(getMcpToolUiMeta("mcp_linear_create_issue")).toEqual({
-      verb: "linear",
-    });
-  });
-
-  it("routes MCP names through the shared lookup", () => {
-    expect(getToolUiMeta("mcp_github_search")?.verb).toBe("github");
+describe("tool UI metadata", () => {
+  it("leaves extension labels to their registered definitions", () => {
+    expect(getToolUiMeta("mcp__github__search")).toBeUndefined();
     expect(getToolUiMeta("bash")?.verb).toBe("Ran");
     expect(getToolUiMeta("terminal_run")?.verb).toBe("Terminal");
     expect(getToolUiMeta("browser_cdp")?.verb).toBe("Sent CDP");

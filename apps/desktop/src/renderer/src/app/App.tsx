@@ -41,17 +41,18 @@ import type {
   PlanRef,
   PromptDelivery,
   PromptImageAttachment,
+  QuestionRequest,
   SkillSelection,
   WorkspaceInfo,
 } from "../../../shared/contracts";
 import modusLogo from "../assets/modus-logo.png";
 import { SIDEBAR_MIN_WIDTH, SIDEBAR_TRANSITION, Sidebar } from "../components/Sidebar";
+import { ChromeMoreMenu } from "../components/ui/ChromeMoreMenu";
 import { ImageViewerProvider } from "../components/ui/ImageViewer";
 import { ModusBot } from "../components/ui/ModusBot";
 import { ModusLoadingFallback } from "../components/ui/ModusLoadingMark";
 import { NativeSurfaceProvider } from "../components/ui/nativeSurface";
-import { ChromeMoreMenu } from "../components/ui/ChromeMoreMenu";
-import { ToolbarButton, TOOLBAR_ICON } from "../components/ui/ToolbarButton";
+import { TOOLBAR_ICON, ToolbarButton } from "../components/ui/ToolbarButton";
 import { TooltipProvider } from "../components/ui/Tooltip";
 import {
   AgentEventHub,
@@ -63,9 +64,10 @@ import {
 } from "../features/agent/agentEventHub";
 import type { ChatComposerDraft, ChatComposerDraftUpdate } from "../features/agent/ChatPane";
 import { addContextItemToDraft } from "../features/agent/ChatPane";
+import { ExtensionDialog } from "../features/agent/ExtensionDialog";
 import { SessionTitlePopover } from "../features/agent/SessionTitlePopover";
-import { contextItemKey } from "../features/composer/composerTokens";
 import { Composer, createEmptyComposerDraft } from "../features/composer/Composer";
+import { contextItemKey } from "../features/composer/composerTokens";
 import { BranchSwitcher } from "../features/git/BranchSwitcher";
 import { INSPECTOR_MIN_WIDTH } from "../features/inspector/inspector-layout";
 import { normalizePlan } from "../features/plan/planState";
@@ -112,6 +114,7 @@ export function App() {
   const [initialEventsBySession, setInitialEventsBySession] = useState<
     Record<string, AgentEventItem[]>
   >({});
+  const [extensionQuestions, setExtensionQuestions] = useState<QuestionRequest[]>([]);
   const [activityBySession, setActivityBySession] = useState<Record<string, SessionActivity>>({});
   const [contextUsageBySession, setContextUsageBySession] = useState<
     Record<string, ContextUsageInfo>
@@ -319,6 +322,13 @@ export function App() {
     }
 
     const unsubscribe = window.modus.agent.onEvent((event: AgentEvent) => {
+      if (event.type === "question.requested" && event.request.presentation === "dialog") {
+        setExtensionQuestions((current) => [...current, event.request]);
+      } else if (event.type === "question.resolved") {
+        setExtensionQuestions((current) =>
+          current.filter((request) => request.id !== event.requestId),
+        );
+      }
       if (event.type === "context.updated") {
         setContextUsageBySession((current) => ({
           ...current,
@@ -829,6 +839,9 @@ export function App() {
           <ImageViewerProvider>
             <div className="app-root flex h-screen flex-col bg-panel text-fg">
               <MenuBar />
+              {extensionQuestions[0] ? (
+                <ExtensionDialog key={extensionQuestions[0].id} request={extensionQuestions[0]} />
+              ) : null}
 
               <div
                 className="flex min-h-0 min-w-0 flex-1 bg-panel"

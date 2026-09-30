@@ -1,93 +1,63 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { createAgentSettings, readSettingsFile } from "./agent-settings";
+import { createAgentSettings } from "./agent-settings";
 
-/**
- * Layering behavior: the PI CLI's settings are the base, Modus overrides win,
- * and nothing on disk is written.
- *
- * `getAgentDir()` resolves from PI_CODING_AGENT_DIR, so pointing that at a
- * scratch directory exercises the real settings-file contract.
- */
-const piAgentDir = mkdtempSync(join(tmpdir(), "modus-agent-settings-"));
-const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-process.env.PI_CODING_AGENT_DIR = piAgentDir;
-
-const settingsPath = join(piAgentDir, "settings.json");
+const root = mkdtempSync(join(tmpdir(), "modus-agent-settings-"));
+const previous = process.env.PI_CODING_AGENT_DIR;
+process.env.PI_CODING_AGENT_DIR = root;
+const path = join(root, "settings.json");
 
 afterAll(() => {
-  if (previousAgentDir === undefined) {
-    delete process.env.PI_CODING_AGENT_DIR;
-  } else {
-    process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-  }
-  rmSync(piAgentDir, { recursive: true, force: true });
+  if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+  else process.env.PI_CODING_AGENT_DIR = previous;
+  rmSync(root, { recursive: true, force: true });
 });
 
-describe("createAgentSettings", () => {
-  it("inherits values declared by the PI CLI", () => {
-    writeFileSync(settingsPath, JSON.stringify({ shellPath: "/usr/bin/fish", theme: "dark" }));
-
-    const manager = createAgentSettings();
-
-    expect(manager.getShellPath()).toBe("/usr/bin/fish");
-    expect(manager.getTheme()).toBe("dark");
-  });
-
-  it("lets Modus overrides replace inherited values", () => {
-    writeFileSync(settingsPath, JSON.stringify({ shellPath: "/usr/bin/fish" }));
-
-    expect(createAgentSettings({ overrides: { shellPath: "/bin/bash" } }).getShellPath()).toBe(
-      "/bin/bash",
+describe("PI settings inheritance", () => {
+  it("retains nested inherited values and host overrides across reload", async () => {
+    writeFileSync(
+      path,
+      JSON.stringify({
+        shellPath: "inherited-shell",
+        compaction: { enabled: true, reserveTokens: 4096 },
+      }),
     );
-  });
-
-  it("keeps inherited values the override does not mention", () => {
-    writeFileSync(settingsPath, JSON.stringify({ theme: "dark" }));
-
-    expect(createAgentSettings({ overrides: { shellPath: "/bin/bash" } }).getTheme()).toBe("dark");
-  });
-
-  it("falls back to defaults when the CLI has no settings file", () => {
-    rmSync(settingsPath, { force: true });
-
-    expect(createAgentSettings().getShellPath()).toBeUndefined();
-  });
-
-  it("leaves the CLI's settings file byte-identical", () => {
-    const original = `${JSON.stringify({ shellPath: "/usr/bin/fish" }, null, 2)}\n`;
-    writeFileSync(settingsPath, original);
-
-    createAgentSettings({ overrides: { shellPath: "/bin/bash", theme: "light" } });
-
-    expect(readFileSync(settingsPath, "utf-8")).toBe(original);
-  });
-});
-
-describe("readSettingsFile", () => {
-  function write(name: string, content: string): string {
-    const path = join(piAgentDir, name);
-    writeFileSync(path, content, "utf-8");
-    return path;
-  }
-
-  it("reads a settings document", () => {
-    expect(readSettingsFile(write("ok.json", JSON.stringify({ theme: "dark" })))).toEqual({
-      theme: "dark",
+    const settings = createAgentSettings({
+      overrides: { shellPath: "host-shell", compaction: { enabled: false } },
     });
+    await settings.reload();
+    expect(settings.getShellPath()).toBe("host-shell");
+    expect(settings.getCompactionSettings()).toMatchObject({ enabled: false, reserveTokens: 4096 });
   });
 
-  it.each([
-    ["malformed JSON", "{"],
-    ["a JSON array", "[1,2]"],
-    ["a JSON scalar", "42"],
-  ])("treats %s as not configured", (_label, content) => {
-    expect(readSettingsFile(write(`invalid-${content.length}.json`, content))).toEqual({});
+  it("reads project settings only when project trust is granted", async () => {
+    const cwd = join(root, "project");
+    mkdirSync(join(cwd, ".pi"), { recursive: true });
+    writeFileSync(path, JSON.stringify({ shellPath: "global-shell" }));
+    writeFileSync(
+      join(cwd, ".pi", "settings.json"),
+      JSON.stringify({ shellPath: "project-shell" }),
+    );
+    expect(createAgentSettings({ cwd }).getShellPath()).toBe("global-shell");
+    const settings = createAgentSettings({ cwd, projectTrusted: true });
+    await settings.reload();
+    expect(settings.getShellPath()).toBe("project-shell");
   });
 
-  it("treats an absent file as not configured", () => {
-    expect(readSettingsFile(join(piAgentDir, "absent.json"))).toEqual({});
+  it("keeps CLI files byte-identical while changing effective settings", async () => {
+    const original = `${JSON.stringify({ shellPath: "cli-shell" }, null, 2)}\n`;
+    writeFileSync(path, original);
+    const settings = createAgentSettings({ overrides: { shellPath: "host-shell" } });
+    settings.setTheme("light");
+    await settings.flush();
+    await settings.reload();
+    expect(readFileSync(path, "utf8")).toBe(original);
+  });
+
+  it("uses PI defaults when the settings file is absent", () => {
+    rmSync(path, { force: true });
+    expect(createAgentSettings().getShellPath()).toBeUndefined();
   });
 });

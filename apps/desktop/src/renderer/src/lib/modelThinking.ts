@@ -1,11 +1,10 @@
-import type { ThinkingBudget, ThinkingLevel, ThinkingOption } from "../../../shared/contracts";
+import type { ThinkingLevel, ThinkingOption } from "../../../shared/contracts";
 
 type ModelThinkingOwner = {
   thinkingLevel: ThinkingLevel;
   thinkingLevels?: readonly ThinkingLevel[];
   thinkingVariant?: string;
   thinkingOptions?: readonly ThinkingOption[];
-  thinkingBudget?: ThinkingBudget;
 };
 
 export function modelThinkingOptions(model: ModelThinkingOwner): ThinkingOption[] {
@@ -30,11 +29,5 @@ export function selectedThinkingOption(model: ModelThinkingOwner): ThinkingOptio
 }
 
 export function selectedThinkingLabel(model: ModelThinkingOwner): string {
-  if (model.thinkingBudget) {
-    const tokens = Number(model.thinkingVariant);
-    return model.thinkingLevel !== "off" && Number.isSafeInteger(tokens)
-      ? `${tokens.toLocaleString()} tokens`
-      : "Off";
-  }
   return selectedThinkingOption(model).label;
 }

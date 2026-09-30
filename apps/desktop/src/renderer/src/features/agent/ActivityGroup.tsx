@@ -216,11 +216,16 @@ export function WorkActivityRow({
   }
   if (item.type === "compaction") return <CompactionRow {...item} />;
   return (
-    <ToolCard
-      {...item}
-      {...(onOpenFile ? { onOpenFile } : {})}
-      {...(item.plan && onOpenPlan ? { onOpenPlan, plan: item.plan } : {})}
-    />
+    <div
+      className={item.parentToolCallId ? "ml-4 border-hairline-soft border-l pl-3" : undefined}
+      data-parent-tool-call-id={item.parentToolCallId}
+    >
+      <ToolCard
+        {...item}
+        {...(onOpenFile ? { onOpenFile } : {})}
+        {...(item.plan && onOpenPlan ? { onOpenPlan, plan: item.plan } : {})}
+      />
+    </div>
   );
 }
 

@@ -4,11 +4,14 @@ import { join } from "node:path";
 import {
   type AgentSession,
   createAgentSession,
+  createCodemodeExtension,
+  createToolSearchExtension,
   DefaultResourceLoader,
   SessionManager,
   type SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { app, type BrowserWindow as BrowserWindowType } from "electron";
+import { buildContextChips } from "../../shared/context-chips";
 import type {
   AgentEvent,
   AgentRunInfo,
@@ -17,7 +20,6 @@ import type {
   ModelInfo,
   PlanBuildStatus,
 } from "../../shared/contracts";
-import { buildContextChips } from "../../shared/context-chips";
 import { SUBAGENT_TOOL_NAMES, type ToolProfileName, WAIT_TOOL_NAME } from "../../shared/tools";
 import { releaseAgentBrowserControl } from "../browser/browser-service";
 import { formatResolvedContext, resolveContext } from "../context/context-service";
@@ -29,13 +31,14 @@ import {
 import { resolveGlobalGuidancePrompt } from "../guidance/guidance-service";
 import { denyPendingQuestionRequestsForSession } from "../interaction/question-broker";
 import { IPC_CHANNELS } from "../ipc/channels";
+import { createModusMcpExtension } from "../mcp/mcp-service";
 import { maybeNotifyAgentEvent } from "../notifications/agent-notifications";
 import { denyPendingPermissionRequestsForSession } from "../permissions/permission-broker";
 import { readPlanById, setPlanBuildStatusById } from "../plan/plan-store";
 import { summarizeApps } from "../process/app-process-service";
 import { killManagedProcess, listManagedProcesses } from "../process/managed-process-facade";
 import { RULES_MAX_TOTAL_BYTES, resolveAlwaysRulesPrompt } from "../rules/rules-service";
-import { resolveSkillsPrompt } from "../skills/skills-service";
+import { skillPathsFor } from "../skills/skills-service";
 import { summarizeTerminals } from "../terminal/terminal-service";
 import { listAgentEvents, recordAgentEvent } from "./agent-event-store";
 import {
@@ -45,6 +48,7 @@ import {
   listAgentRuns,
   updateAgentRunStatus,
 } from "./agent-run-store";
+import { createAgentSettings, resolveInheritedResources } from "./agent-settings";
 import {
   createAgentSessionRecord,
   getAgentSession,
@@ -55,13 +59,13 @@ import {
   updateAgentSessionTitle,
   updateAgentSessionWorktree,
 } from "./agent-store";
-import { createAgentSettings } from "./agent-settings";
 import { createCheckpoint } from "./checkpoint-service";
+import { createExtensionUI } from "./extension-ui";
 import {
   cycleDefaultModel,
   findModel,
   getDefaultModel,
-  getModelRegistry,
+  getModelRuntime,
   getModelThinkingVariant,
   listScopedModels,
   modelToId,
@@ -71,6 +75,7 @@ import {
 import { createPiEventNormalizer } from "./pi-event-normalizer";
 import { createModusPermissionExtension } from "./pi-permission-extension";
 import { planModePreamble, profileForMode } from "./plan-prompt";
+import { resolveProjectTrust } from "./project-trust";
 import { PI_ROOT_LEAF } from "./rollback-service";
 import type {
   AgentRuntime,
@@ -79,6 +84,8 @@ import type {
   EmitAgentEvent,
   PromptAgentInput,
 } from "./runtime";
+import { isRuntimeTool, withRuntimeToolPolicy } from "./runtime-tools";
+import { registerSessionResources, releaseSessionResources } from "./session-resources";
 import { deriveSessionTitle, shouldReplaceSessionTitle } from "./session-title";
 import { describeAgentShellForPrompt, resolveAgentShellWith } from "./shell-resolver";
 import { resolveSubagent, resolveSubagentsPrompt } from "./subagents-config";
@@ -141,23 +148,7 @@ type SdkRuntimeSession = {
   unsubscribe: () => void;
   emit: EmitAgentEvent;
   emitVolatile: EmitAgentEvent;
-  /** Last compaction.ended seen on this session (for threshold continue). */
-  lastCompactionEnd:
-    | {
-        reason: "manual" | "threshold" | "overflow";
-        willRetry: boolean;
-        aborted: boolean;
-      }
-    | undefined;
 };
-
-/**
- * After PI threshold compaction (willRetry=false), Modus re-prompts so long
- * tasks are not stranded. Bound prevents compact→continue loops.
- */
-const MAX_THRESHOLD_CONTINUES = 2;
-const CONTINUE_AFTER_COMPACTION =
-  "Context was compacted. Continue any unfinished work from the summary Next Steps. If already complete, briefly confirm done.";
 
 type RunOutputTracker = {
   runId: string;
@@ -174,14 +165,6 @@ type RunOutputTracker = {
 const TOOL_DELTA_THROTTLE_MS = 100;
 const MAX_SUBAGENTS_PER_SESSION = 6;
 
-function setSessionThinkingBudget(session: AgentSession, budget: number | undefined): void {
-  if (budget === undefined) {
-    delete session.agent.thinkingBudgets;
-  } else {
-    session.agent.thinkingBudgets = { high: budget };
-  }
-}
-
 /** Dedupe tool definitions by name (chat + plan custom-tool sets overlap). */
 function dedupeToolsByName<T extends { name: string }>(tools: T[]): T[] {
   const byName = new Map<string, T>();
@@ -191,8 +174,15 @@ function dedupeToolsByName<T extends { name: string }>(tools: T[]): T[] {
   return [...byName.values()];
 }
 
-function activeToolNamesForSession(info: AgentSessionInfo, profile: ToolProfileName): string[] {
-  let active = toolRegistry.resolveActiveTools(profile);
+function toolAllowedForSession(
+  info: AgentSessionInfo,
+  profile: ToolProfileName,
+  session: AgentSession,
+  name: string,
+): boolean {
+  const definition = session.getToolDefinition(name);
+  const source = session.getAllTools().find((tool) => tool.name === name)?.sourceInfo;
+  if (!source || !toolRegistry.allowsProfile(name, profile, definition, source)) return false;
   const configCwd = info.parentSessionId
     ? (getAgentSession(info.parentSessionId)?.cwd ?? info.cwd)
     : info.cwd;
@@ -200,32 +190,37 @@ function activeToolNamesForSession(info: AgentSessionInfo, profile: ToolProfileN
     info.parentSessionId && info.subagentType
       ? resolveSubagent(configCwd, info.subagentType)
       : undefined;
-  if (subagent?.tools?.length) {
-    active = active.filter((name) =>
-      subagent.tools?.some((selector) => toolRegistry.matchesSelector(name, selector)),
-    );
-  }
-  const disabled = new Set<string>();
-  if (info.parentSessionId) {
-    // Parent-only orchestration: children neither spawn peers nor wait on them.
-    for (const name of SUBAGENT_TOOL_NAMES) disabled.add(name);
-    disabled.add(WAIT_TOOL_NAME);
-  }
-  if (info.subagentReadOnly) {
-    for (const name of active) {
-      if (!toolRegistry.isReadOnlySafe(name)) {
-        disabled.add(name);
-      }
-    }
-  }
-  for (const selector of subagent?.disallowedTools ?? []) {
-    for (const name of active) {
-      if (toolRegistry.matchesSelector(name, selector)) {
-        disabled.add(name);
-      }
-    }
-  }
-  return active.filter((name) => !disabled.has(name));
+  const matches = (selector: string) =>
+    toolRegistry.matchesSelector(name, selector, definition, source);
+  if (subagent?.tools?.length && !subagent.tools.some(matches)) return false;
+  if (
+    info.parentSessionId &&
+    (SUBAGENT_TOOL_NAMES.includes(name as (typeof SUBAGENT_TOOL_NAMES)[number]) ||
+      name === WAIT_TOOL_NAME)
+  )
+    return false;
+  if (info.subagentReadOnly && !toolRegistry.isReadOnlySafe(name, definition, source)) return false;
+  return !(subagent?.disallowedTools ?? []).some(matches);
+}
+
+function activeToolNamesForSession(
+  info: AgentSessionInfo,
+  profile: ToolProfileName,
+  session: AgentSession,
+): string[] {
+  const active = new Set(session.getActiveToolNames());
+  return session
+    .getAllTools()
+    .filter(
+      (tool) =>
+        tool.exposure !== "hidden" &&
+        (tool.exposure === "direct" ||
+          tool.exposure === "model-only" ||
+          active.has(tool.name) ||
+          isRuntimeTool(session.getToolDefinition(tool.name))) &&
+        toolAllowedForSession(info, profile, session, tool.name),
+    )
+    .map((tool) => tool.name);
 }
 
 function composeSubagentPrompt(input: {
@@ -250,6 +245,7 @@ function composeSubagentPrompt(input: {
 export class PiSdkRuntime implements AgentRuntime {
   private sessions = new Map<string, SdkRuntimeSession>();
   private resumePromises = new Map<string, Promise<SdkRuntimeSession | undefined>>();
+  private disposePromises = new Map<string, Promise<void>>();
   private runOutputTrackers = new Map<string, RunOutputTracker>();
   private cancellingRuns = new Set<string>();
   private parentSessionByChild = new Map<string, string | null>();
@@ -376,6 +372,7 @@ export class PiSdkRuntime implements AgentRuntime {
     window: BrowserWindowType,
     sessionId: string,
   ): Promise<SdkRuntimeSession | undefined> {
+    await this.disposePromises.get(sessionId);
     const existing = this.sessions.get(sessionId);
     if (existing) {
       return existing;
@@ -407,18 +404,24 @@ export class PiSdkRuntime implements AgentRuntime {
     emit: EmitAgentEvent,
     agentDir: string,
   ): Promise<{ settingsManager: SettingsManager; loader: DefaultResourceLoader }> {
-    // Inherit the PI CLI's settings (compaction, retry, proxy, shell…) so a
-    // machine already configured for PI works here unchanged. Modus has no
-    // settings of its own to layer on top yet; the shell is resolved below
-    // because the host may need one PI cannot detect (Windows Git Bash).
-    const settingsManager = createAgentSettings();
-    const declaredShellPath = settingsManager.getShellPath();
-    const shell = resolveAgentShellWith(declaredShellPath);
-    // Only inject what detection found: a shell the CLI already declared is
-    // already in effect and must not be rewritten with the probe's label.
-    if (declaredShellPath === undefined && shell.shellPath) {
-      settingsManager.applyOverrides({ shellPath: shell.shellPath });
-    }
+    const projectTrusted = await resolveProjectTrust(cwd);
+    const inheritedSettings = createAgentSettings({ cwd, projectTrusted });
+    const resources = await resolveInheritedResources(cwd, projectTrusted);
+    const enabled = (paths: typeof resources.skills) =>
+      paths.filter((resource) => resource.enabled).map((resource) => resource.path);
+    const shell = resolveAgentShellWith(inheritedSettings.getShellPath());
+    const settingsManager = createAgentSettings({
+      cwd,
+      projectTrusted,
+      overrides: {
+        packages: [],
+        extensions: [],
+        skills: [],
+        prompts: [],
+        themes: [],
+        ...(shell.shellPath ? { shellPath: shell.shellPath } : {}),
+      },
+    });
     // Project rules (AGENTS.md / .cursor/rules alwaysApply) ride the system
     // prompt so they apply to every turn without re-paying per-message tokens.
     const globalGuidancePrompt = resolveGlobalGuidancePrompt();
@@ -428,7 +431,29 @@ export class PiSdkRuntime implements AgentRuntime {
     const loader = new DefaultResourceLoader({
       cwd,
       agentDir,
-      extensionFactories: [createModusPermissionExtension(sessionId, emit, cwd)],
+      additionalSkillPaths: [...enabled(resources.skills), ...skillPathsFor(cwd)],
+      additionalExtensionPaths: enabled(resources.extensions),
+      additionalPromptTemplatePaths: enabled(resources.prompts),
+      additionalThemePaths: enabled(resources.themes),
+      extensionFactories: [
+        { name: "codemode", factory: withRuntimeToolPolicy(createCodemodeExtension()) },
+        { name: "tool_search", factory: withRuntimeToolPolicy(createToolSearchExtension()) },
+        { name: "mcp", factory: createModusMcpExtension() },
+        createModusPermissionExtension(sessionId, emit, cwd, {
+          definition: (name) => this.sessions.get(sessionId)?.session.getToolDefinition(name),
+          source: (name) =>
+            this.sessions
+              .get(sessionId)
+              ?.session.getAllTools()
+              .find((tool) => tool.name === name)?.sourceInfo,
+          allows: (name) => {
+            const runtime = this.sessions.get(sessionId);
+            return runtime
+              ? toolAllowedForSession(runtime.info, runtime.profile, runtime.session, name)
+              : false;
+          },
+        }),
+      ],
       settingsManager,
       appendSystemPrompt: [
         describeAgentShellForPrompt(shell),
@@ -456,28 +481,15 @@ export class PiSdkRuntime implements AgentRuntime {
     sessionManager: SessionManager;
     model: NonNullable<Parameters<typeof createAgentSession>[0]>["model"];
     thinkingLevel: NonNullable<Parameters<typeof createAgentSession>[0]>["thinkingLevel"];
-    thinkingBudget?: number;
   }): Promise<SdkRuntimeSession> {
     const sessionOptions: Parameters<typeof createAgentSession>[0] = {
       cwd: params.info.cwd,
       agentDir: params.agentDir,
-      authStorage: getModelRegistry().authStorage,
-      modelRegistry: getModelRegistry(),
+      modelRuntime: await getModelRuntime(),
       resourceLoader: params.loader,
       sessionManager: params.sessionManager,
       settingsManager: params.settingsManager,
       scopedModels: listScopedModels(),
-      // `tools` is also the allowlist that gates which tools enter the session's
-      // registry (see createAgentSession in the pi SDK). It must be the UNION of
-      // every profile we may switch to per-turn, or setActiveToolsByName can't
-      // activate a tool that was filtered out — which is exactly why plan_write
-      // was invisible in plan mode. Per-turn narrowing happens in prompt().
-      tools: [
-        ...new Set([
-          ...toolRegistry.resolveActiveTools("chat"),
-          ...toolRegistry.resolveActiveTools("plan"),
-        ]),
-      ],
       // Register chat + plan custom tools so a turn can switch its active set by
       // mode (plan_write becomes available without recreating the session).
       customTools: dedupeToolsByName([
@@ -493,7 +505,6 @@ export class PiSdkRuntime implements AgentRuntime {
     }
 
     const { session } = await createAgentSession(sessionOptions);
-    setSessionThinkingBudget(session, params.thinkingBudget);
     const normalizePiEvent = createPiEventNormalizer(params.info.id);
     const publishContextUsage = () => {
       const event = createContextUsageEvent(params.info.id, session);
@@ -519,6 +530,10 @@ export class PiSdkRuntime implements AgentRuntime {
     };
     const sessionUnsubscribe = session.subscribe((event) => {
       for (const normalized of normalizePiEvent(event)) {
+        if (normalized.type === "tool.started") {
+          const label = session.getToolDefinition(normalized.toolName)?.label;
+          if (label) normalized.label = label;
+        }
         if (normalized.type === "tool.delta" || normalized.type === "tool.started") {
           const hiddenProfiles = toolRegistry.getEntry(normalized.toolName)?.ui
             .hiddenFromTimelineInProfiles;
@@ -535,13 +550,6 @@ export class PiSdkRuntime implements AgentRuntime {
           continue;
         }
         this.noteAssistantOutput(normalized);
-        if (normalized.type === "compaction.ended" && runtimeSession) {
-          runtimeSession.lastCompactionEnd = {
-            reason: normalized.reason,
-            willRetry: normalized.willRetry,
-            aborted: normalized.aborted,
-          };
-        }
         if (normalized.type === "tool.delta") {
           pendingToolDelta = normalized;
           const wait = TOOL_DELTA_THROTTLE_MS - (Date.now() - lastToolDeltaAt);
@@ -601,11 +609,42 @@ export class PiSdkRuntime implements AgentRuntime {
       unsubscribe,
       emit: params.emit,
       emitVolatile: params.emitVolatile,
-      lastCompactionEnd: undefined,
     };
     this.sessions.set(params.info.id, runtimeSession);
+    try {
+      await session.bindExtensions({
+        uiContext: createExtensionUI(session, params.info.id, params.emit),
+        mode: "rpc",
+      });
+      registerSessionResources({
+        id: params.info.id,
+        cwd: params.info.cwd,
+        session,
+        loader: params.loader,
+      });
+    } catch (error) {
+      this.sessions.delete(params.info.id);
+      await session.extensionRunner?.emit({ type: "session_shutdown", reason: "quit" });
+      unsubscribe();
+      session.dispose();
+      throw error;
+    }
     publishContextUsage();
     return runtimeSession;
+  }
+
+  async shutdown(): Promise<void> {
+    await Promise.allSettled([...this.resumePromises.values()]);
+    const results = await Promise.allSettled(
+      [...this.sessions.keys()].map((id) => this.dispose(id)),
+    );
+    await Promise.allSettled([...this.disposePromises.values()]);
+    const errors = results.filter((result) => result.status === "rejected");
+    if (errors.length)
+      throw new AggregateError(
+        errors.map((result) => result.reason),
+        "Failed to close agent sessions.",
+      );
   }
 
   async create(
@@ -661,9 +700,6 @@ export class PiSdkRuntime implements AgentRuntime {
         sessionManager: SessionManager.create(input.cwd, sessionDir),
         model: selectedThinking?.model ?? selectedModel,
         thinkingLevel: selectedThinking?.thinkingLevel,
-        ...(selectedThinking?.thinkingBudget !== undefined
-          ? { thinkingBudget: selectedThinking.thinkingBudget }
-          : {}),
       });
     })().finally(() => {
       this.resumePromises.delete(info.id);
@@ -725,9 +761,6 @@ export class PiSdkRuntime implements AgentRuntime {
       sessionManager,
       model: selectedThinking?.model ?? selectedModel,
       thinkingLevel: selectedThinking?.thinkingLevel,
-      ...(selectedThinking?.thinkingBudget !== undefined
-        ? { thinkingBudget: selectedThinking.thinkingBudget }
-        : {}),
     });
   }
 
@@ -785,7 +818,7 @@ export class PiSdkRuntime implements AgentRuntime {
       // plan artifacts; build = full chat tools). setActiveToolsByName also rebuilds
       // the system prompt for the new set, and takes effect on this turn.
       runtimeSession.session.setActiveToolsByName(
-        activeToolNamesForSession(runtimeSession.info, profile),
+        activeToolNamesForSession(runtimeSession.info, profile, runtimeSession.session),
       );
 
       // Per-turn model + thinking: the composer's current selection travels with
@@ -923,43 +956,16 @@ export class PiSdkRuntime implements AgentRuntime {
         `[modus-timing] composeTurnMessage done +${Date.now() - outputTracker.startedAt}ms`,
       );
       const images = buildTurnImages(input);
-      let turnMessage = message;
-      let thresholdContinues = 0;
-      let isFirstPrompt = true;
-      while (true) {
-        await runWithAgentToolContext(toolContext, () =>
-          runtimeSession.session.prompt(turnMessage, {
-            source: "rpc",
-            ...(isFirstPrompt && images.length > 0 ? { images } : {}),
-            ...(isFirstPrompt && delivery !== "normal"
-              ? { streamingBehavior: delivery === "follow-up" ? "followUp" : "steer" }
-              : {}),
-          }),
-        );
-        isFirstPrompt = false;
-        console.info(`[modus-timing] prompt() resolved +${Date.now() - outputTracker.startedAt}ms`);
-        this.emitContextUsage(runtimeSession);
-        // Consume after prompt so TS does not narrow the field from a pre-await clear.
-        const compact = runtimeSession.lastCompactionEnd;
-        runtimeSession.lastCompactionEnd = undefined;
-        const stillRunning = getAgentRun(run.id)?.status === "running";
-        if (
-          stillRunning &&
-          compact &&
-          compact.reason === "threshold" &&
-          !compact.willRetry &&
-          !compact.aborted &&
-          thresholdContinues < MAX_THRESHOLD_CONTINUES
-        ) {
-          thresholdContinues += 1;
-          turnMessage = CONTINUE_AFTER_COMPACTION;
-          console.info(
-            `[modus-timing] threshold compaction continue ${thresholdContinues}/${MAX_THRESHOLD_CONTINUES}`,
-          );
-          continue;
-        }
-        break;
-      }
+      await runWithAgentToolContext(toolContext, () =>
+        runtimeSession.session.prompt(message, {
+          source: "rpc",
+          ...(images.length > 0 ? { images } : {}),
+          ...(delivery !== "normal"
+            ? { streamingBehavior: delivery === "follow-up" ? "followUp" : "steer" }
+            : {}),
+        }),
+      );
+      this.emitContextUsage(runtimeSession);
       const currentRun = getAgentRun(run.id);
       if (currentRun?.status === "running") {
         // Authoritative end-of-turn outcome, read from pi's own record: if the
@@ -1166,15 +1172,13 @@ export class PiSdkRuntime implements AgentRuntime {
     const appDigest = summarizeApps({ sessionId: runtimeSession.info.id });
     const digest = [terminalDigest, appDigest].filter(Boolean).join("\n");
     const awareness = digest ? `<active_terminals>\n${digest}\n</active_terminals>` : "";
-    const skillsText = resolveSkillsPrompt(runtimeSession.info.cwd, input.skills ?? []);
     const subagentsText = runtimeSession.info.parentSessionId
       ? ""
       : resolveSubagentsPrompt(runtimeSession.info.cwd);
-    return [
+    const message = [
       planModePreamble(input.mode),
       // Plan turns forbid inline visuals via planModePreamble; chat/build get the channel here.
       input.mode === "plan" ? "" : RESPONSE_FORMAT_INLINE_VISUALS,
-      skillsText,
       subagentsText,
       contextText,
       awareness,
@@ -1182,6 +1186,17 @@ export class PiSdkRuntime implements AgentRuntime {
     ]
       .filter(Boolean)
       .join("\n\n");
+    if ((input.skills?.length ?? 0) > 1) throw new Error("Choose one skill for this prompt.");
+    const selected = input.skills?.[0];
+    if (!selected) return message;
+    const skill = runtimeSession.session.resourceLoader
+      .getSkills()
+      .skills.find((item) => item.filePath === selected.path);
+    if (!skill)
+      throw new Error(
+        "The selected skill is not available in this session. Refresh the skill menu.",
+      );
+    return `/skill:${skill.name} ${message}`;
   }
 
   /**
@@ -1362,8 +1377,7 @@ export class PiSdkRuntime implements AgentRuntime {
 
     const childRun = listAgentRuns(session.id).at(-1);
     const failed =
-      Boolean(promptError) ||
-      (childRun !== undefined && childRun.status !== "completed");
+      Boolean(promptError) || (childRun !== undefined && childRun.status !== "completed");
     const output =
       lastAssistantOutput(session.id) ??
       (promptError instanceof Error
@@ -1552,7 +1566,17 @@ export class PiSdkRuntime implements AgentRuntime {
     }
   }
 
-  private async disposeSessionOnly(sessionId: string): Promise<void> {
+  private disposeSessionOnly(sessionId: string): Promise<void> {
+    const pending = this.disposePromises.get(sessionId);
+    if (pending) return pending;
+    const operation = this.closeRuntimeSession(sessionId).finally(() =>
+      this.disposePromises.delete(sessionId),
+    );
+    this.disposePromises.set(sessionId, operation);
+    return operation;
+  }
+
+  private async closeRuntimeSession(sessionId: string): Promise<void> {
     // Settle any in-flight resume first: it would otherwise re-cache a live
     // session right after this dispose (and a rollback would then truncate the
     // session file while a stale in-memory tree keeps answering prompts).
@@ -1567,9 +1591,20 @@ export class PiSdkRuntime implements AgentRuntime {
       return;
     }
 
-    runtimeSession.unsubscribe();
-    runtimeSession.session.dispose();
     this.sessions.delete(sessionId);
+    releaseSessionResources(sessionId);
+    denyPendingQuestionRequestsForSession(sessionId);
+    denyPendingPermissionRequestsForSession(sessionId, "Session closed");
+    try {
+      if (runtimeSession.session.isStreaming) await runtimeSession.session.abort();
+      await runtimeSession.session.extensionRunner?.emit({
+        type: "session_shutdown",
+        reason: "quit",
+      });
+    } finally {
+      runtimeSession.unsubscribe();
+      runtimeSession.session.dispose();
+    }
   }
 
   private async closeSubagentTree(rootSessionId: string, reason: string): Promise<void> {
@@ -1625,7 +1660,6 @@ export class PiSdkRuntime implements AgentRuntime {
     );
     await runtimeSession.session.setModel(resolved.model);
     runtimeSession.session.setThinkingLevel(resolved.thinkingLevel);
-    setSessionThinkingBudget(runtimeSession.session, resolved.thinkingBudget);
     const updated = updateAgentSessionMetadata(runtimeSession.info.id, {
       model: modelToId(model),
     });
@@ -1676,7 +1710,6 @@ export class PiSdkRuntime implements AgentRuntime {
     const resolved = resolveModelThinking(model, next.thinkingVariant);
     await runtimeSession.session.setModel(resolved.model);
     runtimeSession.session.setThinkingLevel(resolved.thinkingLevel);
-    setSessionThinkingBudget(runtimeSession.session, resolved.thinkingBudget);
     updateAgentSessionMetadata(sessionId, { model: modelToId(model) });
     this.emitContextUsage(runtimeSession);
     return next;
@@ -1750,7 +1783,7 @@ function toContextUsageInfo(
 
 function shouldPublishContextUsage(event: { type?: unknown }): boolean {
   return (
-    event.type === "agent_end" ||
+    event.type === "agent_settled" ||
     event.type === "message_end" ||
     event.type === "tool_execution_end" ||
     event.type === "compaction_end"

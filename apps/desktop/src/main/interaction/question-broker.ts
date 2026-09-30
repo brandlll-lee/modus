@@ -48,14 +48,17 @@ export async function requestQuestions(input: {
   sessionId: string;
   runId?: string | undefined;
   questions: QuestionPrompt[];
+  presentation?: "dialog";
   emit(event: AgentEvent): void;
   /** When the run is aborted mid-question, unblock as skipped so the turn ends cleanly. */
   signal?: AbortSignal | undefined;
+  timeoutMs?: number | undefined;
 }): Promise<QuestionResponse> {
   const request: QuestionRequest = {
     id: randomUUID(),
     sessionId: input.sessionId,
     questions: input.questions,
+    ...(input.presentation ? { presentation: input.presentation } : {}),
   };
   if (input.runId !== undefined) request.runId = input.runId;
 
@@ -65,21 +68,20 @@ export async function requestQuestions(input: {
     id: request.id,
     sessionId: input.sessionId,
     context: { request, emit: input.emit },
-    timeoutMs: QUESTION_TIMEOUT_MS,
+    timeoutMs: input.timeoutMs ?? QUESTION_TIMEOUT_MS,
     onTimeout: (context) => skip(context),
   });
 
-  if (input.signal) {
-    if (input.signal.aborted) {
-      resolveQuestionRequest(request.id, [], true);
-    } else {
-      input.signal.addEventListener("abort", () => resolveQuestionRequest(request.id, [], true), {
-        once: true,
-      });
-    }
+  const abort = () => {
+    resolveQuestionRequest(request.id, [], true);
+  };
+  if (input.signal?.aborted) abort();
+  else input.signal?.addEventListener("abort", abort, { once: true });
+  try {
+    return await pending;
+  } finally {
+    input.signal?.removeEventListener("abort", abort);
   }
-
-  return await pending;
 }
 
 export function resolveQuestionRequest(

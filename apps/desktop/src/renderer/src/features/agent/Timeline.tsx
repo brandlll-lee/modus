@@ -87,6 +87,8 @@ export type ToolBlockItem = {
   id: string;
   type: "tool";
   name: string;
+  label?: string;
+  parentToolCallId?: string;
   args?: unknown;
   output: string;
   isComplete?: boolean;
@@ -586,7 +588,9 @@ export function buildBlocks(agentEvents: AgentEventItem[]): TimelineBlock[] {
       // Idempotent: a live `tool.delta` may have already created the block.
       // Refresh its args with the authoritative ones rather than forking a
       // duplicate card.
-      upsertToolBlock(event.toolCallId, event.toolName, event.args);
+      const block = upsertToolBlock(event.toolCallId, event.toolName, event.args);
+      if (event.parentToolCallId) block.parentToolCallId = event.parentToolCallId;
+      if (event.label) block.label = event.label;
       continue;
     }
 
@@ -623,6 +627,7 @@ export function buildBlocks(agentEvents: AgentEventItem[]): TimelineBlock[] {
       if (block?.type === "tool") {
         block.isComplete = true;
         block.isError = event.isError;
+        if (event.output !== undefined) block.output = event.output;
       }
       if (activeQuestionToolId === event.toolCallId) {
         activeQuestionToolId = undefined;
@@ -725,6 +730,17 @@ export function buildBlocks(agentEvents: AgentEventItem[]): TimelineBlock[] {
     }
 
     if (event.type === "permission.requested" || event.type === "permission.resolved") continue;
+
+    if (event.type === "extension.notice") {
+      blocks.push({
+        id,
+        type: "notice",
+        title: "Agent extension",
+        body: event.message,
+        isError: event.level === "error",
+      });
+      continue;
+    }
 
     if (event.type === "runtime.error") {
       blocks.push({

@@ -1,4 +1,4 @@
-import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
+import type { ExtensionFactory, ToolDefinition, ToolInfo } from "@earendil-works/pi-coding-agent";
 import { shouldPrompt } from "../../shared/approval";
 import type { AgentEvent } from "../../shared/contracts";
 import { requestPermission } from "../permissions/permission-broker";
@@ -12,17 +12,35 @@ export function createModusPermissionExtension(
   sessionId: string,
   emit: PermissionEmitter,
   cwd?: string,
+  access?: {
+    definition(name: string): ToolDefinition | undefined;
+    source(name: string): ToolInfo["sourceInfo"] | undefined;
+    allows(name: string): boolean;
+  },
 ): ExtensionFactory {
   return (pi) => {
     pi.on("tool_call", async (event) => {
-      const { action, dangerous } = toolRegistry.classify(event);
+      if (access && !access.allows(event.toolName)) {
+        return {
+          block: true,
+          reason: "This tool is outside the session's permitted capabilities.",
+        };
+      }
+      const { action, dangerous } = toolRegistry.classify(
+        event,
+        access?.definition(event.toolName),
+        access?.source(event.toolName),
+      );
       // Resolved approval mode (project override → global → default) decides
       // whether a dangerous call pauses for the user.
       if (!shouldPrompt(getApprovalMode(cwd), action, dangerous)) {
         return undefined;
       }
 
-      const target = getToolTarget(event);
+      const target =
+        action === "tool.execute"
+          ? `${cwd ?? sessionId} · ${event.toolName}: ${getToolTarget(event)}`
+          : getToolTarget(event);
       if (findWorkspaceAllowDecision(action, target)) {
         return undefined;
       }
@@ -32,7 +50,7 @@ export function createModusPermissionExtension(
         sessionId,
         action,
         target,
-        reason: `Blocked dangerous ${event.toolName} tool call before execution.`,
+        reason: `${event.toolName} requires approval before execution.`,
         emit,
       };
       if (run?.id !== undefined) permissionInput.runId = run.id;

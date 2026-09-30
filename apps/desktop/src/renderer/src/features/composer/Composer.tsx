@@ -20,7 +20,6 @@ import {
   type KeyboardEvent,
   type ReactNode,
   useCallback,
-  useEffect,
   useRef,
   useState,
 } from "react";
@@ -778,41 +777,8 @@ function ModelSelect({
   const current = models.find((item) => item.id === model) ?? models[0];
   const thinkingOptions = current ? modelThinkingOptions(current) : [];
   const thinkingSelection = current ? selectedThinkingOption(current) : undefined;
-  const effortAvailable = Boolean(
-    current?.supportsThinking && (current.thinkingBudget || thinkingOptions.length > 0),
-  );
-  const discreteEffortOptions = current?.thinkingBudget ? [] : thinkingOptions;
+  const effortAvailable = Boolean(current?.supportsThinking && thinkingOptions.length > 0);
   const effortLabel = effortAvailable && current ? selectedThinkingLabel(current) : "Not supported";
-  const sliderLabel = current?.thinkingBudget ? "Custom budget" : effortLabel;
-  const [budgetDraft, setBudgetDraft] = useState("");
-  useEffect(() => {
-    if (!current?.id) {
-      setBudgetDraft("");
-      return;
-    }
-    setBudgetDraft(
-      current.thinkingLevel !== "off" && current.thinkingVariant
-        ? current.thinkingVariant
-        : current.thinkingBudget?.min !== undefined
-          ? String(current.thinkingBudget.min)
-          : "",
-    );
-  }, [current?.id, current?.thinkingBudget?.min, current?.thinkingLevel, current?.thinkingVariant]);
-
-  function applyBudget(): void {
-    const tokens = Number(budgetDraft);
-    const budget = current?.thinkingBudget;
-    if (
-      !budget ||
-      !Number.isSafeInteger(tokens) ||
-      tokens < 0 ||
-      (budget.min !== undefined && tokens < budget.min) ||
-      (budget.max !== undefined && tokens > budget.max)
-    ) {
-      return;
-    }
-    void onModelConfigChange?.(current.id, String(tokens));
-  }
   const providerGroups = Array.from(
     models
       .reduce((groups, item) => {
@@ -918,56 +884,18 @@ function ModelSelect({
                 <Menu.Positioner align="start" side="right" sideOffset={5}>
                   <Menu.Popup className="origin-(--transform-origin) w-[220px] max-w-[calc(100vw-24px)] popup-chrome p-1">
                     <div className="px-2.5 pt-1.5 pb-1 text-fg-faint text-xs">Effort</div>
-                    {current.thinkingBudget ? (
-                      <>
-                        <Menu.Item
-                          className="flex h-8 cursor-default items-center justify-between gap-3 rounded-md px-2.5 text-fg-subtle text-sm outline-none select-none data-highlighted:bg-hover"
-                          onClick={() => void onModelConfigChange?.(current.id, "off")}
-                        >
-                          <span>Off</span>
-                          {current.thinkingLevel === "off" ? (
-                            <IconCheck className="text-fg-muted" size={15} stroke={1.8} />
-                          ) : null}
-                        </Menu.Item>
-                        <div className="grid grid-cols-[minmax(0,1fr)_28px] gap-1 px-1.5 py-1">
-                          <input
-                            aria-label="Thinking token budget"
-                            className="h-8 min-w-0 rounded-md border border-hairline bg-canvas px-2.5 text-fg-subtle text-sm outline-none focus:border-fg-faint"
-                            max={current.thinkingBudget.max}
-                            min={current.thinkingBudget.min ?? 0}
-                            onChange={(event) => setBudgetDraft(event.target.value)}
-                            onKeyDown={(event) => {
-                              event.stopPropagation();
-                              if (event.key === "Enter") applyBudget();
-                            }}
-                            placeholder="Tokens"
-                            type="number"
-                            value={budgetDraft}
-                          />
-                          <button
-                            aria-label="Apply thinking token budget"
-                            className="flex size-7 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-hover hover:text-fg"
-                            onClick={applyBudget}
-                            type="button"
-                          >
-                            <IconCheck size={14} stroke={1.8} />
-                          </button>
-                        </div>
-                      </>
-                    ) : (
-                      thinkingOptions.map((option) => (
-                        <Menu.Item
-                          className="flex h-8 cursor-default items-center justify-between gap-3 rounded-md px-2.5 text-fg-subtle text-sm outline-none select-none data-highlighted:bg-hover"
-                          key={option.value}
-                          onClick={() => void onModelConfigChange?.(current.id, option.value)}
-                        >
-                          <span>{option.label}</span>
-                          {thinkingSelection?.value === option.value ? (
-                            <IconCheck className="text-fg-muted" size={15} stroke={1.8} />
-                          ) : null}
-                        </Menu.Item>
-                      ))
-                    )}
+                    {thinkingOptions.map((option) => (
+                      <Menu.Item
+                        className="flex h-8 cursor-default items-center justify-between gap-3 rounded-md px-2.5 text-fg-subtle text-sm outline-none select-none data-highlighted:bg-hover"
+                        key={option.value}
+                        onClick={() => void onModelConfigChange?.(current.id, option.value)}
+                      >
+                        <span>{option.label}</span>
+                        {thinkingSelection?.value === option.value ? (
+                          <IconCheck className="text-fg-muted" size={15} stroke={1.8} />
+                        ) : null}
+                      </Menu.Item>
+                    ))}
                   </Menu.Popup>
                 </Menu.Positioner>
               </Menu.Portal>
@@ -975,9 +903,9 @@ function ModelSelect({
 
             <div className="my-1 h-px bg-hairline" />
             <EffortEnergySlider
-              disabled={!onModelConfigChange || discreteEffortOptions.length < 2}
-              label={sliderLabel}
-              options={discreteEffortOptions}
+              disabled={!onModelConfigChange || thinkingOptions.length < 2}
+              label={effortLabel}
+              options={thinkingOptions}
               selectedValue={thinkingSelection?.value}
               syncKey={`${current.id}:${thinkingSelection?.value ?? ""}`}
               onCommit={(value) => void onModelConfigChange?.(current.id, value)}

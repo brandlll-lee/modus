@@ -71,7 +71,7 @@ export const agentPromptSchema = z.object({
   delivery: z.enum(["normal", "steer", "follow-up"]).optional(),
   userMessageId: optionalNonEmptyString,
   attachments: z.array(promptImageAttachmentSchema).max(6).optional(),
-  skills: z.array(skillSelectionSchema).max(10).optional(),
+  skills: z.array(skillSelectionSchema).max(1).optional(),
   mode: z.enum(["build", "plan"]).optional(),
   model: optionalNonEmptyString,
   thinkingLevel: thinkingLevelSchema.optional(),
@@ -348,7 +348,7 @@ export const permissionDecideSchema = z.object({
     "file.write",
     "file.delete",
     "git.write",
-    "mcp.call",
+    "tool.execute",
     "external.open",
     "browser.control",
   ]),
@@ -435,10 +435,10 @@ export const mcpUpsertSchema = z
       .string()
       .trim()
       .min(1)
-      .max(64)
-      .regex(/^[\w.-]+$/, "Server names may use letters, numbers, dot, dash and underscore."),
+      .regex(/^[A-Za-z0-9_-]+$/, "Server names may use letters, numbers, dash and underscore."),
     originalName: optionalNonEmptyString,
     scope: z.enum(["user", "project"]).optional(),
+    exposure: z.enum(["direct", "deferred", "codemode", "codemode-deferred", "hidden"]).optional(),
     transport: z.enum(["stdio", "http"]),
     command: z.string().trim().optional(),
     args: z.array(z.string()).max(64).optional(),
@@ -459,6 +459,12 @@ export const mcpUpsertSchema = z
 export const mcpServerNameSchema = z.object({
   cwd: nonEmptyString,
   name: nonEmptyString,
+});
+
+export const mcpCommandSchema = z.object({
+  sessionId: nonEmptyString,
+  name: z.string().regex(/^[A-Za-z0-9_-]+$/),
+  action: z.enum(["login", "logout", "reconnect"]),
 });
 
 export const mcpSetEnabledSchema = z.object({
@@ -487,6 +493,7 @@ export const configureProviderSchema = z.object({
 
 export const providerAuthStartSchema = z.object({
   provider: nonEmptyString,
+  method: z.enum(["oauth", "api_key"]).optional(),
 });
 
 export const providerAuthOperationSchema = z.object({

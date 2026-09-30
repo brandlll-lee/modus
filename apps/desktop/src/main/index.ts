@@ -1,8 +1,8 @@
 import { app, BrowserWindow, type BrowserWindow as BrowserWindowType } from "electron";
-import { startRemoteModelCatalog, stopRemoteModelCatalog } from "./agent/model-service";
-import { IPC_CHANNELS } from "./ipc/channels";
+import { configurePiHost } from "./agent/agent-paths";
+import { getModelRuntime } from "./agent/model-service";
+import { shutdownAgentRuntime } from "./agent/runtime-registry";
 import { registerAppIpc } from "./ipc/register-app-ipc";
-import { disposeAllMcp } from "./mcp/mcp-service";
 import { createStartupTimeline } from "./startup/startup-timeline";
 import { shutdownTerminals } from "./terminal/terminal-service";
 import { createMainWindow } from "./windows/main-window";
@@ -39,13 +39,10 @@ if (!app.requestSingleInstanceLock()) {
 
   app
     .whenReady()
-    .then(() => {
+    .then(async () => {
       startupTimeline.mark("main.electron-ready");
-      startRemoteModelCatalog(() => {
-        for (const window of BrowserWindow.getAllWindows()) {
-          window.webContents.send(IPC_CHANNELS.modelCatalogChanged);
-        }
-      });
+      configurePiHost();
+      await getModelRuntime();
       boot();
     })
     .catch((error: unknown) => {
@@ -65,10 +62,14 @@ if (!app.requestSingleInstanceLock()) {
     }
   });
 
-  // Close MCP transports on quit so stdio servers never outlive the app.
-  app.on("before-quit", () => {
-    stopRemoteModelCatalog();
+  let quitting = false;
+  app.on("before-quit", (event) => {
+    if (quitting) return;
+    event.preventDefault();
+    quitting = true;
     shutdownTerminals();
-    void disposeAllMcp();
+    void shutdownAgentRuntime()
+      .catch((error) => console.error("Failed to close agent sessions.", error))
+      .finally(() => app.quit());
   });
 }

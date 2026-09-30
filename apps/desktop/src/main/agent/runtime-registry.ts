@@ -6,3 +6,7 @@ const runtime = new PiSdkRuntime();
 export function getAgentRuntime(): AgentRuntime {
   return runtime;
 }
+
+export function shutdownAgentRuntime(): Promise<void> {
+  return runtime.shutdown();
+}

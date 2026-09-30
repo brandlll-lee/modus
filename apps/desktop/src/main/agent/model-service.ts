@@ -7,9 +7,7 @@ import {
   type ModelThinkingLevel,
 } from "@earendil-works/pi-ai";
 import { streamSimple } from "@earendil-works/pi-ai/compat";
-import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
-import { app } from "electron";
-import bundledCatalogJson from "../../../../../catalog/models.json";
+import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type {
   ConfigureProviderInput,
   CustomProviderConfig,
@@ -21,7 +19,6 @@ import type {
   ModelProviderDetail,
   ModelProviderInfo,
   ModelSettingsState,
-  ProviderAuthOperationState,
   ProviderConnectionMethod,
   ProviderModelConfig,
   TestCustomProviderInput,
@@ -32,12 +29,7 @@ import type {
   UpsertCustomProviderInput,
 } from "../../shared/contracts";
 import { getDatabase } from "../db/database";
-import {
-  forceModelCatalogRefresh,
-  type ModelCatalog,
-  parseModelCatalog,
-  startModelCatalogUpdates,
-} from "./model-catalog-service";
+import { modusAgentDir } from "./agent-paths";
 
 type ModelConfigRow = {
   id: string;
@@ -63,9 +55,6 @@ type ProviderConfigRow = {
   auth_header: number;
   headers_json: string | null;
 };
-
-type ProviderConfigInput = Parameters<ModelRegistry["registerProvider"]>[1];
-type RegisteredModel = NonNullable<ProviderConfigInput["models"]>[number];
 
 type CustomModelsJson = {
   providers?: Record<string, CustomProviderJson>;
@@ -159,27 +148,11 @@ const MANAGED_CLIENT_HEADER_KEYS = new Set<string>([
 ]);
 
 let registry: ModelRegistry | undefined;
-let stopCatalogUpdates: (() => void) | undefined;
-let catalogProviders = new Set<string>();
-let activeCatalog: ModelCatalog = parseModelCatalog(bundledCatalogJson);
-let catalogReasoningCapabilities = new Map<
-  string,
-  NonNullable<ModelCatalog["providers"][string][number]["reasoningCapability"]>
->();
-
-type ProviderAuthOperation = {
-  cancelled: boolean;
-  controller: AbortController;
-  respond: ((value: string | undefined) => void) | undefined;
-  state: ProviderAuthOperationState;
-};
-
-const providerAuthOperations = new Map<string, ProviderAuthOperation>();
+let modelRuntime: ModelRuntime | undefined;
+let initialization: Promise<ModelRuntime> | undefined;
 
 function agentDir(): string {
-  const dir = join(app.getPath("userData"), "pi-agent");
-  mkdirSync(dir, { recursive: true });
-  return dir;
+  return modusAgentDir();
 }
 
 function authPath(): string {
@@ -190,137 +163,30 @@ function modelsPath(): string {
   return join(agentDir(), "models.json");
 }
 
-function catalogPath(): string {
-  return join(agentDir(), "model-catalog.json");
-}
-
-function catalogProviderConfigs(
-  modelRegistry: ModelRegistry,
-  catalog: ModelCatalog,
-): Array<[string, ProviderConfigInput]> {
-  const bundledModels = ModelRegistry.inMemory(modelRegistry.authStorage).getAll();
-  const bundledProviders = new Set(bundledModels.map((model) => model.provider));
-  const supportedApis = new Set(bundledModels.map((model) => model.api));
-  const oauthProviders = new Map(
-    modelRegistry.authStorage.getOAuthProviders().map(({ id, ...provider }) => [id, provider]),
-  );
-
-  return Object.entries(catalog.providers).flatMap(([provider, models]) => {
-    const local = getProviderConfig(provider);
-    if (!bundledProviders.has(provider) || local?.source === "custom") return [];
-    const supported = models.filter((model) => supportedApis.has(model.api));
-    const baseUrl = supported.find((model) => model.baseUrl)?.baseUrl;
-    if (!baseUrl) return [];
-    const oauth = oauthProviders.get(provider);
-
-    return [
-      [
-        provider,
-        {
-          baseUrl,
-          ...(oauth ? { oauth } : { apiKey: "$MODUS_MODEL_CATALOG_API_KEY" }),
-          models: supported.map(
-            (model): RegisteredModel => ({
-              id: model.id,
-              name: model.name,
-              api: model.api,
-              ...(model.baseUrl ? { baseUrl: local?.base_url ?? model.baseUrl } : {}),
-              reasoning: model.reasoning,
-              input: model.input,
-              cost: {
-                input: model.cost.input,
-                output: model.cost.output,
-                cacheRead: model.cost.cacheRead,
-                cacheWrite: model.cost.cacheWrite,
-                ...(model.cost.tiers ? { tiers: model.cost.tiers } : {}),
-              },
-              contextWindow: model.contextWindow,
-              maxTokens: model.maxTokens,
-              ...(model.thinkingLevelMap
-                ? {
-                    thinkingLevelMap: model.thinkingLevelMap as RegisteredModel["thinkingLevelMap"],
-                  }
-                : {}),
-              ...(model.headers ? { headers: model.headers } : {}),
-              ...(model.compat ? { compat: model.compat as RegisteredModel["compat"] } : {}),
-            }),
-          ),
-          ...(local?.base_url ? { baseUrl: local.base_url } : {}),
-          ...(local?.api ? { api: local.api } : {}),
-          ...(local?.headers_json
-            ? { headers: parseJson<Record<string, string>>(local.headers_json, {}) }
-            : {}),
-          ...(local ? { authHeader: Boolean(local.auth_header) } : {}),
-        },
-      ],
-    ];
-  });
-}
-
-function applyModelCatalog(modelRegistry: ModelRegistry, catalog: ModelCatalog): void {
-  const providers = catalogProviderConfigs(modelRegistry, catalog);
-  const validationRegistry = ModelRegistry.inMemory(modelRegistry.authStorage);
-  for (const [provider, config] of providers) validationRegistry.registerProvider(provider, config);
-  const nextProviders = new Set(providers.map(([provider]) => provider));
-  for (const provider of catalogProviders) {
-    if (!nextProviders.has(provider)) modelRegistry.unregisterProvider(provider);
-  }
-  for (const [provider, config] of providers) modelRegistry.registerProvider(provider, config);
-  catalogProviders = nextProviders;
-  catalogReasoningCapabilities = new Map(
-    Object.entries(catalog.providers).flatMap(([provider, models]) =>
-      nextProviders.has(provider)
-        ? models.flatMap((model) =>
-            model.reasoningCapability
-              ? [[modelConfigId(provider, model.id), model.reasoningCapability] as const]
-              : [],
-          )
-        : [],
-    ),
-  );
-  activeCatalog = catalog;
-}
-
-export function startRemoteModelCatalog(onChanged: () => void): void {
-  if (stopCatalogUpdates) return;
-  const modelRegistry = getModelRegistry();
-  applyModelCatalog(modelRegistry, activeCatalog);
-  stopCatalogUpdates = startModelCatalogUpdates({
-    cachePath: catalogPath(),
-    currentCatalog: activeCatalog,
-    onCatalog: (catalog) => {
-      applyModelCatalog(modelRegistry, catalog);
-      onChanged();
-    },
-  });
-}
-
-export function stopRemoteModelCatalog(): void {
-  stopCatalogUpdates?.();
-  stopCatalogUpdates = undefined;
+export function getModelRuntime(): Promise<ModelRuntime> {
+  initialization ??= (async () => {
+    migrateCustomProviderRuntimeConfig();
+    modelRuntime = await ModelRuntime.create({ authPath: authPath(), modelsPath: modelsPath() });
+    registry = new ModelRegistry(modelRuntime);
+    return modelRuntime;
+  })();
+  return initialization;
 }
 
 export async function refreshRemoteModelCatalog(): Promise<ModelSettingsState> {
-  await forceModelCatalogRefresh();
+  await (await getModelRuntime()).refresh({ allowNetwork: true });
   return getModelSettings();
 }
 
 export function getModelRegistry(): ModelRegistry {
-  if (!registry) {
-    migrateCustomProviderRuntimeConfig();
-    registry = ModelRegistry.create(AuthStorage.create(authPath()), modelsPath());
-  }
-
+  if (!registry) throw new Error("Model runtime has not been initialized.");
   return registry;
 }
 
-function refreshRegistry(): ModelRegistry {
+async function refreshRegistry(): Promise<ModelRegistry> {
   migrateCustomProviderRuntimeConfig();
-  const modelRegistry = getModelRegistry();
-  modelRegistry.authStorage.reload();
-  modelRegistry.refresh();
-  applyModelCatalog(modelRegistry, activeCatalog);
-  return modelRegistry;
+  await (await getModelRuntime()).refresh({ allowNetwork: false });
+  return getModelRegistry();
 }
 
 export function modelToId(model: Model<Api>): string {
@@ -573,20 +439,11 @@ function thinkingLevelMapForModel(
   return normalizeThinkingLevelMap(model?.thinkingLevelMap);
 }
 
-function catalogReasoningCapabilityForModel(model: Model<Api> | undefined) {
-  return model ? catalogReasoningCapabilities.get(modelToId(model)) : undefined;
-}
-
 function thinkingOptionsForModel(
   model: Model<Api> | undefined,
   config: ModelConfigRow | undefined,
   levels = thinkingLevelsForModel(model, config),
 ): ThinkingOption[] {
-  const capability = catalogReasoningCapabilityForModel(model);
-  if (capability?.type === "options") {
-    return capability.options;
-  }
-
   const map = thinkingLevelMapForModel(model, config);
   return levels.map((level) => {
     const mapped = map?.[level];
@@ -598,37 +455,6 @@ function thinkingOptionsForModel(
       ...(value !== level ? { wireValue: value } : {}),
     };
   });
-}
-
-function thinkingBudgetForModel(model: Model<Api> | undefined) {
-  const capability = catalogReasoningCapabilityForModel(model);
-  return capability?.type === "budget"
-    ? {
-        ...(capability.min !== undefined ? { min: capability.min } : {}),
-        ...(capability.max !== undefined ? { max: capability.max } : {}),
-      }
-    : undefined;
-}
-
-function budgetThinkingOption(
-  value: string | null | undefined,
-  budget: { min?: number; max?: number },
-): ThinkingOption | undefined {
-  if (value === "off") return { value: "off", label: "Off", level: "off" as const };
-  const tokens = Number(value);
-  if (
-    !Number.isSafeInteger(tokens) ||
-    tokens < 0 ||
-    (budget.min !== undefined && tokens < budget.min) ||
-    (budget.max !== undefined && tokens > budget.max)
-  ) {
-    return undefined;
-  }
-  return {
-    value: String(tokens),
-    label: `${tokens.toLocaleString()} tokens`,
-    level: "high" as const,
-  };
 }
 
 function clampThinkingVariant(
@@ -665,14 +491,6 @@ function thinkingLevelsForModel(
     return ["off"];
   }
 
-  const capability = catalogReasoningCapabilityForModel(model);
-  if (capability?.type === "options") {
-    return [...new Set(capability.options.map((option) => option.level))];
-  }
-  if (capability?.type === "budget") {
-    return ["off", "high"];
-  }
-
   const map = thinkingLevelMapForModel(model, config);
   if (map) {
     return THINKING_LEVELS.filter((level) => {
@@ -696,26 +514,13 @@ function clampThinkingLevel(value: ThinkingLevel, levels: ThinkingLevel[]): Thin
 
 function thinkingStateForModel(model: Model<Api> | undefined, config: ModelConfigRow | undefined) {
   const levels = thinkingLevelsForModel(model, config);
-  const budget = thinkingBudgetForModel(model);
-  if (budget) {
-    const selected =
-      config?.thinking_level === "off"
-        ? budgetThinkingOption("off", budget)
-        : budgetThinkingOption(config?.thinking_variant, budget);
-    return {
-      levels,
-      options: [{ value: "off", label: "Off", level: "off" as const }],
-      budget,
-      selected: selected ?? { value: "off", label: "Off", level: "off" as const },
-    };
-  }
   const options = thinkingOptionsForModel(model, config, levels);
   const selected = selectedThinkingOption(
     config?.thinking_variant,
     clampThinkingLevel(config?.thinking_level ?? "off", levels),
     options,
   );
-  return { levels, options, selected, budget: undefined };
+  return { levels, options, selected };
 }
 
 function modelToInfo(model: Model<Api>, available: boolean, config?: ModelConfigRow): ModelInfo {
@@ -740,7 +545,6 @@ function modelToInfo(model: Model<Api>, available: boolean, config?: ModelConfig
     thinkingLevels: thinking.levels,
     thinkingVariant: thinking.selected.value,
     thinkingOptions: thinking.options,
-    ...(thinking.budget ? { thinkingBudget: thinking.budget } : {}),
   };
 }
 
@@ -766,11 +570,11 @@ function listModelsFromRegistry(modelRegistry: ModelRegistry): ModelInfo[] {
 }
 
 export function listModels(): ModelInfo[] {
-  return listModelsFromRegistry(refreshRegistry());
+  return listModelsFromRegistry(getModelRegistry());
 }
 
 export function listAllProviderModels(provider: string): ProviderModelConfig[] {
-  const modelRegistry = refreshRegistry();
+  const modelRegistry = getModelRegistry();
   const configs = new Map(listModelConfigRows().map((row) => [row.id, row]));
   return modelRegistry
     .getAll()
@@ -791,7 +595,6 @@ export function listAllProviderModels(provider: string): ProviderModelConfig[] {
         thinkingLevels: thinking.levels,
         thinkingVariant: thinking.selected.value,
         thinkingOptions: thinking.options,
-        ...(thinking.budget ? { thinkingBudget: thinking.budget } : {}),
       };
     })
     .sort((a, b) => a.name.localeCompare(b.name));
@@ -819,18 +622,13 @@ function listProvidersFromRegistry(modelRegistry: ModelRegistry): ModelProviderI
     const providerModelIds = new Set(providerModels.map(modelToId));
     const configuredModels = modelConfigs.filter((config) => config.provider_id === provider);
     const authStatus = modelRegistry.getProviderAuthStatus(provider);
-    const credential =
-      authStatus.source === "stored" ? modelRegistry.authStorage.get(provider) : undefined;
     const authKind =
-      credential?.type === "oauth"
-        ? "oauth"
-        : credential?.type === "api_key"
-          ? "api-key"
-          : undefined;
-    const oauthProvider =
-      authKind === "oauth"
-        ? modelRegistry.authStorage.getOAuthProviders().find((item) => item.id === provider)
+      authStatus.source === "stored"
+        ? modelRuntime?.isUsingOAuth(provider)
+          ? "oauth"
+          : "api-key"
         : undefined;
+    const oauthProvider = modelRegistry.getProvider(provider)?.auth?.oauth;
     const authLabel =
       authStatus.label ??
       (authKind === "oauth"
@@ -874,7 +672,7 @@ function listProvidersFromRegistry(modelRegistry: ModelRegistry): ModelProviderI
 }
 
 export function listProviders(): ModelProviderInfo[] {
-  return listProvidersFromRegistry(refreshRegistry());
+  return listProvidersFromRegistry(getModelRegistry());
 }
 
 export function getProviderDetail(provider: string): ModelProviderDetail | undefined {
@@ -886,7 +684,7 @@ export function getProviderDetail(provider: string): ModelProviderDetail | undef
 }
 
 export function getModelSettings(): ModelSettingsState {
-  const modelRegistry = refreshRegistry();
+  const modelRegistry = getModelRegistry();
   const models = listModelsFromRegistry(modelRegistry);
   const defaultModel = getDefaultModelId(models);
   return {
@@ -898,7 +696,7 @@ export function getModelSettings(): ModelSettingsState {
 
 export function listProviderConnectionMethods(provider: string): ProviderConnectionMethod[] {
   const id = provider.trim();
-  const modelRegistry = refreshRegistry();
+  const modelRegistry = getModelRegistry();
   const config = getProviderConfig(id);
   const known = modelRegistry.getAll().some((model) => model.provider === id);
   if (!id || (!known && !config)) {
@@ -908,216 +706,13 @@ export function listProviderConnectionMethods(provider: string): ProviderConnect
     return [];
   }
 
-  const oauth = modelRegistry.authStorage.getOAuthProviders().find((item) => item.id === id);
+  const auth = modelRegistry.getProvider(id)?.auth;
   return [
-    { kind: "api-key", label: "API key" },
-    ...(oauth ? [{ kind: "oauth" as const, label: oauth.name }] : []),
+    ...(auth?.apiKey?.login ? [{ kind: "api-key" as const, label: auth.apiKey.name }] : []),
+    ...(auth?.oauth
+      ? [{ kind: "oauth" as const, label: auth.oauth.loginLabel ?? auth.oauth.name }]
+      : []),
   ];
-}
-
-function findProviderAuthOperation(operationId: string): ProviderAuthOperation {
-  const operation = providerAuthOperations.get(operationId);
-  if (!operation) {
-    throw new Error("Provider sign-in is no longer active.");
-  }
-  return operation;
-}
-
-function updateProviderAuthOperation(
-  operation: ProviderAuthOperation,
-  patch: Omit<Partial<ProviderAuthOperationState>, "id" | "provider">,
-): void {
-  operation.state = { ...operation.state, ...patch };
-}
-
-function waitForProviderAuthInput(
-  operation: ProviderAuthOperation,
-  state: Omit<ProviderAuthOperationState, "id" | "provider">,
-): Promise<string | undefined> {
-  if (operation.cancelled) {
-    return Promise.resolve(undefined);
-  }
-  updateProviderAuthOperation(operation, state);
-  return new Promise((resolve) => {
-    operation.respond = resolve;
-  });
-}
-
-export function startProviderAuth(
-  provider: string,
-  openExternal: (url: string) => Promise<void>,
-): ProviderAuthOperationState {
-  const id = provider.trim();
-  const modelRegistry = refreshRegistry();
-  if (!id || !modelRegistry.authStorage.getOAuthProviders().some((item) => item.id === id)) {
-    throw new Error(`No native sign-in is available for ${provider}.`);
-  }
-  if (
-    [...providerAuthOperations.values()].some(
-      (operation) =>
-        operation.state.provider === id &&
-        !operation.cancelled &&
-        !["complete", "error", "cancelled"].includes(operation.state.status),
-    )
-  ) {
-    throw new Error(`A sign-in is already in progress for ${id}.`);
-  }
-
-  const operation: ProviderAuthOperation = {
-    cancelled: false,
-    controller: new AbortController(),
-    respond: undefined,
-    state: {
-      id: crypto.randomUUID(),
-      provider: id,
-      status: "pending",
-      message: "Preparing sign-in…",
-    },
-  };
-  providerAuthOperations.set(operation.state.id, operation);
-
-  void modelRegistry.authStorage
-    .login(id, {
-      signal: operation.controller.signal,
-      onAuth: (info) => {
-        if (operation.cancelled) {
-          return;
-        }
-        updateProviderAuthOperation(operation, {
-          status: "browser",
-          url: info.url,
-          instructions: info.instructions,
-          message: "Continue sign-in in your browser.",
-        });
-        void openExternal(info.url).catch(() => {
-          updateProviderAuthOperation(operation, {
-            message: "Browser could not be opened. Copy the link below to continue.",
-          });
-        });
-      },
-      onDeviceCode: (info) => {
-        if (operation.cancelled) {
-          return;
-        }
-        updateProviderAuthOperation(operation, {
-          status: "device-code",
-          url: info.verificationUri,
-          userCode: info.userCode,
-          message: "Enter this code in your browser to continue.",
-        });
-        void openExternal(info.verificationUri).catch(() => {
-          updateProviderAuthOperation(operation, {
-            message: "Browser could not be opened. Copy the link below to continue.",
-          });
-        });
-      },
-      onPrompt: async (prompt) => {
-        const value = await waitForProviderAuthInput(operation, {
-          status: "prompt",
-          message: prompt.message,
-          placeholder: prompt.placeholder,
-          allowEmpty: prompt.allowEmpty,
-          options: undefined,
-          url: undefined,
-          userCode: undefined,
-        });
-        if (operation.cancelled) {
-          throw new Error("Sign-in cancelled.");
-        }
-        if (!value && !prompt.allowEmpty) {
-          throw new Error("A value is required to continue sign-in.");
-        }
-        return value ?? "";
-      },
-      onManualCodeInput: async () => {
-        const value = await waitForProviderAuthInput(operation, {
-          status: "manual-code",
-          message: "Paste the authorization code or complete redirect URL.",
-          placeholder: "Authorization code or redirect URL",
-          allowEmpty: false,
-          options: undefined,
-        });
-        if (operation.cancelled || !value) {
-          throw new Error("Sign-in cancelled.");
-        }
-        return value;
-      },
-      onProgress: (message) => {
-        if (!operation.cancelled) {
-          updateProviderAuthOperation(operation, { message });
-        }
-      },
-      onSelect: async (prompt) => {
-        const value = await waitForProviderAuthInput(operation, {
-          status: "select",
-          message: prompt.message,
-          options: prompt.options,
-          url: undefined,
-          userCode: undefined,
-        });
-        return operation.cancelled ? undefined : value;
-      },
-    })
-    .then(async () => {
-      if (operation.cancelled) {
-        return;
-      }
-      await configureProvider({ provider: id, baseUrl: "" });
-      if (!operation.cancelled) {
-        updateProviderAuthOperation(operation, { status: "complete", message: "Connected." });
-      }
-    })
-    .catch((error: unknown) => {
-      if (operation.cancelled || operation.controller.signal.aborted) {
-        updateProviderAuthOperation(operation, {
-          status: "cancelled",
-          message: "Sign-in cancelled.",
-        });
-        return;
-      }
-      updateProviderAuthOperation(operation, {
-        status: "error",
-        message: error instanceof Error ? error.message : String(error),
-      });
-    });
-
-  return operation.state;
-}
-
-export function getProviderAuthState(operationId: string): ProviderAuthOperationState {
-  const operation = findProviderAuthOperation(operationId);
-  const state = { ...operation.state };
-  if (["complete", "error", "cancelled"].includes(state.status)) {
-    providerAuthOperations.delete(state.id);
-  }
-  return state;
-}
-
-export function respondProviderAuth(operationId: string, value: string | undefined): void {
-  const operation = findProviderAuthOperation(operationId);
-  const respond = operation.respond;
-  if (!respond) {
-    throw new Error("Provider sign-in is not waiting for input.");
-  }
-  operation.respond = undefined;
-  updateProviderAuthOperation(operation, {
-    status: "pending",
-    message: "Continuing sign-in…",
-    options: undefined,
-    placeholder: undefined,
-    allowEmpty: undefined,
-  });
-  respond(value);
-}
-
-export function cancelProviderAuth(operationId: string): void {
-  const operation = findProviderAuthOperation(operationId);
-  operation.cancelled = true;
-  operation.controller.abort();
-  operation.respond?.(undefined);
-  operation.respond = undefined;
-  updateProviderAuthOperation(operation, { status: "cancelled", message: "Sign-in cancelled." });
-  providerAuthOperations.delete(operationId);
 }
 
 /** The wire protocol of a built-in provider, read from its first bundled model. */
@@ -1151,14 +746,10 @@ export async function configureProvider(
   if (!provider) {
     throw new Error("Provider is required.");
   }
-  const modelRegistry = refreshRegistry();
+  const modelRegistry = await refreshRegistry();
   const providerName = modelRegistry.getProviderDisplayName(provider);
 
-  // Optional custom base URL for a built-in provider. Reuses pi's native
-  // "override-only" provider entry in models.json (baseUrl/headers, no models):
-  // every built-in model is kept but its endpoint is rewritten to the relay,
-  // while auth still flows through AuthStorage. `undefined` leaves the current
-  // setting untouched; "" reverts to the official endpoint; a URL sets it.
+  // An override-only native config preserves every model in the provider catalog.
   const protocolApi = builtinProviderApi(provider, modelRegistry);
   const baseUrlOverride = resolveBaseUrlOverride(input.baseUrl);
   const runtimeHeaders = baseUrlOverride
@@ -1190,7 +781,7 @@ export async function configureProvider(
   }
 
   if (input.apiKey?.trim()) {
-    modelRegistry.authStorage.set(provider, { type: "api_key", key: input.apiKey.trim() });
+    await storeApiKey(provider, input.apiKey.trim());
   }
 
   const selected = new Set(input.enabledModelIds ?? []);
@@ -1216,7 +807,7 @@ export async function configureProvider(
     });
   }
 
-  refreshRegistry();
+  await refreshRegistry();
   return (
     getProviderDetail(provider) ?? {
       id: provider,
@@ -1255,10 +846,6 @@ export async function upsertCustomProvider(
     ...(input.authHeader !== undefined ? { authHeader: input.authHeader } : {}),
     ...(headers ? { headers } : {}),
   });
-  if (input.apiKey?.trim()) {
-    getModelRegistry().authStorage.set(provider, { type: "api_key", key: input.apiKey.trim() });
-  }
-
   const models = input.models.map(normalizeCustomModelInput);
   for (const model of models) {
     upsertModelConfig({
@@ -1304,7 +891,8 @@ export async function upsertCustomProvider(
   if (runtimeHeaders) jsonConfig.headers = runtimeHeaders;
   if (providerCompat) jsonConfig.compat = providerCompat;
   writeCustomModelsJson(provider, jsonConfig);
-  refreshRegistry();
+  await refreshRegistry();
+  if (input.apiKey?.trim()) await storeApiKey(provider, input.apiKey.trim());
   return (
     getProviderDetail(provider) ?? {
       id: provider,
@@ -1603,8 +1191,20 @@ function removeCustomModelsJson(provider: string): void {
   writeFileSync(path, `${JSON.stringify(data, null, 2)}\n`, "utf-8");
 }
 
-function clearProviderConnectionState(provider: string, modelRegistry: ModelRegistry): void {
-  modelRegistry.authStorage.remove(provider);
+async function storeApiKey(provider: string, key: string): Promise<void> {
+  let supplied = false;
+  await (await getModelRuntime()).login(provider, "api_key", {
+    prompt: async (input) => {
+      if (supplied || input.type !== "secret")
+        throw new Error("Use the provider sign-in dialog to complete this authentication flow.");
+      supplied = true;
+      return key;
+    },
+    notify: () => {},
+  });
+}
+
+function clearProviderConnectionState(provider: string): void {
   const db = getDatabase();
   db.prepare("delete from model_configs where provider_id = ?").run(provider);
 
@@ -1614,9 +1214,9 @@ function clearProviderConnectionState(provider: string, modelRegistry: ModelRegi
   }
 }
 
-export function disconnectProvider(provider: string): void {
+export async function disconnectProvider(provider: string): Promise<void> {
   const id = provider.trim();
-  const modelRegistry = refreshRegistry();
+  const modelRegistry = await refreshRegistry();
   const authStatus = modelRegistry.getProviderAuthStatus(id);
   if (authStatus.source !== "stored") {
     throw new Error("This provider is managed outside Modus and cannot be disconnected here.");
@@ -1627,12 +1227,13 @@ export function disconnectProvider(provider: string): void {
     throw new Error(`Unknown provider: ${provider}`);
   }
 
-  clearProviderConnectionState(id, modelRegistry);
+  await (await getModelRuntime()).logout(id);
+  clearProviderConnectionState(id);
   if (config?.source !== "custom") {
     getDatabase().prepare("delete from model_provider_configs where provider_id = ?").run(id);
     setProviderRuntimeConfig(id, undefined);
   }
-  refreshRegistry();
+  await refreshRegistry();
 }
 
 /**
@@ -1640,7 +1241,7 @@ export function disconnectProvider(provider: string): void {
  * DB config tables, the stored API key, and the default-model pointer if it
  * referenced this provider. Refuses to touch built-in providers.
  */
-export function deleteCustomProvider(provider: string): void {
+export async function deleteCustomProvider(provider: string): Promise<void> {
   const id = provider.trim();
   const config = getProviderConfig(id);
   const stored = readCustomModelsJson().providers?.[id];
@@ -1648,11 +1249,12 @@ export function deleteCustomProvider(provider: string): void {
     throw new Error(`Only custom providers can be removed: ${provider}`);
   }
 
-  clearProviderConnectionState(id, refreshRegistry());
+  await (await getModelRuntime()).logout(id);
+  clearProviderConnectionState(id);
   removeCustomModelsJson(id);
   getDatabase().prepare("delete from model_provider_configs where provider_id = ?").run(id);
 
-  refreshRegistry();
+  await refreshRegistry();
 }
 
 export function updateModelConfig(input: UpdateModelConfigInput): ModelInfo {
@@ -1670,9 +1272,7 @@ export function updateModelConfig(input: UpdateModelConfigInput): ModelInfo {
   const thinking = thinkingStateForModel(model, existing);
   const selected =
     input.thinkingVariant !== undefined
-      ? thinking.budget
-        ? (budgetThinkingOption(input.thinkingVariant, thinking.budget) ?? thinking.selected)
-        : clampThinkingVariant(input.thinkingVariant, thinking.options)
+      ? clampThinkingVariant(input.thinkingVariant, thinking.options)
       : input.thinkingLevel
         ? selectedThinkingOption(undefined, input.thinkingLevel, thinking.options)
         : thinking.selected;
@@ -1763,24 +1363,12 @@ export function resolveModelThinking(
   model: Model<Api>;
   thinkingLevel: ModelThinkingLevel;
   variant: string;
-  thinkingBudget?: number;
 } {
   const config = getModelConfig(modelToId(model));
   const thinking = thinkingStateForModel(model, config);
   const selected = thinkingVariant
-    ? thinking.budget
-      ? (budgetThinkingOption(thinkingVariant, thinking.budget) ?? thinking.selected)
-      : clampThinkingVariant(thinkingVariant, thinking.options)
+    ? clampThinkingVariant(thinkingVariant, thinking.options)
     : thinking.selected;
-
-  if (thinking.budget && selected.level !== "off") {
-    return {
-      model,
-      thinkingLevel: "high",
-      variant: selected.value,
-      thinkingBudget: Number(selected.value),
-    };
-  }
 
   if (!selected.wireValue) {
     return { model, thinkingLevel: toPiThinkingLevel(selected.level), variant: selected.value };

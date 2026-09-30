@@ -1,4 +1,4 @@
-import type { ToolCallEvent, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { ToolCallEvent, ToolDefinition, ToolInfo } from "@earendil-works/pi-coding-agent";
 import type { PermissionAction } from "../../../shared/contracts";
 import {
   BUILTIN_TOOL_CATALOG,
@@ -6,6 +6,7 @@ import {
   type ToolCatalogEntry,
   type ToolProfileName,
 } from "../../../shared/tools";
+import { isRuntimeTool } from "../runtime-tools";
 
 /**
  * Runtime tool registry. Wraps the shared catalog with PI-SDK-dependent behavior:
@@ -38,7 +39,7 @@ export type RegisterToolInput = {
   classify?: ToolClassifier;
 };
 
-const DEFAULT_ACTION: PermissionAction = "mcp.call";
+const DEFAULT_ACTION: PermissionAction = "tool.execute";
 
 /** Primary target string for a tool call (command, path, else the raw input). */
 export function getToolTarget(event: ToolCallEvent): string {
@@ -51,33 +52,6 @@ export function getToolTarget(event: ToolCallEvent): string {
   return JSON.stringify(event.input);
 }
 
-function isGitWriteCommand(command: string): boolean {
-  return /\bgit\s+(commit|push|reset|clean|checkout\s+--|restore\b|branch\s+-D|worktree\s+remove|stash\s+(drop|clear))\b/i.test(
-    command,
-  );
-}
-
-function isMutatingShellCommand(command: string): boolean {
-  return /\b(rm|mv|touch|chmod|chown)\b|(^|\s)(>|>>|<<)\s*|\b(npm|pnpm|yarn)\s+(i|install|add)\b/i.test(
-    command,
-  );
-}
-
-/**
- * Risk verdict for a raw shell command string. Shared by the built-in `bash`
- * tool and the custom `terminal_run` tool so both gate dangerous commands the
- * same way: git-write and mutating commands prompt; everything else runs.
- */
-export function classifyShellCommand(command: string): ToolClassification {
-  if (isGitWriteCommand(command)) {
-    return { action: "git.write", dangerous: true };
-  }
-  return { action: "shell.execute", dangerous: isMutatingShellCommand(command) };
-}
-
-/** Built-in bash classifier: only git-write / mutating commands require approval. */
-const bashClassifier: ToolClassifier = (event) => classifyShellCommand(getToolTarget(event));
-
 export class ToolRegistry {
   private readonly entries = new Map<string, ToolCatalogEntry>();
   private readonly definitions = new Map<string, ToolDefinition>();
@@ -87,7 +61,6 @@ export class ToolRegistry {
     for (const entry of builtins) {
       this.entries.set(entry.name, entry);
     }
-    this.classifiers.set("bash", bashClassifier);
   }
 
   /** Register a custom LLM-callable tool. It joins the activation/permission/UI pipeline. */
@@ -140,33 +113,63 @@ export class ToolRegistry {
   }
 
   /** Decide whether a tool call needs approval and under which permission action. */
-  classify(event: ToolCallEvent): ToolClassification {
-    const classifier = this.classifiers.get(event.toolName);
+  private entryFor(
+    name: string,
+    definition?: ToolDefinition,
+    source?: ToolInfo["sourceInfo"],
+  ): ToolCatalogEntry | undefined {
+    const entry = this.entries.get(name);
+    if (!definition && !source) return entry;
+    if (entry?.kind === "builtin")
+      return source?.source === "builtin" && source.path === `builtin:${name}` ? entry : undefined;
+    return definition && this.definitions.get(name) === definition ? entry : undefined;
+  }
+
+  classify(
+    event: ToolCallEvent,
+    definition?: ToolDefinition,
+    source?: ToolInfo["sourceInfo"],
+  ): ToolClassification {
+    if (isRuntimeTool(definition)) return { action: DEFAULT_ACTION, dangerous: false };
+    const entry = this.entryFor(event.toolName, definition, source);
+    const classifier = entry && this.classifiers.get(event.toolName);
     if (classifier) {
       return classifier(event);
     }
-    const entry = this.entries.get(event.toolName);
     if (entry) {
       return {
         action: entry.permission.action ?? DEFAULT_ACTION,
         dangerous: entry.permission.danger !== "safe",
       };
     }
-    // Unregistered tool: preserve the legacy name heuristic (permissive except delete/remove).
-    if (/delete|remove/i.test(event.toolName)) {
-      return { action: "file.delete", dangerous: true };
-    }
-    return { action: DEFAULT_ACTION, dangerous: false };
+    return { action: DEFAULT_ACTION, dangerous: true };
   }
 
   getEntry(name: string): ToolCatalogEntry | undefined {
     return this.entries.get(name);
   }
 
-  capabilitiesFor(name: string): ToolCapability[] {
-    const entry = this.entries.get(name);
+  allowsProfile(
+    name: string,
+    profile: ToolProfileName,
+    definition?: ToolDefinition,
+    source?: ToolInfo["sourceInfo"],
+  ): boolean {
+    if (isRuntimeTool(definition)) return true;
+    return (
+      this.entryFor(name, definition, source)?.profiles.includes(profile) ?? profile === "chat"
+    );
+  }
+
+  capabilitiesFor(
+    name: string,
+    definition?: ToolDefinition,
+    source?: ToolInfo["sourceInfo"],
+  ): ToolCapability[] {
+    if (isRuntimeTool(definition)) return ["read"];
+    const entry = this.entryFor(name, definition, source);
     if (!entry) {
-      return [];
+      return ["write"];
     }
     if (entry.capabilities) {
       return entry.capabilities;
@@ -177,19 +180,31 @@ export class ToolRegistry {
     return ["read"];
   }
 
-  isReadOnlySafe(name: string): boolean {
-    return !this.capabilitiesFor(name).some((capability) => WRITE_CAPABILITIES.has(capability));
+  isReadOnlySafe(
+    name: string,
+    definition?: ToolDefinition,
+    source?: ToolInfo["sourceInfo"],
+  ): boolean {
+    return !this.capabilitiesFor(name, definition, source).some((capability) =>
+      WRITE_CAPABILITIES.has(capability),
+    );
   }
 
-  matchesSelector(name: string, selector: string): boolean {
+  matchesSelector(
+    name: string,
+    selector: string,
+    definition?: ToolDefinition,
+    source?: ToolInfo["sourceInfo"],
+  ): boolean {
     const normalized = selector.trim();
     if (!normalized) {
       return false;
     }
-    if (this.entries.has(normalized)) {
-      return name === normalized;
-    }
-    return this.capabilitiesFor(name).includes(normalized as ToolCapability);
+    if (this.entries.has(normalized)) return name === normalized;
+    return (
+      name === normalized ||
+      this.capabilitiesFor(name, definition, source).includes(normalized as ToolCapability)
+    );
   }
 }
 

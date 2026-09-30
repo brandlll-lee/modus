@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import type { SkillInfo } from "../../../../shared/contracts";
 
 type UseComposerSlashInput = {
@@ -70,35 +70,33 @@ export function useComposerSlash({ value, cwd, actions }: UseComposerSlashInput)
   const slash = useMemo(() => getSlashQuery(value), [value]);
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
-  const loadedForCwd = useRef<string | undefined>(undefined);
+  const menuRequested = Boolean(slash);
 
-  // Load skills the first time the slash menu opens for a workspace; refresh
-  // when the workspace changes so newly added skills appear without a restart.
   useEffect(() => {
-    if (!slash || !cwd) {
+    if (!menuRequested || !cwd) {
+      setSkills([]);
       return;
     }
-    if (loadedForCwd.current === cwd) {
-      return;
+    let active = true;
+    let generation = 0;
+    async function refresh(): Promise<void> {
+      const request = ++generation;
+      try {
+        const items = await window.modus.skills.list(cwd as string);
+        if (active && request === generation) setSkills(items);
+      } catch {
+        if (active && request === generation) setSkills([]);
+      }
     }
-    loadedForCwd.current = cwd;
-    let cancelled = false;
-    void window.modus.skills
-      .list(cwd)
-      .then((items: SkillInfo[]) => {
-        if (!cancelled) {
-          setSkills(items);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setSkills([]);
-        }
-      });
+    void refresh();
+    const unsubscribe = window.modus.skills.onChanged((changedCwd: string) => {
+      if (changedCwd === cwd) void refresh();
+    });
     return () => {
-      cancelled = true;
+      active = false;
+      unsubscribe();
     };
-  }, [slash, cwd]);
+  }, [menuRequested, cwd]);
 
   const query = slash?.query.toLowerCase() ?? "";
 

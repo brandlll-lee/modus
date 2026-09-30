@@ -3,7 +3,6 @@ import type {
   SubagentActivity,
   SubagentStatus,
 } from "../../../../shared/contracts";
-import { isMcpToolName, MCP_TOOL_PREFIX } from "../../../../shared/tools";
 
 /** ModusBot / board: actively executing (not waiting on the user). */
 export function isSubagentSessionLive(status: AgentSessionInfo["status"]): boolean {
@@ -58,13 +57,7 @@ function toolPhrase(name: string): string {
     default:
       break;
   }
-  let rest = name;
-  if (isMcpToolName(name)) {
-    const after = name.slice(MCP_TOOL_PREFIX.length);
-    const sep = after.indexOf("_");
-    rest = sep > 0 ? after.slice(sep + 1) : after;
-  }
-  const words = rest.split(/[_\s]+/).filter(Boolean);
+  const words = name.split(/[_\s]+/).filter(Boolean);
   if (words.length === 0) return "Working";
   const [verb, ...others] = words;
   const lower = (verb ?? "").toLowerCase();

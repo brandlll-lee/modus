@@ -12,7 +12,7 @@ import type { AgentReviewDepth, AgentReviewIssue, AgentReviewResult } from "../.
 import { getDatabase } from "../db/database";
 import { readDiff } from "../git/git-service";
 import { createAgentSettings } from "./agent-settings";
-import { getDefaultModel, getModelRegistry } from "./model-service";
+import { getDefaultModel, getModelRuntime } from "./model-service";
 import { toolRegistry } from "./tools/registry";
 
 const reviewIssueSchema = z.object({
@@ -156,7 +156,11 @@ export function parseReviewOutput(
 async function runPiReview(cwd: string, diff: string, depth: AgentReviewDepth): Promise<string> {
   const agentDir = join(app.getPath("userData"), "pi-agent");
   mkdirSync(agentDir, { recursive: true });
-  const settingsManager = createAgentSettings({ overrides: { compaction: { enabled: false } } });
+  const modelRuntime = await getModelRuntime();
+  const settingsManager = createAgentSettings({
+    cwd,
+    overrides: { compaction: { enabled: false } },
+  });
   const loader = new DefaultResourceLoader({
     cwd,
     agentDir,
@@ -170,8 +174,7 @@ async function runPiReview(cwd: string, diff: string, depth: AgentReviewDepth): 
   const sessionOptions: Parameters<typeof createAgentSession>[0] = {
     cwd,
     agentDir,
-    authStorage: getModelRegistry().authStorage,
-    modelRegistry: getModelRegistry(),
+    modelRuntime,
     resourceLoader: loader,
     sessionManager: SessionManager.inMemory(),
     settingsManager,
@@ -191,9 +194,11 @@ async function runPiReview(cwd: string, diff: string, depth: AgentReviewDepth): 
   });
 
   try {
+    await session.bindExtensions({});
     await session.prompt(buildReviewPrompt(diff, depth), { source: "rpc" });
     return text;
   } finally {
+    await session.extensionRunner?.emit({ type: "session_shutdown", reason: "quit" });
     unsubscribe();
     session.dispose();
   }

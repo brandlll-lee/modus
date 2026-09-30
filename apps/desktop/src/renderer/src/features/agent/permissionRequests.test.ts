@@ -24,7 +24,7 @@ describe("latestPendingPermissionRequest", () => {
         sessionId: "s",
         request: {
           id: "second",
-          action: "mcp.call",
+          action: "tool.execute",
           target: "tavily-remote/tavily_research",
           reason: "Needs MCP access.",
         },

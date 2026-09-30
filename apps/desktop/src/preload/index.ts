@@ -212,7 +212,9 @@ const api: ModusApi = {
     restore: (input) => ipcRenderer.invoke("checkpoint:restore", input),
   },
   mcp: {
-    list: () => ipcRenderer.invoke("mcp:list"),
+    list: (cwd) => ipcRenderer.invoke("mcp:list", cwd),
+    status: (cwd) => ipcRenderer.invoke("mcp:status", cwd),
+    command: (input) => ipcRenderer.invoke("mcp:command", input),
     sync: (cwd) => ipcRenderer.invoke("mcp:sync", cwd),
     openConfig: (cwd) => ipcRenderer.invoke("mcp:open-config", cwd),
     upsert: (input) => ipcRenderer.invoke("mcp:upsert", input),
@@ -230,6 +232,14 @@ const api: ModusApi = {
   },
   skills: {
     list: (cwd) => ipcRenderer.invoke("skills:list", cwd),
+    refresh: (cwd) => ipcRenderer.invoke("skills:refresh", cwd),
+    onChanged: (callback) => {
+      const listener = (_event: IpcRendererEvent, cwd: string) => callback(cwd);
+      ipcRenderer.on("resources:changed", listener);
+      return () => {
+        ipcRenderer.removeListener("resources:changed", listener);
+      };
+    },
     get: (input) => ipcRenderer.invoke("skills:get", input),
     create: (input) => ipcRenderer.invoke("skills:create", input),
     openDir: (cwd) => ipcRenderer.invoke("skills:open-dir", cwd),

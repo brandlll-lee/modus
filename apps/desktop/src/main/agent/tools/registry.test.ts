@@ -1,6 +1,6 @@
 import type { ToolCallEvent } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
-import { PLAN_TOOL_UI, type ToolCatalogEntry } from "../../../shared/tools";
+import { BUILTIN_TOOL_CATALOG, PLAN_TOOL_UI, type ToolCatalogEntry } from "../../../shared/tools";
 import { registerBrowserTools } from "./browser-tools";
 import { ToolRegistry, toolRegistry } from "./registry";
 
@@ -9,10 +9,14 @@ function toolEvent(toolName: string, input: Record<string, unknown>): ToolCallEv
 }
 
 describe("ToolRegistry profiles", () => {
-  it("chat profile activates all seven builtin tools", () => {
+  it("activates the declared builtin chat tools", () => {
     const registry = new ToolRegistry();
     expect(new Set(registry.resolveActiveTools("chat"))).toEqual(
-      new Set(["read", "bash", "edit", "write", "grep", "find", "ls"]),
+      new Set(
+        BUILTIN_TOOL_CATALOG.filter((entry) => entry.profiles.includes("chat")).map(
+          (entry) => entry.name,
+        ),
+      ),
     );
   });
 
@@ -96,28 +100,11 @@ describe("ToolRegistry custom tools", () => {
 });
 
 describe("ToolRegistry classify", () => {
-  it("treats bash git-write commands as dangerous git.write", () => {
+  it("uses the shell tool's declared permission regardless of command text", () => {
     const registry = new ToolRegistry();
-    expect(registry.classify(toolEvent("bash", { command: "git commit -m wip" }))).toEqual({
-      action: "git.write",
-      dangerous: true,
-    });
-  });
-
-  it("treats bash mutating commands as dangerous shell.execute", () => {
-    const registry = new ToolRegistry();
-    expect(registry.classify(toolEvent("bash", { command: "rm -rf build" }))).toEqual({
-      action: "shell.execute",
-      dangerous: true,
-    });
-  });
-
-  it("treats plain bash commands as safe shell.execute", () => {
-    const registry = new ToolRegistry();
-    expect(registry.classify(toolEvent("bash", { command: "ls -la" }))).toEqual({
-      action: "shell.execute",
-      dangerous: false,
-    });
+    expect(
+      registry.classify(toolEvent("bash", { command: "synthetic-task --new-operation" })),
+    ).toEqual({ action: "shell.execute", dangerous: true });
   });
 
   it("treats write and edit as dangerous file.write", () => {
@@ -139,13 +126,19 @@ describe("ToolRegistry classify", () => {
     }
   });
 
-  it("keeps the legacy delete/remove heuristic for unregistered tools", () => {
+  it("requires approval for unverified definitions including names that shadow builtins", () => {
     const registry = new ToolRegistry();
-    expect(registry.classify(toolEvent("delete_file", { path: "a.txt" }))).toEqual({
-      action: "file.delete",
+    expect(registry.classify(toolEvent("novel_operation", {}))).toEqual({
+      action: "tool.execute",
       dangerous: true,
     });
-    expect(registry.classify(toolEvent("unknown_tool", {})).dangerous).toBe(false);
+    const definition = { name: "read", annotations: { readOnlyHint: true } } as never;
+    expect(registry.classify(toolEvent("read", {}), definition)).toEqual({
+      action: "tool.execute",
+      dangerous: true,
+    });
+    expect(registry.allowsProfile("read", "plan", definition)).toBe(false);
+    expect(registry.isReadOnlySafe("read", definition)).toBe(false);
   });
 });
 

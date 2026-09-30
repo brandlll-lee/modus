@@ -76,10 +76,12 @@ export const ModusBot = memo(function ModusBot({
 
     /* ── Ambient idle ─────────────────────────────────────────────── */
     async function blink() {
+      if (!alive) return;
       await run(animate("#mb-eyes", { scaleY: [1, 0.12, 1] }, { duration: 0.16, ease: "easeOut" }))
         .finished;
     }
     async function lookAround() {
+      if (!alive) return;
       const dir = Math.random() < 0.5 ? -2.5 : 2.5;
       await run(
         animate(
@@ -114,6 +116,7 @@ export const ModusBot = memo(function ModusBot({
 
     /* ── Walk in place (3 legs alternate, body bobs, slight lean) ──── */
     async function walk() {
+      if (!alive) return;
       const step = 0.34;
       const reps = 3;
       const lift = { y: [0, -2.6, 0] };
@@ -140,6 +143,7 @@ export const ModusBot = memo(function ModusBot({
 
     /* ── Hop: crouch → parabolic launch (stretch) → land squash ───── */
     async function hop() {
+      if (!alive) return;
       // Crouch — gather momentum.
       await Promise.all([
         run(
@@ -151,6 +155,7 @@ export const ModusBot = memo(function ModusBot({
         ).finished,
         run(animate("#mb-legs", { y: 2 }, { duration: 0.12, ease: "easeIn" })).finished,
       ]);
+      if (!alive) return;
       // Launch up + stretch (sine-out feel = gravity decel on the way up).
       await Promise.all([
         run(animate("#mb-root", { y: -15 }, { duration: 0.3, ease: "circOut" })).finished,
@@ -163,8 +168,10 @@ export const ModusBot = memo(function ModusBot({
         ).finished,
         run(animate("#mb-legs", { y: -1.5 }, { duration: 0.2, ease: "easeOut" })).finished,
       ]);
+      if (!alive) return;
       // Fall (power-in feel = gravity accel on the way down).
       await run(animate("#mb-root", { y: 0 }, { duration: 0.24, ease: "circIn" })).finished;
+      if (!alive) return;
       // Land squash + overshoot recover.
       await Promise.all([
         run(

@@ -175,7 +175,7 @@ export function ApprovalPanel({ onDecide, request }: ApprovalPanelProps) {
 }
 
 function approvalTitle(action: PermissionRequest["action"]): string {
-  if (action === "mcp.call") return "Allow using this MCP tool?";
+  if (action === "tool.execute") return "Allow this tool to run?";
   if (action === "shell.execute") return "Allow running this command?";
   if (action === "git.write") return "Allow changing git state?";
   if (action === "file.write") return "Allow editing files?";

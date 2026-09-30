@@ -59,6 +59,8 @@ function stringify(value: unknown): string {
   if (typeof value === "string") {
     return value;
   }
+  if (value && typeof value === "object" && "structuredContent" in value)
+    return JSON.stringify(value, null, 2);
   if (
     value &&
     typeof value === "object" &&
@@ -132,7 +134,7 @@ export function normalizePiEvent(
   switch (event.type) {
     case "agent_start":
       return [{ type: "agent.started", sessionId }];
-    case "agent_end":
+    case "agent_settled":
       state.activeMessageIds = {};
       return [{ type: "agent.ended", sessionId }];
     case "message_start": {
@@ -224,6 +226,7 @@ export function normalizePiEvent(
           toolCallId: event.toolCallId,
           toolName: event.toolName,
           args: event.args,
+          ...(event.parentToolCallId ? { parentToolCallId: event.parentToolCallId } : {}),
         },
       ];
     case "tool_execution_update":
@@ -233,6 +236,7 @@ export function normalizePiEvent(
           sessionId,
           toolCallId: event.toolCallId,
           output: stringify(event.partialResult),
+          ...(event.parentToolCallId ? { parentToolCallId: event.parentToolCallId } : {}),
         },
       ];
     case "tool_execution_end":
@@ -242,6 +246,8 @@ export function normalizePiEvent(
           sessionId,
           toolCallId: event.toolCallId,
           isError: event.isError,
+          ...(event.parentToolCallId ? { parentToolCallId: event.parentToolCallId } : {}),
+          ...(event.result !== undefined ? { output: stringify(event.result) } : {}),
         },
       ];
     case "queue_update":

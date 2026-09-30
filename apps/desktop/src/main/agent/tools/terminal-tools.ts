@@ -17,7 +17,7 @@ import {
   type TerminalRead,
   writeTerminal,
 } from "../../terminal/terminal-service";
-import { classifyShellCommand, getToolTarget, toolRegistry } from "./registry";
+import { toolRegistry } from "./registry";
 import { resolveAgentToolContext } from "./tool-context";
 
 /**
@@ -377,12 +377,11 @@ export function registerTerminalTools(): void {
     entry: {
       name: "terminal_run",
       profiles: ["chat"],
-      permission: { danger: "dynamic" },
+      permission: { danger: "dangerous", action: "shell.execute" },
       capabilities: ["shell", "process"],
       ui: TERMINAL_TOOL_UI.terminal_run,
     },
     definition: runTool,
-    classify: (event) => classifyShellCommand(getToolTarget(event)),
   });
   toolRegistry.registerTool({
     entry: {

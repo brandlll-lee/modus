@@ -1,3 +1,4 @@
+import { IconX } from "@tabler/icons-react";
 import {
   type ClipboardEvent,
   forwardRef,
@@ -8,7 +9,6 @@ import {
   useRef,
 } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { IconX } from "@tabler/icons-react";
 import type { ContextItem, SkillSelection } from "../../../../shared/contracts";
 import { cn } from "../../lib/cn";
 import { contextItemKey, SkillTokenContent, TokenContent } from "./composerTokens";
@@ -76,12 +76,17 @@ function snapshotParts(parts: MentionEditorPart[]): string {
   );
 }
 
-function textPositionAt(root: HTMLElement, target: number): { node: Text; offset: number } | undefined {
+function textPositionAt(
+  root: HTMLElement,
+  target: number,
+): { node: Text; offset: number } | undefined {
   let seen = 0;
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
       const parent = node.parentElement;
-      return parent?.closest("[data-token-id]") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
+      return parent?.closest("[data-token-id]")
+        ? NodeFilter.FILTER_REJECT
+        : NodeFilter.FILTER_ACCEPT;
     },
   });
   let node = walker.nextNode() as Text | null;
@@ -141,62 +146,59 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
     }, []);
 
     /** Read text (tokens excluded, `<br>` → newline) + tokens in document order. */
-    const read = useCallback(
-      (): {
-        text: string;
-        items: ContextItem[];
-        skills: SkillSelection[];
-        parts: MentionEditorPart[];
-      } => {
-        const root = elementRef.current;
-        if (!root) {
-          return { text: "", items: [], skills: [], parts: [] };
+    const read = useCallback((): {
+      text: string;
+      items: ContextItem[];
+      skills: SkillSelection[];
+      parts: MentionEditorPart[];
+    } => {
+      const root = elementRef.current;
+      if (!root) {
+        return { text: "", items: [], skills: [], parts: [] };
+      }
+      let text = "";
+      const items: ContextItem[] = [];
+      const selectedSkills: SkillSelection[] = [];
+      const parts: MentionEditorPart[] = [];
+      const pushText = (value: string): void => {
+        const normalized = value.replace(/\u00a0/g, " ");
+        if (!normalized) {
+          return;
         }
-        let text = "";
-        const items: ContextItem[] = [];
-        const selectedSkills: SkillSelection[] = [];
-        const parts: MentionEditorPart[] = [];
-        const pushText = (value: string): void => {
-          const normalized = value.replace(/\u00a0/g, " ");
-          if (!normalized) {
-            return;
-          }
-          text += normalized;
-          const last = parts.at(-1);
-          if (last?.type === "text") {
-            last.text += normalized;
-          } else {
-            parts.push({ type: "text", text: normalized });
-          }
-        };
-        const walk = (node: Node): void => {
-          for (const child of Array.from(node.childNodes)) {
-            if (child.nodeType === Node.TEXT_NODE) {
-              pushText(child.textContent ?? "");
-            } else if (child instanceof HTMLElement) {
-              const tokenId = child.dataset.tokenId;
-              if (tokenId) {
-                const token = tokensRef.current.get(tokenId);
-                if (token?.kind === "context") {
-                  items.push(token.item);
-                  parts.push({ type: "context", item: token.item });
-                } else if (token?.kind === "skill") {
-                  selectedSkills.push(token.skill);
-                  parts.push({ type: "skill", skill: token.skill });
-                }
-              } else if (child.tagName === "BR") {
-                pushText("\n");
-              } else {
-                walk(child);
+        text += normalized;
+        const last = parts.at(-1);
+        if (last?.type === "text") {
+          last.text += normalized;
+        } else {
+          parts.push({ type: "text", text: normalized });
+        }
+      };
+      const walk = (node: Node): void => {
+        for (const child of Array.from(node.childNodes)) {
+          if (child.nodeType === Node.TEXT_NODE) {
+            pushText(child.textContent ?? "");
+          } else if (child instanceof HTMLElement) {
+            const tokenId = child.dataset.tokenId;
+            if (tokenId) {
+              const token = tokensRef.current.get(tokenId);
+              if (token?.kind === "context") {
+                items.push(token.item);
+                parts.push({ type: "context", item: token.item });
+              } else if (token?.kind === "skill") {
+                selectedSkills.push(token.skill);
+                parts.push({ type: "skill", skill: token.skill });
               }
+            } else if (child.tagName === "BR") {
+              pushText("\n");
+            } else {
+              walk(child);
             }
           }
-        };
-        walk(root);
-        return { text, items, skills: selectedSkills, parts };
-      },
-      [],
-    );
+        }
+      };
+      walk(root);
+      return { text, items, skills: selectedSkills, parts };
+    }, []);
 
     const textBeforeCaret = useCallback((): string => {
       const root = elementRef.current;
@@ -241,8 +243,7 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
       const span = document.createElement("span");
       span.dataset.tokenId = id;
       span.contentEditable = "false";
-      span.className =
-        "group/token mr-0.5 inline-flex select-none items-center align-baseline";
+      span.className = "group/token mr-0.5 inline-flex select-none items-center align-baseline";
       span.innerHTML = renderToStaticMarkup(
         <>
           {token.kind === "context" ? (
@@ -307,7 +308,7 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
         root.focus();
         emit();
       },
-      [emit],
+      [emit, textFromNode],
     );
 
     const insertInlineToken = useCallback(
@@ -349,9 +350,15 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
           if (part.type === "text") {
             root.append(document.createTextNode(part.text));
           } else if (part.type === "context") {
-            root.append(buildToken({ kind: "context", item: part.item }), document.createTextNode("\u00a0"));
+            root.append(
+              buildToken({ kind: "context", item: part.item }),
+              document.createTextNode("\u00a0"),
+            );
           } else {
-            root.append(buildToken({ kind: "skill", skill: part.skill }), document.createTextNode("\u00a0"));
+            root.append(
+              buildToken({ kind: "skill", skill: part.skill }),
+              document.createTextNode("\u00a0"),
+            );
           }
         }
       } else if (value) {
@@ -401,13 +408,19 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
         deleteBeforeCaret: (replaceLen: number) => replaceBeforeCaret(replaceLen, []),
         insertContextToken: (item: ContextItem, replaceLen: number) =>
           insertInlineToken({ kind: "context", item }, replaceLen),
-        insertSkillToken: (skill: SkillSelection, replaceLen: number) =>
-          insertInlineToken({ kind: "skill", skill }, replaceLen),
+        insertSkillToken: (skill: SkillSelection, replaceLen: number) => {
+          for (const [id, token] of tokensRef.current) {
+            if (token.kind === "skill")
+              elementRef.current?.querySelector(`[data-token-id="${id}"]`)?.remove();
+          }
+          insertInlineToken({ kind: "skill", skill }, replaceLen);
+        },
       }),
       [emit, insertInlineToken, onChange, replaceBeforeCaret],
     );
 
     return (
+      // biome-ignore lint/a11y/useSemanticElements: Inline skill and context tokens require a contenteditable textbox.
       <div
         className={cn(
           "scroll-thin max-h-[260px] overflow-y-auto whitespace-pre-wrap break-words outline-none",

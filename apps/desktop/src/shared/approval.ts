@@ -28,7 +28,7 @@ export const APPROVAL_MODE_BY_ID: Record<ApprovalMode, ApprovalModeMeta> = {
   auto: {
     id: "auto",
     label: "Auto",
-    description: "Only ask for high-risk actions like deletes and git pushes.",
+    description: "Ask for deletes, git writes, and tools with unverified capabilities.",
   },
   "full-access": {
     id: "full-access",
@@ -50,6 +50,7 @@ export const DEFAULT_APPROVAL_MODE: ApprovalMode = "request-approval";
 const HIGH_RISK_ACTIONS: ReadonlySet<PermissionAction> = new Set<PermissionAction>([
   "file.delete",
   "git.write",
+  "tool.execute",
 ]);
 
 export function actionRisk(action: PermissionAction): "high" | "medium" {

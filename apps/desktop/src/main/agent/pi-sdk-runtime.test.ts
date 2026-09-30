@@ -65,7 +65,13 @@ function createWindowStub(): BrowserWindowType {
   } as unknown as BrowserWindowType;
 }
 
-vi.mock("@earendil-works/pi-coding-agent", () => ({
+vi.mock("./project-trust", () => ({ resolveProjectTrust: vi.fn(async () => true) }));
+vi.mock("./agent-paths", () => ({
+  modusAgentDir: () => join(userData, "pi-agent"),
+  getPiCliAgentDir: () => join(userData, "cli"),
+}));
+vi.mock("@earendil-works/pi-coding-agent", async (original) => ({
+  ...(await original<typeof import("@earendil-works/pi-coding-agent")>()),
   createAgentSession: mocks.createAgentSession,
   defineTool: <T>(tool: T): T => tool,
   DefaultResourceLoader: class {
@@ -73,18 +79,14 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
       mocks.resourceLoaderOptions.push(options);
     }
     async reload(): Promise<void> {}
+    getSkills(): { skills: unknown[]; diagnostics: unknown[] } {
+      return { skills: [], diagnostics: [] };
+    }
   },
   SessionManager: {
     create: mocks.sessionManagerCreate,
     open: mocks.sessionManagerOpen,
   },
-  SettingsManager: {
-    inMemory: vi.fn(() => ({
-      applyOverrides: vi.fn(),
-      getShellPath: vi.fn(() => undefined),
-    })),
-  },
-  getAgentDir: vi.fn(() => join(userData, "pi-agent")),
 }));
 
 vi.mock("../guidance/guidance-service", () => ({
@@ -124,6 +126,7 @@ vi.mock("./model-service", () => ({
     thinkingLevels: ["off", "low", "medium", "high"],
   })),
   getModelThinkingVariant: vi.fn(() => "off"),
+  getModelRuntime: vi.fn(async () => ({})),
   getModelRegistry: vi.fn(() => ({ authStorage: {} })),
   listModels: vi.fn(() => [{ id: "mock/model" }]),
   listScopedModels: vi.fn(() => [{ model: mocks.model, thinkingLevel: "off" }]),
@@ -148,7 +151,25 @@ const { setAgentToolContext } = await import("./tools/tool-context");
 function createMockPiSession(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     abort: vi.fn(async () => undefined),
-    agent: { thinkingBudgets: undefined },
+    bindExtensions: vi.fn(async () => undefined),
+    extensionRunner: { getUIContext: () => ({}), emit: vi.fn(async () => undefined) },
+    getAllTools: () =>
+      [
+        ...new Set([
+          ...toolRegistry.resolveActiveTools("chat"),
+          ...toolRegistry.resolveActiveTools("plan"),
+        ]),
+      ].map((name) => ({
+        name,
+        exposure: "direct",
+        sourceInfo: { source: "builtin", path: `builtin:${name}` },
+      })),
+    getToolDefinition: (name: string) =>
+      [
+        ...toolRegistry.getCustomToolDefinitions("chat"),
+        ...toolRegistry.getCustomToolDefinitions("plan"),
+      ].find((definition) => definition.name === name),
+    getActiveToolNames: () => toolRegistry.resolveActiveTools("chat"),
     cycleModel: vi.fn(async () => ({ model: mocks.model })),
     dispose: vi.fn(),
     getContextUsage: vi.fn(() => ({
@@ -289,7 +310,12 @@ describe("PiSdkRuntime", () => {
     insertSession(sessionId, `workspace-${crypto.randomUUID()}`, join(userData, "missing.jsonl"));
     const compact = vi.fn(async () => {
       mocks.emitPiEvent({ type: "compaction_start", reason: "manual" });
-      mocks.emitPiEvent({ type: "compaction_end", reason: "manual", aborted: false, willRetry: false });
+      mocks.emitPiEvent({
+        type: "compaction_end",
+        reason: "manual",
+        aborted: false,
+        willRetry: false,
+      });
     });
     mocks.createAgentSession.mockImplementationOnce(async () => ({
       session: createMockPiSession({ compact, isIdle: true }),
@@ -302,7 +328,10 @@ describe("PiSdkRuntime", () => {
       .prepare("select type from agent_events where session_id = ? order by rowid")
       .all(sessionId) as Array<{ type: string }>;
     expect(rows.map(({ type }) => type)).toEqual([
-      "session.status", "compaction.started", "compaction.ended", "session.status",
+      "session.status",
+      "compaction.started",
+      "compaction.ended",
+      "session.status",
     ]);
   });
 
@@ -320,7 +349,7 @@ describe("PiSdkRuntime", () => {
     expect(compact).not.toHaveBeenCalled();
   });
 
-  it("re-prompts after threshold compaction so the Modus run continues", async () => {
+  it("lets PI continue threshold compaction within one prompt", async () => {
     const sessionId = `session-${crypto.randomUUID()}`;
     const workspaceId = `workspace-${crypto.randomUUID()}`;
     insertSession(sessionId, workspaceId, join(userData, "missing.jsonl"), "New chat");
@@ -343,11 +372,14 @@ describe("PiSdkRuntime", () => {
           mocks.emitPiEvent({
             type: "compaction_end",
             reason: "threshold",
-            result: { summary: "## Next Steps\n1. Finish", firstKeptEntryId: "e1", tokensBefore: 9 },
+            result: {
+              summary: "## Next Steps\n1. Finish",
+              firstKeptEntryId: "e1",
+              tokensBefore: 9,
+            },
             aborted: false,
             willRetry: false,
           });
-          return;
         }
         mocks.emitPiEvent({ type: "message_start", message: { role: "assistant" } });
         mocks.emitPiEvent({
@@ -369,12 +401,12 @@ describe("PiSdkRuntime", () => {
       userMessageId: "local-user-compact-continue",
     });
 
-    expect(promptCalls).toBe(2);
-    const promptFn = session.prompt as ReturnType<typeof vi.fn>;
-    expect(promptFn.mock.calls[1]?.[0]).toContain("Context was compacted");
+    expect(promptCalls).toBe(1);
     const types = (
       getDatabase()
-        .prepare("select type from agent_events where session_id = ? order by created_at asc, rowid asc")
+        .prepare(
+          "select type from agent_events where session_id = ? order by created_at asc, rowid asc",
+        )
         .all(sessionId) as Array<{ type: string }>
     ).map((row) => row.type);
     expect(types).toContain("compaction.started");
@@ -1188,7 +1220,11 @@ describe("PiSdkRuntime", () => {
     expect(waited.timedOut).toBe(false);
     expect(waited.subagents).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ id: first.session.id, status: "completed", output: "first done" }),
+        expect.objectContaining({
+          id: first.session.id,
+          status: "completed",
+          output: "first done",
+        }),
         expect.objectContaining({
           id: second.session.id,
           status: "completed",
@@ -1605,7 +1641,7 @@ describe("PiSdkRuntime", () => {
     });
 
     expect(result.session.cwd.replace(/\\/g, "/")).toContain("/.modus/worktrees/writer-");
-    expect(childCwd).toBe(result.session.cwd);
+    await vi.waitFor(() => expect(childCwd).toBe(result.session.cwd));
     expect(existsSync(result.session.cwd)).toBe(true);
     expect(existsSync(join(cwd, ".modus", "worktrees"))).toBe(true);
 

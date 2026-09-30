@@ -178,6 +178,7 @@ export type QuestionPrompt = {
   header: string;
   /** Optional context shown under the header. */
   detail?: string;
+  prefill?: string;
   /** true → multiple options may be chosen; false → single choice. */
   multiSelect: boolean;
   options: QuestionOption[];
@@ -187,6 +188,7 @@ export type QuestionRequest = {
   id: string;
   sessionId?: string;
   runId?: string;
+  presentation?: "dialog";
   questions: QuestionPrompt[];
 };
 
@@ -292,6 +294,8 @@ export type AgentEvent =
       sessionId: string;
       toolCallId: string;
       toolName: string;
+      parentToolCallId?: string;
+      label?: string;
       args?: unknown;
     }
   | {
@@ -309,8 +313,21 @@ export type AgentEvent =
       toolName: string;
       args?: unknown;
     }
-  | { type: "tool.output"; sessionId: string; toolCallId: string; output: string }
-  | { type: "tool.ended"; sessionId: string; toolCallId: string; isError: boolean }
+  | {
+      type: "tool.output";
+      sessionId: string;
+      toolCallId: string;
+      parentToolCallId?: string;
+      output: string;
+    }
+  | {
+      type: "tool.ended";
+      sessionId: string;
+      toolCallId: string;
+      parentToolCallId?: string;
+      output?: string;
+      isError: boolean;
+    }
   | { type: "permission.requested"; sessionId: string; request: PermissionRequest }
   | {
       type: "permission.resolved";
@@ -333,7 +350,7 @@ export type AgentEvent =
       sessionId: string;
       reason: CompactionReason;
       aborted: boolean;
-      /** PI overflow recovery continues the same prompt; threshold does not. */
+      /** PI may continue the same prompt after automatic compaction. */
       willRetry: boolean;
       /** True when PI reported errorMessage (failed compact). */
       failed?: boolean;
@@ -365,6 +382,12 @@ export type AgentEvent =
     }
   | { type: "session.status"; sessionId: string; status: SessionRunStatus }
   | { type: "session.updated"; sessionId: string; title: string }
+  | {
+      type: "extension.notice";
+      sessionId: string;
+      message: string;
+      level: "info" | "warning" | "error";
+    }
   | { type: "runtime.error"; sessionId: string; message: string };
 
 export type TerminalStatus = "running" | "exited";
@@ -541,7 +564,7 @@ export type PermissionAction =
   | "file.write"
   | "file.delete"
   | "git.write"
-  | "mcp.call"
+  | "tool.execute"
   | "external.open"
   | "browser.control";
 
@@ -1007,7 +1030,6 @@ export type ModelInfo = {
   thinkingLevels: ThinkingLevel[];
   thinkingVariant?: string;
   thinkingOptions?: ThinkingOption[];
-  thinkingBudget?: ThinkingBudget;
 };
 
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -1017,7 +1039,6 @@ export type ThinkingOption = {
   level: ThinkingLevel;
   wireValue?: string | undefined;
 };
-export type ThinkingBudget = { min?: number; max?: number };
 export type ModelInputKind = "text" | "image";
 
 export type JsonObject = Record<string, unknown>;
@@ -1055,7 +1076,6 @@ export type ProviderModelConfig = {
   thinkingLevels: ThinkingLevel[];
   thinkingVariant?: string;
   thinkingOptions?: ThinkingOption[];
-  thinkingBudget?: ThinkingBudget;
 };
 
 export type ModelProviderDetail = ModelProviderInfo & {
@@ -1091,6 +1111,7 @@ export type ProviderAuthOperationState = {
   instructions?: string | undefined;
   userCode?: string | undefined;
   placeholder?: string | undefined;
+  secret?: boolean | undefined;
   allowEmpty?: boolean | undefined;
 };
 
@@ -1254,12 +1275,12 @@ export type TestCustomProviderResult = {
 
 export type McpTransportKind = "stdio" | "http";
 
-export type McpServerStatus = "connecting" | "connected" | "failed" | "disabled";
+export type McpServerStatus = "configured" | "disabled";
 
 export type McpToolInfo = {
   /** Tool name as exposed by the server. */
   name: string;
-  /** Namespaced name the agent calls (mcp_<server>_<tool>). */
+  /** Namespaced name provided by PI (mcp__<server>__<tool>). */
   registeredName: string;
   description?: string | undefined;
 };
@@ -1287,6 +1308,7 @@ export type McpServerUpsertInput = {
   env?: Record<string, string> | undefined;
   url?: string | undefined;
   headers?: Record<string, string> | undefined;
+  exposure?: "direct" | "deferred" | "codemode" | "codemode-deferred" | "hidden" | undefined;
   enabled: boolean;
 };
 
@@ -1347,13 +1369,7 @@ export type FileReadResult = {
  * Structured preview capability from authoritative byte inspection (magic /
  * OOXML part peek). UI routes on this enum — never on filename extensions.
  */
-export type PreviewKind =
-  | "pdf"
-  | "docx"
-  | "xlsx"
-  | "pptx"
-  | "image"
-  | "unsupported";
+export type PreviewKind = "pdf" | "docx" | "xlsx" | "pptx" | "image" | "unsupported";
 
 /** Result of reading workspace file bytes for in-app document/image preview. */
 export type PreviewReadResult = {
@@ -1435,7 +1451,12 @@ export type PlanRef = {
 /* ── Skills (Agent Skills, 2026 SKILL.md standard) ─────────────────────── */
 
 export type ConfigScope = "workspace" | "user";
-export type SkillScope = ConfigScope | "builtin";
+
+/**
+ * Where a skill was discovered. Values match PI's `SourceScope` plus Modus's
+ * bundled resource root, which PI reports as an ordinary additional path.
+ */
+export type SkillScope = "user" | "project" | "temporary";
 
 export type SkillSelection = {
   name: string;
@@ -1454,14 +1475,12 @@ export type SkillInfo = {
   name: string;
   description: string;
   scope: SkillScope;
-  /** Config family the skill came from (".modus", ".cursor", ".claude", …). */
+  /** Discovery source reported by PI ("pi", "agents", "auto", "local", …). */
   source: string;
-  /** Absolute path of the skill's SKILL.md (or `<name>.md`). */
+  /** Absolute path of the skill's SKILL.md. */
   path: string;
   enabled: boolean;
   allowImplicitInvocation: boolean;
-  /** Tools the skill declares it needs, when present in frontmatter. */
-  allowedTools?: string[];
 };
 
 /** A skill plus its full Markdown instruction body. */

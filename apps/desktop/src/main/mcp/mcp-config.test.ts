@@ -1,177 +1,111 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { dirname, join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   defaultMcpConfigPath,
-  interpolateEnv,
-  mcpConfigPaths,
-  parseMcpConfig,
+  findRawMcpEntry,
+  loadWorkspaceMcpConfig,
+  removeMcpServerEntry,
+  setMcpServerEnabledEntry,
   upsertMcpServerEntry,
   userMcpConfigPath,
 } from "./mcp-config";
 
-/** Literal "${env:NAME}" built from parts so lint doesn't read it as a template placeholder. */
-const envRef = (name: string): string => ["${", "env:", name, "}"].join("");
-
-describe("interpolateEnv", () => {
-  it("substitutes env placeholders", () => {
-    expect(interpolateEnv(`Bearer ${envRef("TOKEN")}`, { TOKEN: "abc" } as NodeJS.ProcessEnv)).toBe(
-      "Bearer abc",
-    );
-  });
-
-  it("resolves unset variables to an empty string", () => {
-    expect(interpolateEnv(`x${envRef("MISSING")}y`, {} as NodeJS.ProcessEnv)).toBe("xy");
-  });
-
-  it("leaves plain strings untouched", () => {
-    expect(interpolateEnv("no placeholders", {} as NodeJS.ProcessEnv)).toBe("no placeholders");
-  });
+const roots = vi.hoisted(() => ({ home: "", cli: "" }));
+vi.mock("node:os", async (original) => ({
+  ...(await original<typeof import("node:os")>()),
+  homedir: () => roots.home,
+}));
+vi.mock("../agent/agent-paths", () => ({ getPiCliAgentDir: () => roots.cli }));
+let root: string;
+let cwd: string;
+function save(path: string, mcpServers: Record<string, unknown>): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify({ mcpServers }), "utf8");
+}
+beforeEach(() => {
+  root = mkdtempSync(join(tmpdir(), "modus-mcp-"));
+  cwd = join(root, "workspace");
+  roots.home = join(root, "home");
+  roots.cli = join(root, "cli");
+});
+afterEach(() => {
+  rmSync(root, { recursive: true, force: true });
 });
 
-describe("mcpConfigPaths", () => {
-  it("only discovers Modus-owned config files", () => {
-    expect(mcpConfigPaths("workspace", "home")).toEqual([
-      join("home", ".modus", "mcp.json"),
-      join("workspace", ".modus", "mcp.json"),
-    ]);
-  });
-
-  it("creates new servers in the project Modus config", () => {
-    expect(defaultMcpConfigPath("workspace")).toBe(join("workspace", ".modus", "mcp.json"));
-  });
-
-  it("creates explicitly global servers in the user Modus config", () => {
-    const cwd = mkdtempSync(join(tmpdir(), "modus-mcp-cwd-"));
-    const home = mkdtempSync(join(tmpdir(), "modus-mcp-home-"));
-    try {
-      const target = upsertMcpServerEntry(
-        cwd,
-        {
-          name: "global",
-          scope: "user",
-          transport: "stdio",
-          command: "run",
-          enabled: true,
-        },
-        home,
-      );
-      expect(target).toBe(userMcpConfigPath(home));
-      expect(readFileSync(target, "utf8")).toContain('"global"');
-    } finally {
-      rmSync(cwd, { recursive: true, force: true });
-      rmSync(home, { recursive: true, force: true });
-    }
-  });
-});
-
-describe("parseMcpConfig", () => {
-  const env = { API_KEY: "k-123" } as NodeJS.ProcessEnv;
-
-  it("parses stdio servers with args and env interpolation", () => {
-    const { servers, errors } = parseMcpConfig(
-      JSON.stringify({
-        mcpServers: {
-          files: {
-            command: "npx",
-            args: ["-y", `server-${envRef("API_KEY")}`],
-            env: { KEY: envRef("API_KEY") },
-          },
-        },
-      }),
-      "test.json",
-      env,
-    );
-    expect(errors).toEqual([]);
-    expect(servers).toHaveLength(1);
-    const server = servers[0];
-    expect(server).toMatchObject({
-      name: "files",
-      transport: "stdio",
-      command: "npx",
-      args: ["-y", "server-k-123"],
-      enabled: true,
-      source: "test.json",
+describe("MCP configuration ownership", () => {
+  it("gates project files on native trust and preserves native server fields", () => {
+    save(join(roots.cli, "mcp.json"), {
+      inherited: {
+        command: "fixture",
+        env: { TOKEN: `\${TOKEN}` },
+        timeout: 1234,
+        exposure: "deferred",
+      },
     });
-    if (server?.transport === "stdio") {
-      expect(server.env).toEqual({ KEY: "k-123" });
-    }
+    save(join(cwd, ".pi", "mcp.json"), { project: { url: "https://example.test/mcp" } });
+    save(userMcpConfigPath(), { own: { command: "own" } });
+    save(defaultMcpConfigPath(cwd), { scoped: { command: "scoped" } });
+    expect(loadWorkspaceMcpConfig(cwd).servers.map((entry) => entry.name)).toEqual([
+      "inherited",
+      "own",
+    ]);
+    expect(loadWorkspaceMcpConfig(cwd, { projectTrusted: true }).servers).toHaveLength(4);
+    expect(findRawMcpEntry(cwd, "inherited")?.entry).toMatchObject({
+      timeout: 1234,
+      env: { TOKEN: `\${TOKEN}` },
+      exposure: "deferred",
+    });
   });
-
-  it("parses http servers with headers", () => {
-    const { servers } = parseMcpConfig(
-      JSON.stringify({
-        mcpServers: {
-          remote: {
-            url: "https://example.com/mcp",
-            headers: { Authorization: envRef("API_KEY") },
-          },
-        },
-      }),
-      "test.json",
-      env,
-    );
-    expect(servers[0]).toMatchObject({
+  it("writes inherited edits to Modus and masks the old name on rename", () => {
+    const inheritedPath = join(cwd, ".pi", "mcp.json");
+    save(inheritedPath, {
+      source: { command: "fixture", exposure: "deferred", toolExposure: { inspect: "direct" } },
+    });
+    const before = readFileSync(inheritedPath, "utf8");
+    upsertMcpServerEntry(cwd, {
+      name: "renamed",
+      originalName: "source",
       transport: "http",
-      url: "https://example.com/mcp",
-      headers: { Authorization: "k-123" },
+      url: "https://example.test/mcp",
+      enabled: true,
     });
+    expect(readFileSync(inheritedPath, "utf8")).toBe(before);
+    expect(findRawMcpEntry(cwd, "source")?.entry.enabled).toBe(false);
+    expect(findRawMcpEntry(cwd, "renamed")?.entry).toMatchObject({
+      exposure: "deferred",
+      toolExposure: { inspect: "direct" },
+      url: "https://example.test/mcp",
+    });
+    expect(findRawMcpEntry(cwd, "renamed")?.entry.command).toBeUndefined();
   });
-
-  it("parses common MCP JSON wrapper shapes", () => {
-    for (const config of [
-      { mcp: { servers: { nested: { command: "run" } } } },
-      { servers: { vscode: { command: "run" } } },
-      { mcp_servers: { snake: { command: "run" } } },
-      { bare: { command: "run" } },
-    ]) {
-      const { servers, errors } = parseMcpConfig(JSON.stringify(config), "test.json", env);
-      expect(errors).toEqual([]);
-      expect(servers).toHaveLength(1);
-      expect(servers[0]).toMatchObject({ command: "run" });
-    }
+  it("disables inherited entries without modifying their file", () => {
+    const path = join(roots.cli, "mcp.json");
+    save(path, { remote: { url: "https://example.test/mcp" } });
+    const before = readFileSync(path, "utf8");
+    setMcpServerEnabledEntry(cwd, "remote", false);
+    expect(findRawMcpEntry(cwd, "remote")?.entry.enabled).toBe(false);
+    expect(readFileSync(path, "utf8")).toBe(before);
+    removeMcpServerEntry(cwd, "remote");
+    expect(findRawMcpEntry(cwd, "remote")?.source).toBe(path);
   });
-
-  it("honors disabled/enabled flags", () => {
-    const { servers } = parseMcpConfig(
-      JSON.stringify({
-        mcpServers: {
-          off: { command: "x", disabled: true },
-          alsoOff: { command: "y", enabled: false },
-          on: { command: "z" },
-        },
-      }),
-      "test.json",
-      env,
-    );
-    expect(servers.map((server) => [server.name, server.enabled])).toEqual([
-      ["off", false],
-      ["alsoOff", false],
-      ["on", true],
-    ]);
+  it("writes global servers only to the Modus user directory", () => {
+    upsertMcpServerEntry(cwd, {
+      name: "global",
+      scope: "user",
+      transport: "stdio",
+      command: "fixture",
+      enabled: true,
+    });
+    expect(findRawMcpEntry(cwd, "global")?.source).toBe(userMcpConfigPath());
   });
-
-  it("collects errors for invalid entries without dropping valid ones", () => {
-    const { servers, errors } = parseMcpConfig(
-      JSON.stringify({ mcpServers: { broken: {}, ok: { command: "run" } } }),
-      "test.json",
-      env,
-    );
-    expect(servers.map((server) => server.name)).toEqual(["ok"]);
-    expect(errors).toHaveLength(1);
-    expect(errors[0]?.message).toContain('"broken"');
-  });
-
-  it("reports invalid JSON as a single error", () => {
-    const { servers, errors } = parseMcpConfig("{not json", "bad.json", env);
-    expect(servers).toEqual([]);
-    expect(errors).toHaveLength(1);
-    expect(errors[0]?.source).toBe("bad.json");
-  });
-
-  it("reports a missing mcpServers object", () => {
-    const { errors } = parseMcpConfig("{}", "empty.json", env);
-    expect(errors[0]?.message).toContain("mcpServers");
+  it("reports malformed files while retaining valid configuration", () => {
+    save(userMcpConfigPath(), { valid: { command: "fixture" } });
+    mkdirSync(dirname(defaultMcpConfigPath(cwd)), { recursive: true });
+    writeFileSync(defaultMcpConfigPath(cwd), "{", "utf8");
+    const result = loadWorkspaceMcpConfig(cwd, { projectTrusted: true });
+    expect(result.servers.map((entry) => entry.name)).toEqual(["valid"]);
+    expect(result.errors).toHaveLength(1);
   });
 });

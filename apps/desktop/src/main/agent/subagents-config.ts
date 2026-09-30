@@ -9,6 +9,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import type {
   ConfigScope,
   CreateSubagentInput,
@@ -16,7 +17,7 @@ import type {
   SubagentInfo,
   UpdateSubagentInput,
 } from "../../shared/contracts";
-import { normalizeSkillName, parseFrontmatter } from "../skills/skills-config";
+import { normalizeSkillName } from "../skills/skills";
 import { listModels } from "./model-service";
 
 const USER_AGENT_FAMILIES = [".codex", ".claude", ".cursor", ".modus"] as const;
@@ -24,7 +25,6 @@ const WORKSPACE_AGENT_FAMILIES = [".codex", ".claude", ".cursor", ".modus"] as c
 const SUBAGENTS_MANIFEST_BUDGET = 8000;
 
 type AgentRoot = { dir: string; source: string; scope: ConfigScope };
-type FrontmatterValue = string | string[];
 
 export type ParsedSubagent = {
   name: string;
@@ -38,7 +38,7 @@ export type ParsedSubagent = {
 };
 
 export function parseSubagent(text: string, fallbackName: string): ParsedSubagent {
-  const { data, body } = parseFrontmatter(text);
+  const { frontmatter: data, body } = parseFrontmatter(text);
   const name = normalizeSkillName(
     (typeof data.name === "string" && data.name.trim()) || fallbackName,
   );
@@ -47,7 +47,7 @@ export function parseSubagent(text: string, fallbackName: string): ParsedSubagen
     firstNonHeadingLine(body) ||
     "";
   const tools = asStringArray(data.tools);
-  const disallowedTools = asStringArray(data.disallowedtools ?? data["disallowed-tools"]);
+  const disallowedTools = asStringArray(data.disallowedTools ?? data["disallowed-tools"]);
   return {
     name,
     description,
@@ -337,11 +337,15 @@ function isPathInside(root: string, path: string): boolean {
   return diff === "" || (!!diff && !diff.startsWith("..") && !isAbsolute(diff));
 }
 
-function scalar(value: FrontmatterValue | undefined): string | undefined {
+function scalar(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-function asBoolean(value: FrontmatterValue | undefined, fallback: boolean): boolean {
+function asBoolean(value: unknown, fallback: boolean): boolean {
+  // YAML resolves true/false to booleans; quoted forms stay strings.
+  if (typeof value === "boolean") {
+    return value;
+  }
   if (typeof value !== "string") {
     return fallback;
   }
@@ -351,9 +355,9 @@ function asBoolean(value: FrontmatterValue | undefined, fallback: boolean): bool
   return fallback;
 }
 
-function asStringArray(value: FrontmatterValue | undefined): string[] | undefined {
+function asStringArray(value: unknown): string[] | undefined {
   if (Array.isArray(value)) {
-    const items = value.map((item) => item.trim()).filter(Boolean);
+    const items = value.filter((item): item is string => typeof item === "string");
     return items.length > 0 ? items : undefined;
   }
   if (typeof value === "string" && value.trim()) {
@@ -365,7 +369,7 @@ function asStringArray(value: FrontmatterValue | undefined): string[] | undefine
   return undefined;
 }
 
-function asIsolation(value: FrontmatterValue | undefined): "shared" | "worktree" {
+function asIsolation(value: unknown): "shared" | "worktree" {
   return scalar(value)?.trim() === "worktree" ? "worktree" : "shared";
 }
 

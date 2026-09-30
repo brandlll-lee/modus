@@ -21,7 +21,7 @@ export type ToolIconName = "globe" | "favicon";
  * How a tool's permission requirement is determined.
  * - `safe`: never prompts (read-only tools).
  * - `dangerous`: always prompts, using the declared `action`.
- * - `dynamic`: a main-side classifier inspects the arguments (e.g. `bash`).
+ * - `dynamic`: a main-side classifier inspects declared operation arguments.
  */
 export type ToolDangerLevel = "safe" | "dangerous" | "dynamic";
 
@@ -108,11 +108,20 @@ export type ToolCatalogEntry = {
   ui: ToolUiMeta;
 };
 
-export const BUILTIN_TOOL_NAMES = ["read", "bash", "edit", "write", "grep", "find", "ls"] as const;
+export const BUILTIN_TOOL_NAMES = [
+  "read",
+  "bash",
+  "powershell",
+  "edit",
+  "write",
+  "grep",
+  "find",
+  "ls",
+] as const;
 
 export type BuiltinToolName = (typeof BUILTIN_TOOL_NAMES)[number];
 
-/** The seven tools PI's DefaultResourceLoader ships out of the box. */
+/** Presentation and permission declarations for PI's built-in tools. */
 export const BUILTIN_TOOL_CATALOG: ToolCatalogEntry[] = [
   {
     name: "read",
@@ -131,7 +140,22 @@ export const BUILTIN_TOOL_CATALOG: ToolCatalogEntry[] = [
     name: "bash",
     kind: "builtin",
     profiles: ["chat"],
-    permission: { danger: "dynamic" },
+    permission: { danger: "dangerous", action: "shell.execute" },
+    capabilities: ["shell", "process"],
+    ui: {
+      verb: "Ran",
+      activeVerb: "Running",
+      primaryArgKey: "command",
+      render: "terminal",
+      terminalFramed: false,
+      summary: { verb: "ran", noun: { one: "command", other: "commands" }, countBy: "call" },
+    },
+  },
+  {
+    name: "powershell",
+    kind: "builtin",
+    profiles: ["chat"],
+    permission: { danger: "dangerous", action: "shell.execute" },
     capabilities: ["shell", "process"],
     ui: {
       verb: "Ran",
@@ -390,29 +414,8 @@ export function getBuiltinToolUiMeta(name: string): ToolUiMeta | undefined {
   return BUILTIN_TOOL_CATALOG.find((entry) => entry.name === name)?.ui;
 }
 
-/** Namespacing prefix for MCP-bridged tools: mcp_<server>_<tool>. */
-export const MCP_TOOL_PREFIX = "mcp_";
-
-export function isMcpToolName(name: string): boolean {
-  return name.startsWith(MCP_TOOL_PREFIX);
-}
-
-/**
- * UI metadata for an MCP-bridged tool. The verb carries the server name so a
- * call renders as "linear · create_issue" instead of an opaque identifier.
- */
-export function getMcpToolUiMeta(name: string): ToolUiMeta {
-  const rest = name.slice(MCP_TOOL_PREFIX.length);
-  const separator = rest.indexOf("_");
-  const server = separator > 0 ? rest.slice(0, separator) : rest;
-  return { verb: server };
-}
-
-/** UI metadata for any known tool (builtin, terminal, web, to-do, or MCP-bridged). */
+/** UI metadata for Modus-owned and builtin tools. Extension labels come from PI. */
 export function getToolUiMeta(name: string): ToolUiMeta | undefined {
-  if (isMcpToolName(name)) {
-    return getMcpToolUiMeta(name);
-  }
   if (name === TODO_TOOL_NAME) {
     return TODO_TOOL_UI;
   }

@@ -125,7 +125,7 @@ export type ModusApi = {
       title: string;
       model?: string;
     }): Promise<AgentSessionInfo>;
-    list(input?: { includeSessionId?: string }): Promise<AgentSessionInfo[]>;
+    list(input?: { includeSessionId?: string | undefined }): Promise<AgentSessionInfo[]>;
     listArchived(workspaceId: string): Promise<AgentSessionInfo[]>;
     listEvents(
       sessionId: string,
@@ -174,7 +174,7 @@ export type ModusApi = {
       thinkingVariant?: string;
     }): Promise<AgentSessionInfo>;
     cycleModel(input: {
-      sessionId?: string;
+      sessionId?: string | undefined;
       direction?: "forward" | "backward";
     }): Promise<ModelInfo>;
     onEvent(callback: (event: AgentEvent) => void): () => void;
@@ -308,7 +308,7 @@ export type ModusApi = {
   permission: {
     decide(input: {
       requestId?: string;
-      sessionId?: string;
+      sessionId?: string | undefined;
       action: PermissionAction;
       target: string;
       decision: PermissionDecision["decision"];
@@ -348,9 +348,12 @@ export type ModusApi = {
     onCatalogChanged(callback: () => void): () => void;
     providerDetail(provider: string): Promise<ModelProviderDetail | undefined>;
     connectionMethods(provider: string): Promise<ProviderConnectionMethod[]>;
-    startProviderAuth(input: { provider: string }): Promise<ProviderAuthOperationState>;
+    startProviderAuth(input: {
+      provider: string;
+      method?: "oauth" | "api_key";
+    }): Promise<ProviderAuthOperationState>;
     providerAuthState(input: { operationId: string }): Promise<ProviderAuthOperationState>;
-    respondProviderAuth(input: { operationId: string; value?: string }): Promise<void>;
+    respondProviderAuth(input: { operationId: string; value?: string | undefined }): Promise<void>;
     cancelProviderAuth(input: { operationId: string }): Promise<void>;
     disconnectProvider(provider: string): Promise<void>;
     customProviderConfig(provider: string): Promise<CustomProviderConfig | undefined>;
@@ -364,8 +367,8 @@ export type ModusApi = {
   review: {
     start(input: {
       cwd: string;
-      sessionId?: string;
-      workspaceId?: string;
+      sessionId?: string | undefined;
+      workspaceId?: string | undefined;
       depth?: AgentReviewDepth;
     }): Promise<AgentReviewResult>;
     list(cwd: string): Promise<AgentReviewResult[]>;
@@ -375,7 +378,13 @@ export type ModusApi = {
     restore(input: { checkpointId: string }): Promise<CheckpointInfo>;
   };
   mcp: {
-    list(): Promise<McpServerInfo[]>;
+    list(cwd?: string): Promise<McpServerInfo[]>;
+    status(cwd: string): Promise<Array<{ sessionId: string; report: string }>>;
+    command(input: {
+      sessionId: string;
+      name: string;
+      action: "login" | "logout" | "reconnect";
+    }): Promise<string>;
     sync(cwd: string): Promise<McpServerInfo[]>;
     openConfig(cwd: string): Promise<string>;
     upsert(input: { cwd: string } & McpServerUpsertInput): Promise<McpServerInfo[]>;
@@ -394,6 +403,8 @@ export type ModusApi = {
   };
   skills: {
     list(cwd: string): Promise<SkillInfo[]>;
+    refresh(cwd: string): Promise<SkillInfo[]>;
+    onChanged(callback: (cwd: string) => void): () => void;
     get(input: { cwd: string; path: string }): Promise<SkillDetail | undefined>;
     create(input: {
       cwd: string;

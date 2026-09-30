@@ -1,13 +1,7 @@
 ---
 name: browser
 description: Use when controlling the Modus in-app browser for navigation, page inspection, forms, search, screenshots, or browser-state verification with raw Chrome DevTools Protocol.
-allow-implicit-invocation: true
-allowed-tools:
-  - browser_tabs
-  - browser_cdp
-  - browser_events
-  - browser_snapshot
-  - browser_screenshot
+disable-model-invocation: false
 ---
 
 # Browser

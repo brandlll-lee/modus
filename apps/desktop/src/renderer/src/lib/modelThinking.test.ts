@@ -40,14 +40,4 @@ describe("modelThinkingOptions", () => {
     ]);
     expect(selectedThinkingOption(model).value).toBe("high");
   });
-
-  it("labels token-budget selections without inventing named levels", () => {
-    expect(
-      selectedThinkingLabel({
-        thinkingLevel: "high",
-        thinkingVariant: "32768",
-        thinkingBudget: { min: 128, max: 32_768 },
-      }),
-    ).toBe("32,768 tokens");
-  });
 });

@@ -28,28 +28,31 @@ import {
   restoreCheckpoint,
 } from "../agent/checkpoint-service";
 import {
-  cancelProviderAuth,
   configureProvider,
   deleteCustomProvider,
   disconnectProvider,
   getCustomProviderConfig,
   getModelSettings,
-  getProviderAuthState,
   getProviderDetail,
   listModels,
   listProviderConnectionMethods,
   refreshRemoteModelCatalog,
-  respondProviderAuth,
   setDefaultModel,
-  startProviderAuth,
   testCustomProvider,
   updateModelConfig,
   upsertCustomProvider,
 } from "../agent/model-service";
+import {
+  cancelProviderAuth,
+  getProviderAuthState,
+  respondProviderAuth,
+  startProviderAuth,
+} from "../agent/provider-auth";
 import { listAgentReviews, startAgentReview } from "../agent/review-service";
 import { rollbackToUserMessage } from "../agent/rollback-service";
 import { getAgentRuntime } from "../agent/runtime-registry";
 import { deleteAgentSessionTree, setAgentSessionArchivedTree } from "../agent/session-lifecycle";
+import { onSessionResourcesChanged, reloadSessionResources } from "../agent/session-resources";
 import {
   createSubagent,
   deleteSubagent,
@@ -117,7 +120,9 @@ import {
   deleteMcpServer,
   ensureMcpConfigFile,
   getMcpServerEntry,
+  getMcpStatus,
   listMcpServers,
+  runMcpCommand,
   setMcpServerEnabled,
   syncWorkspaceMcp,
   upsertMcpServer,
@@ -199,6 +204,7 @@ import {
   filesWriteSchema,
   gitCheckoutSchema,
   gitLogSchema,
+  mcpCommandSchema,
   mcpServerNameSchema,
   mcpSetEnabledSchema,
   mcpUpsertSchema,
@@ -661,6 +667,12 @@ export function registerAppIpc({
       if (!window.isDestroyed()) {
         window.webContents.send(IPC_CHANNELS.processChanged);
       }
+    }
+  });
+
+  onSessionResourcesChanged((cwd) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send(IPC_CHANNELS.resourcesChanged, cwd);
     }
   });
 
@@ -1158,9 +1170,21 @@ export function registerAppIpc({
     return checkpoint;
   });
 
-  ipcMain.handle(IPC_CHANNELS.mcpList, (event) => {
+  ipcMain.handle(IPC_CHANNELS.mcpList, (event, cwd?: string) => {
     assertTrustedSender(event);
-    return listMcpServers();
+    return listMcpServers(
+      cwd === undefined ? undefined : parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.mcpList),
+    );
+  });
+
+  ipcMain.handle(IPC_CHANNELS.mcpStatus, async (event, cwd: string) => {
+    assertTrustedSender(event);
+    return getMcpStatus(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.mcpStatus));
+  });
+
+  ipcMain.handle(IPC_CHANNELS.mcpCommand, async (event, input) => {
+    assertTrustedSender(event);
+    return runMcpCommand(parseIpcInput(mcpCommandSchema, input, IPC_CHANNELS.mcpCommand));
   });
 
   ipcMain.handle(IPC_CHANNELS.mcpSync, async (event, cwd: string) => {
@@ -1232,6 +1256,13 @@ export function registerAppIpc({
   ipcMain.handle(IPC_CHANNELS.skillsList, (event, cwd: string) => {
     assertTrustedSender(event);
     return listSkills(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.skillsList));
+  });
+
+  ipcMain.handle(IPC_CHANNELS.skillsRefresh, async (event, cwd: string) => {
+    assertTrustedSender(event);
+    const target = parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.skillsRefresh);
+    await reloadSessionResources(target);
+    return listSkills(target);
   });
 
   ipcMain.handle(IPC_CHANNELS.skillsGet, (event, input) => {
@@ -1345,7 +1376,7 @@ export function registerAppIpc({
       input,
       IPC_CHANNELS.modelProviderAuthStart,
     );
-    return startProviderAuth(parsed.provider, (url) => shell.openExternal(url));
+    return startProviderAuth(parsed.provider, (url) => shell.openExternal(url), parsed.method);
   });
 
   ipcMain.handle(IPC_CHANNELS.modelProviderAuthState, (event, input) => {
@@ -1380,7 +1411,7 @@ export function registerAppIpc({
 
   ipcMain.handle(IPC_CHANNELS.modelDisconnectProvider, (event, provider: string) => {
     assertTrustedSender(event);
-    disconnectProvider(
+    return disconnectProvider(
       parseIpcInput(sessionIdSchema, provider, IPC_CHANNELS.modelDisconnectProvider),
     );
   });
@@ -1394,7 +1425,7 @@ export function registerAppIpc({
 
   ipcMain.handle(IPC_CHANNELS.modelDeleteCustomProvider, (event, provider: string) => {
     assertTrustedSender(event);
-    deleteCustomProvider(
+    return deleteCustomProvider(
       parseIpcInput(sessionIdSchema, provider, IPC_CHANNELS.modelDeleteCustomProvider),
     );
   });

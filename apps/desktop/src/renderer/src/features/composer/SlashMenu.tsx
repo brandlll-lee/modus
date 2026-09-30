@@ -18,7 +18,9 @@ export function SlashMenu({ items, activeIndex, onSelect }: SlashMenuProps) {
       {items.map((item, index) => {
         const showSectionHeader = item.kind !== "action" && items[index - 1]?.kind !== item.kind;
         const scopeLabel =
-          item.kind === "skill" ? (item.skill.scope === "user" ? "Personal" : "Workspace") : null;
+          item.kind === "skill"
+            ? { user: "Personal", project: "Project", temporary: "Temporary" }[item.skill.scope]
+            : null;
         return (
           <div key={item.key}>
             {showSectionHeader ? (
