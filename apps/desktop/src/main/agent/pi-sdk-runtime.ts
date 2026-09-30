@@ -6,7 +6,7 @@ import {
   createAgentSession,
   DefaultResourceLoader,
   SessionManager,
-  SettingsManager,
+  type SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { app, type BrowserWindow as BrowserWindowType } from "electron";
 import type {
@@ -55,6 +55,7 @@ import {
   updateAgentSessionTitle,
   updateAgentSessionWorktree,
 } from "./agent-store";
+import { createAgentSettings } from "./agent-settings";
 import { createCheckpoint } from "./checkpoint-service";
 import {
   cycleDefaultModel,
@@ -79,7 +80,7 @@ import type {
   PromptAgentInput,
 } from "./runtime";
 import { deriveSessionTitle, shouldReplaceSessionTitle } from "./session-title";
-import { describeAgentShellForPrompt, resolveAgentShell } from "./shell-resolver";
+import { describeAgentShellForPrompt, resolveAgentShellWith } from "./shell-resolver";
 import { resolveSubagent, resolveSubagentsPrompt } from "./subagents-config";
 import { registerAppTools } from "./tools/app-tools";
 import { registerBrowserTools } from "./tools/browser-tools";
@@ -406,14 +407,18 @@ export class PiSdkRuntime implements AgentRuntime {
     emit: EmitAgentEvent,
     agentDir: string,
   ): Promise<{ settingsManager: SettingsManager; loader: DefaultResourceLoader }> {
-    // Inject a cross-platform-resolved POSIX shell so the bash tool works out of
-    // the box (notably on Windows, where PI's default picks the broken WSL stub),
-    // and tell the model which shell it's actually driving.
-    const shell = resolveAgentShell();
-    const settingsManager = SettingsManager.inMemory({
-      compaction: { enabled: true },
-      ...(shell.shellPath ? { shellPath: shell.shellPath } : {}),
-    });
+    // Inherit the PI CLI's settings (compaction, retry, proxy, shell…) so a
+    // machine already configured for PI works here unchanged. Modus has no
+    // settings of its own to layer on top yet; the shell is resolved below
+    // because the host may need one PI cannot detect (Windows Git Bash).
+    const settingsManager = createAgentSettings();
+    const declaredShellPath = settingsManager.getShellPath();
+    const shell = resolveAgentShellWith(declaredShellPath);
+    // Only inject what detection found: a shell the CLI already declared is
+    // already in effect and must not be rewritten with the probe's label.
+    if (declaredShellPath === undefined && shell.shellPath) {
+      settingsManager.applyOverrides({ shellPath: shell.shellPath });
+    }
     // Project rules (AGENTS.md / .cursor/rules alwaysApply) ride the system
     // prompt so they apply to every turn without re-paying per-message tokens.
     const globalGuidancePrompt = resolveGlobalGuidancePrompt();

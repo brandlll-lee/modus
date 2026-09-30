@@ -79,8 +79,12 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
     open: mocks.sessionManagerOpen,
   },
   SettingsManager: {
-    inMemory: vi.fn(() => ({})),
+    inMemory: vi.fn(() => ({
+      applyOverrides: vi.fn(),
+      getShellPath: vi.fn(() => undefined),
+    })),
   },
+  getAgentDir: vi.fn(() => join(userData, "pi-agent")),
 }));
 
 vi.mock("../guidance/guidance-service", () => ({

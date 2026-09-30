@@ -27,6 +27,7 @@ import { dirname, join } from "node:path";
 
 /** Where the resolved shell came from. */
 export type ShellSource =
+  | "declared" // explicit shellPath from settings (PI CLI or Modus)
   | "override" // explicit MODUS_SHELL_PATH env
   | "git-bash" // a real Git Bash / MSYS2 / Cygwin bash
   | "path-bash" // a non-WSL bash found on PATH
@@ -243,6 +244,26 @@ let cached: ResolvedAgentShell | undefined;
 export function resolveAgentShell(): ResolvedAgentShell {
   cached ??= resolveShellWith(nodeShellProbe());
   return cached;
+}
+
+/**
+ * Resolve the shell the agent should use, preferring an explicit declaration
+ * over auto-detection. A machine configured for the PI CLI already declares its
+ * shell; guessing would override that statement with a probe result.
+ * The declaration is only honored when the path actually exists, so a stale
+ * setting on a moved install falls back to detection instead of breaking bash.
+ */
+export function resolveAgentShellWith(declaredPath: string | undefined): ResolvedAgentShell {
+  if (declaredPath && existsSync(declaredPath)) {
+    return {
+      platform: process.platform,
+      shellPath: declaredPath,
+      source: "declared",
+      usable: true,
+      label: `Configured shell (${declaredPath})`,
+    };
+  }
+  return resolveAgentShell();
 }
 
 /**

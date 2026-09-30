@@ -1,6 +1,13 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { describe, expect, it } from "vitest";
-import { describeAgentShellForPrompt, resolveShellWith, type ShellProbe } from "./shell-resolver";
+import { afterAll, describe, expect, it } from "vitest";
+import {
+  describeAgentShellForPrompt,
+  resolveAgentShellWith,
+  resolveShellWith,
+  type ShellProbe,
+} from "./shell-resolver";
 
 function probe(overrides: Partial<ShellProbe>): ShellProbe {
   return {
@@ -146,5 +153,34 @@ describe("describeAgentShellForPrompt", () => {
 
     expect(text).toContain("WARNING");
     expect(text).toContain("No usable bash was found.");
+  });
+});
+
+describe("resolveAgentShellWith — declared shell", () => {
+  const scratch = mkdtempSync(join(tmpdir(), "modus-shell-declared-"));
+
+  afterAll(() => {
+    rmSync(scratch, { recursive: true, force: true });
+  });
+
+  it("honors a declared shell that exists", () => {
+    const declared = join(scratch, "declared-bash");
+    writeFileSync(declared, "");
+
+    const result = resolveAgentShellWith(declared);
+
+    expect(result.shellPath).toBe(declared);
+    expect(result.source).toBe("declared");
+    expect(result.usable).toBe(true);
+  });
+
+  it("falls back to detection when the declared shell is missing", () => {
+    const declared = join(scratch, "absent-bash");
+
+    expect(resolveAgentShellWith(declared).shellPath).not.toBe(declared);
+  });
+
+  it("falls back to detection when nothing is declared", () => {
+    expect(resolveAgentShellWith(undefined).usable).toBe(true);
   });
 });
