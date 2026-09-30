@@ -36,6 +36,7 @@ import { CheckpointRestoreButton } from "./CheckpointRestoreButton";
 import { MarkdownMessage } from "./MarkdownMessage";
 
 type MessageBlockProps = {
+  sessionId?: string | undefined;
   messageRole: "assistant" | "user";
   /** Timeline id of this message — the rollback anchor for edit & resend. */
   messageId: string;
@@ -73,6 +74,7 @@ type MessageBlockProps = {
 };
 
 export const MessageBlock = memo(function MessageBlock({
+  sessionId,
   messageRole,
   messageId,
   content,
@@ -146,6 +148,7 @@ export const MessageBlock = memo(function MessageBlock({
       >
         {showEditor && onEditResend ? (
           <InlineEditComposer
+            sessionId={sessionId}
             {...(attachments ? { attachments } : {})}
             content={content}
             {...(contextChips ? { contextChips } : {})}
@@ -219,6 +222,7 @@ export const MessageBlock = memo(function MessageBlock({
 
 /** Seeds the shared Composer for edit-resend — no parallel editor UI. */
 function InlineEditComposer({
+  sessionId,
   messageId,
   content,
   attachments,
@@ -234,6 +238,7 @@ function InlineEditComposer({
   onEditResend,
   onRestoreCheckpoint,
 }: {
+  sessionId?: string | undefined;
   messageId: string;
   content: string;
   attachments?: PromptImageAttachment[];
@@ -267,6 +272,7 @@ function InlineEditComposer({
 
   return (
     <Composer
+      sessionId={sessionId}
       trailingActions={
         <>
           <CopyButton label="Copy message" text={draft.value} />
@@ -353,9 +359,6 @@ function contextItemsFromChips(
     if (chip.kind === "recent-changes") {
       return [{ type: "recent-changes" }];
     }
-    if (chip.kind === "rules") {
-      return [{ type: "rules" }];
-    }
     if (chip.kind === "search" && chip.label.startsWith("search:")) {
       return [{ type: "search", query: chip.label.slice("search:".length) }];
     }
@@ -402,7 +405,6 @@ function ContextKindIcon({ kind }: { kind: MessageContextChip["kind"] }) {
     case "folder":
       return <IconFolder {...props} />;
     case "doc":
-    case "rules":
       return <IconBook2 {...props} />;
     case "terminal":
       return <IconTerminal2 {...props} />;

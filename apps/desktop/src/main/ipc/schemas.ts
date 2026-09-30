@@ -5,13 +5,13 @@ import { STARTUP_RENDERER_MILESTONES } from "../../shared/startup";
 const nonEmptyString = z.string().trim().min(1);
 const optionalNonEmptyString = nonEmptyString.optional();
 const thinkingLevelSchema = z.enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
-const jsonObjectSchema = z.record(z.string(), z.unknown());
-const optionalHeadersSchema = z.record(z.string(), z.string()).optional();
+const _jsonObjectSchema = z.record(z.string(), z.unknown());
+const _optionalHeadersSchema = z.record(z.string(), z.string()).optional();
 export const startupMetricSchema = z.object({
   milestone: z.enum(STARTUP_RENDERER_MILESTONES),
   rendererElapsedMs: z.number().finite().nonnegative(),
 });
-const modelCostSchema = z
+const _modelCostSchema = z
   .object({
     input: z.number().min(0).optional(),
     output: z.number().min(0).optional(),
@@ -222,16 +222,9 @@ export const browserDesignModeSchema = z.object({
     .optional(),
 });
 
-export const skillsGetSchema = z.object({
-  cwd: nonEmptyString,
+export const resourceLocationSchema = z.object({
+  sessionId: nonEmptyString,
   path: nonEmptyString,
-});
-
-export const skillsCreateSchema = z.object({
-  cwd: nonEmptyString,
-  name: nonEmptyString.max(64),
-  description: z.string().trim().max(280),
-  body: z.string().trim().min(1).max(20_000),
 });
 
 export const subagentsGetSchema = z.object({
@@ -399,7 +392,6 @@ export const contextSearchSchema = z.object({
       "past-chat",
       "project-summary",
       "recent-changes",
-      "rules",
       "search",
     ])
     .optional(),
@@ -426,57 +418,6 @@ export const checkpointRestoreSchema = z.object({
   checkpointId: nonEmptyString,
 });
 
-const stringRecordSchema = z.record(z.string(), z.string());
-
-export const mcpUpsertSchema = z
-  .object({
-    cwd: nonEmptyString,
-    name: z
-      .string()
-      .trim()
-      .min(1)
-      .regex(/^[A-Za-z0-9_-]+$/, "Server names may use letters, numbers, dash and underscore."),
-    originalName: optionalNonEmptyString,
-    scope: z.enum(["user", "project"]).optional(),
-    exposure: z.enum(["direct", "deferred", "codemode", "codemode-deferred", "hidden"]).optional(),
-    transport: z.enum(["stdio", "http"]),
-    command: z.string().trim().optional(),
-    args: z.array(z.string()).max(64).optional(),
-    env: stringRecordSchema.optional(),
-    url: z.string().trim().optional(),
-    headers: stringRecordSchema.optional(),
-    enabled: z.boolean(),
-  })
-  .refine((value) => (value.transport === "stdio" ? Boolean(value.command?.trim()) : true), {
-    message: "Local servers need a command.",
-  })
-  .refine(
-    (value) =>
-      value.transport === "http" ? Boolean(value.url && /^https?:\/\//.test(value.url)) : true,
-    { message: "Remote servers need an http(s) URL." },
-  );
-
-export const mcpServerNameSchema = z.object({
-  cwd: nonEmptyString,
-  name: nonEmptyString,
-});
-
-export const mcpCommandSchema = z.object({
-  sessionId: nonEmptyString,
-  name: z.string().regex(/^[A-Za-z0-9_-]+$/),
-  action: z.enum(["login", "logout", "reconnect"]),
-});
-
-export const mcpSetEnabledSchema = z.object({
-  cwd: nonEmptyString,
-  name: nonEmptyString,
-  enabled: z.boolean(),
-});
-
-export const personalizationSaveSchema = z.object({
-  content: z.string().max(200_000),
-});
-
 export const reviewStartSchema = z.object({
   cwd: nonEmptyString,
   sessionId: optionalNonEmptyString,
@@ -484,111 +425,9 @@ export const reviewStartSchema = z.object({
   depth: z.enum(["fast", "standard", "deep"]).optional(),
 });
 
-export const configureProviderSchema = z.object({
-  provider: nonEmptyString,
-  apiKey: z.string().optional(),
-  baseUrl: z.string().trim().optional(),
-  enabledModelIds: z.array(nonEmptyString).optional(),
-});
-
-export const providerAuthStartSchema = z.object({
-  provider: nonEmptyString,
-  method: z.enum(["oauth", "api_key"]).optional(),
-});
-
-export const providerAuthOperationSchema = z.object({
-  operationId: nonEmptyString,
-});
-
-export const providerAuthResponseSchema = z.object({
-  operationId: nonEmptyString,
-  value: z.string().max(20_000).optional(),
-});
-
-const providerCompatibilitySchema = z.object({
-  supportsDeveloperRole: z.boolean().optional(),
-  supportsReasoningEffort: z.boolean().optional(),
-});
-
-const modelCompatibilitySchema = z.object({
-  thinkingFormat: z
-    .enum([
-      "none",
-      "openai",
-      "openrouter",
-      "deepseek",
-      "together",
-      "zai",
-      "qwen",
-      "qwen-chat-template",
-      "string-thinking",
-    ])
-    .optional(),
-  supportsUsageInStreaming: z.boolean().optional(),
-  forceAdaptiveThinking: z.boolean().optional(),
-  allowEmptySignature: z.boolean().optional(),
-});
-
-export const customProviderModelSchema = z.object({
-  id: nonEmptyString,
-  name: z.string().optional(),
-  api: z.string().trim().min(1).optional(),
-  baseUrl: z.string().trim().url().optional(),
-  headers: optionalHeadersSchema,
-  contextWindow: z.number().int().min(1_000).max(10_000_000).optional(),
-  maxTokens: z.number().int().min(1).max(1_000_000).optional(),
-  reasoning: z.boolean().optional(),
-  input: z
-    .array(z.enum(["text", "image"]))
-    .min(1)
-    .optional(),
-  cost: modelCostSchema,
-  compat: jsonObjectSchema.optional(),
-  compatibility: modelCompatibilitySchema.optional(),
-  thinkingLevelMap: z.partialRecord(thinkingLevelSchema, z.string().nullable()).optional(),
-});
-
-export const upsertCustomProviderSchema = z.object({
-  provider: nonEmptyString,
-  name: nonEmptyString,
-  baseUrl: z.string().trim().url(),
-  apiKey: z.string().optional(),
-  api: z.string().trim().min(1).optional(),
-  authHeader: z.boolean().optional(),
-  headers: optionalHeadersSchema,
-  compat: jsonObjectSchema.optional(),
-  compatibility: providerCompatibilitySchema.optional(),
-  models: z.array(customProviderModelSchema).min(1),
-});
-
-export const testCustomProviderSchema = z.object({
-  provider: optionalNonEmptyString,
-  baseUrl: z.string().trim().url(),
-  api: z.string().trim().min(1).optional(),
-  apiKey: z.string().optional(),
-  authHeader: z.boolean().optional(),
-  headers: optionalHeadersSchema,
-  model: z.object({
-    id: nonEmptyString,
-    api: z.string().trim().min(1).optional(),
-    baseUrl: z.string().trim().url().optional(),
-    headers: optionalHeadersSchema,
-    reasoning: z.boolean().optional(),
-    contextWindow: z.number().int().min(1_000).max(10_000_000).optional(),
-    maxTokens: z.number().int().min(1).max(1_000_000).optional(),
-    compat: jsonObjectSchema.optional(),
-    compatibility: modelCompatibilitySchema.optional(),
-    thinkingLevelMap: z.partialRecord(thinkingLevelSchema, z.string().nullable()).optional(),
-  }),
-});
-
-export const updateModelConfigSchema = z.object({
+export const setModelThinkingSchema = z.object({
   model: nonEmptyString,
-  enabled: z.boolean().optional(),
-  thinkingLevel: thinkingLevelSchema.optional(),
-  thinkingVariant: optionalNonEmptyString,
-  contextWindow: z.number().int().min(1_000).max(10_000_000).optional(),
-  maxTokens: z.number().int().min(1).max(1_000_000).optional(),
+  thinkingVariant: nonEmptyString,
 });
 
 /** PNG bytes from renderer canvas.encode — Uint8Array survives Electron IPC clone. */

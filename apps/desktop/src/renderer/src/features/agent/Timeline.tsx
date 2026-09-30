@@ -22,6 +22,7 @@ import { WorkActivityRow, WorkFold } from "./ActivityGroup";
 import { MessageBlock } from "./MessageBlock";
 
 type TimelineProps = {
+  sessionId?: string | undefined;
   /** Blocks built by the owner (ChatPane) — the single authority for this list. */
   blocks: TimelineBlock[];
   /** Session cwd — file chips / markdown file nav resolve against the workspace. */
@@ -1169,6 +1170,7 @@ function TurnFooter({ turn }: { turn: TimelineTurn }) {
 }
 
 export function Timeline({
+  sessionId,
   blocks,
   cwd,
   model,
@@ -1212,6 +1214,7 @@ export function Timeline({
                 }
                 return (
                   <MessageBlock
+                    sessionId={sessionId}
                     key={key}
                     {...(block.attachments ? { attachments: block.attachments } : {})}
                     {...(block.contextChips ? { contextChips: block.contextChips } : {})}
@@ -1251,6 +1254,7 @@ export function Timeline({
                   ) : null}
                   {block.type === "message" ? (
                     <MessageBlock
+                      sessionId={sessionId}
                       {...(block.attachments ? { attachments: block.attachments } : {})}
                       {...(block.contextChips ? { contextChips: block.contextChips } : {})}
                       {...(block.contextItems ? { contextItems: block.contextItems } : {})}

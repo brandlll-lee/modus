@@ -18,7 +18,6 @@ beforeEach(async () => {
   await git(["config", "user.email", "test@example.com"]);
   await git(["config", "user.name", "Modus Test"]);
   await writeFile(join(repo, "tracked.txt"), "base\n");
-  await writeFile(join(repo, "AGENTS.md"), "Follow project rules.\n");
   await git(["add", "."]);
   await git(["commit", "-m", "initial"]);
 });
@@ -43,12 +42,6 @@ describe("context-service", () => {
 
     expect(resolved[0]?.title).toContain(":L2-3");
     expect(resolved[0]?.content).toBe("two\nthree");
-  });
-
-  it("resolves project rules", async () => {
-    const resolved = await resolveContext(repo, [{ type: "rules" }]);
-
-    expect(resolved[0]?.content).toContain("Follow project rules");
   });
 
   it("resolves recent changes with status and diff stat", async () => {
@@ -127,7 +120,7 @@ describe("context-service", () => {
     const content = resolved[0]?.content ?? "";
     expect(content).toContain("Selected elements:");
     expect(content).toContain("1. h1");
-    expect(content).toContain("Text: \"Pricing\"");
+    expect(content).toContain('Text: "Pricing"');
     expect(content).toContain("2. button");
     expect(content).toContain("DOM path: nav > button");
   });

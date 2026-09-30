@@ -38,7 +38,6 @@ const mocks = vi.hoisted(() => {
     sessionManagerCreate: vi.fn(() => ({ kind: "create" })),
     sessionManagerOpen: vi.fn(() => ({ kind: "open" })),
     resourceLoaderOptions: [] as unknown[],
-    globalGuidance: undefined as string | undefined,
   };
 });
 
@@ -79,6 +78,7 @@ vi.mock("@earendil-works/pi-coding-agent", async (original) => ({
       mocks.resourceLoaderOptions.push(options);
     }
     async reload(): Promise<void> {}
+    extendResources(): void {}
     getSkills(): { skills: unknown[]; diagnostics: unknown[] } {
       return { skills: [], diagnostics: [] };
     }
@@ -87,10 +87,6 @@ vi.mock("@earendil-works/pi-coding-agent", async (original) => ({
     create: mocks.sessionManagerCreate,
     open: mocks.sessionManagerOpen,
   },
-}));
-
-vi.mock("../guidance/guidance-service", () => ({
-  resolveGlobalGuidancePrompt: vi.fn(() => mocks.globalGuidance),
 }));
 
 vi.mock("../process/managed-process-facade", () => ({
@@ -279,7 +275,6 @@ beforeEach(async () => {
   mocks.sessionManagerCreate.mockClear();
   mocks.sessionManagerOpen.mockClear();
   mocks.resourceLoaderOptions = [];
-  mocks.globalGuidance = undefined;
   mocks.killManagedProcess.mockClear();
   mocks.listManagedProcesses.mockClear();
   mocks.setManagedProcesses([]);
@@ -615,10 +610,9 @@ describe("PiSdkRuntime", () => {
     expect(row.cwd).toBe(cwd);
   });
 
-  it("injects global guidance before workspace rules", async () => {
+  it("leaves workspace instructions to the native resource loader", async () => {
     const workspaceId = `workspace-${crypto.randomUUID()}`;
     const now = new Date().toISOString();
-    mocks.globalGuidance = "<global_guidance>global</global_guidance>";
     await writeFile(join(cwd, "AGENTS.md"), "project rules", "utf8");
     getDatabase()
       .prepare(
@@ -638,15 +632,7 @@ describe("PiSdkRuntime", () => {
     await runtime.ensure(window, session.id);
 
     const options = mocks.resourceLoaderOptions.at(-1) as { appendSystemPrompt: string[] };
-    const globalIndex = options.appendSystemPrompt.findIndex((part) =>
-      part.includes("<global_guidance>global"),
-    );
-    const rulesIndex = options.appendSystemPrompt.findIndex((part) =>
-      part.includes("<project_rules>"),
-    );
-
-    expect(globalIndex).toBeGreaterThan(-1);
-    expect(rulesIndex).toBeGreaterThan(globalIndex);
+    expect(options.appendSystemPrompt.join("\n")).not.toContain("project rules");
   });
 
   it("creates a fresh PI backing session when a persisted session is no longer in memory and its PI file is missing", async () => {

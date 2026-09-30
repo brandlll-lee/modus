@@ -6,7 +6,7 @@ import {
   createAgentSession,
   createCodemodeExtension,
   createToolSearchExtension,
-  DefaultResourceLoader,
+  type ResourceLoader,
   SessionManager,
   type SettingsManager,
 } from "@earendil-works/pi-coding-agent";
@@ -28,7 +28,6 @@ import {
   finishSubagentWorktree,
   getChangeStatsSince,
 } from "../git/git-service";
-import { resolveGlobalGuidancePrompt } from "../guidance/guidance-service";
 import { denyPendingQuestionRequestsForSession } from "../interaction/question-broker";
 import { IPC_CHANNELS } from "../ipc/channels";
 import { createModusMcpExtension } from "../mcp/mcp-service";
@@ -37,10 +36,10 @@ import { denyPendingPermissionRequestsForSession } from "../permissions/permissi
 import { readPlanById, setPlanBuildStatusById } from "../plan/plan-store";
 import { summarizeApps } from "../process/app-process-service";
 import { killManagedProcess, listManagedProcesses } from "../process/managed-process-facade";
-import { RULES_MAX_TOTAL_BYTES, resolveAlwaysRulesPrompt } from "../rules/rules-service";
-import { skillPathsFor } from "../skills/skills-service";
 import { summarizeTerminals } from "../terminal/terminal-service";
 import { listAgentEvents, recordAgentEvent } from "./agent-event-store";
+import { modusAgentDir } from "./agent-paths";
+import { createAgentResourceLoader } from "./agent-resources";
 import {
   createAgentRun,
   getActiveAgentRun,
@@ -48,7 +47,7 @@ import {
   listAgentRuns,
   updateAgentRunStatus,
 } from "./agent-run-store";
-import { createAgentSettings, resolveInheritedResources } from "./agent-settings";
+import { createAgentSettings } from "./agent-settings";
 import {
   createAgentSessionRecord,
   getAgentSession,
@@ -65,12 +64,14 @@ import {
   cycleDefaultModel,
   findModel,
   getDefaultModel,
+  getModelInfo,
   getModelRuntime,
   getModelThinkingVariant,
   listScopedModels,
   modelToId,
   resolveModelThinking,
   setDefaultModel,
+  setModelThinking,
 } from "./model-service";
 import { createPiEventNormalizer } from "./pi-event-normalizer";
 import { createModusPermissionExtension } from "./pi-permission-extension";
@@ -371,6 +372,7 @@ export class PiSdkRuntime implements AgentRuntime {
   private async getOrResume(
     window: BrowserWindowType,
     sessionId: string,
+    modelOverride?: string,
   ): Promise<SdkRuntimeSession | undefined> {
     await this.disposePromises.get(sessionId);
     const existing = this.sessions.get(sessionId);
@@ -383,7 +385,7 @@ export class PiSdkRuntime implements AgentRuntime {
       return await pending;
     }
 
-    const next = this.createRuntimeSession(window, sessionId).finally(() => {
+    const next = this.createRuntimeSession(window, sessionId, modelOverride).finally(() => {
       this.resumePromises.delete(sessionId);
     });
     this.resumePromises.set(sessionId, next);
@@ -402,14 +404,8 @@ export class PiSdkRuntime implements AgentRuntime {
     cwd: string,
     sessionId: string,
     emit: EmitAgentEvent,
-    agentDir: string,
-  ): Promise<{ settingsManager: SettingsManager; loader: DefaultResourceLoader }> {
+  ): Promise<{ settingsManager: SettingsManager; loader: ResourceLoader }> {
     const projectTrusted = await resolveProjectTrust(cwd);
-    const inheritedSettings = createAgentSettings({ cwd, projectTrusted });
-    const resources = await resolveInheritedResources(cwd, projectTrusted);
-    const enabled = (paths: typeof resources.skills) =>
-      paths.filter((resource) => resource.enabled).map((resource) => resource.path);
-    const shell = resolveAgentShellWith(inheritedSettings.getShellPath());
     const settingsManager = createAgentSettings({
       cwd,
       projectTrusted,
@@ -419,23 +415,27 @@ export class PiSdkRuntime implements AgentRuntime {
         skills: [],
         prompts: [],
         themes: [],
-        ...(shell.shellPath ? { shellPath: shell.shellPath } : {}),
       },
     });
-    // Project rules (AGENTS.md / .cursor/rules alwaysApply) ride the system
-    // prompt so they apply to every turn without re-paying per-message tokens.
-    const globalGuidancePrompt = resolveGlobalGuidancePrompt();
-    const rulesBudget =
-      RULES_MAX_TOTAL_BYTES - Buffer.byteLength(globalGuidancePrompt ?? "", "utf8");
-    const rulesPrompt = rulesBudget > 0 ? resolveAlwaysRulesPrompt(cwd, rulesBudget) : undefined;
-    const loader = new DefaultResourceLoader({
+    const loader = await createAgentResourceLoader(
       cwd,
-      agentDir,
-      additionalSkillPaths: [...enabled(resources.skills), ...skillPathsFor(cwd)],
-      additionalExtensionPaths: enabled(resources.extensions),
-      additionalPromptTemplatePaths: enabled(resources.prompts),
-      additionalThemePaths: enabled(resources.themes),
-      extensionFactories: [
+      settingsManager,
+      [
+        {
+          name: "session-model",
+          factory: (pi) => {
+            pi.on("model_select", ({ model }) => {
+              const info = updateAgentSessionMetadata(sessionId, { model: modelToId(model) });
+              const runtime = this.sessions.get(sessionId);
+              if (info && runtime) runtime.info = info;
+              if (info) emit({ type: "session.updated", sessionId, title: info.title });
+            });
+            pi.on("thinking_level_select", () => {
+              const info = getAgentSession(sessionId);
+              if (info) emit({ type: "session.updated", sessionId, title: info.title });
+            });
+          },
+        },
         { name: "codemode", factory: withRuntimeToolPolicy(createCodemodeExtension()) },
         { name: "tool_search", factory: withRuntimeToolPolicy(createToolSearchExtension()) },
         { name: "mcp", factory: createModusMcpExtension() },
@@ -454,15 +454,11 @@ export class PiSdkRuntime implements AgentRuntime {
           },
         }),
       ],
-      settingsManager,
-      appendSystemPrompt: [
-        describeAgentShellForPrompt(shell),
+      () => [
+        describeAgentShellForPrompt(resolveAgentShellWith(settingsManager.getShellPath())),
         RESPONSE_FORMAT_BASE,
-        ...(globalGuidancePrompt ? [globalGuidancePrompt] : []),
-        ...(rulesPrompt ? [rulesPrompt] : []),
       ],
-    });
-    await loader.reload();
+    );
     return { settingsManager, loader };
   }
 
@@ -476,7 +472,7 @@ export class PiSdkRuntime implements AgentRuntime {
     emit: EmitAgentEvent;
     emitVolatile: EmitAgentEvent;
     agentDir: string;
-    loader: DefaultResourceLoader;
+    loader: ResourceLoader;
     settingsManager: SettingsManager;
     sessionManager: SessionManager;
     model: NonNullable<Parameters<typeof createAgentSession>[0]>["model"];
@@ -489,7 +485,7 @@ export class PiSdkRuntime implements AgentRuntime {
       resourceLoader: params.loader,
       sessionManager: params.sessionManager,
       settingsManager: params.settingsManager,
-      scopedModels: listScopedModels(),
+      scopedModels: await listScopedModels(params.settingsManager),
       // Register chat + plan custom tools so a turn can switch its active set by
       // mode (plan_write becomes available without recreating the session).
       customTools: dedupeToolsByName([
@@ -504,7 +500,11 @@ export class PiSdkRuntime implements AgentRuntime {
       }
     }
 
-    const { session } = await createAgentSession(sessionOptions);
+    const { session, modelFallbackMessage } = await createAgentSession(sessionOptions);
+    if (modelFallbackMessage) {
+      session.dispose();
+      throw new Error(modelFallbackMessage);
+    }
     const normalizePiEvent = createPiEventNormalizer(params.info.id);
     const publishContextUsage = () => {
       const event = createContextUsageEvent(params.info.id, session);
@@ -653,10 +653,10 @@ export class PiSdkRuntime implements AgentRuntime {
   ): Promise<AgentSessionInfo> {
     const emit = this.emitToWindow(window);
     const emitVolatile = this.emitVolatileToWindow(window);
-    const selectedModel = findModel(input.model) ?? getDefaultModel();
+    const selectedModel = input.model ? findModel(input.model) : getDefaultModel();
     if (!selectedModel) {
       throw new Error(
-        "No model is configured. Open Settings and connect a provider before starting a chat.",
+        `Model is not available: ${input.model ?? "default"}. Check the native provider configuration.`,
       );
     }
     const modelId = selectedModel ? modelToId(selectedModel) : input.model;
@@ -678,7 +678,7 @@ export class PiSdkRuntime implements AgentRuntime {
     const info = createAgentSessionRecord(recordInput);
     const selectedThinking = selectedModel ? resolveModelThinking(selectedModel) : undefined;
 
-    const agentDir = join(app.getPath("userData"), "pi-agent");
+    const agentDir = modusAgentDir();
     const sessionDir = join(app.getPath("userData"), "pi-sessions");
     mkdirSync(agentDir, { recursive: true });
     mkdirSync(sessionDir, { recursive: true });
@@ -688,7 +688,6 @@ export class PiSdkRuntime implements AgentRuntime {
         input.cwd,
         info.id,
         emit,
-        agentDir,
       );
       return await this.assembleSession({
         info,
@@ -714,6 +713,7 @@ export class PiSdkRuntime implements AgentRuntime {
   private async createRuntimeSession(
     window: BrowserWindowType,
     sessionId: string,
+    modelOverride?: string,
   ): Promise<SdkRuntimeSession | undefined> {
     const info = getAgentSession(sessionId);
     if (!info) {
@@ -722,22 +722,18 @@ export class PiSdkRuntime implements AgentRuntime {
 
     const emit = this.emitToWindow(window);
     const emitVolatile = this.emitVolatileToWindow(window);
-    const agentDir = join(app.getPath("userData"), "pi-agent");
+    const agentDir = modusAgentDir();
     const sessionDir = join(app.getPath("userData"), "pi-sessions");
     mkdirSync(agentDir, { recursive: true });
     mkdirSync(sessionDir, { recursive: true });
 
-    const { settingsManager, loader } = await this.createSessionResources(
-      info.cwd,
-      info.id,
-      emit,
-      agentDir,
-    );
+    const { settingsManager, loader } = await this.createSessionResources(info.cwd, info.id, emit);
 
-    const selectedModel = findModel(info.model) ?? getDefaultModel();
-    if (!selectedModel) {
+    const requestedModel = modelOverride ?? info.model;
+    const selectedModel = requestedModel ? findModel(requestedModel) : getDefaultModel();
+    if (!selectedModel && !info.piSessionFile) {
       throw new Error(
-        "No model is configured. Open Settings and connect a provider before resuming this chat.",
+        `Model is not available: ${requestedModel ?? "default"}. Check the native provider configuration.`,
       );
     }
     const selectedThinking = selectedModel ? resolveModelThinking(selectedModel) : undefined;
@@ -759,8 +755,8 @@ export class PiSdkRuntime implements AgentRuntime {
       loader,
       settingsManager,
       sessionManager,
-      model: selectedThinking?.model ?? selectedModel,
-      thinkingLevel: selectedThinking?.thinkingLevel,
+      model: sessionFile && !modelOverride ? undefined : (selectedThinking?.model ?? selectedModel),
+      thinkingLevel: sessionFile && !modelOverride ? undefined : selectedThinking?.thinkingLevel,
     });
   }
 
@@ -1675,7 +1671,7 @@ export class PiSdkRuntime implements AgentRuntime {
     modelId: string,
     thinkingVariant?: string,
   ): Promise<AgentSessionInfo> {
-    const runtimeSession = await this.getOrResume(window, sessionId);
+    const runtimeSession = await this.getOrResume(window, sessionId, modelId);
     if (!runtimeSession) {
       throw new Error(`Unable to set model: ${modelId}`);
     }
@@ -1683,7 +1679,8 @@ export class PiSdkRuntime implements AgentRuntime {
     if (!model) {
       throw new Error(`Unable to set model: ${modelId}`);
     }
-    setDefaultModel(modelToId(model));
+    if (thinkingVariant) await setModelThinking({ model: modelToId(model), thinkingVariant });
+    await setDefaultModel(modelToId(model));
     this.emitContextUsage(runtimeSession);
     return runtimeSession.info;
   }
@@ -1702,17 +1699,17 @@ export class PiSdkRuntime implements AgentRuntime {
       return cycleDefaultModel(direction);
     }
 
-    const next = cycleDefaultModel(direction);
-    const model = findModel(next.id);
-    if (!model) {
-      throw new Error(`Unable to cycle to model: ${next.id}`);
-    }
-    const resolved = resolveModelThinking(model, next.thinkingVariant);
-    await runtimeSession.session.setModel(resolved.model);
-    runtimeSession.session.setThinkingLevel(resolved.thinkingLevel);
-    updateAgentSessionMetadata(sessionId, { model: modelToId(model) });
+    const selected = await runtimeSession.session.cycleModel(direction);
+    if (!selected)
+      throw new Error("No other model is available in this session's native model scope.");
+    const id = modelToId(selected.model);
+    const updated = updateAgentSessionMetadata(sessionId, { model: id });
+    if (updated) runtimeSession.info = updated;
+    await setDefaultModel(id);
     this.emitContextUsage(runtimeSession);
-    return next;
+    const info = getModelInfo(id);
+    if (!info) throw new Error(`Model is no longer available: ${id}`);
+    return { ...info, thinkingLevel: selected.thinkingLevel };
   }
 }
 

@@ -219,10 +219,8 @@ export function App() {
     setModelSettings(settings);
     setModels(settings.models);
     setModel((current) => {
-      if (current && settings.models.some((item: ModelInfo) => item.id === current)) {
-        return current;
-      }
-      return settings.defaultModel ?? settings.models[0]?.id ?? "";
+      if (current) return current;
+      return settings.defaultModel ?? "";
     });
   }, []);
 
@@ -414,6 +412,24 @@ export function App() {
     () => agentSessions.find((session) => session.id === activeSessionId),
     [activeSessionId, agentSessions],
   );
+  useEffect(() => {
+    setModel(activeSession?.model ?? modelSettings?.defaultModel ?? "");
+    if (modelSettings)
+      setModels(
+        modelSettings.models.map((entry) => {
+          if (entry.id !== activeSession?.model || !activeSession.thinkingLevel) return entry;
+          const option = entry.thinkingOptions?.find(
+            (option) => option.level === activeSession.thinkingLevel,
+          );
+          return {
+            ...entry,
+            thinkingLevel: activeSession.thinkingLevel,
+            ...(option ? { thinkingVariant: option.value } : {}),
+          };
+        }),
+      );
+  }, [activeSession?.model, activeSession?.thinkingLevel, modelSettings]);
+
   const rootSessions = useMemo(
     () => agentSessions.filter((session) => !session.parentSessionId && !session.archivedAt),
     [agentSessions],
@@ -671,19 +687,43 @@ export function App() {
       .finally(() => hubRef.current.cancelPrepare(session.id));
   }
 
+  function reportModelFailure(error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error);
+    setSessionCreateError(message);
+    if (activeSession)
+      publishLocalAgentEvent({ type: "runtime.error", sessionId: activeSession.id, message });
+  }
+
   async function changeDefaultModel(nextModel: string): Promise<void> {
-    if (!nextModel) {
-      return;
+    if (!nextModel) return;
+    if (activeSession) {
+      const session = await window.modus.agent.setModel({
+        sessionId: activeSession.id,
+        model: nextModel,
+      });
+      setModel(session.model ?? "");
+      await refreshSessions();
+    } else {
+      await window.modus.model.setDefault(nextModel);
+      setModel(nextModel);
     }
-    setModel(nextModel);
-    await window.modus.model.setDefault(nextModel);
   }
 
   async function updateModelThinking(modelId: string, thinkingVariant: string): Promise<void> {
-    await window.modus.model.updateConfig({ model: modelId, thinkingVariant });
-    await window.modus.model.setDefault(modelId);
+    if (activeSession) {
+      const session = await window.modus.agent.setModel({
+        sessionId: activeSession.id,
+        model: modelId,
+        thinkingVariant,
+      });
+      setModel(session.model ?? "");
+      await refreshSessions();
+    } else {
+      await window.modus.model.setThinking({ model: modelId, thinkingVariant });
+      await window.modus.model.setDefault(modelId);
+      setModel(modelId);
+    }
     await refreshModelSettings();
-    setModel(modelId);
   }
 
   const cycleModel = useCallback(
@@ -859,8 +899,8 @@ export function App() {
                 {settingsOpen ? (
                   <Suspense fallback={<ModusLoadingFallback />}>
                     <SettingsPanel
+                      sessionId={activeSessionId ?? undefined}
                       onClose={() => setSettingsOpen(false)}
-                      onRefresh={refreshModelSettings}
                       onRefreshCatalog={refreshModelCatalog}
                       state={modelSettings}
                       workspaces={workspaces}
@@ -980,9 +1020,13 @@ export function App() {
                                 initialEvents={initialEventsBySession[activeSession.id]}
                                 key={activeSession.id}
                                 models={models}
-                                onModelChange={setModel}
+                                onModelChange={(next) =>
+                                  void changeDefaultModel(next).catch(reportModelFailure)
+                                }
                                 onModelConfigChange={(next, thinkingVariant) =>
-                                  void updateModelThinking(next, thinkingVariant)
+                                  void updateModelThinking(next, thinkingVariant).catch(
+                                    reportModelFailure,
+                                  )
                                 }
                                 onOpenReview={openReview}
                                 onComposerDraftChange={(update) =>
@@ -1052,9 +1096,13 @@ export function App() {
                                 models={models}
                                 onContextChange={setHeroContextItems}
                                 onModeChange={setHeroMode}
-                                onModelChange={(next) => void changeDefaultModel(next)}
+                                onModelChange={(next) =>
+                                  void changeDefaultModel(next).catch(reportModelFailure)
+                                }
                                 onModelConfigChange={(next, thinkingVariant) =>
-                                  void updateModelThinking(next, thinkingVariant)
+                                  void updateModelThinking(next, thinkingVariant).catch(
+                                    reportModelFailure,
+                                  )
                                 }
                                 onSubmit={(message, context, delivery, attachments, skills, mode) =>
                                   void submitHeroPrompt(
@@ -1094,9 +1142,13 @@ export function App() {
                           sessionId={activeSession?.id}
                           maxWidth={inspectorMaxWidth}
                           models={models}
-                          onModelChange={setModel}
+                          onModelChange={(next) =>
+                            void changeDefaultModel(next).catch(reportModelFailure)
+                          }
                           onModelConfigChange={(next, thinkingVariant) =>
-                            void updateModelThinking(next, thinkingVariant)
+                            void updateModelThinking(next, thinkingVariant).catch(
+                              reportModelFailure,
+                            )
                           }
                           onOpenChange={setInspectorOpen}
                           onOpenReview={openReview}

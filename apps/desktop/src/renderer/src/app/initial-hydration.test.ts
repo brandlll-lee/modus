@@ -26,7 +26,7 @@ describe("beginInitialAppHydration", () => {
     const securityState = deferred<SecurityState>();
     const workspaces = deferred<[]>();
     const sessions = deferred<[]>();
-    const modelSettings = deferred<{ providers: []; models: [] }>();
+    const modelSettings = deferred<{ providers: []; models: []; errors: [] }>();
     const source = {
       app: { securityState: vi.fn(() => securityState.promise) },
       workspace: { list: vi.fn(() => workspaces.promise) },
@@ -56,7 +56,7 @@ describe("beginInitialAppHydration", () => {
     await Promise.resolve();
     expect(settled).toBe(false);
 
-    modelSettings.resolve({ providers: [], models: [] });
+    modelSettings.resolve({ providers: [], models: [], errors: [] });
     await hydration.settled;
     expect(settled).toBe(true);
   });

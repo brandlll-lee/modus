@@ -6,7 +6,6 @@ import {
   IconGitBranch,
   IconListSearch,
   IconMessage2,
-  IconNotebook,
   IconReportSearch,
   IconSearch,
   IconTerminal2,
@@ -44,8 +43,6 @@ function iconForKind(kind: ContextKind) {
       return <IconReportSearch {...props} />;
     case "recent-changes":
       return <IconListSearch {...props} />;
-    case "rules":
-      return <IconNotebook {...props} />;
     case "search":
       return <IconSearch {...props} />;
     default:

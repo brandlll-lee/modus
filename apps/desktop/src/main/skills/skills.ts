@@ -23,24 +23,6 @@ export function builtinSkillsDir(): string {
   return candidates.find((dir) => existsSync(dir)) ?? join(process.cwd(), "resources", "skills");
 }
 
-/**
- * The Modus-owned skills roots, read by PI as additional skill paths.
- * `.modus` is Modus's own namespace; PI's `.pi` directory stays untouched so
- * the CLI's state is never rewritten by the desktop app.
- */
-export function modusSkillPaths(cwd: string, home: string, bundledDir: string): string[] {
-  return [join(home, ".modus", "skills"), join(cwd, ".modus", "skills"), bundledDir];
-}
-
-/** Normalize a human name to the kebab-case form PI's skills expect. */
-export function normalizeSkillName(name: string): string {
-  return name
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
-
 export function toSkillInfo(skill: Skill): SkillInfo {
   return {
     name: skill.name,
@@ -48,7 +30,6 @@ export function toSkillInfo(skill: Skill): SkillInfo {
     scope: skill.sourceInfo.scope,
     source: skill.sourceInfo.source,
     path: skill.filePath,
-    enabled: true,
     allowImplicitInvocation: !skill.disableModelInvocation,
   };
 }

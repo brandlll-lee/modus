@@ -939,75 +939,74 @@ export function ChatPane({
         </div>
       ) : null}
 
-      <>
-        <div className="relative flex min-h-0 min-w-0 flex-1">
-          {isLite ? null : (
-            <ConversationTimeline blocks={visibleBlocks} scrollContainer={scrollContainer} />
-          )}
-          <ChatViewport
-            contentRef={autoScroll.contentRef}
-            onScroll={autoScroll.handleScroll}
-            scrollRef={setChatScrollRef}
+      <div className="relative flex min-h-0 min-w-0 flex-1">
+        {isLite ? null : (
+          <ConversationTimeline blocks={visibleBlocks} scrollContainer={scrollContainer} />
+        )}
+        <ChatViewport
+          contentRef={autoScroll.contentRef}
+          onScroll={autoScroll.handleScroll}
+          scrollRef={setChatScrollRef}
+        >
+          <Timeline
+            sessionId={sessionId}
+            blocks={visibleBlocks}
+            cwd={activeCwd}
+            {...(isLite ? { embedded: true } : {})}
+            model={paneModel}
+            models={models}
+            onEditResend={editAndResend}
+            {...(onOpenFile ? { onOpenFile } : {})}
+            {...(onOpenPlan ? { onOpenPlan } : {})}
+            {...(canPreviewSubagents
+              ? { onOpenSubagent: openSubagentPreview }
+              : onOpenSubagent
+                ? { onOpenSubagent }
+                : {})}
+            onRestoreCheckpoint={async (checkpointId) => {
+              await window.modus.checkpoint.restore({ checkpointId });
+              refreshStats();
+            }}
+            workspaceId={workspace?.id}
+          />
+        </ChatViewport>
+        {!hideComposer ? (
+          <SubagentPreviewSheet
+            leading={
+              previewSession ? (
+                isSubagentSessionLive(previewSession.status) ? (
+                  <VortexMark className="size-4.5" />
+                ) : (
+                  <SubagentPreviewProviderMark modelId={previewSession.model} models={models} />
+                )
+              ) : undefined
+            }
+            onClose={closeSubagentPreview}
+            onExpand={expandSubagentPreview}
+            open={Boolean(previewSession)}
+            title={previewSession?.subagentTask ?? previewSession?.title ?? "Subagent"}
           >
-            <Timeline
-              blocks={visibleBlocks}
-              cwd={activeCwd}
-              {...(isLite ? { embedded: true } : {})}
-              model={paneModel}
-              models={models}
-              onEditResend={editAndResend}
-              {...(onOpenFile ? { onOpenFile } : {})}
-              {...(onOpenPlan ? { onOpenPlan } : {})}
-              {...(canPreviewSubagents
-                ? { onOpenSubagent: openSubagentPreview }
-                : onOpenSubagent
-                  ? { onOpenSubagent }
-                  : {})}
-              onRestoreCheckpoint={async (checkpointId) => {
-                await window.modus.checkpoint.restore({ checkpointId });
-                refreshStats();
-              }}
-              workspaceId={workspace?.id}
-            />
-          </ChatViewport>
-          {!hideComposer ? (
-            <SubagentPreviewSheet
-              leading={
-                previewSession ? (
-                  isSubagentSessionLive(previewSession.status) ? (
-                    <VortexMark className="size-4.5" />
-                  ) : (
-                    <SubagentPreviewProviderMark modelId={previewSession.model} models={models} />
-                  )
-                ) : undefined
-              }
-              onClose={closeSubagentPreview}
-              onExpand={expandSubagentPreview}
-              open={Boolean(previewSession)}
-              title={previewSession?.subagentTask ?? previewSession?.title ?? "Subagent"}
-            >
-              {previewSession ? (
-                <ChatPane
-                  defaultModel={defaultModel}
-                  hideComposer
-                  hub={hub}
-                  key={previewSession.id}
-                  models={models}
-                  onModelChange={onModelChange}
-                  onModelConfigChange={onModelConfigChange}
-                  onOpenReview={onOpenReview}
-                  onPlanUpdated={onPlanUpdated}
-                  onSessionsChanged={onSessionsChanged}
-                  session={previewSession}
-                  workspace={workspace}
-                  {...(onOpenFile ? { onOpenFile } : {})}
-                  {...(onOpenPlan ? { onOpenPlan } : {})}
-                />
-              ) : null}
-            </SubagentPreviewSheet>
-          ) : null}
-        </div>
-      </>
+            {previewSession ? (
+              <ChatPane
+                defaultModel={defaultModel}
+                hideComposer
+                hub={hub}
+                key={previewSession.id}
+                models={models}
+                onModelChange={onModelChange}
+                onModelConfigChange={onModelConfigChange}
+                onOpenReview={onOpenReview}
+                onPlanUpdated={onPlanUpdated}
+                onSessionsChanged={onSessionsChanged}
+                session={previewSession}
+                workspace={workspace}
+                {...(onOpenFile ? { onOpenFile } : {})}
+                {...(onOpenPlan ? { onOpenPlan } : {})}
+              />
+            ) : null}
+          </SubagentPreviewSheet>
+        ) : null}
+      </div>
 
       {hideComposer ? null : (
         <div className="min-w-0 max-w-full shrink-0 px-4 pb-4">
@@ -1089,6 +1088,7 @@ export function ChatPane({
                       }
                     >
                       <Composer
+                        sessionId={sessionId}
                         canSubmit={Boolean(workspace) && Boolean(paneModel)}
                         contextItems={contextItems}
                         cwd={activeCwd}

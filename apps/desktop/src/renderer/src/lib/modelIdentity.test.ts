@@ -6,9 +6,6 @@ function model(partial: Partial<ModelInfo> & Pick<ModelInfo, "id" | "name">): Mo
   return {
     provider: "openai",
     available: true,
-    enabled: true,
-    configured: true,
-    source: "builtin",
     supportsThinking: false,
     thinkingLevel: "off",
     thinkingLevels: ["off"],

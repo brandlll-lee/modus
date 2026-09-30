@@ -17,8 +17,15 @@ import type {
   SubagentInfo,
   UpdateSubagentInput,
 } from "../../shared/contracts";
-import { normalizeSkillName } from "../skills/skills";
 import { listModels } from "./model-service";
+
+function normalizeSubagentName(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
 
 const USER_AGENT_FAMILIES = [".codex", ".claude", ".cursor", ".modus"] as const;
 const WORKSPACE_AGENT_FAMILIES = [".codex", ".claude", ".cursor", ".modus"] as const;
@@ -39,7 +46,7 @@ export type ParsedSubagent = {
 
 export function parseSubagent(text: string, fallbackName: string): ParsedSubagent {
   const { frontmatter: data, body } = parseFrontmatter(text);
-  const name = normalizeSkillName(
+  const name = normalizeSubagentName(
     (typeof data.name === "string" && data.name.trim()) || fallbackName,
   );
   const description =
@@ -96,7 +103,7 @@ function loadSubagentsForSettings(cwd: string, home: string = homedir()): Subage
 }
 
 export function resolveSubagent(cwd: string, name: string): SubagentDetail | undefined {
-  const normalized = normalizeSkillName(name);
+  const normalized = normalizeSubagentName(name);
   return loadWorkspaceSubagents(cwd).find((subagent) => subagent.name === normalized);
 }
 
@@ -119,7 +126,7 @@ export function getSubagent(cwd: string, path: string): SubagentDetail | undefin
 }
 
 export function createSubagent(input: CreateSubagentInput): SubagentInfo {
-  const name = normalizeSkillName(input.name);
+  const name = normalizeSubagentName(input.name);
   if (!name) {
     throw new Error("Subagent name must contain at least one letter or number.");
   }
@@ -306,7 +313,7 @@ function toSubagentInfo(subagent: SubagentDetail): SubagentInfo {
 }
 
 function renderSubagentFile(input: CreateSubagentInput): string {
-  const name = normalizeSkillName(input.name);
+  const name = normalizeSubagentName(input.name);
   const model = input.model?.trim() || "inherit";
   const lines = [
     "---",

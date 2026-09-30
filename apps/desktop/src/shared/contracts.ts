@@ -16,6 +16,7 @@ export type AgentSessionInfo = {
   status: "starting" | AgentRunStatus | "idle" | "exited" | "error";
   runtime?: "pi-sdk" | "pi-rpc";
   model?: string;
+  thinkingLevel?: ThinkingLevel;
   piSessionId?: string;
   piSessionFile?: string;
   parentSessionId?: string;
@@ -117,37 +118,6 @@ export type TodoItem = {
   id: string;
   content: string;
   status: TodoStatus;
-};
-
-/* ── Project rules (AGENTS.md / .cursor/rules) ─────────────────────────── */
-
-/** Which config family a detected rule file belongs to. */
-export type RuleSource = "agents-md" | "claude-md" | "cursorrules" | "cursor-rule";
-
-/** How a rule is applied (mirrors Cursor's .mdc semantics). */
-export type RuleMode = "always" | "glob" | "intelligent" | "manual";
-
-export type RuleFileInfo = {
-  /** Absolute path of the rule file. */
-  path: string;
-  /** Path relative to the workspace root (display). */
-  relPath: string;
-  source: RuleSource;
-  mode: RuleMode;
-  description?: string;
-  globs?: string;
-  /** File size in bytes. */
-  size: number;
-};
-
-/* ── Global personalization (Codex-style AGENTS.md guidance) ───────────── */
-
-export type PersonalizationState = {
-  basePath: string;
-  overridePath: string;
-  activePath: string;
-  overrideActive: boolean;
-  content: string;
 };
 
 export type PermissionRequest = {
@@ -712,7 +682,6 @@ export type ContextKind =
   | "past-chat"
   | "project-summary"
   | "recent-changes"
-  | "rules"
   | "search"
   | "design-element"
   | "design-annotation"
@@ -733,7 +702,6 @@ export type ContextItem =
   | { type: "past-chat"; sessionId: string; title: string }
   | { type: "project-summary" }
   | { type: "recent-changes"; limit?: number }
-  | { type: "rules" }
   | { type: "search"; query: string }
   /**
    * A page element captured from the in-app browser's Design Mode (point-and-
@@ -1020,9 +988,6 @@ export type ModelInfo = {
   providerName?: string;
   name: string;
   available: boolean;
-  enabled: boolean;
-  configured: boolean;
-  source: "builtin" | "custom";
   contextWindow?: number;
   maxTokens?: number;
   supportsThinking: boolean;
@@ -1039,283 +1004,24 @@ export type ThinkingOption = {
   level: ThinkingLevel;
   wireValue?: string | undefined;
 };
-export type ModelInputKind = "text" | "image";
-
-export type JsonObject = Record<string, unknown>;
-
-export type ModelCost = {
-  input?: number | undefined;
-  output?: number | undefined;
-  cacheRead?: number | undefined;
-  cacheWrite?: number | undefined;
-};
-
 export type ModelProviderInfo = {
   id: string;
   name: string;
-  source: "builtin" | "custom";
   configured: boolean;
-  authSource?: string;
-  authLabel?: string;
-  authKind?: "api-key" | "oauth";
   modelCount: number;
-  enabledModelCount: number;
-  baseUrl?: string;
-  api?: string;
+  availableModelCount: number;
+  source?: string;
+  authSource?: string;
   error?: string;
 };
 
-export type ProviderModelConfig = {
-  id: string;
-  name: string;
-  enabled: boolean;
-  contextWindow?: number;
-  maxTokens?: number;
-  reasoning: boolean;
-  thinkingLevel: ThinkingLevel;
-  thinkingLevels: ThinkingLevel[];
-  thinkingVariant?: string;
-  thinkingOptions?: ThinkingOption[];
-};
-
-export type ModelProviderDetail = ModelProviderInfo & {
-  models: ProviderModelConfig[];
-};
-
-export type ProviderConnectionMethod = {
-  kind: "api-key" | "oauth";
-  label: string;
-};
-
-export type ProviderAuthOption = {
-  id: string;
-  label: string;
-};
-
-export type ProviderAuthOperationState = {
-  id: string;
-  provider: string;
-  status:
-    | "pending"
-    | "select"
-    | "browser"
-    | "device-code"
-    | "prompt"
-    | "manual-code"
-    | "complete"
-    | "error"
-    | "cancelled";
-  message?: string | undefined;
-  options?: ProviderAuthOption[] | undefined;
-  url?: string | undefined;
-  instructions?: string | undefined;
-  userCode?: string | undefined;
-  placeholder?: string | undefined;
-  secret?: boolean | undefined;
-  allowEmpty?: boolean | undefined;
-};
+export type ModelProviderDetail = ModelProviderInfo & { models: ModelInfo[] };
 
 export type ModelSettingsState = {
+  errors: string[];
   providers: ModelProviderInfo[];
   models: ModelInfo[];
   defaultModel?: string;
-};
-
-export type ConfigureProviderInput = {
-  provider: string;
-  apiKey?: string | undefined;
-  /**
-   * Optional custom endpoint for a built-in provider: relay the provider's
-   * native protocol through an OpenAI/Anthropic/Google-compatible gateway.
-   * `undefined` leaves the current setting untouched; an empty string reverts
-   * to the official endpoint; a URL overrides every built-in model's base URL.
-   */
-  baseUrl?: string | undefined;
-  enabledModelIds?: string[] | undefined;
-};
-
-export type ProviderCompatibilityInput = {
-  supportsDeveloperRole?: boolean | undefined;
-  supportsReasoningEffort?: boolean | undefined;
-};
-
-export type ModelCompatibilityInput = {
-  /** OpenAI-compatible endpoints: how the thinking/reasoning request field is shaped. */
-  thinkingFormat?:
-    | "none"
-    | "openai"
-    | "openrouter"
-    | "deepseek"
-    | "together"
-    | "zai"
-    | "qwen"
-    | "qwen-chat-template"
-    | "string-thinking"
-    | undefined;
-  supportsUsageInStreaming?: boolean | undefined;
-  /**
-   * Anthropic-compatible endpoints: send adaptive thinking
-   * (`thinking.type: "adaptive"` + `output_config.effort`) instead of the
-   * deprecated `budget_tokens` form. Required for Claude Opus 4.7+ class
-   * models, where manual budgets return HTTP 400.
-   */
-  forceAdaptiveThinking?: boolean | undefined;
-  /**
-   * Anthropic-compatible endpoints: replay thinking blocks whose signatures a
-   * relay stripped, instead of downgrading them to plain text.
-   */
-  allowEmptySignature?: boolean | undefined;
-};
-
-export type CustomProviderModelInput = {
-  id: string;
-  name?: string | undefined;
-  api?: string | undefined;
-  baseUrl?: string | undefined;
-  headers?: Record<string, string> | undefined;
-  contextWindow?: number | undefined;
-  maxTokens?: number | undefined;
-  reasoning?: boolean | undefined;
-  input?: ModelInputKind[] | undefined;
-  cost?: ModelCost | undefined;
-  compat?: JsonObject | undefined;
-  compatibility?: ModelCompatibilityInput | undefined;
-  thinkingLevelMap?: Partial<Record<ThinkingLevel, string | null>> | undefined;
-};
-
-export type UpsertCustomProviderInput = {
-  provider: string;
-  name: string;
-  baseUrl: string;
-  apiKey?: string | undefined;
-  api?: string | undefined;
-  authHeader?: boolean | undefined;
-  headers?: Record<string, string> | undefined;
-  compat?: JsonObject | undefined;
-  compatibility?: ProviderCompatibilityInput | undefined;
-  models: CustomProviderModelInput[];
-};
-
-/** A custom provider's full stored config, returned for lossless edit round-trips. */
-export type CustomProviderModelConfig = {
-  id: string;
-  name: string;
-  api?: string;
-  baseUrl?: string;
-  headers?: Record<string, string>;
-  reasoning: boolean;
-  input: ModelInputKind[];
-  contextWindow?: number;
-  maxTokens?: number;
-  cost?: ModelCost;
-  compat?: JsonObject;
-  thinkingLevelMap?: Partial<Record<ThinkingLevel, string | null>>;
-};
-
-export type CustomProviderConfig = {
-  provider: string;
-  name: string;
-  baseUrl: string;
-  api: string;
-  authHeader: boolean;
-  headers?: Record<string, string>;
-  compat?: JsonObject;
-  models: CustomProviderModelConfig[];
-};
-
-export type UpdateModelConfigInput = {
-  model: string;
-  enabled?: boolean | undefined;
-  thinkingLevel?: ThinkingLevel | undefined;
-  thinkingVariant?: string | undefined;
-  contextWindow?: number | undefined;
-  maxTokens?: number | undefined;
-};
-
-/**
- * One-shot connectivity probe for the custom provider form: sends a tiny
- * prompt straight through the same pi-ai driver the chat would use, so it
- * validates endpoint + key + protocol + (optionally) the thinking setup
- * before anything is saved.
- */
-export type TestCustomProviderInput = {
-  /** Existing provider id — lets an edit session reuse the stored API key. */
-  provider?: string | undefined;
-  baseUrl: string;
-  api?: string | undefined;
-  /** Blank while editing keeps the stored credential. */
-  apiKey?: string | undefined;
-  authHeader?: boolean | undefined;
-  headers?: Record<string, string> | undefined;
-  model: {
-    id: string;
-    api?: string | undefined;
-    baseUrl?: string | undefined;
-    headers?: Record<string, string> | undefined;
-    reasoning?: boolean | undefined;
-    contextWindow?: number | undefined;
-    maxTokens?: number | undefined;
-    compat?: JsonObject | undefined;
-    compatibility?: ModelCompatibilityInput | undefined;
-    thinkingLevelMap?: Partial<Record<ThinkingLevel, string | null>> | undefined;
-  };
-};
-
-export type TestCustomProviderResult = {
-  ok: boolean;
-  /** Round-trip time of the probe request. */
-  latencyMs: number;
-  /** Reply snippet on success; the provider/transport error on failure. */
-  message: string;
-  /** True when the probe saw thinking deltas (reasoning models only). */
-  sawThinking: boolean;
-};
-
-/* ── MCP (Model Context Protocol) ──────────────────────────────────────── */
-
-export type McpTransportKind = "stdio" | "http";
-
-export type McpServerStatus = "configured" | "disabled";
-
-export type McpToolInfo = {
-  /** Tool name as exposed by the server. */
-  name: string;
-  /** Namespaced name provided by PI (mcp__<server>__<tool>). */
-  registeredName: string;
-  description?: string | undefined;
-};
-
-export type McpServerInfo = {
-  name: string;
-  transport: McpTransportKind;
-  /** Config file this server came from (project beats user on conflicts). */
-  source: string;
-  status: McpServerStatus;
-  error?: string | undefined;
-  tools: McpToolInfo[];
-};
-
-/** Settings-form payload for creating/updating a server entry. */
-export type McpServerUpsertInput = {
-  name: string;
-  /** Existing name when editing (handles renames). */
-  originalName?: string | undefined;
-  /** New servers land in the selected config scope; existing servers write back to source. */
-  scope?: "user" | "project" | undefined;
-  transport: McpTransportKind;
-  command?: string | undefined;
-  args?: string[] | undefined;
-  env?: Record<string, string> | undefined;
-  url?: string | undefined;
-  headers?: Record<string, string> | undefined;
-  exposure?: "direct" | "deferred" | "codemode" | "codemode-deferred" | "hidden" | undefined;
-  enabled: boolean;
-};
-
-/** Raw (un-interpolated) mcp.json entry + the file it lives in. */
-export type RawMcpEntry = {
-  source: string;
-  entry: Record<string, unknown>;
 };
 
 export type AgentReviewDepth = "fast" | "standard" | "deep";
@@ -1479,20 +1185,12 @@ export type SkillInfo = {
   source: string;
   /** Absolute path of the skill's SKILL.md. */
   path: string;
-  enabled: boolean;
   allowImplicitInvocation: boolean;
 };
 
-/** A skill plus its full Markdown instruction body. */
-export type SkillDetail = SkillInfo & { body: string };
-
-export type CreateSkillInput = {
-  cwd: string;
-  /** Human/slash name; normalized to a kebab-case folder name. */
-  name: string;
-  description: string;
-  /** Markdown instructions written to SKILL.md after frontmatter. */
-  body: string;
+export type SkillState = {
+  skills: SkillInfo[];
+  diagnostics: Array<{ type: "warning" | "error" | "collision"; message: string; path?: string }>;
 };
 
 export type SubagentInfo = {

@@ -98,20 +98,6 @@ async function projectSummary(cwd: string): Promise<string> {
     .join("\n");
 }
 
-async function readRules(cwd: string): Promise<string> {
-  const candidates = ["AGENTS.md", "CLAUDE.md", ".cursorrules", ".cursor/rules"];
-  const chunks: string[] = [];
-  for (const candidate of candidates) {
-    const target = join(cwd, candidate);
-    const info = await stat(target).catch(() => undefined);
-    if (!info || info.isDirectory() || info.size > MAX_FILE_BYTES) {
-      continue;
-    }
-    chunks.push(`${candidate}\n${await readFile(target, "utf8")}`);
-  }
-  return chunks.join("\n\n");
-}
-
 export async function searchContext(input: {
   workspaceId: string;
   cwd: string;
@@ -301,14 +287,6 @@ export async function resolveContext(
         title: "recent-changes",
         content:
           `Status\n${status.stdout}\n\nDiff stat\n${stat.stdout}\n\nRecent commits\n${log.stdout}`.trim(),
-      });
-    }
-
-    if (item.type === "rules") {
-      resolvedItems.push({
-        item,
-        title: "project-rules",
-        content: await readRules(cwd),
       });
     }
 

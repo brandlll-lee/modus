@@ -28,31 +28,23 @@ import {
   restoreCheckpoint,
 } from "../agent/checkpoint-service";
 import {
-  configureProvider,
-  deleteCustomProvider,
-  disconnectProvider,
-  getCustomProviderConfig,
   getModelSettings,
   getProviderDetail,
   listModels,
-  listProviderConnectionMethods,
   refreshRemoteModelCatalog,
+  revealProviderConfig,
   setDefaultModel,
-  testCustomProvider,
-  updateModelConfig,
-  upsertCustomProvider,
+  setModelThinking,
 } from "../agent/model-service";
-import {
-  cancelProviderAuth,
-  getProviderAuthState,
-  respondProviderAuth,
-  startProviderAuth,
-} from "../agent/provider-auth";
 import { listAgentReviews, startAgentReview } from "../agent/review-service";
 import { rollbackToUserMessage } from "../agent/rollback-service";
 import { getAgentRuntime } from "../agent/runtime-registry";
 import { deleteAgentSessionTree, setAgentSessionArchivedTree } from "../agent/session-lifecycle";
-import { onSessionResourcesChanged, reloadSessionResources } from "../agent/session-resources";
+import {
+  onSessionResourcesChanged,
+  reloadSessionResources,
+  sessionResources,
+} from "../agent/session-resources";
 import {
   createSubagent,
   deleteSubagent,
@@ -108,24 +100,14 @@ import {
 } from "../git/git-service";
 import { emitGitEvent, unwatchRepo, watchRepo } from "../git/git-watcher";
 import {
-  ensurePersonalizationFile,
-  getPersonalization,
-  savePersonalization,
-} from "../guidance/guidance-service";
-import {
   denyPendingQuestionRequests,
   resolveQuestionRequest,
 } from "../interaction/question-broker";
 import {
-  deleteMcpServer,
-  ensureMcpConfigFile,
-  getMcpServerEntry,
+  getMcpLocations,
   getMcpStatus,
-  listMcpServers,
-  runMcpCommand,
-  setMcpServerEnabled,
+  revealMcpConfig,
   syncWorkspaceMcp,
-  upsertMcpServer,
 } from "../mcp/mcp-service";
 import {
   denyPendingPermissionRequests,
@@ -141,8 +123,7 @@ import {
 } from "../permissions/permission-store";
 import { onManagedProcessChange } from "../process/managed-process-bus";
 import { killManagedProcess, listManagedProcesses } from "../process/managed-process-facade";
-import { listRuleFiles } from "../rules/rules-service";
-import { createSkill, ensureSkillsDir, getSkill, listSkills } from "../skills/skills-service";
+import { listSkills, revealSkill } from "../skills/skills-service";
 import type { StartupTimeline } from "../startup/startup-timeline";
 import {
   createTerminal,
@@ -185,7 +166,6 @@ import {
   browserWorkspaceSchema,
   checkpointRestoreSchema,
   clipboardWriteImageSchema,
-  configureProviderSchema,
   contextResolveSchema,
   contextSearchSchema,
   cwdSchema,
@@ -204,25 +184,17 @@ import {
   filesWriteSchema,
   gitCheckoutSchema,
   gitLogSchema,
-  mcpCommandSchema,
-  mcpServerNameSchema,
-  mcpSetEnabledSchema,
-  mcpUpsertSchema,
   parseIpcInput,
   permissionDecideSchema,
-  personalizationSaveSchema,
   previewReadSchema,
   processKillSchema,
   processListSchema,
-  providerAuthOperationSchema,
-  providerAuthResponseSchema,
-  providerAuthStartSchema,
   questionRespondSchema,
+  resourceLocationSchema,
   reviewStartSchema,
   sessionIdSchema,
   sessionPinSchema,
-  skillsCreateSchema,
-  skillsGetSchema,
+  setModelThinkingSchema,
   startupMetricSchema,
   subagentsCreateSchema,
   subagentsDeleteSchema,
@@ -232,9 +204,6 @@ import {
   terminalCreateSchema,
   terminalResizeSchema,
   terminalWriteSchema,
-  testCustomProviderSchema,
-  updateModelConfigSchema,
-  upsertCustomProviderSchema,
   workspaceIdSchema,
   workspacePinSchema,
   workspaceRenameSchema,
@@ -421,7 +390,16 @@ export function registerAppIpc({
     const parsed = parseIpcInput(agentListSchema, input, IPC_CHANNELS.agentList);
     return listAgentSessions(
       parsed?.includeSessionId ? { includeSessionId: parsed.includeSessionId } : {},
-    );
+    ).map((info) => {
+      const native = sessionResources().find(({ id }) => id === info.id)?.session;
+      return native?.model
+        ? {
+            ...info,
+            model: `${native.model.provider}/${native.model.id}`,
+            thinkingLevel: native.thinkingLevel,
+          }
+        : info;
+    });
   });
 
   ipcMain.handle(IPC_CHANNELS.agentListArchived, (event, workspaceId: string) => {
@@ -1170,11 +1148,9 @@ export function registerAppIpc({
     return checkpoint;
   });
 
-  ipcMain.handle(IPC_CHANNELS.mcpList, (event, cwd?: string) => {
+  ipcMain.handle(IPC_CHANNELS.mcpLocations, (event, sessionId: string) => {
     assertTrustedSender(event);
-    return listMcpServers(
-      cwd === undefined ? undefined : parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.mcpList),
-    );
+    return getMcpLocations(parseIpcInput(sessionIdSchema, sessionId, IPC_CHANNELS.mcpLocations));
   });
 
   ipcMain.handle(IPC_CHANNELS.mcpStatus, async (event, cwd: string) => {
@@ -1182,75 +1158,15 @@ export function registerAppIpc({
     return getMcpStatus(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.mcpStatus));
   });
 
-  ipcMain.handle(IPC_CHANNELS.mcpCommand, async (event, input) => {
-    assertTrustedSender(event);
-    return runMcpCommand(parseIpcInput(mcpCommandSchema, input, IPC_CHANNELS.mcpCommand));
-  });
-
   ipcMain.handle(IPC_CHANNELS.mcpSync, async (event, cwd: string) => {
     assertTrustedSender(event);
     return await syncWorkspaceMcp(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.mcpSync));
   });
 
-  ipcMain.handle(IPC_CHANNELS.mcpOpenConfig, async (event, cwd: string) => {
+  ipcMain.handle(IPC_CHANNELS.mcpOpenConfig, async (event, input) => {
     assertTrustedSender(event);
-    const path = ensureMcpConfigFile(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.mcpOpenConfig));
-    await shell.openPath(path);
-    return path;
-  });
-
-  ipcMain.handle(IPC_CHANNELS.mcpUpsert, async (event, input) => {
-    assertTrustedSender(event);
-    const parsed = parseIpcInput(mcpUpsertSchema, input, IPC_CHANNELS.mcpUpsert);
-    const { cwd, ...server } = parsed;
-    return await upsertMcpServer(cwd, server);
-  });
-
-  ipcMain.handle(IPC_CHANNELS.mcpDelete, async (event, input) => {
-    assertTrustedSender(event);
-    const parsed = parseIpcInput(mcpServerNameSchema, input, IPC_CHANNELS.mcpDelete);
-    return await deleteMcpServer(parsed.cwd, parsed.name);
-  });
-
-  ipcMain.handle(IPC_CHANNELS.mcpSetEnabled, async (event, input) => {
-    assertTrustedSender(event);
-    const parsed = parseIpcInput(mcpSetEnabledSchema, input, IPC_CHANNELS.mcpSetEnabled);
-    return await setMcpServerEnabled(parsed.cwd, parsed.name, parsed.enabled);
-  });
-
-  ipcMain.handle(IPC_CHANNELS.mcpEntry, (event, input) => {
-    assertTrustedSender(event);
-    const parsed = parseIpcInput(mcpServerNameSchema, input, IPC_CHANNELS.mcpEntry);
-    return getMcpServerEntry(parsed.cwd, parsed.name);
-  });
-
-  ipcMain.handle(IPC_CHANNELS.personalizationGet, (event) => {
-    assertTrustedSender(event);
-    return getPersonalization();
-  });
-
-  ipcMain.handle(IPC_CHANNELS.personalizationSave, (event, input) => {
-    assertTrustedSender(event);
-    const parsed = parseIpcInput(
-      personalizationSaveSchema,
-      input,
-      IPC_CHANNELS.personalizationSave,
-    );
-    return savePersonalization(parsed.content);
-  });
-
-  ipcMain.handle(IPC_CHANNELS.personalizationOpen, async (event) => {
-    assertTrustedSender(event);
-    const path = ensurePersonalizationFile();
-    await shell.openPath(path);
-    return path;
-  });
-
-  // Detected project rule files (AGENTS.md / CLAUDE.md / .cursorrules /
-  // .cursor/rules/*.mdc) with their apply mode, for the Settings panel.
-  ipcMain.handle(IPC_CHANNELS.rulesList, (event, cwd: string) => {
-    assertTrustedSender(event);
-    return listRuleFiles(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.rulesList));
+    const parsed = parseIpcInput(resourceLocationSchema, input, IPC_CHANNELS.mcpOpenConfig);
+    await revealMcpConfig(parsed.sessionId, parsed.path);
   });
 
   ipcMain.handle(IPC_CHANNELS.skillsList, (event, cwd: string) => {
@@ -1262,26 +1178,12 @@ export function registerAppIpc({
     assertTrustedSender(event);
     const target = parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.skillsRefresh);
     await reloadSessionResources(target);
-    return listSkills(target);
   });
 
-  ipcMain.handle(IPC_CHANNELS.skillsGet, (event, input) => {
+  ipcMain.handle(IPC_CHANNELS.skillsOpenDir, async (event, input) => {
     assertTrustedSender(event);
-    const parsed = parseIpcInput(skillsGetSchema, input, IPC_CHANNELS.skillsGet);
-    return getSkill(parsed.cwd, parsed.path);
-  });
-
-  ipcMain.handle(IPC_CHANNELS.skillsCreate, (event, input) => {
-    assertTrustedSender(event);
-    const parsed = parseIpcInput(skillsCreateSchema, input, IPC_CHANNELS.skillsCreate);
-    return createSkill(parsed);
-  });
-
-  ipcMain.handle(IPC_CHANNELS.skillsOpenDir, async (event, cwd: string) => {
-    assertTrustedSender(event);
-    const dir = ensureSkillsDir(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.skillsOpenDir));
-    await shell.openPath(dir);
-    return dir;
+    const parsed = parseIpcInput(resourceLocationSchema, input, IPC_CHANNELS.skillsOpenDir);
+    await revealSkill(parsed.sessionId, parsed.path);
   });
 
   ipcMain.handle(IPC_CHANNELS.subagentsList, (event, cwd: string) => {
@@ -1342,7 +1244,7 @@ export function registerAppIpc({
 
   ipcMain.handle(IPC_CHANNELS.modelSetDefault, (event, model: string) => {
     assertTrustedSender(event);
-    setDefaultModel(parseIpcInput(sessionIdSchema, model, IPC_CHANNELS.modelSetDefault));
+    return setDefaultModel(parseIpcInput(sessionIdSchema, model, IPC_CHANNELS.modelSetDefault));
   });
 
   ipcMain.handle(IPC_CHANNELS.modelSettings, (event) => {
@@ -1362,108 +1264,18 @@ export function registerAppIpc({
     );
   });
 
-  ipcMain.handle(IPC_CHANNELS.modelProviderConnectionMethods, (event, provider: string) => {
+  ipcMain.handle(IPC_CHANNELS.modelOpenConfig, (event, provider: string) => {
     assertTrustedSender(event);
-    return listProviderConnectionMethods(
-      parseIpcInput(sessionIdSchema, provider, IPC_CHANNELS.modelProviderConnectionMethods),
+    return revealProviderConfig(
+      parseIpcInput(sessionIdSchema, provider, IPC_CHANNELS.modelOpenConfig),
     );
   });
 
-  ipcMain.handle(IPC_CHANNELS.modelProviderAuthStart, (event, input) => {
+  ipcMain.handle(IPC_CHANNELS.modelSetThinking, (event, input) => {
     assertTrustedSender(event);
-    const parsed = parseIpcInput(
-      providerAuthStartSchema,
-      input,
-      IPC_CHANNELS.modelProviderAuthStart,
+    return setModelThinking(
+      parseIpcInput(setModelThinkingSchema, input, IPC_CHANNELS.modelSetThinking),
     );
-    return startProviderAuth(parsed.provider, (url) => shell.openExternal(url), parsed.method);
-  });
-
-  ipcMain.handle(IPC_CHANNELS.modelProviderAuthState, (event, input) => {
-    assertTrustedSender(event);
-    const parsed = parseIpcInput(
-      providerAuthOperationSchema,
-      input,
-      IPC_CHANNELS.modelProviderAuthState,
-    );
-    return getProviderAuthState(parsed.operationId);
-  });
-
-  ipcMain.handle(IPC_CHANNELS.modelProviderAuthRespond, (event, input) => {
-    assertTrustedSender(event);
-    const parsed = parseIpcInput(
-      providerAuthResponseSchema,
-      input,
-      IPC_CHANNELS.modelProviderAuthRespond,
-    );
-    respondProviderAuth(parsed.operationId, parsed.value);
-  });
-
-  ipcMain.handle(IPC_CHANNELS.modelProviderAuthCancel, (event, input) => {
-    assertTrustedSender(event);
-    const parsed = parseIpcInput(
-      providerAuthOperationSchema,
-      input,
-      IPC_CHANNELS.modelProviderAuthCancel,
-    );
-    cancelProviderAuth(parsed.operationId);
-  });
-
-  ipcMain.handle(IPC_CHANNELS.modelDisconnectProvider, (event, provider: string) => {
-    assertTrustedSender(event);
-    return disconnectProvider(
-      parseIpcInput(sessionIdSchema, provider, IPC_CHANNELS.modelDisconnectProvider),
-    );
-  });
-
-  ipcMain.handle(IPC_CHANNELS.modelCustomProviderConfig, (event, provider: string) => {
-    assertTrustedSender(event);
-    return getCustomProviderConfig(
-      parseIpcInput(sessionIdSchema, provider, IPC_CHANNELS.modelCustomProviderConfig),
-    );
-  });
-
-  ipcMain.handle(IPC_CHANNELS.modelDeleteCustomProvider, (event, provider: string) => {
-    assertTrustedSender(event);
-    return deleteCustomProvider(
-      parseIpcInput(sessionIdSchema, provider, IPC_CHANNELS.modelDeleteCustomProvider),
-    );
-  });
-
-  ipcMain.handle(IPC_CHANNELS.modelConfigureProvider, async (event, input) => {
-    assertTrustedSender(event);
-    const parsed = parseIpcInput(
-      configureProviderSchema,
-      input,
-      IPC_CHANNELS.modelConfigureProvider,
-    );
-    return await configureProvider(parsed);
-  });
-
-  ipcMain.handle(IPC_CHANNELS.modelUpsertCustomProvider, async (event, input) => {
-    assertTrustedSender(event);
-    const parsed = parseIpcInput(
-      upsertCustomProviderSchema,
-      input,
-      IPC_CHANNELS.modelUpsertCustomProvider,
-    );
-    return await upsertCustomProvider(parsed);
-  });
-
-  ipcMain.handle(IPC_CHANNELS.modelTestCustomProvider, async (event, input) => {
-    assertTrustedSender(event);
-    const parsed = parseIpcInput(
-      testCustomProviderSchema,
-      input,
-      IPC_CHANNELS.modelTestCustomProvider,
-    );
-    return await testCustomProvider(parsed);
-  });
-
-  ipcMain.handle(IPC_CHANNELS.modelUpdateConfig, (event, input) => {
-    assertTrustedSender(event);
-    const parsed = parseIpcInput(updateModelConfigSchema, input, IPC_CHANNELS.modelUpdateConfig);
-    return updateModelConfig(parsed);
   });
 
   // 自绘 titlebar 的窗口控制 IPC —— 走 sender-validated 通道，不暴露原始 ipcRenderer

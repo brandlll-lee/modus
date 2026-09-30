@@ -2,6 +2,7 @@ import { type ReactNode, useEffect, useMemo, useState } from "react";
 import type { SkillInfo } from "../../../../shared/contracts";
 
 type UseComposerSlashInput = {
+  sessionId?: string | undefined;
   value: string;
   cwd: string | undefined;
   actions: SlashActionItem[];
@@ -66,14 +67,14 @@ export function getSlashQuery(value: string): { start: number; query: string } |
   return { start: match.index + match[0].indexOf("/"), query: match[1] ?? "" };
 }
 
-export function useComposerSlash({ value, cwd, actions }: UseComposerSlashInput) {
+export function useComposerSlash({ value, cwd, sessionId, actions }: UseComposerSlashInput) {
   const slash = useMemo(() => getSlashQuery(value), [value]);
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
   const menuRequested = Boolean(slash);
 
   useEffect(() => {
-    if (!menuRequested || !cwd) {
+    if (!menuRequested || !cwd || !sessionId) {
       setSkills([]);
       return;
     }
@@ -82,8 +83,8 @@ export function useComposerSlash({ value, cwd, actions }: UseComposerSlashInput)
     async function refresh(): Promise<void> {
       const request = ++generation;
       try {
-        const items = await window.modus.skills.list(cwd as string);
-        if (active && request === generation) setSkills(items);
+        const items = await window.modus.skills.list(sessionId as string);
+        if (active && request === generation) setSkills(items.skills);
       } catch {
         if (active && request === generation) setSkills([]);
       }
@@ -96,7 +97,7 @@ export function useComposerSlash({ value, cwd, actions }: UseComposerSlashInput)
       active = false;
       unsubscribe();
     };
-  }, [menuRequested, cwd]);
+  }, [menuRequested, cwd, sessionId]);
 
   const query = slash?.query.toLowerCase() ?? "";
 

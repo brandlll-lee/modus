@@ -65,6 +65,7 @@ export const COMPOSER_SHELL_CLASS = cn(
 );
 
 type ComposerProps = {
+  sessionId?: string | undefined;
   model: string;
   models: ModelInfo[];
   contextItems: ContextItem[];
@@ -160,6 +161,7 @@ function resolveUpdate<T>(update: T | ((current: T) => T), current: T): T {
 }
 
 export function Composer({
+  sessionId,
   model,
   models,
   contextItems,
@@ -244,7 +246,7 @@ export function Composer({
   const hasSelectedSkills = selectedSkills.length > 0;
   const hasInlineTokens = contextItems.length > 0 || hasSelectedSkills;
   const hasContent = hasText || hasImages || contextItems.length > 0 || hasSelectedSkills;
-  const currentModel = models.find((item) => item.id === model) ?? models[0];
+  const currentModel = models.find((item) => item.id === model);
   const {
     activeIndex,
     isOpen,
@@ -277,10 +279,10 @@ export function Composer({
         },
       ]
     : [];
-  const slash = useComposerSlash({ actions: slashActions, cwd, value: textBeforeCaret });
+  const slash = useComposerSlash({ actions: slashActions, cwd, sessionId, value: textBeforeCaret });
 
   function send(delivery: PromptDelivery = isRunning ? "follow-up" : "normal"): void {
-    if (!hasContent || !canSubmit || submitting || models.length === 0 || !model) {
+    if (!hasContent || !canSubmit || submitting || !currentModel?.available) {
       return;
     }
     // Providers reject empty text blocks, so image-only sends get a stub line.
@@ -722,7 +724,7 @@ export function Composer({
                 animate={{ opacity: 1 }}
                 aria-label="Send"
                 className="flex size-[26px] shrink-0 items-center justify-center rounded-full bg-fg text-canvas transition-colors hover:bg-fg-muted active:scale-[0.94] disabled:bg-chip-strong disabled:text-fg-faint"
-                disabled={!hasContent || !canSubmit || submitting || models.length === 0 || !model}
+                disabled={!hasContent || !canSubmit || submitting || !currentModel?.available}
                 exit={{ opacity: 0 }}
                 initial={{ opacity: 0 }}
                 key="send"
@@ -774,7 +776,7 @@ function ModelSelect({
   onModelChange(model: string): void;
   onModelConfigChange?(model: string, thinkingVariant: string): Promise<void> | void;
 }) {
-  const current = models.find((item) => item.id === model) ?? models[0];
+  const current = models.find((item) => item.id === model);
   const thinkingOptions = current ? modelThinkingOptions(current) : [];
   const thinkingSelection = current ? selectedThinkingOption(current) : undefined;
   const effortAvailable = Boolean(current?.supportsThinking && thinkingOptions.length > 0);
@@ -797,20 +799,22 @@ function ModelSelect({
       }, new Map<string, { provider: string; name: string; models: ModelInfo[] }>())
       .values(),
   );
-  const tag = current?.name ?? "No model configured";
+  const tag = current?.name ?? (model ? `${model} (unavailable)` : "Select model");
 
-  return current ? (
+  return models.length ? (
     <Menu.Root>
       <Menu.Trigger className="app-no-drag flex h-[26px] min-w-0 items-center gap-1.5 rounded-md px-2 text-sm font-normal outline-none transition-colors hover:bg-hover data-popup-open:bg-hover">
-        <ProviderLogo
-          framed={false}
-          name={current.providerName ?? current.provider}
-          provider={current.provider}
-          size="sm"
-        />
+        {current ? (
+          <ProviderLogo
+            framed={false}
+            name={current.providerName ?? current.provider}
+            provider={current.provider}
+            size="sm"
+          />
+        ) : null}
         <span className="min-w-0 truncate text-fg">{tag}</span>
         <span className="hidden shrink-0 whitespace-nowrap text-fg-faint @md:inline">
-          {selectedThinkingLabel(current)}
+          {current ? selectedThinkingLabel(current) : "Unavailable"}
         </span>
         <IconChevronDown className="shrink-0 text-fg-faint" size={12} stroke={2} />
       </Menu.Trigger>
@@ -856,7 +860,7 @@ function ModelSelect({
                                   off
                                 </span>
                               ) : null}
-                              {item.id === current.id ? (
+                              {item.id === model ? (
                                 <IconCheck className="text-fg-muted" size={15} stroke={1.8} />
                               ) : null}
                             </span>
@@ -888,7 +892,9 @@ function ModelSelect({
                       <Menu.Item
                         className="flex h-8 cursor-default items-center justify-between gap-3 rounded-md px-2.5 text-fg-subtle text-sm outline-none select-none data-highlighted:bg-hover"
                         key={option.value}
-                        onClick={() => void onModelConfigChange?.(current.id, option.value)}
+                        onClick={() => {
+                          if (current) void onModelConfigChange?.(current.id, option.value);
+                        }}
                       >
                         <span>{option.label}</span>
                         {thinkingSelection?.value === option.value ? (
@@ -907,20 +913,19 @@ function ModelSelect({
               label={effortLabel}
               options={thinkingOptions}
               selectedValue={thinkingSelection?.value}
-              syncKey={`${current.id}:${thinkingSelection?.value ?? ""}`}
-              onCommit={(value) => void onModelConfigChange?.(current.id, value)}
+              syncKey={`${current?.id ?? model}:${thinkingSelection?.value ?? ""}`}
+              onCommit={(value) => {
+                if (current) void onModelConfigChange?.(current.id, value);
+              }}
             />
           </Menu.Popup>
         </Menu.Positioner>
       </Menu.Portal>
     </Menu.Root>
   ) : (
-    <button
-      className="app-no-drag flex h-[26px] items-center gap-1 rounded-md px-2 text-sm font-normal text-fg-faint transition-colors hover:bg-hover hover:text-fg-subtle"
-      type="button"
-    >
-      No model configured
-    </button>
+    <span className="app-no-drag flex h-[26px] items-center px-2 text-sm text-fg-faint">
+      No available models
+    </span>
   );
 }
 

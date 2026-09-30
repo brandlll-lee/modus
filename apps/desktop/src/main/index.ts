@@ -1,7 +1,9 @@
 import { app, BrowserWindow, type BrowserWindow as BrowserWindowType } from "electron";
 import { configurePiHost } from "./agent/agent-paths";
+import { migrateAgentConfiguration } from "./agent/configuration-migration";
 import { getModelRuntime } from "./agent/model-service";
 import { shutdownAgentRuntime } from "./agent/runtime-registry";
+import { getDatabase } from "./db/database";
 import { registerAppIpc } from "./ipc/register-app-ipc";
 import { createStartupTimeline } from "./startup/startup-timeline";
 import { shutdownTerminals } from "./terminal/terminal-service";
@@ -42,7 +44,10 @@ if (!app.requestSingleInstanceLock()) {
     .then(async () => {
       startupTimeline.mark("main.electron-ready");
       configurePiHost();
-      await getModelRuntime();
+      migrateAgentConfiguration(getDatabase());
+      await getModelRuntime().catch((error: unknown) =>
+        console.error("Model configuration could not be loaded.", error),
+      );
       boot();
     })
     .catch((error: unknown) => {

@@ -44,8 +44,6 @@ export function contextChipFor(item: ContextItem): MessageContextChip | undefine
       return { kind: "project-summary", label: "project summary" };
     case "recent-changes":
       return { kind: "recent-changes", label: "recent changes" };
-    case "rules":
-      return { kind: "rules", label: "project rules" };
     case "search":
       return { kind: "search", label: `search:${item.query}` };
     case "design-element": {

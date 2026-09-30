@@ -14,11 +14,9 @@ import type {
   BrowserRecentInfo,
   BrowserTabInfo,
   CheckpointInfo,
-  ConfigureProviderInput,
   ContextItem,
   ContextKind,
   ContextSuggestion,
-  CustomProviderConfig,
   DiffFilePatch,
   DiffReview,
   DiffTarget,
@@ -37,36 +35,24 @@ import type {
   GitStatusSummary,
   ManagedProcessInfo,
   ManagedProcessOrigin,
-  McpServerInfo,
-  McpServerUpsertInput,
   ModelInfo,
   ModelProviderDetail,
   ModelSettingsState,
   PermissionAction,
   PermissionDecision,
-  PersonalizationState,
   PreviewReadResult,
   PromptDelivery,
   PromptImageAttachment,
-  ProviderAuthOperationState,
-  ProviderConnectionMethod,
   QuestionAnswer,
   QuestionResponse,
-  RawMcpEntry,
   ResolvedContext,
-  RuleFileInfo,
-  SkillDetail,
-  SkillInfo,
   SkillSelection,
+  SkillState,
   SubagentDetail,
   SubagentInfo,
   TerminalEvent,
   TerminalInfo,
-  TestCustomProviderInput,
-  TestCustomProviderResult,
   ThinkingLevel,
-  UpdateModelConfigInput,
-  UpsertCustomProviderInput,
   WorkingChangeStats,
   WorkspaceInfo,
 } from "../shared/contracts";
@@ -347,22 +333,8 @@ export type ModusApi = {
     refreshCatalog(): Promise<ModelSettingsState>;
     onCatalogChanged(callback: () => void): () => void;
     providerDetail(provider: string): Promise<ModelProviderDetail | undefined>;
-    connectionMethods(provider: string): Promise<ProviderConnectionMethod[]>;
-    startProviderAuth(input: {
-      provider: string;
-      method?: "oauth" | "api_key";
-    }): Promise<ProviderAuthOperationState>;
-    providerAuthState(input: { operationId: string }): Promise<ProviderAuthOperationState>;
-    respondProviderAuth(input: { operationId: string; value?: string | undefined }): Promise<void>;
-    cancelProviderAuth(input: { operationId: string }): Promise<void>;
-    disconnectProvider(provider: string): Promise<void>;
-    customProviderConfig(provider: string): Promise<CustomProviderConfig | undefined>;
-    deleteCustomProvider(provider: string): Promise<void>;
-    configureProvider(input: ConfigureProviderInput): Promise<ModelProviderDetail>;
-    upsertCustomProvider(input: UpsertCustomProviderInput): Promise<ModelProviderDetail>;
-    /** Live connectivity probe for the custom provider form (nothing is saved). */
-    testCustomProvider(input: TestCustomProviderInput): Promise<TestCustomProviderResult>;
-    updateConfig(input: UpdateModelConfigInput): Promise<ModelInfo>;
+    openConfig(provider: string): Promise<void>;
+    setThinking(input: { model: string; thinkingVariant: string }): Promise<ModelInfo>;
   };
   review: {
     start(input: {
@@ -378,41 +350,16 @@ export type ModusApi = {
     restore(input: { checkpointId: string }): Promise<CheckpointInfo>;
   };
   mcp: {
-    list(cwd?: string): Promise<McpServerInfo[]>;
-    status(cwd: string): Promise<Array<{ sessionId: string; report: string }>>;
-    command(input: {
-      sessionId: string;
-      name: string;
-      action: "login" | "logout" | "reconnect";
-    }): Promise<string>;
-    sync(cwd: string): Promise<McpServerInfo[]>;
-    openConfig(cwd: string): Promise<string>;
-    upsert(input: { cwd: string } & McpServerUpsertInput): Promise<McpServerInfo[]>;
-    delete(input: { cwd: string; name: string }): Promise<McpServerInfo[]>;
-    setEnabled(input: { cwd: string; name: string; enabled: boolean }): Promise<McpServerInfo[]>;
-    entry(input: { cwd: string; name: string }): Promise<RawMcpEntry | undefined>;
-  };
-  rules: {
-    /** Detected project rule files (AGENTS.md, .cursor/rules…) with apply modes. */
-    list(cwd: string): Promise<RuleFileInfo[]>;
-  };
-  personalization: {
-    get(): Promise<PersonalizationState>;
-    save(input: { content: string }): Promise<PersonalizationState>;
-    open(): Promise<string>;
+    locations(sessionId: string): Promise<string[]>;
+    status(sessionId: string): Promise<Array<{ sessionId: string; report: string }>>;
+    sync(cwd: string): Promise<void>;
+    openConfig(input: { sessionId: string; path: string }): Promise<void>;
   };
   skills: {
-    list(cwd: string): Promise<SkillInfo[]>;
-    refresh(cwd: string): Promise<SkillInfo[]>;
+    list(sessionId: string): Promise<SkillState>;
+    refresh(cwd: string): Promise<void>;
     onChanged(callback: (cwd: string) => void): () => void;
-    get(input: { cwd: string; path: string }): Promise<SkillDetail | undefined>;
-    create(input: {
-      cwd: string;
-      name: string;
-      description: string;
-      body: string;
-    }): Promise<SkillInfo>;
-    openDir(cwd: string): Promise<string>;
+    openDir(input: { sessionId: string; path: string }): Promise<void>;
   };
   subagents: {
     list(cwd: string): Promise<SubagentInfo[]>;

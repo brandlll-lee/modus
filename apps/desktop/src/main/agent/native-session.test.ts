@@ -86,11 +86,11 @@ beforeAll(async () => {
     { compaction: { enabled: false }, defaultTools: ["+codemode", "+tool_search"] },
     { projectTrusted: true },
   );
+  writeFileSync(join(root, "AGENTS.md"), "SYNTHETIC_WORKSPACE_INSTRUCTIONS");
   const loader = new DefaultResourceLoader({
     cwd: root,
     agentDir,
     settingsManager,
-    noContextFiles: true,
     noThemes: true,
     noPromptTemplates: true,
     additionalSkillPaths: [join(root, ".modus", "skills")],
@@ -125,6 +125,9 @@ beforeAll(async () => {
     ],
   });
   await loader.reload();
+  expect(
+    loader.getAgentsFiles().agentsFiles.filter((file) => file.path === join(root, "AGENTS.md")),
+  ).toHaveLength(1);
   ({ session } = await createAgentSession({
     cwd: root,
     agentDir,
@@ -134,6 +137,7 @@ beforeAll(async () => {
     resourceLoader: loader,
     sessionManager: SessionManager.inMemory(root),
   }));
+  expect(session.systemPrompt.split("SYNTHETIC_WORKSPACE_INSTRUCTIONS")).toHaveLength(2);
   const normalize = createPiEventNormalizer("native");
   session.subscribe((event) => events.push(...normalize(event)));
   await session.bindExtensions({

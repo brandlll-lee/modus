@@ -1,16 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
-import { join } from "node:path";
 import {
   createAgentSession,
   DefaultResourceLoader,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
-import { app } from "electron";
 import { z } from "zod";
 import type { AgentReviewDepth, AgentReviewIssue, AgentReviewResult } from "../../shared/contracts";
 import { getDatabase } from "../db/database";
 import { readDiff } from "../git/git-service";
+import { modusAgentDir } from "./agent-paths";
 import { createAgentSettings } from "./agent-settings";
 import { getDefaultModel, getModelRuntime } from "./model-service";
 import { toolRegistry } from "./tools/registry";
@@ -154,7 +153,7 @@ export function parseReviewOutput(
 }
 
 async function runPiReview(cwd: string, diff: string, depth: AgentReviewDepth): Promise<string> {
-  const agentDir = join(app.getPath("userData"), "pi-agent");
+  const agentDir = modusAgentDir();
   mkdirSync(agentDir, { recursive: true });
   const modelRuntime = await getModelRuntime();
   const settingsManager = createAgentSettings({

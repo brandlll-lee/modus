@@ -187,21 +187,8 @@ const api: ModusApi = {
       return () => ipcRenderer.removeListener("model:catalog-changed", listener);
     },
     providerDetail: (provider) => ipcRenderer.invoke("model:provider-detail", provider),
-    connectionMethods: (provider) =>
-      ipcRenderer.invoke("model:provider-connection-methods", provider),
-    startProviderAuth: (input) => ipcRenderer.invoke("model:provider-auth-start", input),
-    providerAuthState: (input) => ipcRenderer.invoke("model:provider-auth-state", input),
-    respondProviderAuth: (input) => ipcRenderer.invoke("model:provider-auth-respond", input),
-    cancelProviderAuth: (input) => ipcRenderer.invoke("model:provider-auth-cancel", input),
-    disconnectProvider: (provider) => ipcRenderer.invoke("model:disconnect-provider", provider),
-    customProviderConfig: (provider) =>
-      ipcRenderer.invoke("model:custom-provider-config", provider),
-    deleteCustomProvider: (provider) =>
-      ipcRenderer.invoke("model:delete-custom-provider", provider),
-    configureProvider: (input) => ipcRenderer.invoke("model:configure-provider", input),
-    upsertCustomProvider: (input) => ipcRenderer.invoke("model:upsert-custom-provider", input),
-    testCustomProvider: (input) => ipcRenderer.invoke("model:test-custom-provider", input),
-    updateConfig: (input) => ipcRenderer.invoke("model:update-config", input),
+    openConfig: (provider) => ipcRenderer.invoke("model:open-config", provider),
+    setThinking: (input) => ipcRenderer.invoke("model:set-thinking", input),
   },
   review: {
     start: (input) => ipcRenderer.invoke("review:start", input),
@@ -212,26 +199,13 @@ const api: ModusApi = {
     restore: (input) => ipcRenderer.invoke("checkpoint:restore", input),
   },
   mcp: {
-    list: (cwd) => ipcRenderer.invoke("mcp:list", cwd),
-    status: (cwd) => ipcRenderer.invoke("mcp:status", cwd),
-    command: (input) => ipcRenderer.invoke("mcp:command", input),
+    locations: (sessionId) => ipcRenderer.invoke("mcp:locations", sessionId),
+    status: (sessionId) => ipcRenderer.invoke("mcp:status", sessionId),
     sync: (cwd) => ipcRenderer.invoke("mcp:sync", cwd),
     openConfig: (cwd) => ipcRenderer.invoke("mcp:open-config", cwd),
-    upsert: (input) => ipcRenderer.invoke("mcp:upsert", input),
-    delete: (input) => ipcRenderer.invoke("mcp:delete", input),
-    setEnabled: (input) => ipcRenderer.invoke("mcp:set-enabled", input),
-    entry: (input) => ipcRenderer.invoke("mcp:entry", input),
-  },
-  rules: {
-    list: (cwd) => ipcRenderer.invoke("rules:list", cwd),
-  },
-  personalization: {
-    get: () => ipcRenderer.invoke("personalization:get"),
-    save: (input) => ipcRenderer.invoke("personalization:save", input),
-    open: () => ipcRenderer.invoke("personalization:open"),
   },
   skills: {
-    list: (cwd) => ipcRenderer.invoke("skills:list", cwd),
+    list: (sessionId) => ipcRenderer.invoke("skills:list", sessionId),
     refresh: (cwd) => ipcRenderer.invoke("skills:refresh", cwd),
     onChanged: (callback) => {
       const listener = (_event: IpcRendererEvent, cwd: string) => callback(cwd);
@@ -240,8 +214,6 @@ const api: ModusApi = {
         ipcRenderer.removeListener("resources:changed", listener);
       };
     },
-    get: (input) => ipcRenderer.invoke("skills:get", input),
-    create: (input) => ipcRenderer.invoke("skills:create", input),
     openDir: (cwd) => ipcRenderer.invoke("skills:open-dir", cwd),
   },
   subagents: {
