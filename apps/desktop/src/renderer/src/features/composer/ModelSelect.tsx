@@ -1,6 +1,8 @@
 import { Combobox } from "@base-ui/react/combobox";
 import { Menu } from "@base-ui/react/menu";
 import { IconCheck, IconChevronDown } from "@tabler/icons-react";
+import { useVirtualizer, type Virtualizer } from "@tanstack/react-virtual";
+import { type RefObject, useImperativeHandle, useRef } from "react";
 import type { ModelInfo } from "../../../../shared/contracts";
 import { ProviderLogo } from "../../components/providers/ProviderLogo";
 import {
@@ -23,10 +25,17 @@ export function ModelSelect({
   const current = models.find((item) => item.id === model);
   const thinkingOptions = current ? modelThinkingOptions(current) : [];
   const thinkingSelection = current ? selectedThinkingOption(current) : undefined;
+  const virtualizerRef = useRef<Virtualizer<HTMLDivElement, HTMLDivElement>>(null);
   return (
     <div className="flex min-w-0 items-center gap-1">
       <Combobox.Root
         items={models}
+        virtualized
+        onItemHighlighted={(item, details) => {
+          if (item && details.reason !== "pointer") {
+            virtualizerRef.current?.scrollToIndex(details.index, { align: "auto" });
+          }
+        }}
         value={current ?? null}
         itemToStringLabel={(item) => `${item.name} ${item.providerName ?? item.provider}`}
         isItemEqualToValue={(a, b) => a.id === b.id}
@@ -47,42 +56,18 @@ export function ModelSelect({
           <Combobox.Positioner side="top" align="end" sideOffset={8}>
             <Combobox.Popup
               aria-label="Models"
-              className="popup-chrome w-[320px] max-w-[calc(100vw-24px)] p-1.5"
+              initialFocus={false}
+              className="popup-chrome selection-surface p-1.5"
             >
               <Combobox.Input
                 aria-label="Search models"
                 placeholder="Search models"
-                className="mb-1 h-9 w-full rounded-md border border-hairline bg-canvas px-3 text-sm"
+                className="search-control mb-1 h-9 w-full shrink-0 rounded-md border border-hairline bg-canvas px-3 text-sm"
               />
               <Combobox.Empty className="p-4 text-sm text-fg-subtle">
                 No matching models
               </Combobox.Empty>
-              <Combobox.List className="scroll-thin max-h-[min(320px,var(--available-height))] overflow-y-auto">
-                {(item: ModelInfo) => (
-                  <Combobox.Item
-                    key={item.id}
-                    value={item}
-                    disabled={!item.available}
-                    className="flex min-h-11 cursor-default items-center gap-2 rounded-md px-2 py-2 text-sm outline-none data-highlighted:bg-hover data-disabled:opacity-40"
-                  >
-                    <ProviderLogo
-                      provider={item.provider}
-                      name={item.providerName ?? item.provider}
-                      size="sm"
-                      framed={false}
-                    />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate">{item.name}</span>
-                      <span className="block truncate text-xs text-fg-subtle">
-                        {item.providerName ?? item.provider}
-                      </span>
-                    </span>
-                    <Combobox.ItemIndicator>
-                      <IconCheck size={15} />
-                    </Combobox.ItemIndicator>
-                  </Combobox.Item>
-                )}
-              </Combobox.List>
+              <ModelOptions virtualizerRef={virtualizerRef} />
             </Combobox.Popup>
           </Combobox.Positioner>
         </Combobox.Portal>
@@ -115,5 +100,63 @@ export function ModelSelect({
         </Menu.Root>
       ) : null}
     </div>
+  );
+}
+
+function ModelOptions({
+  virtualizerRef,
+}: {
+  virtualizerRef: RefObject<Virtualizer<HTMLDivElement, HTMLDivElement> | null>;
+}) {
+  const items = Combobox.useFilteredItems<ModelInfo>();
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const virtualizer = useVirtualizer<HTMLDivElement, HTMLDivElement>({
+    count: items.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 56,
+    getItemKey: (index) => items[index]?.id ?? index,
+    overscan: 4,
+  });
+  useImperativeHandle(virtualizerRef, () => virtualizer, [virtualizer]);
+  return (
+    <Combobox.List
+      ref={scrollRef}
+      className="scroll-thin min-h-0 flex-1 overflow-y-auto overscroll-contain"
+    >
+      <div className="relative" style={{ height: virtualizer.getTotalSize() }}>
+        {virtualizer.getVirtualItems().map((row) => {
+          const item = items[row.index];
+          if (!item) return null;
+          return (
+            <Combobox.Item
+              key={item.id}
+              value={item}
+              index={row.index}
+              aria-setsize={items.length}
+              aria-posinset={row.index + 1}
+              disabled={!item.available}
+              className="absolute top-0 left-0 flex h-14 w-full cursor-default items-center gap-2 rounded-md px-2 py-2 text-sm outline-none data-highlighted:bg-hover data-disabled:opacity-40"
+              style={{ transform: `translateY(${row.start}px)` }}
+            >
+              <ProviderLogo
+                provider={item.provider}
+                name={item.providerName ?? item.provider}
+                size="sm"
+                framed={false}
+              />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate">{item.name}</span>
+                <span className="block truncate text-xs text-fg-subtle">
+                  {item.providerName ?? item.provider}
+                </span>
+              </span>
+              <Combobox.ItemIndicator>
+                <IconCheck size={15} />
+              </Combobox.ItemIndicator>
+            </Combobox.Item>
+          );
+        })}
+      </div>
+    </Combobox.List>
   );
 }

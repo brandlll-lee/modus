@@ -2,6 +2,7 @@ import { Dialog } from "@base-ui/react/dialog";
 import { IconCloudUpload, IconGitBranch, IconGitCommit } from "@tabler/icons-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import type { GitStatusSummary } from "../../../../shared/contracts";
+import { DialogBody, DialogSurface } from "../../components/ui/DialogSurface";
 import { ShinyText } from "../../components/ui/ShinyText";
 import { cn } from "../../lib/cn";
 
@@ -80,112 +81,94 @@ export function CommitDialog({ open, onOpenChange, cwd, status, onRefresh }: Com
 
   return (
     <Dialog.Root onOpenChange={onOpenChange} open={open}>
-      <Dialog.Portal>
-        <Dialog.Backdrop
-          className={cn(
-            "fixed inset-0 z-50 bg-black/50 transition-opacity duration-150 ease-out-quint",
-            "data-ending-style:opacity-0 data-starting-style:opacity-0",
-          )}
-        />
-        <Dialog.Popup
-          className={cn(
-            "-translate-x-1/2 -translate-y-1/2 fixed top-1/2 left-1/2 z-50 w-[min(440px,calc(100vw-2rem))]",
-            "origin-center overflow-hidden popup-chrome outline-none",
-            "transition-[transform,opacity] duration-150 ease-out-quint",
-            "data-ending-style:scale-[0.97] data-ending-style:opacity-0",
-            "data-starting-style:scale-[0.97] data-starting-style:opacity-0",
-          )}
-          initialFocus={messageRef}
-        >
-          {/* Header: branch + diff stat (read-only; switching lives in the panel) */}
-          <div className="flex items-center justify-between gap-3 px-4 pt-3.5 pb-2">
-            <span className="flex min-w-0 items-center gap-1.5 text-fg-muted text-sm">
-              <IconGitBranch className="shrink-0 text-fg-subtle" size={14} stroke={1.7} />
-              <span className="max-w-[200px] truncate font-medium">
-                {status?.branch ?? "detached"}
+      <DialogSurface size="compact" initialFocus={messageRef}>
+        {/* Header: branch + diff stat (read-only; switching lives in the panel) */}
+        <div className="flex items-center justify-between gap-3 px-4 pt-3.5 pb-2">
+          <span className="flex min-w-0 items-center gap-1.5 text-fg-muted text-sm">
+            <IconGitBranch className="shrink-0 text-fg-subtle" size={14} stroke={1.7} />
+            <span className="max-w-[200px] truncate font-medium">
+              {status?.branch ?? "detached"}
+            </span>
+          </span>
+          <div className="flex shrink-0 items-center gap-2 font-mono text-xs">
+            <span className="text-success">+{status?.added ?? 0}</span>
+            <span className="text-danger">-{status?.removed ?? 0}</span>
+          </div>
+        </div>
+
+        <Dialog.Title className="sr-only">Commit or push changes</Dialog.Title>
+
+        <DialogBody className="px-4">
+          <textarea
+            className={cn(
+              "scroll-thin h-24 w-full resize-none rounded-lg border border-hairline bg-canvas px-3 py-2.5",
+              "text-sm text-fg leading-relaxed outline-none transition-colors placeholder:text-fg-faint",
+              "focus:border-hairline-strong",
+            )}
+            onChange={(event) => setMessage(event.target.value)}
+            onKeyDown={onMessageKeyDown}
+            placeholder="Describe your changes…"
+            ref={messageRef}
+            value={message}
+          />
+          <button
+            aria-pressed={includeUnstaged}
+            className="mt-2 flex w-full items-center justify-between rounded-md px-1 py-1 text-left text-xs"
+            onClick={() => setIncludeUnstaged((value) => !value)}
+            type="button"
+          >
+            <span>
+              <span className="block text-fg-muted">Include unstaged</span>
+              <span className="block text-2xs text-fg-faint">
+                {includedCount} file{includedCount === 1 ? "" : "s"} will be committed
               </span>
             </span>
-            <div className="flex shrink-0 items-center gap-2 font-mono text-xs">
-              <span className="text-success">+{status?.added ?? 0}</span>
-              <span className="text-danger">-{status?.removed ?? 0}</span>
-            </div>
-          </div>
-
-          <Dialog.Title className="sr-only">Commit or push changes</Dialog.Title>
-
-          <div className="px-4">
-            <textarea
+            <span
               className={cn(
-                "scroll-thin h-24 w-full resize-none rounded-lg border border-hairline bg-canvas px-3 py-2.5",
-                "text-sm text-fg leading-relaxed outline-none transition-colors placeholder:text-fg-faint",
-                "focus:border-hairline-strong",
+                "flex h-4 w-7 items-center rounded-full p-0.5 transition-colors",
+                includeUnstaged ? "bg-accent" : "bg-chip-strong",
               )}
-              onChange={(event) => setMessage(event.target.value)}
-              onKeyDown={onMessageKeyDown}
-              placeholder="Describe your changes…"
-              ref={messageRef}
-              value={message}
-            />
-            <button
-              aria-pressed={includeUnstaged}
-              className="mt-2 flex w-full items-center justify-between rounded-md px-1 py-1 text-left text-xs"
-              onClick={() => setIncludeUnstaged((value) => !value)}
-              type="button"
             >
-              <span>
-                <span className="block text-fg-muted">Include unstaged</span>
-                <span className="block text-2xs text-fg-faint">
-                  {includedCount} file{includedCount === 1 ? "" : "s"} will be committed
-                </span>
-              </span>
               <span
                 className={cn(
-                  "flex h-4 w-7 items-center rounded-full p-0.5 transition-colors",
-                  includeUnstaged ? "bg-accent" : "bg-chip-strong",
+                  "size-3 rounded-full bg-white transition-transform",
+                  includeUnstaged && "translate-x-3",
                 )}
-              >
-                <span
-                  className={cn(
-                    "size-3 rounded-full bg-white transition-transform",
-                    includeUnstaged && "translate-x-3",
-                  )}
-                />
-              </span>
-            </button>
-          </div>
-
+              />
+            </span>
+          </button>
           {error ? (
             <div className="mx-4 mt-2 max-h-24 overflow-y-auto whitespace-pre-wrap rounded-md border border-danger/30 bg-danger/8 px-2.5 py-2 text-xs text-danger">
               {error}
             </div>
           ) : null}
+        </DialogBody>
 
-          <div className="mt-3 border-hairline-soft border-t">
-            <ActionRow
-              busy={busy === "commit"}
-              disabled={!canCommit}
-              icon={<IconGitCommit size={16} stroke={1.7} />}
-              label="Commit"
-              onClick={() => void run("commit")}
-              shortcut="Ctrl+⏎"
-            />
-            <ActionRow
-              busy={busy === "commit-and-push"}
-              disabled={!canCommit || !hasRemote}
-              icon={<IconCloudUpload size={16} stroke={1.7} />}
-              label="Commit and push"
-              onClick={() => void run("commit-and-push")}
-            />
-            <ActionRow
-              busy={busy === "push"}
-              disabled={!canPushOnly}
-              icon={<IconCloudUpload size={16} stroke={1.7} />}
-              label={ahead > 0 ? `Push (${ahead})` : "Push"}
-              onClick={() => void run("push")}
-            />
-          </div>
-        </Dialog.Popup>
-      </Dialog.Portal>
+        <div className="shrink-0 border-hairline-soft border-t">
+          <ActionRow
+            busy={busy === "commit"}
+            disabled={!canCommit}
+            icon={<IconGitCommit size={16} stroke={1.7} />}
+            label="Commit"
+            onClick={() => void run("commit")}
+            shortcut="Ctrl+⏎"
+          />
+          <ActionRow
+            busy={busy === "commit-and-push"}
+            disabled={!canCommit || !hasRemote}
+            icon={<IconCloudUpload size={16} stroke={1.7} />}
+            label="Commit and push"
+            onClick={() => void run("commit-and-push")}
+          />
+          <ActionRow
+            busy={busy === "push"}
+            disabled={!canPushOnly}
+            icon={<IconCloudUpload size={16} stroke={1.7} />}
+            label={ahead > 0 ? `Push (${ahead})` : "Push"}
+            onClick={() => void run("push")}
+          />
+        </div>
+      </DialogSurface>
     </Dialog.Root>
   );
 }

@@ -2,10 +2,9 @@ import { Dialog } from "@base-ui/react/dialog";
 import { useState } from "react";
 import type { QuestionAnswer, QuestionRequest } from "../../../../shared/contracts";
 import { Button } from "../../components/ui/Button";
-import { useSuppressNativeSurface } from "../../components/ui/nativeSurface";
+import { DialogBody, DialogSurface } from "../../components/ui/DialogSurface";
 
 export function ExtensionDialog({ request }: { request: QuestionRequest }) {
-  useSuppressNativeSurface();
   const question = request.questions[0];
   const [value, setValue] = useState(question?.prefill ?? "");
   const [busy, setBusy] = useState(false);
@@ -39,10 +38,11 @@ export function ExtensionDialog({ request }: { request: QuestionRequest }) {
         if (!open) void respond(undefined, true);
       }}
     >
-      <Dialog.Portal>
-        <Dialog.Backdrop className="fixed inset-0 z-50 bg-fg/20 backdrop-blur-[1px]" />
-        <Dialog.Popup className="fixed top-1/2 left-1/2 z-50 max-h-[calc(100dvh-2rem)] w-[min(32rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-lg border border-hairline bg-panel p-5 shadow-lg">
-          <Dialog.Title className="break-words text-fg text-base">{question.header}</Dialog.Title>
+      <DialogSurface size="compact">
+        <Dialog.Title className="shrink-0 border-b border-hairline-soft p-5 break-words text-fg text-base">
+          {question.header}
+        </Dialog.Title>
+        <DialogBody className="px-5 py-4">
           {question.detail ? (
             <Dialog.Description className="mt-2 whitespace-pre-wrap break-words text-fg-muted text-sm">
               {question.detail}
@@ -83,14 +83,16 @@ export function ExtensionDialog({ request }: { request: QuestionRequest }) {
             </form>
           )}
           {error ? <p className="mt-3 text-danger text-sm">{error}</p> : null}
+        </DialogBody>
+        <footer className="shrink-0 border-t border-hairline-soft px-5 py-3">
           <Dialog.Close
             disabled={busy}
-            className="mt-4 rounded-md px-3 py-2 text-sm text-fg-muted hover:bg-hover"
+            className="rounded-md px-3 py-2 text-sm text-fg-muted hover:bg-hover"
           >
             Cancel
           </Dialog.Close>
-        </Dialog.Popup>
-      </Dialog.Portal>
+        </footer>
+      </DialogSurface>
     </Dialog.Root>
   );
 }

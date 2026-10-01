@@ -1,8 +1,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import type {
-  AgentSession,
-  ExtensionUIContext,
-  ExtensionUIDialogOptions,
+import {
+  type AgentSession,
+  type ExtensionUIContext,
+  type ExtensionUIDialogOptions,
+  initTheme,
 } from "@earendil-works/pi-coding-agent";
 import type { AgentEvent } from "../../shared/contracts";
 import { requestQuestions } from "../interaction/question-broker";
@@ -19,6 +20,7 @@ export function createExtensionUI(
   sessionId: string,
   emit: (event: AgentEvent) => void,
 ): ExtensionUIContext {
+  initTheme(session.settingsManager.getTheme());
   const runner = session.extensionRunner;
   if (!runner) throw new Error("Session extensions are not initialized.");
   const ask = async (

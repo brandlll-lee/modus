@@ -142,6 +142,7 @@ function createMockPiSession(overrides: Record<string, unknown> = {}): Record<st
   return {
     abort: vi.fn(async () => undefined),
     bindExtensions: vi.fn(async () => undefined),
+    settingsManager: { getTheme: () => undefined },
     extensionRunner: { getUIContext: () => ({}), emit: vi.fn(async () => undefined) },
     getAllTools: () =>
       [

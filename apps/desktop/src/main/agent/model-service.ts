@@ -5,6 +5,7 @@ import {
   ModelRegistry,
   ModelRuntime,
   resolveModelScopeWithDiagnostics,
+  type SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { shell } from "electron";
 import type {
@@ -72,9 +73,12 @@ function thinkingOptions(model: Model<Api>): ThinkingOption[] {
   });
 }
 
-export function resolveModelThinking(model: Model<Api>, variant?: string) {
+export function resolveModelThinking(
+  model: Model<Api>,
+  variant?: string,
+  settings = createAgentSettings(),
+) {
   const options = thinkingOptions(model);
-  const settings = createAgentSettings();
   const preferred =
     settings.getModelThinkingLevel(model.provider, model.id) ??
     settings.getDefaultThinkingLevel() ??
@@ -86,8 +90,8 @@ export function resolveModelThinking(model: Model<Api>, variant?: string) {
   return { model, thinkingLevel: selected.level, variant: selected.value };
 }
 
-function modelToInfo(model: Model<Api>): ModelInfo {
-  const thinking = resolveModelThinking(model);
+function modelToInfo(model: Model<Api>, settings: SettingsManager): ModelInfo {
+  const thinking = resolveModelThinking(model, undefined, settings);
   const options = thinkingOptions(model);
   return {
     id: modelToId(model),
@@ -105,17 +109,17 @@ function modelToInfo(model: Model<Api>): ModelInfo {
   };
 }
 
-export function listModels(): ModelInfo[] {
+export function listModels(settings = createAgentSettings()): ModelInfo[] {
   if (!registry) return [];
   return getModelRegistry()
     .getAvailable()
-    .map(modelToInfo)
+    .map((model) => modelToInfo(model, settings))
     .sort((a, b) => a.provider.localeCompare(b.provider) || a.name.localeCompare(b.name));
 }
 
 export function getModelInfo(reference: string | undefined): ModelInfo | undefined {
   const model = findModel(reference);
-  return model ? modelToInfo(model) : undefined;
+  return model ? modelToInfo(model, createAgentSettings()) : undefined;
 }
 
 export function listProviders(): ModelProviderInfo[] {
@@ -142,21 +146,23 @@ export function listProviders(): ModelProviderInfo[] {
 
 export function getProviderDetail(provider: string): ModelProviderDetail | undefined {
   const info = listProviders().find((entry) => entry.id === provider);
+  const settings = createAgentSettings();
   return info
     ? {
         ...info,
         models: getModelRegistry()
           .getAll()
           .filter((model) => model.provider === provider)
-          .map(modelToInfo),
+          .map((model) => modelToInfo(model, settings)),
       }
     : undefined;
 }
 
 export function getModelSettings(): ModelSettingsState {
   if (!registry) return { models: [], providers: [], errors: refreshErrors };
-  const models = listModels();
-  const defaultModel = getDefaultModelId(models);
+  const settings = createAgentSettings();
+  const models = listModels(settings);
+  const defaultModel = getDefaultModelId(models, settings);
   const error = getModelRegistry().getError();
   return {
     models,
@@ -175,8 +181,10 @@ export async function listScopedModels(settings = createAgentSettings()) {
   return result.scopedModels;
 }
 
-export function getDefaultModelId(models = listModels()): string | undefined {
-  const settings = createAgentSettings();
+export function getDefaultModelId(
+  models = listModels(),
+  settings = createAgentSettings(),
+): string | undefined {
   const provider = settings.getDefaultProvider();
   const model = settings.getDefaultModel();
   return provider && model ? `${provider}/${model}` : models[0]?.id;
@@ -217,7 +225,7 @@ export async function setModelThinking(input: {
   const settings = createAgentSettings();
   settings.setModelThinkingLevel(model.provider, model.id, thinking.thinkingLevel);
   await settings.flush();
-  return modelToInfo(model);
+  return modelToInfo(model, settings);
 }
 
 export async function cycleDefaultModel(

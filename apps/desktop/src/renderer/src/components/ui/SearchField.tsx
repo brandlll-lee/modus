@@ -27,7 +27,7 @@ export function SearchField({
       />
       <input
         aria-label={ariaLabel}
-        className="h-9 w-full rounded-md border border-hairline bg-canvas pr-8 pl-8 text-sm text-fg outline-none placeholder:text-fg-faint transition-colors focus:border-hairline-strong focus-visible:ring-2 focus-visible:ring-focus-ring/25"
+        className="search-control h-9 w-full rounded-md border border-hairline bg-canvas pr-8 pl-8 text-sm text-fg placeholder:text-fg-faint"
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
         spellCheck={false}

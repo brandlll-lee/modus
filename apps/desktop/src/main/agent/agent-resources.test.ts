@@ -19,6 +19,7 @@ vi.mock("electron", () => ({ shell: { openExternal: vi.fn(), openPath: vi.fn() }
 import { listSkills } from "../skills/skills-service";
 import { createAgentResourceLoader } from "./agent-resources";
 import { createAgentSettings } from "./agent-settings";
+import { createExtensionUI } from "./extension-ui";
 import { registerSessionResources, releaseSessionResources } from "./session-resources";
 
 let root: string;
@@ -78,7 +79,16 @@ it("restores persisted SDK usage and skills and keeps desktop tools deferred", a
     { defaultTools: ["read"], compaction: { enabled: false } },
     { projectTrusted: true },
   );
-  const loader = await createAgentResourceLoader(cwd, settings, []);
+  const loader = await createAgentResourceLoader(cwd, settings, [
+    {
+      name: "session-ui",
+      factory: (pi) => {
+        pi.on("session_start", (_event, ctx) => {
+          ctx.ui.notify(ctx.ui.theme.fg("accent", "UI_READY"));
+        });
+      },
+    },
+  ]);
   const options = {
     cwd,
     agentDir: paths.agent,
@@ -101,6 +111,14 @@ it("restores persisted SDK usage and skills and keeps desktop tools deferred", a
     ...options,
     sessionManager: SessionManager.create(cwd, join(root, "sessions")),
   });
+  const notices: string[] = [];
+  await session.bindExtensions({
+    mode: "rpc",
+    uiContext: createExtensionUI(session, "fixture", (event) => {
+      if (event.type === "extension.notice") notices.push(event.message);
+    }),
+  });
+  expect(notices.some((message) => message.includes("UI_READY"))).toBe(true);
   const response = fauxAssistantMessage("Hello");
   response.usage = {
     input: 120,
