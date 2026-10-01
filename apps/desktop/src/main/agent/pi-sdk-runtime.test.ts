@@ -141,6 +141,7 @@ const { writePlan, readPlanById } = await import("../plan/plan-store");
 function createMockPiSession(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     abort: vi.fn(async () => undefined),
+    clearQueue: vi.fn(() => ({ steering: [], followUp: [] })),
     bindExtensions: vi.fn(async () => undefined),
     settingsManager: { getTheme: () => undefined },
     extensionRunner: { getUIContext: () => ({}), emit: vi.fn(async () => undefined) },
@@ -597,7 +598,7 @@ describe("PiSdkRuntime", () => {
     await runtime.dispose(sessionId);
   });
 
-  it("marks a run as failed when PI completes without visible output", async () => {
+  it("completes a prompt handled by PI without an assistant response", async () => {
     const sessionId = `session-${crypto.randomUUID()}`;
     const workspaceId = `workspace-${crypto.randomUUID()}`;
     insertSession(sessionId, workspaceId, join(userData, "missing.jsonl"), "New chat");
@@ -623,10 +624,10 @@ describe("PiSdkRuntime", () => {
       )
       .all(sessionId) as Array<{ type: string }>;
 
-    expect(run.status).toBe("failed");
-    expect(run.error).toContain("finished without returning any assistant output");
-    expect(events.map((event) => event.type)).toContain("runtime.error");
-    expect(events.map((event) => event.type)).toContain("run.failed");
+    expect(run.status).toBe("completed");
+    expect(run.error).toBeNull();
+    expect(events.map((event) => event.type)).toContain("run.completed");
+    expect(events.map((event) => event.type)).not.toContain("run.failed");
   });
 
   it("completes a run when PI emits assistant text", async () => {
@@ -750,7 +751,7 @@ describe("PiSdkRuntime", () => {
     );
   });
 
-  it("fails the run from the last assistant error when the turn ends in error", async () => {
+  it("retains the native terminal error even when model projection omits it", async () => {
     const sessionId = `session-${crypto.randomUUID()}`;
     const workspaceId = `workspace-${crypto.randomUUID()}`;
     insertSession(sessionId, workspaceId, join(userData, "missing.jsonl"), "New chat");
@@ -760,11 +761,7 @@ describe("PiSdkRuntime", () => {
     // run.failed (never doubled, never a red retry line).
     mocks.createAgentSession.mockImplementationOnce(async () => ({
       session: createMockPiSession({
-        state: {
-          messages: [
-            { role: "assistant", stopReason: "error", errorMessage: "Provider is overloaded" },
-          ],
-        },
+        state: { messages: [] },
         prompt: vi.fn(async () => {
           mocks.emitPiEvent({ type: "message_start", message: { role: "assistant" } });
           mocks.emitPiEvent({
@@ -772,7 +769,14 @@ describe("PiSdkRuntime", () => {
             message: { role: "assistant" },
             assistantMessageEvent: { type: "text_delta", delta: "partial" },
           });
-          mocks.emitPiEvent({ type: "message_end", message: { role: "assistant" } });
+          mocks.emitPiEvent({
+            type: "message_end",
+            message: {
+              role: "assistant",
+              stopReason: "error",
+              errorMessage: "Provider is overloaded",
+            },
+          });
         }),
       }),
     }));
@@ -883,7 +887,6 @@ describe("PiSdkRuntime", () => {
     // The build turn ends in error (last assistant stopReason = error).
     mocks.createAgentSession.mockImplementationOnce(async () => ({
       session: createMockPiSession({
-        state: { messages: [{ role: "assistant", stopReason: "error", errorMessage: "boom" }] },
         prompt: vi.fn(async () => {
           mocks.emitPiEvent({ type: "message_start", message: { role: "assistant" } });
           mocks.emitPiEvent({
@@ -891,7 +894,10 @@ describe("PiSdkRuntime", () => {
             message: { role: "assistant" },
             assistantMessageEvent: { type: "text_delta", delta: "partial" },
           });
-          mocks.emitPiEvent({ type: "message_end", message: { role: "assistant" } });
+          mocks.emitPiEvent({
+            type: "message_end",
+            message: { role: "assistant", stopReason: "error", errorMessage: "boom" },
+          });
         }),
       }),
     }));
@@ -911,24 +917,39 @@ describe("PiSdkRuntime", () => {
     expect(readPlanById(plansRoot, plan.id)?.buildStatus).toBe("not_built");
   });
 
-  it("keeps an aborted in-flight run cancelled instead of failed", async () => {
+  it.each([
+    "resolved",
+    "rejected",
+  ] as const)("keeps an aborted run cancelled when PI prompt is %s", async (settlement) => {
     await initGitRepo();
     const sessionId = `session-${crypto.randomUUID()}`;
     const workspaceId = `workspace-${crypto.randomUUID()}`;
     insertSession(sessionId, workspaceId, join(userData, "missing.jsonl"), "New chat");
-    let rejectPrompt: ((error: Error) => void) | undefined;
+    let finishPrompt: (() => void) | undefined;
+    const clearQueue = vi.fn(() => ({ steering: ["adjust task"], followUp: ["next task"] }));
     const abort = vi.fn(async () => {
-      rejectPrompt?.(new Error("Aborted"));
+      mocks.emitPiEvent({
+        type: "auto_retry_end",
+        success: false,
+        attempt: 1,
+        finalError: "Retry cancelled",
+      });
+      finishPrompt?.();
     });
     const prompt = vi.fn(
       () =>
-        new Promise<void>((_resolve, reject) => {
-          rejectPrompt = reject;
+        new Promise<void>((resolve, reject) => {
+          mocks.emitPiEvent({
+            type: "message_end",
+            message: { role: "assistant", stopReason: "error", errorMessage: "Transient failure" },
+          });
+          finishPrompt = settlement === "resolved" ? resolve : () => reject(new Error("Aborted"));
         }),
     );
     mocks.createAgentSession.mockImplementationOnce(async () => ({
       session: createMockPiSession({
         abort,
+        clearQueue,
         prompt,
       }),
     }));
@@ -951,7 +972,7 @@ describe("PiSdkRuntime", () => {
       ).toEqual({ count: 1 });
     });
     await vi.waitFor(() => expect(prompt).toHaveBeenCalledOnce(), { timeout: 10_000 });
-    await runtime.abort(sessionId);
+    expect(await runtime.abort(sessionId)).toEqual(["adjust task", "next task"]);
     await promptTask;
 
     const run = getDatabase()
@@ -966,6 +987,9 @@ describe("PiSdkRuntime", () => {
       .all(sessionId) as Array<{ type: string }>;
 
     expect(abort).toHaveBeenCalledOnce();
+    expect(clearQueue.mock.invocationCallOrder[0]).toBeLessThan(
+      abort.mock.invocationCallOrder[0] ?? 0,
+    );
     expect(run).toEqual({ status: "cancelled", error: null });
     expect(events.map((event) => event.type)).toContain("run.cancelled");
     expect(events.map((event) => event.type)).not.toContain("run.failed");

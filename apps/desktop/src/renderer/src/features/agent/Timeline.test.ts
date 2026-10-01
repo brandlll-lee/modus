@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { AgentEvent, PlanRef } from "../../../../shared/contracts";
 import { PLAN_TOOL_NAME } from "../../../../shared/tools";
 import { formatElapsed, workActivityPresentation } from "./ActivityGroup";
-import { optimisticUserPromptEvents } from "./agentEventHub";
+import { foldAgentEvents, optimisticUserPromptEvents } from "./agentEventHub";
 import {
   attachTurnActions,
   blockRenderKeys,
@@ -29,6 +29,80 @@ function tool(id: string, name: string, complete = true, isError = false) {
 }
 
 describe("buildBlocks", () => {
+  it("updates one retry row through exhaustion and restores it from history", () => {
+    const events: AgentEvent[] = [
+      { type: "run.started", sessionId: "s", runId: "r", delivery: "normal" },
+      {
+        type: "session.status",
+        sessionId: "s",
+        status: { type: "retry", attempt: 1, maxAttempts: 5, message: "temporary", nextAt: 1000 },
+      },
+      {
+        type: "session.status",
+        sessionId: "s",
+        status: { type: "retry", attempt: 2, maxAttempts: 5, message: "temporary", nextAt: 2000 },
+      },
+      {
+        type: "retry.ended",
+        sessionId: "s",
+        success: false,
+        attempt: 2,
+        finalError: "final failure",
+      },
+      { type: "run.failed", sessionId: "s", runId: "r", message: "final failure" },
+      { type: "runtime.error", sessionId: "s", message: "final failure" },
+      { type: "session.status", sessionId: "s", status: { type: "idle" } },
+    ];
+    const entries = foldAgentEvents(events.map((event, i) => item(String(i), event)));
+    const rows = buildBlocks(entries).filter((block) => block.type === "request-status");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      status: "failed",
+      attempt: 2,
+      maxAttempts: 5,
+      detail: "final failure",
+    });
+    const grouped = groupTurnWork(buildBlocks(entries));
+    expect(grouped[0]).toMatchObject({ type: "work-fold", items: [rows[0]] });
+  });
+
+  it("keeps recovered retries distinct from later retry cycles", () => {
+    const blocks = buildBlocks([
+      item("start", { type: "run.started", sessionId: "s", runId: "r", delivery: "normal" }),
+      item("retry", {
+        type: "session.status",
+        sessionId: "s",
+        status: { type: "retry", attempt: 1, maxAttempts: 3, message: "first", nextAt: 1000 },
+      }),
+      item("recovered", { type: "retry.ended", sessionId: "s", success: true, attempt: 1 }),
+      item("retry2", {
+        type: "session.status",
+        sessionId: "s",
+        status: { type: "retry", attempt: 1, maxAttempts: 3, message: "second", nextAt: 2000 },
+      }),
+      item("cancelled", { type: "run.cancelled", sessionId: "s", runId: "r" }),
+    ]);
+    expect(blocks.filter((block) => block.type === "request-status")).toMatchObject([
+      { status: "done", recovered: true },
+      { status: "cancelled" },
+    ]);
+  });
+
+  it("shows a terminal error even when the run produced no content", () => {
+    const events: AgentEvent[] = [
+      { type: "run.started", sessionId: "s", runId: "r", delivery: "normal" },
+      { type: "run.failed", sessionId: "s", runId: "r", message: "403 quota exhausted" },
+    ];
+    expect(
+      groupTurnWork(buildBlocks(events.map((event, i) => item(String(i), event)))),
+    ).toMatchObject([
+      {
+        type: "work-fold",
+        items: [{ type: "request-status", status: "failed", detail: "403 quota exhausted" }],
+      },
+    ]);
+  });
+
   it("starts execution time at the first native turn and keeps it across later turns", () => {
     const events = [
       { type: "run.started", sessionId: "s", runId: "r", delivery: "normal" },

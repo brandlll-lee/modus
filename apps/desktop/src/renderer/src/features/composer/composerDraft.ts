@@ -58,3 +58,17 @@ export function messageFromParts(parts: MentionEditorPart[] | undefined, fallbac
 export function resolveDraftUpdate<T>(update: T | ((current: T) => T), current: T): T {
   return typeof update === "function" ? (update as (value: T) => T)(current) : update;
 }
+
+export function restoreQueuedDraft(draft: ComposerDraft, messages: string[]): ComposerDraft {
+  const text = messages.filter((message) => message.trim()).join("\n\n");
+  if (!text) return draft;
+  const prefix = `${text}${draft.value.trim() ? "\n\n" : ""}`;
+  return {
+    ...draft,
+    value: prefix + draft.value,
+    parts: [
+      { type: "text", text: prefix },
+      ...(draft.parts ?? [{ type: "text", text: draft.value }]),
+    ],
+  };
+}

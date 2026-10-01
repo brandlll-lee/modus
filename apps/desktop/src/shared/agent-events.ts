@@ -20,9 +20,9 @@ export type AgentEventItem = {
  * still collapse correctly, and a session's event list stays O(parts) instead
  * of O(deltas): one accumulated item per stream, not one per chunk.
  *
- * Durable lifecycle events are keyed when the event identity is explicit
- * (`messageId`, session id for status), so local optimistic items can be
- * replaced by the runtime's authoritative echo.
+ * Message lifecycle events are keyed by `messageId`, so local optimistic items
+ * can be replaced by the runtime's authoritative echo. Session status changes
+ * retain their order because retries belong to the run where they occurred.
  */
 function foldKey(event: AgentEvent): string | undefined {
   if ("runId" in event && typeof event.runId === "string") {
@@ -38,8 +38,6 @@ function foldKey(event: AgentEvent): string | undefined {
     case "tool.output":
     case "tool.delta":
       return `${event.type}:${event.toolCallId}`;
-    case "session.status":
-      return `${event.type}:${event.sessionId}`;
     default:
       return undefined;
   }
@@ -165,12 +163,6 @@ export function optimisticUserPromptEvents(input: {
         sessionId: input.sessionId,
         messageId: input.userMessageId,
       },
-      createdAt,
-      optimistic: true,
-    },
-    {
-      id: `optimistic:${input.sessionId}:status`,
-      event: { type: "session.status", sessionId: input.sessionId, status: { type: "busy" } },
       createdAt,
       optimistic: true,
     },

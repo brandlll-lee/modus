@@ -151,7 +151,7 @@ export const MessageBlock = memo(function MessageBlock({
           <div
             aria-label={canEdit ? "Edit message" : undefined}
             className={cn(
-              "block w-fit min-w-0 max-w-[85%] rounded-2xl bg-card px-4 py-3 text-left text-sm text-fg leading-relaxed transition-colors hover:bg-surface",
+              "block w-fit min-w-0 max-w-[85%] rounded-2xl bg-card px-4 py-3 text-left text-md text-fg leading-relaxed transition-colors hover:bg-surface",
               canEdit && "cursor-pointer",
             )}
             onClick={canEdit ? () => setEditing(true) : undefined}
@@ -188,7 +188,7 @@ export const MessageBlock = memo(function MessageBlock({
   }
 
   return (
-    <div className="min-w-0 max-w-full text-sm leading-relaxed">
+    <div className="min-w-0 max-w-full text-md leading-relaxed">
       {content ? (
         <MarkdownMessage
           content={content}

@@ -138,7 +138,7 @@ export type ModusApi = {
       planId?: string;
     }): Promise<void>;
     compact(sessionId: string): Promise<void>;
-    abort(sessionId: string): Promise<void>;
+    abort(sessionId: string): Promise<string[]>;
     /**
      * Rewind the session to just before one of its user messages: restores
      * workspace files from the pre-run snapshot and removes the conversation

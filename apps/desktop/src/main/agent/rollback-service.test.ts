@@ -28,7 +28,7 @@ const { PI_ROOT_LEAF, ROLLBACK_MARKER_TYPE, rollbackToUserMessage } = await impo
 
 function fakeRuntime() {
   return {
-    abort: vi.fn<(sessionId: string) => Promise<void>>().mockResolvedValue(undefined),
+    abort: vi.fn<(sessionId: string) => Promise<string[]>>().mockResolvedValue([]),
     dispose: vi.fn<(sessionId: string) => Promise<void>>().mockResolvedValue(undefined),
   };
 }

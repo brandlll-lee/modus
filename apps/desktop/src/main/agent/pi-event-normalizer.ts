@@ -212,12 +212,6 @@ export function normalizePiEvent(
       }
       const id = messageId(event.message, role, state);
       delete state.activeMessageIds[role];
-      // A message that ends with `stopReason: "error"` is NOT surfaced here.
-      // If the runtime will auto-retry, `auto_retry_start` reports it as a
-      // (non-fatal) retry status; if it won't, the turn ends and the backend
-      // surfaces the final error once as `run.failed` (read authoritatively
-      // from the last assistant message's stopReason). Emitting an error here
-      // too would double every transient failure and paint retries red.
       return [{ type: "message.completed", sessionId, messageId: id }];
     }
     case "tool_execution_start":
@@ -281,11 +275,7 @@ export function normalizePiEvent(
       ];
     }
     case "auto_retry_start":
-      // The runtime hit a transient error and will retry — the turn is still
-      // working. Report it as an authoritative `retry` status (drives the
-      // composer lock + a single non-fatal "retrying … attempt N/M" line),
-      // carrying the runtime's own attempt/maxAttempts and a `nextAt` deadline
-      // for the countdown. NOT a red error.
+    case "summarization_retry_scheduled":
       return [
         {
           type: "session.status",
@@ -300,11 +290,23 @@ export function normalizePiEvent(
         },
       ];
     case "auto_retry_end":
-      // Success → the turn resumed streaming, drop back to `busy`. Failure →
-      // retries are exhausted and the turn is about to end; the backend emits
-      // the single fatal `run.failed` (from the last assistant stopReason), so
-      // nothing is surfaced here to avoid a duplicate error line.
-      return event.success ? [{ type: "session.status", sessionId, status: { type: "busy" } }] : [];
+      return [
+        {
+          type: "retry.ended",
+          sessionId,
+          success: event.success,
+          attempt: event.attempt,
+          ...(event.finalError ? { finalError: event.finalError } : {}),
+        },
+        ...(event.success
+          ? [{ type: "session.status", sessionId, status: { type: "busy" } } as const]
+          : []),
+      ];
+    case "summarization_retry_finished":
+      return [
+        { type: "retry.ended", sessionId },
+        { type: "session.status", sessionId, status: { type: "busy" } },
+      ];
     default:
       return [];
   }

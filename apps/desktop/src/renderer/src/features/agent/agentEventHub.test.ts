@@ -223,6 +223,23 @@ describe("appendAgentEvents", () => {
     expect(twice[0]?.event).toMatchObject({ type: "message.delta", delta: "ab" });
   });
 
+  it("retains status transitions in order through live updates and history folding", () => {
+    const transitions = [
+      item({ type: "session.status", sessionId: "s", status: { type: "busy" } }),
+      item({
+        type: "session.status",
+        sessionId: "s",
+        status: { type: "retry", attempt: 1, maxAttempts: 3, nextAt: 2000, message: "502" },
+      }),
+      item({ type: "retry.ended", sessionId: "s", success: true, attempt: 1 }),
+      item({ type: "session.status", sessionId: "s", status: { type: "busy" } }),
+      item({ type: "session.status", sessionId: "s", status: { type: "idle" } }),
+    ];
+    const live = appendAgentEvents(transitions.slice(0, 2), transitions.slice(2));
+    expect(live).toEqual(transitions);
+    expect(foldAgentEvents(live)).toEqual(transitions);
+  });
+
   it("replaces optimistic user prompt events with matching runtime events", () => {
     const seed = optimisticUserPromptEvents({
       sessionId: "s",

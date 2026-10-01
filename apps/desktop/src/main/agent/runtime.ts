@@ -54,7 +54,7 @@ export type AgentRuntime = {
   ): Promise<AgentSessionInfo & { contextUsage?: ContextUsageInfo }>;
   prompt(window: BrowserWindowType, input: PromptAgentInput): Promise<void>;
   compact(window: BrowserWindowType, sessionId: string): Promise<void>;
-  abort(sessionId: string): Promise<void>;
+  abort(sessionId: string): Promise<string[]>;
   listRuns(sessionId: string): Promise<AgentRunInfo[]>;
   dispose(sessionId: string): Promise<void>;
   /** Release an idle SDK runtime while preserving the conversation and managed processes. */

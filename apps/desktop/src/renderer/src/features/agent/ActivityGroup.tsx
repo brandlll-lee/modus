@@ -7,6 +7,7 @@ import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
 import { ShinyText } from "../../components/ui/ShinyText";
 import { cn } from "../../lib/cn";
 import { MessageBlock } from "./MessageBlock";
+import { RequestStatusRow } from "./RequestStatusRow";
 import type {
   CompactionBlockItem,
   RunBlockItem,
@@ -73,7 +74,7 @@ function FoldHeader({
       <button
         aria-controls={controlsId}
         aria-expanded={open}
-        className="group/activity flex min-w-0 max-w-full items-center gap-1.5 rounded-md py-0.5 text-left text-sm text-fg-subtle transition-colors hover:text-fg-muted"
+        className="group/activity flex min-w-0 max-w-full items-center gap-1.5 rounded-md py-0.5 text-left text-sm font-medium text-fg-subtle transition-colors hover:text-fg-muted"
         onClick={onToggle}
         type="button"
       >
@@ -273,17 +274,15 @@ export const WorkFold = memo(function WorkFold({
     run.executionStartedAt ?? run.startedAt,
   );
   const label =
-    run.status === "failed"
-      ? "Modus stopped"
-      : run.status === "cancelled"
-        ? "Stopped by you"
-        : run.executionStartedAt === undefined
-          ? active
-            ? "Preparing"
-            : "Request processed"
-          : active && run.executionCompletedAt === undefined
-            ? `Working for ${elapsed}`
-            : `Worked for ${elapsed}`;
+    run.status === "cancelled"
+      ? "Stopped by you"
+      : run.executionStartedAt === undefined
+        ? active
+          ? "Preparing"
+          : "Request processed"
+        : active && run.executionCompletedAt === undefined
+          ? `Working for ${elapsed}`
+          : `Worked for ${elapsed}`;
 
   return (
     <div className="min-w-0 text-sm">
@@ -298,6 +297,8 @@ export const WorkFold = memo(function WorkFold({
         <div className="mt-0.5">
           <div className="space-y-2.5 pt-1.5 pb-2">
             {items.map((item) => {
+              if (item.type === "request-status")
+                return <RequestStatusRow key={item.id} item={item} />;
               if (item.type === "work-activity-group") {
                 return (
                   <WorkActivityGroup group={item} key={item.id}>

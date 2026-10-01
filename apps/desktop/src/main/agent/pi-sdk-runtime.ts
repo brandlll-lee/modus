@@ -99,10 +99,9 @@ type SdkRuntimeSession = {
   emitVolatile: EmitAgentEvent;
 };
 
-type RunOutputTracker = {
-  runId: string;
-  hasVisibleOutput: boolean;
+type RunObservation = {
   startedAt: number;
+  assistant?: { stopReason: string; errorMessage?: string };
 };
 
 /**
@@ -137,7 +136,7 @@ export class PiSdkRuntime implements AgentRuntime {
   private sessions = new Map<string, SdkRuntimeSession>();
   private resumePromises = new Map<string, Promise<SdkRuntimeSession | undefined>>();
   private disposePromises = new Map<string, Promise<void>>();
-  private runOutputTrackers = new Map<string, RunOutputTracker>();
+  private runObservations = new Map<string, RunObservation>();
   private cancellingRuns = new Set<string>();
 
   constructor() {
@@ -166,29 +165,6 @@ export class PiSdkRuntime implements AgentRuntime {
     return (event) => {
       window.webContents.send(IPC_CHANNELS.agentEvent, event);
     };
-  }
-
-  private noteAssistantOutput(event: Parameters<EmitAgentEvent>[0]): void {
-    const tracker = this.runOutputTrackers.get(event.sessionId);
-    if (!tracker) {
-      return;
-    }
-
-    if ((event.type === "message.delta" || event.type === "thinking.delta") && event.delta.trim()) {
-      if (!tracker.hasVisibleOutput) {
-        console.info(`[modus-timing] first visible output +${Date.now() - tracker.startedAt}ms`);
-      }
-      tracker.hasVisibleOutput = true;
-      return;
-    }
-
-    if (
-      event.type === "tool.started" ||
-      event.type === "tool.output" ||
-      event.type === "tool.ended"
-    ) {
-      tracker.hasVisibleOutput = true;
-    }
   }
 
   private emitContextUsage(runtimeSession: SdkRuntimeSession): void {
@@ -357,6 +333,13 @@ export class PiSdkRuntime implements AgentRuntime {
       params.emitVolatile(event);
     };
     const sessionUnsubscribe = session.subscribe((event) => {
+      const observation = this.runObservations.get(params.info.id);
+      if (observation && event.type === "message_end" && event.message.role === "assistant") {
+        observation.assistant = {
+          stopReason: event.message.stopReason,
+          ...(event.message.errorMessage ? { errorMessage: event.message.errorMessage } : {}),
+        };
+      }
       for (const normalized of normalizePiEvent(event)) {
         if (normalized.type === "tool.started") {
           const label = session.getToolDefinition(normalized.toolName)?.label;
@@ -377,7 +360,6 @@ export class PiSdkRuntime implements AgentRuntime {
           if (normalized.type === "tool.ended") hiddenToolCallIds.delete(normalized.toolCallId);
           continue;
         }
-        this.noteAssistantOutput(normalized);
         if (normalized.type === "tool.delta") {
           pendingToolDelta = normalized;
           const wait = TOOL_DELTA_THROTTLE_MS - (Date.now() - lastToolDeltaAt);
@@ -681,12 +663,10 @@ export class PiSdkRuntime implements AgentRuntime {
     // no live turn to join), so the anchor is always meaningful.
     runInput.piLeafBefore = runtimeSession.session.sessionManager.getLeafId() ?? PI_ROOT_LEAF;
     const run = createAgentRun(runInput);
-    const outputTracker: RunOutputTracker = {
-      runId: run.id,
-      hasVisibleOutput: false,
+    const observation: RunObservation = {
       startedAt: Date.now(),
     };
-    this.runOutputTrackers.set(input.sessionId, outputTracker);
+    this.runObservations.set(input.sessionId, observation);
 
     updateAgentSessionStatus(input.sessionId, "running");
     const userMessageId = earlyUserMessageId ?? input.userMessageId ?? `user:${run.id}`;
@@ -736,7 +716,7 @@ export class PiSdkRuntime implements AgentRuntime {
         runId: run.id,
         userMessageId,
       });
-      console.info(`[modus-timing] createCheckpoint +${Date.now() - outputTracker.startedAt}ms`);
+      console.info(`[modus-timing] createCheckpoint +${Date.now() - observation.startedAt}ms`);
       if (runCheckpoint) {
         runtimeSession.emit({
           type: "checkpoint.created",
@@ -764,8 +744,9 @@ export class PiSdkRuntime implements AgentRuntime {
     };
     try {
       const message = await this.composeTurnMessage(runtimeSession, input);
+      if (this.cancellingRuns.has(run.id)) throw new Error("Prompt cancelled");
       console.info(
-        `[modus-timing] composeTurnMessage done +${Date.now() - outputTracker.startedAt}ms`,
+        `[modus-timing] composeTurnMessage done +${Date.now() - observation.startedAt}ms`,
       );
       const images = buildTurnImages(input);
       await runWithAgentToolContext(toolContext, () =>
@@ -780,13 +761,17 @@ export class PiSdkRuntime implements AgentRuntime {
       this.emitContextUsage(runtimeSession);
       const currentRun = getAgentRun(run.id);
       if (currentRun?.status === "running") {
-        // Authoritative end-of-turn outcome, read from pi's own record: if the
-        // last assistant message ended with `stopReason: "error"`, the turn
-        // failed after exhausting any auto-retries. This is the SINGLE place a
-        // model error becomes a fatal `run.failed` (red), so transient retries
-        // never paint red and the final error is never doubled.
-        const turnError = lastAssistantTurnError(runtimeSession.session);
-        if (turnError) {
+        const cancelled =
+          this.cancellingRuns.has(run.id) || observation.assistant?.stopReason === "aborted";
+        if (cancelled) {
+          await captureTurnEnd();
+          updateAgentRunStatus(run.id, "cancelled");
+          runtimeSession.emit({ type: "run.cancelled", sessionId: input.sessionId, runId: run.id });
+          if (input.planId) this.transitionPlanBuild(runtimeSession, input.planId, "not_built");
+        } else if (observation.assistant?.stopReason === "error") {
+          const turnError =
+            observation.assistant.errorMessage ||
+            "The model returned an error without additional details.";
           await captureTurnEnd();
           updateAgentRunStatus(run.id, "failed", turnError);
           updateAgentSessionStatus(input.sessionId, "error");
@@ -799,7 +784,7 @@ export class PiSdkRuntime implements AgentRuntime {
           if (input.planId) {
             this.transitionPlanBuild(runtimeSession, input.planId, "not_built");
           }
-        } else if (outputTracker.hasVisibleOutput) {
+        } else {
           // Per-turn change summary (Codex-style "N files changed" card):
           // diff the checkout against the pre-run snapshot. Never blocks or
           // fails the run; sessions without a checkpoint just omit it.
@@ -811,7 +796,7 @@ export class PiSdkRuntime implements AgentRuntime {
             ).catch(() => undefined);
           }
           console.info(
-            `[modus-timing] getChangeStatsSince +${Date.now() - outputTracker.startedAt}ms`,
+            `[modus-timing] getChangeStatsSince +${Date.now() - observation.startedAt}ms`,
           );
           await captureTurnEnd();
           updateAgentRunStatus(run.id, "completed");
@@ -824,22 +809,6 @@ export class PiSdkRuntime implements AgentRuntime {
           // The build turn completed cleanly → the plan is built.
           if (input.planId) {
             this.transitionPlanBuild(runtimeSession, input.planId, "built");
-          }
-        } else {
-          const message =
-            "The selected model finished without returning any assistant output. Check the custom provider URL, model id, API type, and reasoning compatibility settings.";
-          await captureTurnEnd();
-          updateAgentRunStatus(run.id, "failed", message);
-          updateAgentSessionStatus(input.sessionId, "error");
-          runtimeSession.emit({
-            type: "run.failed",
-            sessionId: input.sessionId,
-            runId: run.id,
-            message,
-          });
-          runtimeSession.emit({ type: "runtime.error", sessionId: input.sessionId, message });
-          if (input.planId) {
-            this.transitionPlanBuild(runtimeSession, input.planId, "not_built");
           }
         }
       }
@@ -875,18 +844,12 @@ export class PiSdkRuntime implements AgentRuntime {
         runId: run.id,
         message: error instanceof Error ? error.message : String(error),
       });
-      runtimeSession.emit({
-        type: "runtime.error",
-        sessionId: input.sessionId,
-        message: error instanceof Error ? error.message : String(error),
-      });
       throw error;
     } finally {
       await captureTurnEnd();
-      this.runOutputTrackers.delete(input.sessionId);
-      console.info(
-        `[modus-timing] turn end (idle emit) +${Date.now() - outputTracker.startedAt}ms`,
-      );
+      this.runObservations.delete(input.sessionId);
+      this.cancellingRuns.delete(run.id);
+      console.info(`[modus-timing] turn end (idle emit) +${Date.now() - observation.startedAt}ms`);
       const session = getAgentSession(input.sessionId);
       if (session?.status !== "error") {
         updateAgentSessionStatus(input.sessionId, "idle");
@@ -1035,8 +998,11 @@ export class PiSdkRuntime implements AgentRuntime {
     }
   }
 
-  async abort(sessionId: string): Promise<void> {
+  async abort(sessionId: string): Promise<string[]> {
+    const session = this.sessions.get(sessionId)?.session;
+    const queued = session?.clearQueue();
     await this.abortSessionOnly(sessionId);
+    return queued ? [...queued.steering, ...queued.followUp] : [];
   }
 
   private async abortSessionOnly(sessionId: string): Promise<void> {
@@ -1049,14 +1015,7 @@ export class PiSdkRuntime implements AgentRuntime {
       this.cancellingRuns.add(activeRun.id);
     }
 
-    try {
-      await runtimeSession.session.abort();
-    } finally {
-      if (activeRun) {
-        this.cancellingRuns.delete(activeRun.id);
-      }
-      updateAgentSessionStatus(sessionId, "idle");
-    }
+    await runtimeSession.session.abort();
   }
 
   async listRuns(sessionId: string): Promise<AgentRunInfo[]> {
@@ -1218,35 +1177,6 @@ function buildTurnImages(
     data: attachment.data,
     mimeType: attachment.mimeType,
   }));
-}
-
-/**
- * The authoritative end-of-turn error, read from pi's own message log: the last
- * assistant message's `stopReason`. Returns its error text when the turn ended
- * in an unrecovered error (after auto-retries are exhausted or for a
- * non-retryable error), and `undefined` when the latest assistant message ended
- * cleanly. This is pi's recorded fact, not a guess — so it is the single source
- * for surfacing a fatal turn failure.
- */
-function lastAssistantTurnError(session: AgentSession): string | undefined {
-  const messages = session.state.messages as ReadonlyArray<{
-    role?: unknown;
-    stopReason?: unknown;
-    errorMessage?: unknown;
-  }>;
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (message?.role !== "assistant") {
-      continue;
-    }
-    if (message.stopReason !== "error") {
-      return undefined;
-    }
-    return typeof message.errorMessage === "string" && message.errorMessage.trim()
-      ? message.errorMessage
-      : "The model returned an error without additional details.";
-  }
-  return undefined;
 }
 
 function createContextUsageEvent(

@@ -170,20 +170,7 @@ export type QuestionResponse = {
   skipped: boolean;
 };
 
-/**
- * Authoritative run-status for a session, mirrored from the runtime's real
- * processing state (pi's streaming turn + its internal auto-retry). This — not
- * a reconstruction from the run-event log — is the single source of truth the
- * composer's lock/border follow. Aligned with opencode's SessionStatus:
- *
- * - `idle`  — no turn is processing; the composer accepts a new prompt.
- * - `busy`  — a turn is streaming; the composer is locked, border animates.
- * - `retry` — a transient error was hit and the runtime is auto-retrying. The
- *   turn is STILL working, so the composer stays locked; the UI shows a single
- *   non-fatal line ("retrying … attempt N/M") instead of a red error. Carries
- *   the authoritative `attempt`/`maxAttempts` from the runtime and `nextAt` for
- *   a live countdown.
- */
+/** PI's processing state; retry counts and deadlines come from SDK events. */
 export type SessionRunStatus =
   | { type: "idle" }
   | { type: "busy" }
@@ -218,6 +205,13 @@ export type AgentEvent =
   | { type: "run.failed"; sessionId: string; runId: string; message: string }
   | { type: "run.blocked"; sessionId: string; runId: string; requestId: string; reason: string }
   | { type: "run.cancelled"; sessionId: string; runId: string }
+  | {
+      type: "retry.ended";
+      sessionId: string;
+      success?: boolean;
+      attempt?: number;
+      finalError?: string;
+    }
   | {
       type: "message.started";
       sessionId: string;

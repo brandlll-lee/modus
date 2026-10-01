@@ -34,7 +34,7 @@
   --color-fg: #eeeeee;
   --color-working-beam: #ffffff;
   --color-fg-muted: #c2c2c2;
-  --color-fg-subtle: #999999;
+  --color-fg-subtle: #aaaaaa;
   --color-fg-faint: #858585;
 
   --color-fg-placeholder: #959595;
@@ -72,10 +72,10 @@
   --color-diff-del-gutter: #4b302a;
 
   --font-sans:
-    "Segoe UI", "Microsoft YaHei UI", -apple-system, BlinkMacSystemFont, "PingFang SC", system-ui,
-    sans-serif;
+    "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", -apple-system,
+    BlinkMacSystemFont, "PingFang SC", system-ui, sans-serif;
 
-  --font-weight-normal: 400;
+  --font-weight-normal: 500;
   --font-weight-medium: 500;
   --font-weight-semibold: 600;
   --font-weight-bold: 700;
@@ -107,12 +107,12 @@
 
   --text-2xs: 11px;
   --text-xs: 12px;
-  --text-sm: 12px;
-  --text-md: 13px;
-  --text-lg: 14px;
-  --text-nav: 12px;
-  --text-nav-heading: 11px;
-  --spacing-nav-row: 30px;
+  --text-sm: 13px;
+  --text-md: 14px;
+  --text-lg: 15px;
+  --text-nav: 14px;
+  --text-nav-heading: 12px;
+  --spacing-nav-row: 32px;
   --spacing-nav-indent: 24px;
 
   --radius-xs: 4px;
@@ -147,7 +147,7 @@
   text-rendering: optimizeLegibility;
 
   -moz-osx-font-smoothing: grayscale;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.5;
 }
 

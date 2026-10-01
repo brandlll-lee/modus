@@ -58,6 +58,7 @@ type ComposerProps = {
   cwd: string | undefined;
   canSubmit: boolean;
   isRunning?: boolean;
+  stopping?: boolean;
   footer?: ReactNode;
   trailingActions?: ReactNode;
   onModelChange(model: string): void;
@@ -98,6 +99,7 @@ export function Composer({
   footer,
   trailingActions,
   isRunning = false,
+  stopping = false,
   onAbort,
   onModelChange,
   onModelConfigChange,
@@ -207,8 +209,8 @@ export function Composer({
     : [];
   const slash = useComposerSlash({ actions: slashActions, cwd, sessionId, value: textBeforeCaret });
 
-  function send(delivery: PromptDelivery = isRunning ? "follow-up" : "normal"): void {
-    if (!hasContent || !canSubmit || submitting || !currentModel?.available) {
+  function send(delivery: PromptDelivery = isRunning ? "steer" : "normal"): void {
+    if (!hasContent || !canSubmit || submitting || stopping || !currentModel?.available) {
       return;
     }
     // Providers reject empty text blocks, so image-only sends get a stub line.
@@ -449,23 +451,9 @@ export function Composer({
       return;
     }
 
-    if (
-      event.ctrlKey &&
-      !event.metaKey &&
-      !event.altKey &&
-      !event.shiftKey &&
-      event.key.toLowerCase() === "g" &&
-      isRunning &&
-      onAbort
-    ) {
-      event.preventDefault();
-      onAbort();
-      return;
-    }
-
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
-      send(event.ctrlKey && isRunning ? "steer" : undefined);
+      send(isRunning && event.altKey ? "follow-up" : undefined);
     }
   }
 
@@ -631,8 +619,9 @@ export function Composer({
             {isRunning && onAbort ? (
               <m.button
                 animate={{ opacity: 1, scale: 1 }}
-                aria-label="Stop"
-                className="flex size-[26px] shrink-0 items-center justify-center rounded-full bg-fg text-canvas shadow-composer transition-colors hover:bg-fg-muted active:scale-[0.94]"
+                aria-label={stopping ? "Stopping" : "Stop"}
+                disabled={stopping}
+                className="flex size-[26px] shrink-0 items-center justify-center rounded-full bg-fg text-canvas shadow-composer transition-colors hover:bg-fg-muted active:scale-[0.94] disabled:opacity-50"
                 exit={{ opacity: 0 }}
                 initial={{ opacity: 0, scale: 0.96 }}
                 key="stop"

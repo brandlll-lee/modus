@@ -18,6 +18,7 @@ import { CopyButton } from "../../components/ui/CopyButton";
 import { formatClock } from "../../lib/formatClock";
 import { PreparingRow, WorkActivityRow, WorkFold } from "./ActivityGroup";
 import { MessageBlock } from "./MessageBlock";
+import { RequestStatusRow } from "./RequestStatusRow";
 
 type TimelineProps = {
   sessionId?: string | undefined;
@@ -149,6 +150,17 @@ type TodosBlockItem = {
   updating: boolean;
 };
 
+export type RequestStatusBlockItem = {
+  id: string;
+  type: "request-status";
+  status: "retrying" | "done" | "failed" | "cancelled";
+  attempt?: number;
+  maxAttempts?: number;
+  nextAt?: number;
+  detail?: string;
+  recovered?: boolean;
+};
+
 export type WorkActivityItem =
   | ThoughtBlockItem
   | ToolBlockItem
@@ -161,7 +173,11 @@ export type WorkActivityGroupItem = {
   items: WorkActivityItem[];
 };
 
-export type WorkFoldItem = WorkActivityGroupItem | NoticeBlockItem | MessageBlockItem;
+export type WorkFoldItem =
+  | WorkActivityGroupItem
+  | NoticeBlockItem
+  | MessageBlockItem
+  | RequestStatusBlockItem;
 
 /**
  * One turn's work under a single Cursor-style fold (Working for… / Worked for…).
@@ -182,6 +198,7 @@ export type TimelineBlock =
   | NoticeBlockItem
   | CompactionBlockItem
   | WorkFoldBlockItem
+  | RequestStatusBlockItem
   | TodosBlockItem;
 
 export function buildBlocks(agentEvents: AgentEventItem[]): TimelineBlock[] {
@@ -202,6 +219,14 @@ export function buildBlocks(agentEvents: AgentEventItem[]): TimelineBlock[] {
   let order = 0;
   let activeAssistantMessageId: string | undefined;
   let activeRunId: string | undefined;
+  let requestStatus: RequestStatusBlockItem | undefined;
+  function statusRow(id: string): RequestStatusBlockItem {
+    if (!requestStatus) {
+      requestStatus = { id, type: "request-status", status: "done" };
+      blocks.push(requestStatus);
+    }
+    return requestStatus;
+  }
   const loopStartedAtByRun = new Map<string, number>();
   let lastUserMessageBlock: MessageBlockItem | undefined;
   /** Thinking now streams as its own ordered block, keyed by its message. */
@@ -284,6 +309,7 @@ export function buildBlocks(agentEvents: AgentEventItem[]): TimelineBlock[] {
     const { id, event } = item;
     const eventAt = eventTime(item.createdAt, order);
     if (event.type === "run.started") {
+      requestStatus = undefined;
       const block: RunBlockItem = {
         id: event.runId,
         type: "run",
@@ -307,6 +333,26 @@ export function buildBlocks(agentEvents: AgentEventItem[]): TimelineBlock[] {
       continue;
     }
 
+    if (event.type === "session.status" && event.status.type === "retry") {
+      const row = statusRow(`retry:${id}`);
+      row.status = "retrying";
+      row.attempt = event.status.attempt;
+      row.maxAttempts = event.status.maxAttempts;
+      row.nextAt = event.status.nextAt;
+      row.detail = event.status.message;
+      continue;
+    }
+
+    if (event.type === "retry.ended") {
+      if (requestStatus) {
+        requestStatus.status = "done";
+        if (event.success !== undefined) requestStatus.recovered = event.success;
+        if (event.finalError) requestStatus.detail = event.finalError;
+        if (event.success) requestStatus = undefined;
+      }
+      continue;
+    }
+
     if (event.type === "agent.started") {
       if (activeRunId && !loopStartedAtByRun.has(activeRunId))
         loopStartedAtByRun.set(activeRunId, eventAt);
@@ -323,6 +369,10 @@ export function buildBlocks(agentEvents: AgentEventItem[]): TimelineBlock[] {
     }
 
     if (event.type === "run.completed") {
+      if (requestStatus?.status === "retrying") {
+        requestStatus.status = "done";
+        requestStatus.recovered = true;
+      }
       const block = blockById.get(event.runId);
       if (block?.type === "run") {
         block.status = "completed";
@@ -357,6 +407,9 @@ export function buildBlocks(agentEvents: AgentEventItem[]): TimelineBlock[] {
     }
 
     if (event.type === "run.failed") {
+      const row = statusRow(`failure:${event.runId}`);
+      row.status = "failed";
+      row.detail = event.message;
       const block = blockById.get(event.runId);
       if (block?.type === "run") {
         block.status = "failed";
@@ -407,6 +460,7 @@ export function buildBlocks(agentEvents: AgentEventItem[]): TimelineBlock[] {
     }
 
     if (event.type === "run.cancelled") {
+      if (requestStatus) requestStatus.status = "cancelled";
       const block = blockById.get(event.runId);
       if (block?.type === "run") {
         block.status = "cancelled";
@@ -432,6 +486,7 @@ export function buildBlocks(agentEvents: AgentEventItem[]): TimelineBlock[] {
     }
 
     if (event.type === "message.started") {
+      if (event.role === "user" && !activeRunId) requestStatus = undefined;
       const contextChips = event.contextChips?.filter(
         (chip): chip is NonNullable<(typeof event.contextChips)[number]> =>
           chip != null && typeof chip.kind === "string",
@@ -662,13 +717,9 @@ export function buildBlocks(agentEvents: AgentEventItem[]): TimelineBlock[] {
     }
 
     if (event.type === "runtime.error") {
-      blocks.push({
-        body: event.message,
-        id,
-        isError: true,
-        title: "runtime error",
-        type: "notice",
-      });
+      const row = statusRow(`failure:${id}`);
+      row.status = "failed";
+      row.detail = event.message;
       continue;
     }
 
@@ -875,6 +926,7 @@ function isWorkAnchor(block: TimelineBlock): boolean {
     block.type === "thought" ||
     block.type === "todos" ||
     (block.type === "compaction" && block.reason !== "manual") ||
+    block.type === "request-status" ||
     block.type === "notice"
   );
 }
@@ -890,7 +942,7 @@ function isWorkActivity(block: TimelineBlock): block is WorkActivityItem {
 
 /** Messages and notices bound local activity folds. */
 export function groupWorkItems(
-  items: Array<WorkActivityItem | NoticeBlockItem | MessageBlockItem>,
+  items: Array<WorkActivityItem | NoticeBlockItem | MessageBlockItem | RequestStatusBlockItem>,
 ): WorkFoldItem[] {
   const result: WorkFoldItem[] = [];
   for (const item of items) {
@@ -958,7 +1010,9 @@ export function groupTurnWork(blocks: TimelineBlock[]): TimelineBlock[] {
       }
     }
 
-    const items: Array<WorkActivityItem | NoticeBlockItem | MessageBlockItem> = [];
+    const items: Array<
+      WorkActivityItem | NoticeBlockItem | MessageBlockItem | RequestStatusBlockItem
+    > = [];
     const after: TimelineBlock[] = [];
 
     for (let j = 0; j < turnContent.length; j += 1) {
@@ -982,7 +1036,12 @@ export function groupTurnWork(blocks: TimelineBlock[]): TimelineBlock[] {
         continue;
       }
 
-      if (isWorkActivity(entry) || entry.type === "notice" || entry.type === "message") {
+      if (
+        isWorkActivity(entry) ||
+        entry.type === "notice" ||
+        entry.type === "message" ||
+        entry.type === "request-status"
+      ) {
         items.push(entry);
       } else {
         after.push(entry);
@@ -1176,6 +1235,7 @@ export function Timeline({
                     />
                   ) : null}
                   {block.type === "notice" ? <Notice {...block} /> : null}
+                  {block.type === "request-status" ? <RequestStatusRow item={block} /> : null}
                   {isWorkActivity(block) ? (
                     <WorkActivityRow
                       item={block}

@@ -28,7 +28,11 @@ import {
   createEmptyChatComposerDraft,
   designEventToPromptInput,
 } from "../composer/chatComposerDraft";
-import { type ComposerDraftUpdate, resolveDraftUpdate } from "../composer/composerDraft";
+import {
+  type ComposerDraftUpdate,
+  resolveDraftUpdate,
+  restoreQueuedDraft,
+} from "../composer/composerDraft";
 import { buildPlanMessage, effectiveBuildStatus, normalizePlan } from "../plan/planState";
 import { QuestionsCard } from "../plan/QuestionsCard";
 import { ReviewPlanCard } from "../plan/ReviewPlanCard";
@@ -46,7 +50,6 @@ import { ConversationTimeline } from "./ConversationTimeline";
 import { ChangesStrip } from "./changes/ChangesStrip";
 import { latestPendingPermissionRequest } from "./permissionRequests";
 import { latestInlineQuestion } from "./questionRequests";
-import { RetryStatusBar } from "./RetryStatusBar";
 import { latestSessionStatus } from "./runState";
 import { buildVisibleTimelineBlocks, Timeline } from "./Timeline";
 import { useAutoScroll } from "./useAutoScroll";
@@ -194,7 +197,7 @@ export function ChatPane({
   // working (anything but idle), so a transient error never unlocks input
   // mid-turn. `pendingPrompt` is the optimistic bridge until the first status.
   const sessionStatus = useMemo(() => latestSessionStatus(agentEvents), [agentEvents]);
-  const isRunning = !aborting && (sessionStatus.type !== "idle" || pendingPrompt);
+  const isRunning = aborting || sessionStatus.type !== "idle" || pendingPrompt;
 
   // Stick-to-bottom follows the bottom only while the session is working; idle
   // viewing/scrolling never snaps back (opencode's createAutoScroll model).
@@ -363,7 +366,6 @@ export function ChatPane({
 
   const paneModel = session.model ?? defaultModel;
   const activeCwd = session.cwd;
-  const retryStatus = sessionStatus.type === "retry" ? sessionStatus : undefined;
   // The decision card shows only while the plan is unbuilt and not dismissed.
   // Reading the plan's authoritative build status (not a remembered hash) is
   // what stops the card from re-appearing after a build on session re-open.
@@ -445,21 +447,27 @@ export function ChatPane({
       .catch((error: unknown) => {
         const errorMessage = error instanceof Error ? error.message : String(error);
         setPendingPrompt(false);
-        setAgentEvents((events) =>
-          appendAgentEvents(events, [
+        setAgentEvents((events) => {
+          const anchor = events.findIndex(
+            (item) =>
+              item.event.type === "message.started" && item.event.messageId === userMessageId,
+          );
+          if (
+            events
+              .slice(anchor)
+              .some(
+                (item) => item.event.type === "run.failed" || item.event.type === "runtime.error",
+              )
+          )
+            return events;
+          return appendAgentEvents(events, [
             {
               id: `local:${Date.now()}:${crypto.randomUUID()}:error`,
               event: { type: "runtime.error", sessionId, message: errorMessage },
               createdAt: new Date().toISOString(),
             },
-            {
-              id: `local:${Date.now()}:${crypto.randomUUID()}:idle`,
-              event: { type: "session.status", sessionId, status: { type: "idle" } },
-              createdAt: new Date().toISOString(),
-            },
-          ]),
-        );
-        setPromptError(errorMessage);
+          ]);
+        });
       });
   }
 
@@ -482,7 +490,7 @@ export function ChatPane({
         submitPrompt(
           input.message,
           input.context,
-          isRunning ? "follow-up" : "normal",
+          isRunning ? "steer" : "normal",
           input.attachments,
           undefined,
           input.mode,
@@ -503,10 +511,10 @@ export function ChatPane({
       return;
     }
     setPromptError(undefined);
-    setPendingPrompt(false);
     setAborting(true);
     try {
-      await window.modus.agent.abort(sessionId);
+      const queued = await window.modus.agent.abort(sessionId);
+      if (queued.length > 0) setComposerFields((draft) => restoreQueuedDraft(draft, queued));
       onSessionsChanged();
     } catch (error) {
       setAborting(false);
@@ -652,66 +660,62 @@ export function ChatPane({
                   }}
                 />
               ) : (
-                <>
-                  {retryStatus ? <RetryStatusBar status={retryStatus} /> : null}
-                  <ComposerDock
-                    rails={
-                      hasComposerRails ? (
-                        <>
-                          {runningProcesses.length > 0 ? (
-                            <RunningProcessBar
-                              nowMs={managedProcesses.nowMs}
-                              onStop={managedProcesses.kill}
-                              processes={runningProcesses}
-                              {...(onOpenTerminal ? { onOpenTerminal } : {})}
-                            />
-                          ) : null}
+                <ComposerDock
+                  rails={
+                    hasComposerRails ? (
+                      <>
+                        {runningProcesses.length > 0 ? (
+                          <RunningProcessBar
+                            nowMs={managedProcesses.nowMs}
+                            onStop={managedProcesses.kill}
+                            processes={runningProcesses}
+                            {...(onOpenTerminal ? { onOpenTerminal } : {})}
+                          />
+                        ) : null}
 
-                          {showChangesRail && workingStats ? (
-                            <ChangesStrip
-                              onOpenFile={(path) =>
-                                void window.modus.file
-                                  .open({ cwd: activeCwd, path })
-                                  .catch(() => {})
-                              }
-                              onReview={() => onOpenReview(activeCwd)}
-                              stats={workingStats}
-                            />
-                          ) : null}
-                        </>
-                      ) : undefined
+                        {showChangesRail && workingStats ? (
+                          <ChangesStrip
+                            onOpenFile={(path) =>
+                              void window.modus.file.open({ cwd: activeCwd, path }).catch(() => {})
+                            }
+                            onReview={() => onOpenReview(activeCwd)}
+                            stats={workingStats}
+                          />
+                        ) : null}
+                      </>
+                    ) : undefined
+                  }
+                >
+                  <Composer
+                    sessionId={sessionId}
+                    canSubmit={Boolean(workspace) && Boolean(paneModel)}
+                    contextItems={contextItems}
+                    cwd={activeCwd}
+                    draft={{
+                      images: activeComposerDraft.images,
+                      parts: activeComposerDraft.parts,
+                      selectedSkills: activeComposerDraft.selectedSkills,
+                      value: activeComposerDraft.value,
+                    }}
+                    isRunning={isRunning}
+                    mode={composerMode}
+                    model={paneModel}
+                    models={models}
+                    {...(contextUsage ? { contextUsage } : {})}
+                    onAbort={() => void abortPrompt()}
+                    stopping={aborting}
+                    onCompact={() => window.modus.agent.compact(sessionId)}
+                    onContextChange={setContextItems}
+                    onDraftChange={setComposerFields}
+                    onModeChange={setComposerMode}
+                    onModelChange={(next) => void changeModel(next)}
+                    onModelConfigChange={onModelConfigChange}
+                    onSubmit={(message, context, delivery, attachments, skills, mode) =>
+                      submitPrompt(message, context, delivery, attachments, skills, mode)
                     }
-                  >
-                    <Composer
-                      sessionId={sessionId}
-                      canSubmit={Boolean(workspace) && Boolean(paneModel)}
-                      contextItems={contextItems}
-                      cwd={activeCwd}
-                      draft={{
-                        images: activeComposerDraft.images,
-                        parts: activeComposerDraft.parts,
-                        selectedSkills: activeComposerDraft.selectedSkills,
-                        value: activeComposerDraft.value,
-                      }}
-                      isRunning={isRunning}
-                      mode={composerMode}
-                      model={paneModel}
-                      models={models}
-                      {...(contextUsage ? { contextUsage } : {})}
-                      onAbort={() => void abortPrompt()}
-                      onCompact={() => window.modus.agent.compact(sessionId)}
-                      onContextChange={setContextItems}
-                      onDraftChange={setComposerFields}
-                      onModeChange={setComposerMode}
-                      onModelChange={(next) => void changeModel(next)}
-                      onModelConfigChange={onModelConfigChange}
-                      onSubmit={(message, context, delivery, attachments, skills, mode) =>
-                        submitPrompt(message, context, delivery, attachments, skills, mode)
-                      }
-                      workspaceId={workspace?.id}
-                    />
-                  </ComposerDock>
-                </>
+                    workspaceId={workspace?.id}
+                  />
+                </ComposerDock>
               )}
             </>
           )}

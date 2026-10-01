@@ -355,10 +355,13 @@ describe("normalizePiEvent", () => {
     expect(next).toBeGreaterThanOrEqual(before + 4000);
   });
 
-  it("maps a successful auto-retry end back to busy, and a failed one to nothing", () => {
+  it("preserves retry outcomes and returns a recovered session to busy", () => {
     expect(
       normalizePiEvent("session-1", event({ type: "auto_retry_end", success: true, attempt: 2 })),
-    ).toEqual([{ type: "session.status", sessionId: "session-1", status: { type: "busy" } }]);
+    ).toEqual([
+      { type: "retry.ended", sessionId: "session-1", success: true, attempt: 2 },
+      { type: "session.status", sessionId: "session-1", status: { type: "busy" } },
+    ]);
 
     expect(
       normalizePiEvent(
@@ -370,6 +373,35 @@ describe("normalizePiEvent", () => {
           finalError: "Request timed out",
         }),
       ),
-    ).toEqual([]);
+    ).toEqual([
+      {
+        type: "retry.ended",
+        sessionId: "session-1",
+        success: false,
+        attempt: 5,
+        finalError: "Request timed out",
+      },
+    ]);
+  });
+
+  it("projects native summarization retries without inventing a successful outcome", () => {
+    const projected = normalizePiEvent(
+      "s",
+      event({
+        type: "summarization_retry_scheduled",
+        attempt: 1,
+        maxAttempts: 3,
+        delayMs: 100,
+        errorMessage: "Transient failure",
+      }),
+    );
+    expect(projected[0]).toMatchObject({
+      type: "session.status",
+      status: { type: "retry", attempt: 1, maxAttempts: 3 },
+    });
+    expect(normalizePiEvent("s", event({ type: "summarization_retry_finished" }))).toEqual([
+      { type: "retry.ended", sessionId: "s" },
+      { type: "session.status", sessionId: "s", status: { type: "busy" } },
+    ]);
   });
 });
