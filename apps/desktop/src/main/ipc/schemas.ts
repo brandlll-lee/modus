@@ -227,6 +227,12 @@ export const resourceLocationSchema = z.object({
   path: nonEmptyString,
 });
 
+export const mcpCommandSchema = z.object({
+  sessionId: nonEmptyString,
+  name: nonEmptyString,
+  args: z.string(),
+});
+
 export const diffReadSchema = z.object({
   cwd: nonEmptyString,
   path: optionalNonEmptyString,

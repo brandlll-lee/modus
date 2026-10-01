@@ -1,66 +1,39 @@
-# PI Configuration
+# PI Desktop Integration
 
-Modus embeds PI 0.99.1. Its user agent directory is `~/.modus/agent`.
-The inherited PI directory is the original `PI_CODING_AGENT_DIR`, or
-`~/.pi/agent` when that variable is unset.
+Modus embeds PI 0.99.1 and uses `PI_CODING_AGENT_DIR`, or `~/.pi/agent` when unset.
+PI's SettingsManager, ModelRuntime and DefaultResourceLoader own settings,
+credentials, models, instruction files, skills, packages and extensions.
+Project resources follow PI's trust decisions. Model preferences selected in
+the desktop are saved through PI's settings API and are shared with the CLI.
+Desktop appearance and layout preferences remain in the application profile.
 
-## Sources
+## Runtime
 
-Settings and MCP definitions have this precedence, from lowest to highest:
+Opening a conversation restores its SessionManager and SDK runtime. The initial
+context and cumulative usage snapshot comes from `getSessionStats()`; subsequent
+SDK events refresh it. Switching between chat and settings keeps that runtime.
+Leaving a session releases an idle runtime; active work continues until it settles.
+Session files remain in the desktop profile, preserving existing conversation IDs.
 
-1. PI user directory.
-2. Trusted workspace `.pi` directory.
-3. Modus user directory.
-4. Trusted workspace `.modus` directory.
+PI's built-in MCP, codemode and tool-search extensions retain their native
+replacement semantics. An installed extension that replaces MCP owns its
+connections and authentication. The GUI displays its `/mcp` report and exposes
+commands registered by that same extension. It does not infer connection states
+from message text. Extension notifications are transient desktop status messages.
 
-PI handles settings merge semantics, resource parsing, package resolution,
-resource selectors and collision diagnostics. Relative resource paths retain
-their declaring configuration directory. Refresh reloads external file changes.
-Project settings and executable resources require project trust.
+Desktop tools use deferred exposure and PI's tool-search implementation for
+discovery. PI's selected tools remain authoritative across turns. Plan-mode
+permissions apply to both direct and nested tool execution.
 
-`models.json` and `auth.json` are user-scoped. A Modus provider definition replaces
-the entire inherited definition with the same provider ID. Provider overrides
-use their own credentials; inherited stored credentials are not routed through
-overridden provider definitions. Model metadata and availability come from PI.
-Native `enabledModels` patterns scope model cycling, not the displayed catalog.
+## Upgrade Checks
 
-PI discovers instruction files, including `AGENTS.md`, `CLAUDE.md`, and native
-system-prompt files. Shared instruction paths are included once.
+Keep PI dependencies pinned together. For an upgrade, review official release
+notes and exported API declarations, then run typecheck, tests and the desktop
+build. Integration checks cover native settings and trust, extension replacement,
+deferred tools, persisted context/cost/cache statistics and skill discovery.
+Desktop checks cover cold session opening, streaming, model changes, compaction,
+resource refresh, MCP commands and provider dialog keyboard/focus behavior.
 
-## Credentials
-
-Inherited PI credentials are read-only. Modus never copies inherited OAuth
-refresh tokens or updates the PI credential file. Refresh expired inherited
-credentials through PI CLI, then refresh Modus.
-
-Modus-owned credentials use PI's `CredentialStore` contract. PI performs OAuth;
-the store persists complete credentials under a filesystem lock shared with PI.
-API-key values support native environment references and whole-value commands.
-Credential listing does not execute commands.
-
-To authenticate directly into the Modus directory, start PI CLI with
-`PI_CODING_AGENT_DIR` set to `~/.modus/agent` in that terminal session.
-
-## Desktop Views
-
-Provider settings display native catalog metadata and credential sources.
-MCP displays the selected session's native report and existing configuration
-locations. Skills displays the selected loader's skills and diagnostics.
-Resource refresh requires idle sessions. Source navigation opens an existing
-folder and does not create configuration files.
-
-The current conversation's model and thinking level come from its PI session.
-Unavailable explicit selections fail instead of switching to another model.
-
-## Migration
-
-At startup, applicable migration writes a SQLite backup and configuration copies
-under the application profile's `configuration-backup-*` directory. Its report is
-`configuration-migration.json` in the same profile.
-
-Existing `~/.modus/mcp.json` and `~/.modus/skills` are copied into the agent
-directory only when their destinations are absent. Conflicting destinations are
-preserved and recorded. Original files remain in place. Historical profile
-credentials and model definitions are archived, not activated. Retired model
-configuration tables and the database default-model setting are removed after
-backup; conversation tables and native session files are preserved.
+Official references:
+- https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/sdk.md
+- https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/mcp.md

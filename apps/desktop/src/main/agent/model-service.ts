@@ -5,7 +5,6 @@ import {
   ModelRegistry,
   ModelRuntime,
   resolveModelScopeWithDiagnostics,
-  SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { shell } from "electron";
 import type {
@@ -16,22 +15,19 @@ import type {
   ThinkingLevel,
   ThinkingOption,
 } from "../../shared/contracts";
-import { modelConfigFiles, prepareModelConfig } from "./agent-config-files";
-import { AgentCredentials } from "./agent-credentials";
-import { getPiCliAgentDir, modusAgentDir } from "./agent-paths";
+import { getPiCliAgentDir } from "./agent-paths";
 import { createAgentSettings } from "./agent-settings";
 
 let initialization: Promise<ModelRuntime> | undefined;
 let registry: ModelRegistry | undefined;
-let config: ReturnType<typeof prepareModelConfig>;
-let credentials: AgentCredentials;
 let refreshErrors: string[] = [];
 
 export function getModelRuntime(): Promise<ModelRuntime> {
   initialization ??= (async () => {
-    config = prepareModelConfig();
-    credentials = new AgentCredentials(getPiCliAgentDir(), modusAgentDir(), () => config.isolated);
-    const runtime = await ModelRuntime.create({ credentials, modelsPath: config.path });
+    const runtime = await ModelRuntime.create({
+      authPath: join(getPiCliAgentDir(), "auth.json"),
+      modelsPath: join(getPiCliAgentDir(), "models.json"),
+    });
     registry = new ModelRegistry(runtime);
     refreshErrors = [];
     return runtime;
@@ -45,7 +41,6 @@ export function getModelRuntime(): Promise<ModelRuntime> {
 
 export async function refreshRemoteModelCatalog(): Promise<ModelSettingsState> {
   const runtime = await getModelRuntime();
-  config = prepareModelConfig();
   const result = await runtime.refresh({ allowNetwork: true });
   refreshErrors = [...result.errors].map(([provider, error]) => `${provider}: ${error.message}`);
   if (result.aborted) refreshErrors.push("Model refresh was cancelled.");
@@ -131,7 +126,7 @@ export function listProviders(): ModelProviderInfo[] {
       const models = registry.getAll().filter((model) => model.provider === id);
       const available = models.filter((model) => registry.hasConfiguredAuth(model));
       const status = registry.getProviderAuthStatus(id);
-      const source = credentials.source(id) ?? config.sources.get(id);
+      const source = providerConfigSource(status.source);
       return {
         id,
         name: registry.getProviderDisplayName(id),
@@ -207,9 +202,7 @@ export async function setDefaultModel(reference: string | undefined): Promise<vo
   const model = findModel(reference);
   if (!model || !getModelRegistry().hasConfiguredAuth(model))
     throw new Error(`Model is not available: ${reference ?? ""}`);
-  const settings = SettingsManager.create(modusAgentDir(), modusAgentDir(), {
-    projectTrusted: false,
-  });
+  const settings = createAgentSettings();
   settings.setDefaultModelAndProvider(model.provider, model.id);
   await settings.flush();
 }
@@ -221,9 +214,7 @@ export async function setModelThinking(input: {
   const model = findModel(input.model);
   if (!model) throw new Error(`Unknown model: ${input.model}`);
   const thinking = resolveModelThinking(model, input.thinkingVariant);
-  const settings = SettingsManager.create(modusAgentDir(), modusAgentDir(), {
-    projectTrusted: false,
-  });
+  const settings = createAgentSettings();
   settings.setModelThinkingLevel(model.provider, model.id, thinking.thinkingLevel);
   await settings.flush();
   return modelToInfo(model);
@@ -248,15 +239,13 @@ export async function cycleDefaultModel(
 }
 
 export async function revealProviderConfig(provider: string): Promise<void> {
-  const source = credentials.source(provider) ?? config.sources.get(provider);
-  const path =
-    source ??
-    [
-      ...modelConfigFiles(),
-      join(modusAgentDir(), "auth.json"),
-      join(getPiCliAgentDir(), "auth.json"),
-    ].find(existsSync);
-  if (!path || !existsSync(path)) throw new Error("No provider configuration file exists.");
-  const error = await shell.openPath(dirname(path));
+  const path = providerConfigSource(getModelRegistry().getProviderAuthStatus(provider).source);
+  const error = await shell.openPath(path && existsSync(path) ? dirname(path) : getPiCliAgentDir());
   if (error) throw new Error(error);
+}
+
+function providerConfigSource(source: string | undefined): string | undefined {
+  if (source === "stored") return join(getPiCliAgentDir(), "auth.json");
+  if (source === "models_json_key") return join(getPiCliAgentDir(), "models.json");
+  return undefined;
 }

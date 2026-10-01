@@ -65,7 +65,6 @@ function createWindowStub(): BrowserWindowType {
 
 vi.mock("./project-trust", () => ({ resolveProjectTrust: vi.fn(async () => true) }));
 vi.mock("./agent-paths", () => ({
-  modusAgentDir: () => join(userData, "pi-agent"),
   getPiCliAgentDir: () => join(userData, "cli"),
 }));
 vi.mock("@earendil-works/pi-coding-agent", async (original) => ({
@@ -421,8 +420,8 @@ describe("PiSdkRuntime", () => {
     });
     await runtime.ensure(window, session.id);
 
-    const options = mocks.resourceLoaderOptions.at(-1) as { appendSystemPrompt: string[] };
-    expect(options.appendSystemPrompt.join("\n")).not.toContain("project rules");
+    const options = mocks.resourceLoaderOptions.at(-1) as { appendSystemPrompt?: string[] };
+    expect(options.appendSystemPrompt).toBeUndefined();
   });
 
   it("creates a fresh PI backing session when a persisted session is no longer in memory and its PI file is missing", async () => {
@@ -548,6 +547,17 @@ describe("PiSdkRuntime", () => {
       .prepare("select type from agent_events where session_id = ?")
       .all(sessionId) as Array<{ type: string }>;
     expect(rows.map((row) => row.type)).not.toContain("context.updated");
+    const calls = mocks.createAgentSession.mock.calls.length;
+    const snapshot = await runtime.ensure(window, sessionId);
+    expect(snapshot.contextUsage).toMatchObject({
+      tokens: 240,
+      totals: { input: 1200, cost: 0.071604 },
+    });
+    expect(mocks.createAgentSession.mock.calls).toHaveLength(calls);
+    await runtime.releaseRuntime(sessionId);
+    const reopened = await runtime.ensure(window, sessionId);
+    expect(reopened.contextUsage).toEqual(snapshot.contextUsage);
+    expect(mocks.createAgentSession.mock.calls).toHaveLength(calls + 1);
   });
 
   it("keeps cumulative usage while PI measures context again after compaction", async () => {

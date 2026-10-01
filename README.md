@@ -80,14 +80,15 @@ Run the Windows command on Windows and the macOS command on macOS.
 
 ## MCP Config
 
-Modus only auto-loads its own MCP config files:
+Modus uses PI's MCP configuration and the MCP extension selected by PI:
 
 ```text
-~/.modus/mcp.json
-<workspace>/.modus/mcp.json
+~/.pi/agent/mcp.json
+<workspace>/.pi/mcp.json
 ```
 
-It does not silently import Cursor, Claude, Warp, or other agent configs.
+`PI_CODING_AGENT_DIR` selects a different global directory. Project resources follow
+PI's trust rules. Installed MCP extensions own their configuration discovery and credentials.
 
 ## Tech Stack
 

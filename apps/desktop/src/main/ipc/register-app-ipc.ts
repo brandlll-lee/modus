@@ -92,9 +92,11 @@ import {
   resolveQuestionRequest,
 } from "../interaction/question-broker";
 import {
+  getMcpCommands,
   getMcpLocations,
   getMcpStatus,
   revealMcpConfig,
+  runMcpCommand,
   syncWorkspaceMcp,
 } from "../mcp/mcp-service";
 import {
@@ -172,6 +174,7 @@ import {
   filesWriteSchema,
   gitCheckoutSchema,
   gitLogSchema,
+  mcpCommandSchema,
   parseIpcInput,
   permissionDecideSchema,
   previewReadSchema,
@@ -1075,10 +1078,29 @@ export function registerAppIpc({
     return getMcpLocations(parseIpcInput(sessionIdSchema, sessionId, IPC_CHANNELS.mcpLocations));
   });
 
-  ipcMain.handle(IPC_CHANNELS.mcpStatus, async (event, cwd: string) => {
+  ipcMain.handle(IPC_CHANNELS.mcpStatus, async (event, sessionId: string) => {
     assertTrustedSender(event);
-    return getMcpStatus(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.mcpStatus));
+    const id = parseIpcInput(sessionIdSchema, sessionId, IPC_CHANNELS.mcpStatus);
+    await getAgentRuntime().ensure(getSenderWindow(event), id);
+    return getMcpStatus(id);
   });
+
+  ipcMain.handle(IPC_CHANNELS.mcpCommands, async (event, sessionId: string) => {
+    assertTrustedSender(event);
+    const id = parseIpcInput(sessionIdSchema, sessionId, IPC_CHANNELS.mcpCommands);
+    await getAgentRuntime().ensure(getSenderWindow(event), id);
+    return getMcpCommands(id);
+  });
+
+  ipcMain.handle(
+    IPC_CHANNELS.mcpRunCommand,
+    async (event, input: { sessionId: string; name: string; args: string }) => {
+      assertTrustedSender(event);
+      const parsed = parseIpcInput(mcpCommandSchema, input, IPC_CHANNELS.mcpRunCommand);
+      await getAgentRuntime().ensure(getSenderWindow(event), parsed.sessionId);
+      return runMcpCommand(parsed.sessionId, parsed.name, parsed.args);
+    },
+  );
 
   ipcMain.handle(IPC_CHANNELS.mcpSync, async (event, cwd: string) => {
     assertTrustedSender(event);
@@ -1091,9 +1113,11 @@ export function registerAppIpc({
     await revealMcpConfig(parsed.sessionId, parsed.path);
   });
 
-  ipcMain.handle(IPC_CHANNELS.skillsList, (event, cwd: string) => {
+  ipcMain.handle(IPC_CHANNELS.skillsList, async (event, sessionId: string) => {
     assertTrustedSender(event);
-    return listSkills(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.skillsList));
+    const id = parseIpcInput(sessionIdSchema, sessionId, IPC_CHANNELS.skillsList);
+    await getAgentRuntime().ensure(getSenderWindow(event), id);
+    return listSkills(id);
   });
 
   ipcMain.handle(IPC_CHANNELS.skillsRefresh, async (event, cwd: string) => {

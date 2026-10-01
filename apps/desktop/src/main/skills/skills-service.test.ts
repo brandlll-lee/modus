@@ -35,7 +35,7 @@ function resource(id: string, path: string) {
 it("uses the selected loader, not the first session in the workspace", () => {
   mocks.resources = [resource("other", "other-path"), resource("selected", "selected-path")];
   expect(listSkills("selected").skills.map((skill) => skill.path)).toEqual(["selected-path"]);
-  expect(listSkills("closed")).toEqual({ skills: [], diagnostics: [] });
+  expect(() => listSkills("closed")).toThrow("not loaded");
 });
 it("reveals existing discovered locations without changing their content", async () => {
   const path = join(root, "SKILL.md");

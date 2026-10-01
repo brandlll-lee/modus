@@ -195,13 +195,6 @@ export function ChatPane({
   // mid-turn. `pendingPrompt` is the optimistic bridge until the first status.
   const sessionStatus = useMemo(() => latestSessionStatus(agentEvents), [agentEvents]);
   const isRunning = !aborting && (sessionStatus.type !== "idle" || pendingPrompt);
-  // Authoritative: keep SDK hot only while a turn is live (DB status or stream).
-  const keepRuntimeHotRef = useRef(false);
-  keepRuntimeHotRef.current =
-    session.status === "starting" ||
-    session.status === "running" ||
-    session.status === "blocked" ||
-    isRunning;
 
   // Stick-to-bottom follows the bottom only while the session is working; idle
   // viewing/scrolling never snaps back (opencode's createAutoScroll model).
@@ -363,11 +356,6 @@ export function ChatPane({
       cancelled = true;
       unsubscribe();
       clearQueued();
-      // View history ≠ keep SDK. Release when the pane leaves and no turn is live;
-      // prompt/setModel rehydrate via getOrResume on the next interaction.
-      if (!keepRuntimeHotRef.current) {
-        void window.modus.agent.releaseRuntime(sessionId);
-      }
     };
   }, [sessionId, hub, flushQueued, clearQueued]);
 

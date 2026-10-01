@@ -57,9 +57,9 @@ beforeAll(async () => {
   root = mkdtempSync(join(tmpdir(), "modus-native-session-"));
   const agentDir = join(root, "agent");
   process.env.PI_CODING_AGENT_DIR = agentDir;
-  mkdirSync(join(root, ".modus"), { recursive: true });
+  mkdirSync(join(root, ".pi"), { recursive: true });
   writeFileSync(
-    join(root, ".modus", "mcp.json"),
+    join(root, ".pi", "mcp.json"),
     JSON.stringify({
       mcpServers: {
         fixture: {

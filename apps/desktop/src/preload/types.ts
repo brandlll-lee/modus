@@ -17,6 +17,7 @@ import type {
   ContextItem,
   ContextKind,
   ContextSuggestion,
+  ContextUsageInfo,
   DiffFilePatch,
   DiffReview,
   DiffTarget,
@@ -115,7 +116,7 @@ export type ModusApi = {
       sessionId: string,
     ): Promise<Array<{ id: string; event: AgentEvent; createdAt?: string }>>;
     listRuns(sessionId: string): Promise<AgentRunInfo[]>;
-    ensure(sessionId: string): Promise<AgentSessionInfo>;
+    ensure(sessionId: string): Promise<AgentSessionInfo & { contextUsage?: ContextUsageInfo }>;
     /**
      * Drop in-memory SDK runtime for this session only (no descendant abort /
      * no DB status rewrite). Used when a ChatPane unmounts while idle.
@@ -345,6 +346,8 @@ export type ModusApi = {
     restore(input: { checkpointId: string }): Promise<CheckpointInfo>;
   };
   mcp: {
+    commands(sessionId: string): Promise<Array<{ name: string; description?: string }>>;
+    runCommand(input: { sessionId: string; name: string; args: string }): Promise<string>;
     locations(sessionId: string): Promise<string[]>;
     status(sessionId: string): Promise<Array<{ sessionId: string; report: string }>>;
     sync(cwd: string): Promise<void>;

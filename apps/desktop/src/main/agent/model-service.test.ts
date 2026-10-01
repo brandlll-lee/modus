@@ -10,7 +10,6 @@ vi.mock("electron", () => ({
 }));
 vi.mock("./agent-paths", () => ({
   getPiCliAgentDir: () => paths.cli,
-  modusAgentDir: () => paths.product,
 }));
 
 import * as service from "./model-service";
@@ -78,7 +77,7 @@ it("persists only native model preferences and leaves inherited definitions unto
     thinkingVariant: "high",
   });
   expect(info.thinkingLevel).toBe("high");
-  const stored = JSON.parse(readFileSync(join(paths.product, "settings.json"), "utf8"));
+  const stored = JSON.parse(readFileSync(join(paths.cli, "settings.json"), "utf8"));
   expect(stored).toMatchObject({ defaultProvider: "fixture", defaultModel: "new-model-999" });
   expect(stored.modelThinkingLevels["fixture/new-model-999"]).toBe("high");
   expect(readFileSync(join(paths.cli, "models.json"), "utf8")).toBe(source);

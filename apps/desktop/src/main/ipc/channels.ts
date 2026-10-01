@@ -93,6 +93,8 @@ export const IPC_CHANNELS = {
   mcpLocations: "mcp:locations",
   mcpSync: "mcp:sync",
   mcpStatus: "mcp:status",
+  mcpCommands: "mcp:commands",
+  mcpRunCommand: "mcp:run-command",
   mcpOpenConfig: "mcp:open-config",
   skillsList: "skills:list",
   skillsRefresh: "skills:refresh",

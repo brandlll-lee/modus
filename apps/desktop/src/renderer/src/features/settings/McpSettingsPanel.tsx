@@ -1,5 +1,7 @@
 import { IconFolder, IconRefresh } from "@tabler/icons-react";
 import { useEffect, useState } from "react";
+import { Button } from "../../components/ui/Button";
+import { Field, SelectField } from "../../components/ui/FormControls";
 import { ResourceRow } from "../../components/ui/ResourceRow";
 import { SettingsPageHeader } from "../../components/ui/SettingsPageHeader";
 
@@ -14,25 +16,44 @@ export function McpSettingsPanel({
   const [report, setReport] = useState("");
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(Boolean(sessionId));
+  const [revision, setRevision] = useState(0);
+  const [commands, setCommands] = useState<Array<{ name: string; description?: string }>>([]);
+  const [command, setCommand] = useState("mcp");
+  const [args, setArgs] = useState("");
+  const [result, setResult] = useState("");
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Explicit retry invalidates the request.
   useEffect(() => {
     let active = true;
     let request = 0;
     setLocations([]);
     setReport("");
     setError(undefined);
+    setResult("");
+    setCommands([]);
     if (!sessionId) return;
     const load = () => {
       const current = ++request;
-      void Promise.all([window.modus.mcp.locations(sessionId), window.modus.mcp.status(sessionId)])
-        .then(([paths, reports]) => {
+      setLoading(true);
+      void window.modus.mcp
+        .status(sessionId)
+        .then(async (reports) => {
+          const [paths, available] = await Promise.all([
+            window.modus.mcp.locations(sessionId),
+            window.modus.mcp.commands(sessionId),
+          ]);
           if (active && request === current) {
             setLocations(paths);
             setReport(reports.map((entry) => entry.report).join("\n"));
+            setCommands(available);
             setError(undefined);
           }
         })
         .catch((cause: unknown) => {
           if (active && request === current) setError(String(cause));
+        })
+        .finally(() => {
+          if (active && request === current) setLoading(false);
         });
     };
     load();
@@ -43,13 +64,29 @@ export function McpSettingsPanel({
       active = false;
       unsubscribe();
     };
-  }, [cwd, sessionId]);
+  }, [cwd, sessionId, revision]);
   async function refresh() {
     if (!cwd || busy) return;
     setBusy(true);
     setError(undefined);
     try {
+      if (sessionId) await window.modus.agent.ensure(sessionId);
       await window.modus.mcp.sync(cwd);
+      setRevision((value) => value + 1);
+    } catch (cause) {
+      setError(String(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function runCommand() {
+    if (!sessionId || busy) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      setResult(await window.modus.mcp.runCommand({ sessionId, name: command, args }));
+      const reports = await window.modus.mcp.status(sessionId);
+      setReport(reports.map((entry) => entry.report).join("\n"));
     } catch (cause) {
       setError(String(cause));
     } finally {
@@ -64,14 +101,13 @@ export function McpSettingsPanel({
             type="button"
             title="Refresh resources"
             aria-label="Refresh resources"
-            disabled={!sessionId || busy}
+            disabled={!sessionId || busy || loading}
             onClick={() => void refresh()}
             className="toolbar-icon-button flex items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-hover hover:text-fg disabled:opacity-40"
           >
             <IconRefresh aria-hidden size={16} stroke={1.8} />
           </button>
         }
-        description="See the MCP servers and configuration sources loaded by the current session."
         title="MCP"
       />
       {error ? (
@@ -80,10 +116,48 @@ export function McpSettingsPanel({
         </p>
       ) : null}
       {!sessionId ? <p className="text-sm text-fg-muted">No active session.</p> : null}
+      {sessionId && loading ? (
+        <p role="status" className="text-sm text-fg-muted">
+          Loading MCP status...
+        </p>
+      ) : null}
       {report ? (
         <pre className="overflow-x-auto rounded-lg border border-hairline-soft bg-panel p-4 whitespace-pre-wrap break-words text-sm text-fg-muted">
           {report}
         </pre>
+      ) : null}
+      {!loading && !error && sessionId && !report ? (
+        <p className="text-sm text-fg-muted">The MCP extension returned no status.</p>
+      ) : null}
+      {commands.length ? (
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            void runCommand();
+          }}
+          className="flex flex-wrap items-end gap-3 border-t border-hairline-soft pt-4"
+        >
+          <SelectField
+            label="MCP command"
+            value={command}
+            onChange={setCommand}
+            options={commands.map((entry) => ({ value: entry.name, label: `/${entry.name}` }))}
+          />
+          <div className="min-w-[160px] flex-1">
+            <Field label="Arguments" value={args} onChange={setArgs} placeholder="" />
+          </div>
+          <Button type="submit" disabled={busy || loading}>
+            {busy ? "Running..." : "Run"}
+          </Button>
+          <p className="w-full text-xs text-fg-muted">
+            {commands.find((entry) => entry.name === command)?.description}
+          </p>
+        </form>
+      ) : null}
+      {result ? (
+        <p role="status" className="whitespace-pre-wrap break-words text-sm text-fg-muted">
+          {result}
+        </p>
       ) : null}
       <div className="space-y-1">
         {locations.map((path) => (

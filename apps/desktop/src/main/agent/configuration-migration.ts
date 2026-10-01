@@ -1,17 +1,7 @@
-import {
-  cpSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
-import { homedir } from "node:os";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { app } from "electron";
-import { modusAgentDir } from "./agent-paths";
 
 export function migrateAgentConfiguration(database: DatabaseSync): void {
   const dataDir = app.getPath("userData");
@@ -23,14 +13,10 @@ export function migrateAgentConfiguration(database: DatabaseSync): void {
     .all();
   if (existsSync(marker) && tables.length === 0) return;
   const oldAgent = join(dataDir, "pi-agent");
-  const oldProduct = join(homedir(), ".modus");
-  const moves = ["mcp.json", "skills"]
-    .map((name) => ({ source: join(oldProduct, name), destination: join(modusAgentDir(), name) }))
-    .filter(({ source }) => existsSync(source));
   const archived = ["auth.json", "models.json", "settings.json"]
     .map((name) => join(oldAgent, name))
     .filter(existsSync);
-  if (!tables.length && !moves.length && !archived.length) return;
+  if (!tables.length && !archived.length) return;
   mkdirSync(dataDir, { recursive: true });
   const backup = mkdtempSync(join(dataDir, "configuration-backup-"));
   database.prepare("VACUUM INTO ?").run(join(backup, "modus.sqlite"));
@@ -38,26 +24,6 @@ export function migrateAgentConfiguration(database: DatabaseSync): void {
     const destination = join(backup, "pi-agent", basename(path));
     mkdirSync(dirname(destination), { recursive: true, mode: 0o700 });
     cpSync(path, destination, { errorOnExist: true, force: false });
-  }
-  const changes: Array<{ source: string; destination: string; status: string }> = [];
-  for (const move of moves) {
-    const name = basename(move.source);
-    cpSync(move.source, join(backup, ".modus", name), {
-      recursive: true,
-      force: false,
-      errorOnExist: true,
-    });
-    if (existsSync(move.destination)) {
-      const identical =
-        statSync(move.source).isFile() &&
-        statSync(move.destination).isFile() &&
-        readFileSync(move.source).equals(readFileSync(move.destination));
-      changes.push({ ...move, status: identical ? "identical" : "destination-preserved" });
-      continue;
-    }
-    mkdirSync(dirname(move.destination), { recursive: true, mode: 0o700 });
-    cpSync(move.source, move.destination, { recursive: true, force: false, errorOnExist: true });
-    changes.push({ ...move, status: "copied" });
   }
   database.exec("BEGIN");
   try {
@@ -70,6 +36,6 @@ export function migrateAgentConfiguration(database: DatabaseSync): void {
     database.exec("ROLLBACK");
     throw error;
   }
-  const report = { backup, archived, changes, completedAt: new Date().toISOString() };
+  const report = { backup, archived, completedAt: new Date().toISOString() };
   writeFileSync(marker, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
 }

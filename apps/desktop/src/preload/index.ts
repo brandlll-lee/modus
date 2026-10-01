@@ -193,6 +193,8 @@ const api: ModusApi = {
     restore: (input) => ipcRenderer.invoke("checkpoint:restore", input),
   },
   mcp: {
+    commands: (sessionId) => ipcRenderer.invoke("mcp:commands", sessionId),
+    runCommand: (input) => ipcRenderer.invoke("mcp:run-command", input),
     locations: (sessionId) => ipcRenderer.invoke("mcp:locations", sessionId),
     status: (sessionId) => ipcRenderer.invoke("mcp:status", sessionId),
     sync: (cwd) => ipcRenderer.invoke("mcp:sync", cwd),

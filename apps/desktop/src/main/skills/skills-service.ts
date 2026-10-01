@@ -9,14 +9,14 @@ export function listSkills(sessionId: string): SkillState {
   const loaded = sessionResources()
     .find(({ id }) => id === sessionId)
     ?.loader.getSkills();
+  if (!loaded) throw new Error("Session resources are not loaded.");
   return {
-    skills: loaded?.skills.map(toSkillInfo) ?? [],
-    diagnostics:
-      loaded?.diagnostics.map(({ type, message, path }) => ({
-        type,
-        message,
-        ...(path ? { path } : {}),
-      })) ?? [],
+    skills: loaded.skills.map(toSkillInfo),
+    diagnostics: loaded.diagnostics.map(({ type, message, path }) => ({
+      type,
+      message,
+      ...(path ? { path } : {}),
+    })),
   };
 }
 

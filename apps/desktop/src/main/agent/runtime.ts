@@ -5,6 +5,7 @@ import type {
   AgentRunInfo,
   AgentSessionInfo,
   ContextItem,
+  ContextUsageInfo,
   ModelInfo,
   PromptDelivery,
   PromptImageAttachment,
@@ -47,16 +48,16 @@ export type PromptAgentInput = {
 
 export type AgentRuntime = {
   create(window: BrowserWindowType, input: CreateAgentRuntimeInput): Promise<AgentSessionInfo>;
-  ensure(window: BrowserWindowType, sessionId: string): Promise<AgentSessionInfo>;
+  ensure(
+    window: BrowserWindowType,
+    sessionId: string,
+  ): Promise<AgentSessionInfo & { contextUsage?: ContextUsageInfo }>;
   prompt(window: BrowserWindowType, input: PromptAgentInput): Promise<void>;
   compact(window: BrowserWindowType, sessionId: string): Promise<void>;
   abort(sessionId: string): Promise<void>;
   listRuns(sessionId: string): Promise<AgentRunInfo[]>;
   dispose(sessionId: string): Promise<void>;
-  /**
-   * Drop this session's in-memory SDK runtime without aborting descendants or
-   * rewriting DB status. Pane unmount / idle eviction — not delete/rollback.
-   */
+  /** Release an idle SDK runtime while preserving the conversation and managed processes. */
   releaseRuntime(sessionId: string): Promise<void>;
   setModel(
     window: BrowserWindowType,

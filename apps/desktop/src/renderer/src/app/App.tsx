@@ -33,6 +33,7 @@ import { createEmptyComposerDraft } from "../features/composer/composerDraft";
 import { contextItemKey } from "../features/composer/composerTokens";
 import { normalizePlan } from "../features/plan/planState";
 import { useGitBranch } from "../lib/useGitBranch";
+import { RuntimeNotice } from "./RuntimeNotice";
 import { useAgentEvents } from "./useAgentEvents";
 import { useEnvironmentStats } from "./useEnvironmentStats";
 import { useInitialHydration } from "./useInitialHydration";
@@ -111,8 +112,11 @@ export function App() {
     extensionQuestions,
     activityBySession,
     contextUsageBySession,
+    notice,
+    dismissNotice,
+    restoreError,
     publishLocalAgentEvent,
-  } = useAgentEvents(settingsOpen ? undefined : activeSessionId, refreshSessions, focusSession);
+  } = useAgentEvents(activeSessionId, refreshSessions, focusSession, !settingsOpen);
   const {
     models,
     model,
@@ -355,6 +359,12 @@ export function App() {
           <ImageViewerProvider>
             <div className="app-root flex min-h-0 flex-1 flex-col bg-panel text-fg">
               <WindowTitleBar />
+              {restoreError ? (
+                <p role="alert" className="px-4 py-2 text-sm text-danger">
+                  {restoreError}
+                </p>
+              ) : null}
+              {notice ? <RuntimeNotice notice={notice} onDismiss={dismissNotice} /> : null}
               {extensionQuestions[0] ? (
                 <ExtensionDialog key={extensionQuestions[0].id} request={extensionQuestions[0]} />
               ) : null}

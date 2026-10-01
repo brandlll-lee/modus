@@ -64,6 +64,7 @@ export class ToolRegistry {
   registerTool(input: RegisterToolInput): void {
     const entry: ToolCatalogEntry = { ...input.entry, kind: "custom" };
     this.entries.set(entry.name, entry);
+    input.definition.exposure = "deferred";
     this.definitions.set(entry.name, input.definition);
     if (input.classify) {
       this.classifiers.set(entry.name, input.classify);

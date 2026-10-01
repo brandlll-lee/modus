@@ -1,96 +1,141 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fauxAssistantMessage, fauxProvider, InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import {
-  createCodemodeExtension,
-  createMcpExtension,
-  createToolSearchExtension,
+  createAgentSession,
+  DefaultResourceLoader,
+  ModelRuntime,
+  SessionManager,
+  SettingsManager,
 } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 
-const paths = vi.hoisted(() => ({ cli: "", product: "" }));
-vi.mock("./agent-paths", () => ({
-  getPiCliAgentDir: () => paths.cli,
-  modusAgentDir: () => paths.product,
-}));
+const paths = vi.hoisted(() => ({ agent: "" }));
+vi.mock("./agent-paths", () => ({ getPiCliAgentDir: () => paths.agent }));
+vi.mock("electron", () => ({ shell: { openExternal: vi.fn(), openPath: vi.fn() } }));
 
+import { listSkills } from "../skills/skills-service";
 import { createAgentResourceLoader } from "./agent-resources";
 import { createAgentSettings } from "./agent-settings";
+import { registerSessionResources, releaseSessionResources } from "./session-resources";
 
 let root: string;
 let cwd: string;
-function put(path: string, content: string) {
+function put(path: string, text: string) {
   mkdirSync(join(path, ".."), { recursive: true });
-  writeFileSync(path, content);
-}
-function skill(base: string, description: string) {
-  put(
-    join(base, "skills", "synthetic", "SKILL.md"),
-    `---\nname: synthetic\ndescription: ${description}\n---\nSynthetic instructions.\n`,
-  );
+  writeFileSync(path, text);
 }
 beforeAll(() => {
-  root = mkdtempSync(join(tmpdir(), "modus-resources-"));
-  cwd = join(root, "workspace");
-  paths.cli = join(root, "cli");
-  paths.product = join(root, "product");
-  skill(paths.cli, "PI user");
-  skill(paths.product, "Modus user");
-  skill(join(cwd, ".modus"), "Modus project");
-  put(join(cwd, "AGENTS.md"), "SYNTHETIC_SHARED_CONTEXT");
-  put(join(paths.cli, "AGENTS.md"), "SYNTHETIC_CLI_CONTEXT");
-  put(join(paths.product, "AGENTS.md"), "SYNTHETIC_PRODUCT_CONTEXT");
-  put(join(cwd, ".modus", "AGENTS.md"), "SYNTHETIC_PROJECT_CONTEXT");
+  root = mkdtempSync(join(tmpdir(), "modus-pi-resources-"));
+  paths.agent = join(root, "agent");
+  cwd = join(root, "project");
+  put(join(paths.agent, "settings.json"), JSON.stringify({ defaultTools: ["read"] }));
   put(
-    join(cwd, ".modus", "extensions", "synthetic.ts"),
-    'export default function(pi) {pi.registerCommand("synthetic-command", {description: "Synthetic", handler: async () => {}}); }',
+    join(paths.agent, "skills", "synthetic", "SKILL.md"),
+    "---\nname: synthetic\ndescription: Native fixture\n---\nSkill body.\n",
+  );
+  put(join(cwd, "AGENTS.md"), "WORKSPACE_FIXTURE");
+  put(
+    join(cwd, ".pi", "extensions", "fixture.ts"),
+    'export default function(pi) { pi.registerCommand("mcp", {description:"Fixture manager", handler:async()=>{}}); }',
   );
 });
 afterAll(() => rmSync(root, { recursive: true, force: true }));
-it("applies native discovery, project trust and external edits on the same session loader", async () => {
-  const settings = createAgentSettings({
-    cwd,
-    projectTrusted: false,
-    overrides: { packages: [], extensions: [], skills: [], prompts: [], themes: [] },
-  });
-  const loader = await createAgentResourceLoader(cwd, settings, [
-    { name: "codemode", factory: createCodemodeExtension() },
-    { name: "tool_search", factory: createToolSearchExtension() },
-    {
-      name: "mcp",
-      factory: createMcpExtension({ loadConfig: () => ({ servers: [], errors: [] }) }),
-    },
-  ]);
-  expect(loader.getSkills().skills.find((entry) => entry.name === "synthetic")?.description).toBe(
-    "Modus user",
-  );
-  expect(
-    loader.getExtensions().extensions.some((entry) => entry.path.endsWith("synthetic.ts")),
-  ).toBe(false);
+
+it("uses native discovery and lets a trusted extension replace builtin MCP", async () => {
+  const settings = createAgentSettings({ cwd });
+  const loader = await createAgentResourceLoader(cwd, settings, []);
+  expect(loader.getExtensions().extensions.some((item) => item.path === "builtin:mcp")).toBe(true);
   settings.setProjectTrusted(true);
   await loader.reload();
-  expect(loader.getSkills().skills.find((entry) => entry.name === "synthetic")?.description).toBe(
-    "Modus project",
-  );
-  expect(
-    loader.getExtensions().extensions.some((entry) => entry.path.endsWith("synthetic.ts")),
-  ).toBe(true);
-  const instructions = loader
-    .getAgentsFiles()
-    .agentsFiles.map((entry) => entry.content)
-    .join("\n");
-  expect(instructions.split("SYNTHETIC_SHARED_CONTEXT")).toHaveLength(2);
-  expect(instructions).toContain("SYNTHETIC_CLI_CONTEXT");
-  expect(instructions).toContain("SYNTHETIC_PRODUCT_CONTEXT");
-  expect(instructions).toContain("SYNTHETIC_PROJECT_CONTEXT");
-  skill(join(cwd, ".modus"), "Changed externally");
-  await loader.reload();
-  expect(loader.getSkills().skills.find((entry) => entry.name === "synthetic")?.description).toBe(
-    "Changed externally",
-  );
-  settings.setProjectTrusted(false);
-  await loader.reload();
-  expect(loader.getSkills().skills.find((entry) => entry.name === "synthetic")?.description).toBe(
-    "Modus user",
+  const native = new DefaultResourceLoader({
+    cwd,
+    agentDir: paths.agent,
+    settingsManager: settings,
+  });
+  await native.reload();
+  expect(loader.getSkills()).toEqual(native.getSkills());
+  expect(loader.getAgentsFiles()).toEqual(native.getAgentsFiles());
+  expect(loader.getExtensions().extensions.some((item) => item.path === "builtin:mcp")).toBe(false);
+  expect(loader.getExtensions().errors).toEqual([]);
+  expect(loader.getExtensions().extensions.some((item) => item.path.endsWith("fixture.ts"))).toBe(
+    true,
   );
 });
+
+it("restores persisted SDK usage and skills and keeps desktop tools deferred", async () => {
+  const faux = fauxProvider({ tokensPerSecond: 0 });
+  const modelRuntime = await ModelRuntime.create({
+    credentials: new InMemoryCredentialStore(),
+    modelsPath: null,
+    refreshOnCreate: false,
+  });
+  modelRuntime.registerNativeProvider(faux.provider);
+  await modelRuntime.refresh({ allowNetwork: false });
+  const settings = SettingsManager.inMemory(
+    { defaultTools: ["read"], compaction: { enabled: false } },
+    { projectTrusted: true },
+  );
+  const loader = await createAgentResourceLoader(cwd, settings, []);
+  const options = {
+    cwd,
+    agentDir: paths.agent,
+    modelRuntime,
+    model: faux.getModel(),
+    settingsManager: settings,
+    resourceLoader: loader,
+    customTools: [
+      {
+        name: "desktop_fixture",
+        label: "Fixture",
+        description: "Synthetic desktop operation",
+        exposure: "deferred" as const,
+        parameters: Type.Object({}),
+        execute: async () => ({ content: [], details: {} }),
+      },
+    ],
+  };
+  const { session } = await createAgentSession({
+    ...options,
+    sessionManager: SessionManager.create(cwd, join(root, "sessions")),
+  });
+  const response = fauxAssistantMessage("Hello");
+  response.usage = {
+    input: 120,
+    output: 20,
+    cacheRead: 70,
+    cacheWrite: 15,
+    totalTokens: 225,
+    cost: { input: 0.01, output: 0.02, cacheRead: 0.003, cacheWrite: 0.004, total: 0.037 },
+  };
+  faux.setResponses([response]);
+  await session.prompt("hello");
+  expect(session.getActiveToolNames()).toEqual(expect.arrayContaining(["read", "tool_search"]));
+  expect(session.getActiveToolNames()).not.toContain("desktop_fixture");
+  expect(session.getActiveToolNames()).not.toContain("codemode");
+  const stats = session.getSessionStats();
+  expect(stats.tokens.input).toBeGreaterThan(0);
+  expect(session.sessionFile).toBeDefined();
+  const file = session.sessionFile as string;
+  session.dispose();
+  const restoredLoader = await createAgentResourceLoader(cwd, settings, []);
+  const { session: restored } = await createAgentSession({
+    ...options,
+    resourceLoader: restoredLoader,
+    sessionManager: SessionManager.open(file),
+  });
+  try {
+    expect(restored.getSessionStats()).toMatchObject({
+      tokens: stats.tokens,
+      cost: stats.cost,
+      contextUsage: stats.contextUsage,
+    });
+    registerSessionResources({ id: "cold", cwd, session: restored, loader: restoredLoader });
+    expect(listSkills("cold").skills.some((skill) => skill.name === "synthetic")).toBe(true);
+  } finally {
+    releaseSessionResources("cold");
+    restored.dispose();
+  }
+}, 30_000);

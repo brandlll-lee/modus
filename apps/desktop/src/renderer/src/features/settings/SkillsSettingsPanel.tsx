@@ -16,6 +16,9 @@ export function SkillsSettingsPanel({
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(Boolean(sessionId));
+  const [revision, setRevision] = useState(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Explicit retry invalidates the request.
   useEffect(() => {
     let active = true;
     let request = 0;
@@ -24,6 +27,7 @@ export function SkillsSettingsPanel({
     if (!sessionId) return;
     const load = () => {
       const current = ++request;
+      setLoading(true);
       void window.modus.skills
         .list(sessionId)
         .then((result) => {
@@ -34,6 +38,9 @@ export function SkillsSettingsPanel({
         })
         .catch((cause: unknown) => {
           if (active && request === current) setError(String(cause));
+        })
+        .finally(() => {
+          if (active && request === current) setLoading(false);
         });
     };
     load();
@@ -44,13 +51,15 @@ export function SkillsSettingsPanel({
       active = false;
       unsubscribe();
     };
-  }, [cwd, sessionId]);
+  }, [cwd, sessionId, revision]);
   async function refresh() {
     if (!cwd || busy) return;
     setBusy(true);
     setError(undefined);
     try {
+      if (sessionId) await window.modus.agent.ensure(sessionId);
       await window.modus.skills.refresh(cwd);
+      setRevision((current) => current + 1);
     } catch (cause) {
       setError(String(cause));
     } finally {
@@ -75,7 +84,6 @@ export function SkillsSettingsPanel({
             <IconRefresh aria-hidden size={16} stroke={1.8} />
           </button>
         }
-        description="See the skills loaded by the current session and where each one came from."
         title="Skills"
       />
       <SearchField
@@ -101,8 +109,16 @@ export function SkillsSettingsPanel({
       ))}
       {!sessionId ? (
         <p className="text-sm text-fg-muted">No active session.</p>
-      ) : !filtered.length ? (
-        <p className="text-sm text-fg-muted">No loaded skills match.</p>
+      ) : loading ? (
+        <p role="status" className="text-sm text-fg-muted">
+          Loading skills...
+        </p>
+      ) : !error && !filtered.length ? (
+        <p className="text-sm text-fg-muted">
+          {state.skills.length
+            ? "No skills match your search."
+            : "No skills loaded for this session."}
+        </p>
       ) : null}
       <div className="space-y-1">
         {filtered.map((skill) => (

@@ -1,5 +1,3 @@
-import { existsSync } from "node:fs";
-import { join } from "node:path";
 import type { Skill } from "@earendil-works/pi-coding-agent";
 import type { SkillInfo } from "../../shared/contracts";
 
@@ -11,17 +9,6 @@ import type { SkillInfo } from "../../shared/contracts";
  * them for the UI. `scope` and `source` therefore mirror PI's `SourceInfo`
  * rather than a Modus-invented taxonomy.
  */
-
-/** Bundled skills ship as an electron-builder extraResource. */
-export function builtinSkillsDir(): string {
-  const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
-  const candidates = [
-    resourcesPath ? join(resourcesPath, "skills") : undefined,
-    join(process.cwd(), "resources", "skills"),
-    join(process.cwd(), "apps", "desktop", "resources", "skills"),
-  ].filter((dir): dir is string => Boolean(dir));
-  return candidates.find((dir) => existsSync(dir)) ?? join(process.cwd(), "resources", "skills");
-}
 
 export function toSkillInfo(skill: Skill): SkillInfo {
   return {

@@ -4,8 +4,6 @@ import { join } from "node:path";
 import {
   type AgentSession,
   createAgentSession,
-  createCodemodeExtension,
-  createToolSearchExtension,
   type ResourceLoader,
   SessionManager,
   type SettingsManager,
@@ -16,6 +14,7 @@ import type {
   AgentEvent,
   AgentRunInfo,
   AgentSessionInfo,
+  ContextUsageInfo,
   ModelInfo,
   PlanBuildStatus,
 } from "../../shared/contracts";
@@ -25,13 +24,12 @@ import { formatResolvedContext, resolveContext } from "../context/context-servic
 import { getChangeStatsSince } from "../git/git-service";
 import { denyPendingQuestionRequestsForSession } from "../interaction/question-broker";
 import { IPC_CHANNELS } from "../ipc/channels";
-import { createModusMcpExtension } from "../mcp/mcp-service";
 import { maybeNotifyAgentEvent } from "../notifications/agent-notifications";
 import { denyPendingPermissionRequestsForSession } from "../permissions/permission-broker";
 import { readPlanById, setPlanBuildStatusById } from "../plan/plan-store";
 import { killManagedProcess, listManagedProcesses } from "../process/managed-process-facade";
 import { recordAgentEvent } from "./agent-event-store";
-import { modusAgentDir } from "./agent-paths";
+import { getPiCliAgentDir } from "./agent-paths";
 import { createAgentResourceLoader } from "./agent-resources";
 import {
   createAgentRun,
@@ -50,7 +48,7 @@ import {
   updateAgentSessionTitle,
 } from "./agent-store";
 import { createCheckpoint } from "./checkpoint-service";
-import { createExtensionUI } from "./extension-ui";
+import { createExtensionUI, isExtensionCommandActive } from "./extension-ui";
 import {
   cycleDefaultModel,
   findModel,
@@ -75,7 +73,6 @@ import type {
   EmitAgentEvent,
   PromptAgentInput,
 } from "./runtime";
-import { isRuntimeTool, withRuntimeToolPolicy } from "./runtime-tools";
 import { registerSessionResources, releaseSessionResources } from "./session-resources";
 import { deriveSessionTitle, shouldReplaceSessionTitle } from "./session-title";
 import { registerAppTools } from "./tools/app-tools";
@@ -134,22 +131,6 @@ function toolAllowedForSession(
   const source = session.getAllTools().find((tool) => tool.name === name)?.sourceInfo;
   if (!source || !toolRegistry.allowsProfile(name, profile, definition, source)) return false;
   return true;
-}
-
-function activeToolNamesForSession(profile: ToolProfileName, session: AgentSession): string[] {
-  const active = new Set(session.getActiveToolNames());
-  return session
-    .getAllTools()
-    .filter(
-      (tool) =>
-        tool.exposure !== "hidden" &&
-        (tool.exposure === "direct" ||
-          tool.exposure === "model-only" ||
-          active.has(tool.name) ||
-          isRuntimeTool(session.getToolDefinition(tool.name))) &&
-        toolAllowedForSession(profile, session, tool.name),
-    )
-    .map((tool) => tool.name);
 }
 
 export class PiSdkRuntime implements AgentRuntime {
@@ -255,12 +236,16 @@ export class PiSdkRuntime implements AgentRuntime {
     return await next;
   }
 
-  async ensure(window: BrowserWindowType, sessionId: string): Promise<AgentSessionInfo> {
+  async ensure(
+    window: BrowserWindowType,
+    sessionId: string,
+  ): Promise<AgentSessionInfo & { contextUsage?: ContextUsageInfo }> {
     const runtimeSession = await this.getOrResume(window, sessionId);
     if (!runtimeSession) {
       throw new Error(`Agent session not found: ${sessionId}`);
     }
-    return runtimeSession.info;
+    const usage = createContextUsageEvent(sessionId, runtimeSession.session)?.usage;
+    return { ...runtimeSession.info, ...(usage ? { contextUsage: usage } : {}) };
   }
 
   private async createSessionResources(
@@ -272,13 +257,6 @@ export class PiSdkRuntime implements AgentRuntime {
     const settingsManager = createAgentSettings({
       cwd,
       projectTrusted,
-      overrides: {
-        packages: [],
-        extensions: [],
-        skills: [],
-        prompts: [],
-        themes: [],
-      },
     });
     const loader = await createAgentResourceLoader(cwd, settingsManager, [
       {
@@ -296,9 +274,6 @@ export class PiSdkRuntime implements AgentRuntime {
           });
         },
       },
-      { name: "codemode", factory: withRuntimeToolPolicy(createCodemodeExtension()) },
-      { name: "tool_search", factory: withRuntimeToolPolicy(createToolSearchExtension()) },
-      { name: "mcp", factory: createModusMcpExtension() },
       createModusPermissionExtension(sessionId, emit, cwd, {
         definition: (name) => this.sessions.get(sessionId)?.session.getToolDefinition(name),
         source: (name) =>
@@ -466,7 +441,10 @@ export class PiSdkRuntime implements AgentRuntime {
     this.sessions.set(params.info.id, runtimeSession);
     try {
       await session.bindExtensions({
-        uiContext: createExtensionUI(session, params.info.id, params.emit),
+        uiContext: createExtensionUI(session, params.info.id, (event) => {
+          if (event.type === "extension.notice") params.emitVolatile(event);
+          else params.emit(event);
+        }),
         mode: "rpc",
       });
       registerSessionResources({
@@ -526,7 +504,7 @@ export class PiSdkRuntime implements AgentRuntime {
     const info = createAgentSessionRecord(recordInput);
     const selectedThinking = selectedModel ? resolveModelThinking(selectedModel) : undefined;
 
-    const agentDir = modusAgentDir();
+    const agentDir = getPiCliAgentDir();
     const sessionDir = join(app.getPath("userData"), "pi-sessions");
     mkdirSync(agentDir, { recursive: true });
     mkdirSync(sessionDir, { recursive: true });
@@ -570,7 +548,7 @@ export class PiSdkRuntime implements AgentRuntime {
 
     const emit = this.emitToWindow(window);
     const emitVolatile = this.emitVolatileToWindow(window);
-    const agentDir = modusAgentDir();
+    const agentDir = getPiCliAgentDir();
     const sessionDir = join(app.getPath("userData"), "pi-sessions");
     mkdirSync(agentDir, { recursive: true });
     mkdirSync(sessionDir, { recursive: true });
@@ -658,13 +636,6 @@ export class PiSdkRuntime implements AgentRuntime {
     setAgentToolContext(toolContext);
 
     try {
-      // Per-turn mode: switch the active tool set (plan = read-only research +
-      // plan artifacts; build = full chat tools). setActiveToolsByName also rebuilds
-      // the system prompt for the new set, and takes effect on this turn.
-      runtimeSession.session.setActiveToolsByName(
-        activeToolNamesForSession(profile, runtimeSession.session),
-      );
-
       // Per-turn model + thinking: the composer's current selection travels with
       // the prompt and is applied authoritatively here, so the turn never runs
       // with stale model/thinking (mid-session switch, edit-and-resend, resume).
@@ -1098,21 +1069,20 @@ export class PiSdkRuntime implements AgentRuntime {
   }
 
   async releaseRuntime(sessionId: string): Promise<void> {
-    // A pane owns the SDK cache, never the session's managed processes.
-    await this.disposeSessionOnly(sessionId);
+    await this.disposeSessionOnly(sessionId, true);
   }
 
-  private disposeSessionOnly(sessionId: string): Promise<void> {
+  private disposeSessionOnly(sessionId: string, idleOnly = false): Promise<void> {
     const pending = this.disposePromises.get(sessionId);
     if (pending) return pending;
-    const operation = this.closeRuntimeSession(sessionId).finally(() =>
+    const operation = this.closeRuntimeSession(sessionId, idleOnly).finally(() =>
       this.disposePromises.delete(sessionId),
     );
     this.disposePromises.set(sessionId, operation);
     return operation;
   }
 
-  private async closeRuntimeSession(sessionId: string): Promise<void> {
+  private async closeRuntimeSession(sessionId: string, idleOnly: boolean): Promise<void> {
     // Settle any in-flight resume first: it would otherwise re-cache a live
     // session right after this dispose (and a rollback would then truncate the
     // session file while a stale in-memory tree keeps answering prompts).
@@ -1125,6 +1095,14 @@ export class PiSdkRuntime implements AgentRuntime {
     if (!runtimeSession) {
       return;
     }
+
+    if (
+      idleOnly &&
+      (runtimeSession.session.isStreaming ||
+        getActiveAgentRun(sessionId) ||
+        isExtensionCommandActive(runtimeSession.session))
+    )
+      return;
 
     this.sessions.delete(sessionId);
     releaseSessionResources(sessionId);
@@ -1271,7 +1249,10 @@ function lastAssistantTurnError(session: AgentSession): string | undefined {
   return undefined;
 }
 
-function createContextUsageEvent(sessionId: string, session: AgentSession): AgentEvent | undefined {
+function createContextUsageEvent(
+  sessionId: string,
+  session: AgentSession,
+): Extract<AgentEvent, { type: "context.updated" }> | undefined {
   const stats = session.getSessionStats();
   const usage = stats.contextUsage;
   if (!usage) {
