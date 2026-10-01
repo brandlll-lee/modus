@@ -1,0 +1,256 @@
+::selection {
+  background-color: var(--color-selection);
+}
+
+.popup-chrome {
+  border: 1px solid var(--color-popup-border);
+  border-radius: var(--radius-md);
+  background: var(--color-elevated);
+  box-shadow: var(--shadow-popup);
+}
+
+.timeline-wire {
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-sm);
+  background: transparent;
+}
+
+html,
+body,
+button,
+input,
+textarea,
+select {
+  font-family: var(--font-sans);
+  font-weight: var(--font-weight-normal);
+  font-feature-settings: "cv11", "ss01", "ss03";
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  color: var(--color-fg);
+  background: var(--color-canvas);
+}
+
+@layer base {
+  button,
+  textarea,
+  input {
+    font: inherit;
+    letter-spacing: inherit;
+  }
+}
+
+#root,
+.app-root {
+  isolation: isolate;
+  min-height: 100dvh;
+  height: 100dvh;
+}
+
+@layer utilities {
+  .app-drag {
+    -webkit-app-region: drag;
+  }
+  .app-no-drag {
+    -webkit-app-region: no-drag;
+  }
+  .toolbar-row {
+    height: 52px;
+  }
+  .toolbar-icon-button {
+    color: var(--color-icon-muted);
+    width: 30px;
+    height: 30px;
+  }
+  .toolbar-icon-button svg {
+    width: 15px;
+    height: 15px;
+  }
+  .toolbar-icon-button[data-active="true"],
+  .toolbar-icon-button:hover {
+    color: var(--color-icon);
+  }
+  .toolbar-icon {
+    color: var(--color-icon-muted);
+  }
+
+  .tracking-snug {
+    letter-spacing: 0;
+  }
+}
+
+@layer base {
+  @supports selector(::-webkit-scrollbar) {
+    *::-webkit-scrollbar {
+      width: var(--scrollbar-size);
+      height: var(--scrollbar-size);
+    }
+    *::-webkit-scrollbar-button {
+      display: none;
+      width: 0;
+      height: 0;
+    }
+    *::-webkit-scrollbar-thumb {
+      background-color: transparent;
+
+      border: 2px solid transparent;
+      border-radius: 9999px;
+      background-clip: content-box;
+    }
+    *:hover::-webkit-scrollbar-thumb {
+      background-color: var(--scrollbar-thumb);
+    }
+    *:hover::-webkit-scrollbar-thumb:hover {
+      background-color: var(--scrollbar-thumb-hover);
+    }
+    *::-webkit-scrollbar-track,
+    *::-webkit-scrollbar-corner {
+      background: transparent;
+    }
+  }
+
+  @supports not selector(::-webkit-scrollbar) {
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: transparent transparent;
+    }
+    *:hover {
+      scrollbar-color: var(--scrollbar-thumb) transparent;
+    }
+  }
+}
+
+@layer utilities {
+  .timeline-block {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 120px;
+  }
+}
+
+@keyframes modus-shine-border {
+  0% {
+    background-position: 0% 0%;
+  }
+  50% {
+    background-position: 100% 100%;
+  }
+  to {
+    background-position: 0% 0%;
+  }
+}
+
+@layer utilities {
+  .clip-fade {
+    -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 55%, transparent 100%);
+    mask-image: linear-gradient(to bottom, #000 0%, #000 55%, transparent 100%);
+  }
+
+  .scroll-fade {
+    --scroll-fade-top: 0px;
+    --scroll-fade-bottom: 0px;
+    -webkit-mask-image: linear-gradient(
+      to bottom,
+      transparent 0,
+      #000 var(--scroll-fade-top),
+      #000 calc(100% - var(--scroll-fade-bottom)),
+      transparent 100%
+    );
+    mask-image: linear-gradient(
+      to bottom,
+      transparent 0,
+      #000 var(--scroll-fade-top),
+      #000 calc(100% - var(--scroll-fade-bottom)),
+      transparent 100%
+    );
+  }
+  .scroll-fade[data-fade-top] {
+    --scroll-fade-top: 20px;
+  }
+  .scroll-fade[data-fade-bottom] {
+    --scroll-fade-bottom: 20px;
+  }
+
+  .truncate-fade {
+    overflow: hidden;
+    white-space: nowrap;
+    -webkit-mask-image: linear-gradient(
+      to right,
+      #000 0%,
+      #000 calc(100% - 1.5rem),
+      transparent 100%
+    );
+    mask-image: linear-gradient(to right, #000 0%, #000 calc(100% - 1.5rem), transparent 100%);
+  }
+
+  .subagent-preview-scrim {
+    background-color: color-mix(in oklab, var(--color-canvas) 55%, transparent);
+    opacity: 0;
+    transition: opacity 200ms cubic-bezier(0.22, 1, 0.36, 1);
+    will-change: opacity;
+  }
+  .subagent-preview-scrim[data-mounted] {
+    opacity: 1;
+  }
+
+  .subagent-preview-scrim[data-settled] {
+    backdrop-filter: blur(1px);
+    -webkit-backdrop-filter: blur(1px);
+    will-change: auto;
+  }
+
+  .subagent-preview-body {
+    animation: subagent-preview-body-in 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  @keyframes subagent-preview-body-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  .modus-shine-border {
+    padding: var(--shine-border-width, 1px);
+    background-size: 360% 360%;
+    mask:
+      linear-gradient(#fff 0 0) content-box,
+      linear-gradient(#fff 0 0);
+    mask-composite: exclude;
+    -webkit-mask:
+      linear-gradient(#fff 0 0) content-box,
+      linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    will-change: background-position;
+    animation: modus-shine-border var(--shine-duration, 11s) linear infinite;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .modus-markdown [data-sd-animate] {
+    animation: none;
+  }
+  .modus-shine-border {
+    animation: none;
+  }
+}
+
+.chat-column {
+  width: 100%;
+  max-width: 920px;
+  margin-inline: auto;
+  min-width: 0;
+}
+
+@layer base {
+  :is(button, input, textarea, select, [tabindex]):focus-visible {
+    outline: 2px solid var(--color-focus-ring);
+    outline-offset: 2px;
+  }
+}

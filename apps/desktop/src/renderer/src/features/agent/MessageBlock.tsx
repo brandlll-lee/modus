@@ -22,13 +22,8 @@ import { CopyButton } from "../../components/ui/CopyButton";
 import { ImageThumb } from "../../components/ui/ImageViewer";
 import { cn } from "../../lib/cn";
 import { useClipFade } from "../../lib/useClipFade";
-import {
-  COMPOSER_RADIUS_CLASS,
-  COMPOSER_SHELL_CLASS,
-  Composer,
-  type ComposerDraft,
-  createEmptyComposerDraft,
-} from "../composer/Composer";
+import { Composer } from "../composer/Composer";
+import { type ComposerDraft, createEmptyComposerDraft } from "../composer/composerDraft";
 import { InspectGlyph, SkillTokenContent } from "../composer/composerTokens";
 import type { ComposerImage } from "../composer/useComposerImages";
 import { materialIconForFile } from "../files/fileIcons";
@@ -70,7 +65,6 @@ type MessageBlockProps = {
   contextItems?: ContextItem[];
   /** User only: selected skills attached to the prompt. */
   skills?: SkillSelection[];
-  compactClip?: boolean | undefined;
 };
 
 export const MessageBlock = memo(function MessageBlock({
@@ -92,7 +86,6 @@ export const MessageBlock = memo(function MessageBlock({
   contextChips,
   contextItems,
   skills,
-  compactClip = false,
 }: MessageBlockProps) {
   const [editing, setEditing] = useState(false);
   // Pause measurement while the edit composer owns the slot — remounting the
@@ -109,10 +102,6 @@ export const MessageBlock = memo(function MessageBlock({
 
     const canEdit = Boolean(editable && onEditResend && model && models.length > 0);
     const showEditor = Boolean(editing && canEdit && onEditResend);
-    // Sticky slot is always mounted: editing only swaps slot content. Unmounting
-    // sticky and returning a normal-flow editor made the editor appear at the
-    // bubble's real document position (often off-screen) while the sticky
-    // viewport copy vanished.
     const bubbleBody = (
       <>
         <PromptAttachmentRow {...(attachments ? { attachments } : {})} />
@@ -138,14 +127,7 @@ export const MessageBlock = memo(function MessageBlock({
     );
 
     return (
-      <div
-        className={cn(
-          "sticky top-0 z-10 block w-full min-w-0",
-          COMPOSER_RADIUS_CLASS,
-          // Preview sheet is elevated; main chat is canvas.
-          compactClip ? "bg-elevated" : "bg-canvas",
-        )}
-      >
+      <div className="flex w-full min-w-0 justify-end">
         {showEditor && onEditResend ? (
           <InlineEditComposer
             sessionId={sessionId}
@@ -169,8 +151,7 @@ export const MessageBlock = memo(function MessageBlock({
           <div
             aria-label={canEdit ? "Edit message" : undefined}
             className={cn(
-              "block w-full min-w-0 px-4 py-3 text-left text-sm text-fg leading-relaxed transition-colors hover:border-composer-border-strong",
-              COMPOSER_SHELL_CLASS,
+              "block w-fit min-w-0 max-w-[85%] rounded-2xl bg-card px-4 py-3 text-left text-sm text-fg leading-relaxed transition-colors hover:bg-surface",
               canEdit && "cursor-pointer",
             )}
             onClick={canEdit ? () => setEditing(true) : undefined}

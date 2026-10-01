@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { messageFromParts } from "./Composer";
+import { messageFromParts } from "./composerDraft";
 
 describe("messageFromParts", () => {
   it("omits excerpt tokens from the plaintext body (chips + context[] are authority)", () => {

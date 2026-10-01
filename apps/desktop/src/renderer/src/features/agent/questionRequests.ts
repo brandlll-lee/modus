@@ -1,11 +1,6 @@
 import type { AgentEvent, QuestionRequest } from "../../../../shared/contracts";
 
-/**
- * The newest still-unanswered ask_user request, derived from the event stream
- * (mirrors latestPendingPermissionRequest): a `question.requested` is pending
- * until its matching `question.resolved` arrives.
- */
-export function latestPendingQuestionRequest(
+export function latestInlineQuestion(
   events: Array<{ event: AgentEvent }>,
 ): QuestionRequest | undefined {
   const pending = new Map<string, QuestionRequest>();
@@ -13,7 +8,7 @@ export function latestPendingQuestionRequest(
   for (const { event } of events) {
     if (event.type === "question.requested") {
       pending.delete(event.request.id);
-      pending.set(event.request.id, event.request);
+      if (event.request.presentation !== "dialog") pending.set(event.request.id, event.request);
       continue;
     }
     if (event.type === "question.resolved") {

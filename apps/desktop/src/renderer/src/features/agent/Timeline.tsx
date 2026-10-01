@@ -1224,7 +1224,6 @@ export function Timeline({
                       ? { checkpointId: block.checkpointId }
                       : {})}
                     {...(onRestoreCheckpoint ? { onRestoreCheckpoint } : {})}
-                    {...(embedded ? { compactClip: true } : {})}
                     content={block.content}
                     cwd={cwd}
                     {...(onOpenFile ? { onOpenFile } : {})}

@@ -1,20 +1,11 @@
-import {
-  IconAlertCircle,
-  IconCheck,
-  IconHandStop,
-  IconShieldCheck,
-} from "@tabler/icons-react";
+import { IconAlertCircle, IconCheck, IconHandStop, IconShieldCheck } from "@tabler/icons-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   APPROVAL_MODE_BY_ID,
   APPROVAL_MODES,
   DEFAULT_APPROVAL_MODE,
 } from "../../../../shared/approval";
-import type {
-  ApprovalMode,
-  ApprovalModeState,
-  WorkspaceInfo,
-} from "../../../../shared/contracts";
+import type { ApprovalMode, ApprovalModeState, WorkspaceInfo } from "../../../../shared/contracts";
 import { cn } from "../../lib/cn";
 
 const MODE_ICONS: Record<ApprovalMode, typeof IconHandStop> = {

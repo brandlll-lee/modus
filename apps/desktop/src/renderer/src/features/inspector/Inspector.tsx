@@ -11,14 +11,7 @@ import {
   IconWorld,
 } from "@tabler/icons-react";
 import { animate, m, useMotionValue } from "motion/react";
-import {
-  lazy,
-  type PointerEvent,
-  Suspense,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { lazy, type PointerEvent, Suspense, useEffect, useRef, useState } from "react";
 import type { SecurityState } from "../../../../preload/types";
 import type {
   AgentSessionInfo,
@@ -28,17 +21,17 @@ import type {
   PlanRef,
   WorkspaceInfo,
 } from "../../../../shared/contracts";
+import { INSPECTOR_MIN_WIDTH } from "../../components/layout/usePanelLayout";
 import { ChromeMoreMenu } from "../../components/ui/ChromeMoreMenu";
 import { ModusLoadingFallback } from "../../components/ui/ModusLoadingMark";
 import { PanelHeader } from "../../components/ui/Panel";
-import { ToolbarButton, TOOLBAR_ICON } from "../../components/ui/ToolbarButton";
+import { TOOLBAR_ICON, ToolbarButton } from "../../components/ui/ToolbarButton";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
 import type { AgentEventHub } from "../agent/agentEventHub";
 import { DiffPanel } from "../diff/DiffPanel";
 import { FilesPanel } from "../files/FilesPanel";
 import { PlanPanel } from "../plan/PlanPanel";
-import { INSPECTOR_MIN_WIDTH } from "./inspector-layout";
 import { SubagentsPanel } from "./SubagentsPanel";
 
 type InspectorProps = {
@@ -279,7 +272,7 @@ export function Inspector({
 
   return (
     <m.aside
-      className="relative flex min-w-0 shrink-0 flex-col overflow-hidden rounded-lg border border-hairline-strong bg-canvas"
+      className="relative flex min-w-0 shrink-0 flex-col overflow-hidden border-l border-hairline bg-canvas"
       style={{ width: panelWidth }}
     >
       {open ? (
@@ -325,10 +318,7 @@ export function Inspector({
                   </Tabs.List>
                   <div className="ml-1 flex shrink-0 items-center gap-0.5">
                     <ChromeMoreMenu onOpenSettings={onOpenSettings} />
-                    <ToolbarButton
-                      label="Collapse right panel"
-                      onClick={() => onOpenChange(false)}
-                    >
+                    <ToolbarButton label="Collapse right panel" onClick={() => onOpenChange(false)}>
                       <IconLayoutSidebarRight
                         size={TOOLBAR_ICON.size}
                         stroke={TOOLBAR_ICON.stroke}

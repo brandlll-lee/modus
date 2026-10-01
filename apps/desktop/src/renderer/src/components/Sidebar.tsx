@@ -3,19 +3,16 @@ import {
   IconArchive,
   IconArchiveOff,
   IconChevronRight,
-  IconClock,
   IconDots,
   IconEdit,
   IconFolder,
   IconFolderOpen,
   IconFolderPlus,
-  IconGridDots,
   IconLayoutSidebar,
   IconPencil,
   IconPin,
   IconPinnedOff,
   IconSearch,
-  IconSettings,
   IconTrash,
   IconX,
 } from "@tabler/icons-react";
@@ -25,6 +22,7 @@ import {
   type PointerEvent,
   type ReactNode,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -33,10 +31,11 @@ import type { SessionActivity } from "../features/agent/agentEventHub";
 import { SessionStatusDot } from "../features/agent/SessionStatusDot";
 import { cn } from "../lib/cn";
 import { useScrollFade } from "../lib/useScrollFade";
+import { SIDEBAR_MIN_WIDTH } from "./layout/usePanelLayout";
 import { CollapsibleMotion } from "./ui/CollapsibleMotion";
+import { SearchField } from "./ui/SearchField";
 import { TOOLBAR_ICON, ToolbarButton } from "./ui/ToolbarButton";
 
-export const SIDEBAR_MIN_WIDTH = 240;
 const SIDEBAR_MAX_WIDTH = 480;
 export const SIDEBAR_TRANSITION = { duration: 0.18, ease: [0.22, 1, 0.36, 1] } as const;
 
@@ -46,10 +45,10 @@ export const SIDEBAR_TRANSITION = { duration: 0.18, ease: [0.22, 1, 0.36, 1] } a
  */
 const SB_RAIL = "pointer-events-none flex w-5 shrink-0 items-center justify-center";
 const SB_ROW =
-  "flex h-[30px] w-full items-center gap-2 rounded-md pr-1 pl-2 text-sm font-normal transition-colors";
+  "flex h-9 w-full items-center gap-2 rounded-md pr-1 pl-2 text-sm font-normal transition-colors";
 /** Session titles — one step quieter/smaller than nav & project rows (Cursor density). */
 const SB_SESSION =
-  "flex h-[30px] w-full items-center gap-2 rounded-md pr-1 pl-2 text-xs font-normal transition-colors";
+  "flex h-9 w-full items-center gap-2 rounded-md pr-1 pl-2 text-sm font-normal transition-colors";
 const SB_NEST = "pl-5"; // 20px = one rail
 const SB_ICON = 16;
 const SB_STROKE = 1.5;
@@ -79,7 +78,6 @@ type SidebarProps = {
   onDeleteProjectChats(id: string): void;
   onRemoveProject(id: string): void;
   onRevealProject(id: string): void;
-  onOpenSettings(): void;
   onOpenChange(open: boolean): void;
   onWidthChange(width: number): void;
   canCreateSession: boolean;
@@ -108,14 +106,23 @@ export function Sidebar({
   onDeleteProjectChats,
   onRemoveProject,
   onRevealProject,
-  onOpenSettings,
   onOpenChange,
   onWidthChange,
   canCreateSession,
 }: SidebarProps) {
   const [projectsExpanded, setProjectsExpanded] = useState(true);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [sessionQuery, setSessionQuery] = useState("");
   const [renamingId, setRenamingId] = useState<string | null>(null);
-  const sessionsByWorkspace = groupSessionsByWorkspace(agentSessions);
+  const sessionsByWorkspace = useMemo(() => {
+    const query = sessionQuery.trim().toLowerCase();
+    const visibleSessions = query
+      ? agentSessions.filter((session) =>
+          `${session.title} ${session.cwd}`.toLowerCase().includes(query),
+        )
+      : agentSessions;
+    return groupSessionsByWorkspace(visibleSessions);
+  }, [agentSessions, sessionQuery]);
   const { ref: scrollFadeRef, fadeTop, fadeBottom } = useScrollFade();
 
   const dragStartRef = useRef<{ x: number; width: number } | null>(null);
@@ -166,7 +173,7 @@ export function Sidebar({
 
   return (
     <m.aside
-      className="relative flex shrink-0 flex-col overflow-hidden bg-panel"
+      className="relative flex shrink-0 flex-col overflow-hidden border-r border-hairline bg-panel"
       layout={reduceMotion ? false : "size"}
       layoutDependency={open}
       style={{ transformOrigin: "left", width: open ? panelWidth : 0 }}
@@ -178,7 +185,13 @@ export function Sidebar({
         style={{ width: panelWidth }}
         transition={{ layout: SIDEBAR_TRANSITION }}
       >
-        <div className="px-2 pt-3 pb-1">
+        <div className="flex h-14 shrink-0 items-center justify-between px-5">
+          <span className="text-[16px] font-semibold">Modus</span>
+          <ToolbarButton label="Collapse sidebar" onClick={() => onOpenChange(false)}>
+            <IconLayoutSidebar size={TOOLBAR_ICON.size} stroke={TOOLBAR_ICON.stroke} />
+          </ToolbarButton>
+        </div>
+        <div className="px-3 pt-1 pb-3">
           <NavRow
             disabled={!canCreateSession}
             icon={<IconEdit size={SB_ICON} stroke={SB_STROKE} />}
@@ -186,9 +199,22 @@ export function Sidebar({
           >
             New chat
           </NavRow>
-          <NavRow icon={<IconSearch size={SB_ICON} stroke={SB_STROKE} />}>Search</NavRow>
-          <NavRow icon={<IconGridDots size={SB_ICON} stroke={SB_STROKE} />}>Plugins</NavRow>
-          <NavRow icon={<IconClock size={SB_ICON} stroke={SB_STROKE} />}>Automations</NavRow>
+          <NavRow
+            highlight={searchOpen}
+            icon={<IconSearch size={SB_ICON} stroke={SB_STROKE} />}
+            onClick={() => setSearchOpen((open) => !open)}
+          >
+            Search
+          </NavRow>
+          {searchOpen ? (
+            <SearchField
+              ariaLabel="Search chats"
+              className="mx-1 mt-1 mb-2"
+              onChange={setSessionQuery}
+              placeholder="Search chats"
+              value={sessionQuery}
+            />
+          ) : null}
         </div>
 
         <div
@@ -260,22 +286,6 @@ export function Sidebar({
               </NavRow>
             </div>
           </CollapsibleMotion>
-
-          <SectionLabel>Chats</SectionLabel>
-        </div>
-
-        <div className="app-no-drag flex items-center gap-1 px-2 pt-1 pb-2">
-          <div className="min-w-0 flex-1">
-            <NavRow
-              icon={<IconSettings size={SB_ICON} stroke={SB_STROKE} />}
-              onClick={onOpenSettings}
-            >
-              Settings
-            </NavRow>
-          </div>
-          <ToolbarButton label="Collapse sidebar" onClick={() => onOpenChange(false)}>
-            <IconLayoutSidebar size={TOOLBAR_ICON.size} stroke={TOOLBAR_ICON.stroke} />
-          </ToolbarButton>
         </div>
       </m.div>
       {open ? (
@@ -513,16 +523,16 @@ function SessionRow({
         <span className="px-1 text-2xs font-normal text-fg-faint tabular-nums">
           {formatRelativeTime(updatedAt)}
         </span>
-        <IconButton label={pinned ? "Unpin chat" : "Pin chat"} onClick={onPin}>
+        <ToolbarButton label={pinned ? "Unpin chat" : "Pin chat"} onClick={onPin}>
           {pinned ? (
             <IconPinnedOff size={14} stroke={SB_STROKE} />
           ) : (
             <IconPin size={14} stroke={SB_STROKE} />
           )}
-        </IconButton>
-        <IconButton label="Archive" onClick={onArchive}>
+        </ToolbarButton>
+        <ToolbarButton label="Archive" onClick={onArchive}>
           <IconArchive size={14} stroke={SB_STROKE} />
-        </IconButton>
+        </ToolbarButton>
         {confirmDelete ? (
           <button
             className="ml-0.5 h-5 rounded-md px-1.5 text-2xs text-danger transition-colors hover:bg-active"
@@ -532,7 +542,7 @@ function SessionRow({
             Confirm
           </button>
         ) : (
-          <IconButton
+          <ToolbarButton
             label="Delete"
             onClick={(event) => {
               event.stopPropagation();
@@ -540,7 +550,7 @@ function SessionRow({
             }}
           >
             <IconTrash size={14} stroke={SB_STROKE} />
-          </IconButton>
+          </ToolbarButton>
         )}
       </span>
     </m.div>
@@ -571,9 +581,9 @@ function ArchivedSessionRow({
         <span className="px-1 text-2xs tabular-nums">
           {formatRelativeTime(session.archivedAt ?? session.updatedAt)}
         </span>
-        <IconButton label="Restore" onClick={onRestore}>
+        <ToolbarButton label="Restore" onClick={onRestore}>
           <IconArchiveOff size={14} stroke={SB_STROKE} />
-        </IconButton>
+        </ToolbarButton>
       </span>
     </div>
   );
@@ -675,9 +685,9 @@ function ProjectRow({
             )}
           >
             {trigger}
-            <IconButton label="New session" onClick={onCreate}>
+            <ToolbarButton label="New session" onClick={onCreate}>
               <IconEdit size={14} stroke={SB_STROKE} />
-            </IconButton>
+            </ToolbarButton>
           </span>
         </m.div>
       )}
@@ -923,28 +933,6 @@ function ProjectMenuItem({
   );
 }
 
-function IconButton({
-  children,
-  label,
-  onClick,
-}: {
-  children: ReactNode;
-  label: string;
-  onClick?: (event: MouseEvent<HTMLButtonElement>) => void;
-}) {
-  return (
-    <m.button
-      aria-label={label}
-      className="flex size-6 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-active hover:text-fg-muted"
-      onClick={onClick}
-      type="button"
-      whileTap={{ scale: 0.96 }}
-    >
-      {children}
-    </m.button>
-  );
-}
-
 function SectionHeader({
   children,
   expanded,
@@ -973,10 +961,6 @@ function SectionHeader({
       </button>
     </div>
   );
-}
-
-function SectionLabel({ children }: { children: string }) {
-  return <div className="px-2 pt-3 pb-0.5 text-2xs font-normal text-fg-faint">{children}</div>;
 }
 
 function formatRelativeTime(value: string): string {

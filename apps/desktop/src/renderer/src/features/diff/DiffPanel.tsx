@@ -44,6 +44,7 @@ import type {
 } from "../../../../shared/contracts";
 import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
 import { EmptyState } from "../../components/ui/Panel";
+import { ToolbarButton } from "../../components/ui/ToolbarButton";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
 import { materialIconForFile } from "../files/fileIcons";
@@ -871,7 +872,7 @@ function ReviewToolbar({
   return (
     <div
       aria-label="Git review toolbar"
-      className="toolbar-row flex shrink-0 items-center gap-2 border-hairline-soft border-b px-3"
+      className="flex min-h-13 shrink-0 flex-wrap items-center gap-2 border-hairline-soft border-b px-3 py-2"
       role="toolbar"
     >
       <Menu.Root>
@@ -1024,15 +1025,13 @@ const CommitLauncher = memo(function CommitLauncher({
   const ahead = status?.ahead ?? 0;
   return (
     <>
-      <button
-        className="flex h-8 items-center gap-1.5 rounded-md border border-hairline bg-surface px-2.5 text-fg text-sm transition-colors hover:bg-hover disabled:opacity-40"
+      <ToolbarButton
+        label={ahead ? `Commit or push (${ahead} ahead)` : "Commit or push"}
         disabled={!cwd}
         onClick={() => setOpen(true)}
-        type="button"
       >
         <IconGitCommit className="toolbar-icon" size={17} stroke={1.7} />
-        Commit or push{ahead ? ` ${ahead}` : ""}
-      </button>
+      </ToolbarButton>
       <CommitDialog
         cwd={cwd}
         onOpenChange={setOpen}
@@ -1523,7 +1522,10 @@ function CommitGraphLane({
   isMerge: boolean;
 }) {
   return (
-    <span aria-hidden className="relative flex h-full w-4 shrink-0 items-center justify-center self-stretch">
+    <span
+      aria-hidden
+      className="relative flex h-full w-4 shrink-0 items-center justify-center self-stretch"
+    >
       {/* One continuous rail — same ink as the nodes (link blue, like Git Graph). */}
       {!isFirst ? (
         <span className="absolute inset-x-0 top-0 bottom-1/2 mx-auto w-px bg-link/55" />
@@ -1537,7 +1539,9 @@ function CommitGraphLane({
         <span
           className={cn(
             "relative z-1 rounded-full bg-link",
-            isHead ? "size-[7px] ring-2 ring-link/25 ring-offset-1 ring-offset-panel" : "size-[6px]",
+            isHead
+              ? "size-[7px] ring-2 ring-link/25 ring-offset-1 ring-offset-panel"
+              : "size-[6px]",
           )}
         />
       )}

@@ -1,12 +1,5 @@
-import { Menu } from "@base-ui/react/menu";
-import { Popover } from "@base-ui/react/popover";
-import { Slider } from "@base-ui/react/slider";
 import {
-  IconAdjustmentsHorizontal,
   IconArrowUp,
-  IconCheck,
-  IconChevronDown,
-  IconChevronRight,
   IconListCheck,
   IconPlayerStopFilled,
   IconPlus,
@@ -15,7 +8,6 @@ import {
 import { AnimatePresence, m } from "motion/react";
 import {
   type ClipboardEvent,
-  type CSSProperties,
   type DragEvent,
   type KeyboardEvent,
   type ReactNode,
@@ -31,38 +23,30 @@ import type {
   PromptDelivery,
   PromptImageAttachment,
   SkillSelection,
-  ThinkingOption,
 } from "../../../../shared/contracts";
 import { ImageThumb } from "../../components/ui/ImageViewer";
 import { ShineBorder } from "../../components/ui/ShineBorder";
+import { ToolbarButton } from "../../components/ui/ToolbarButton";
 import { cn } from "../../lib/cn";
 import { ContextUsageRing, contextUsagePercent, formatUsagePercent } from "../../lib/contextUsage";
-import {
-  modelThinkingOptions,
-  selectedThinkingLabel,
-  selectedThinkingOption,
-} from "../../lib/modelThinking";
-import { ProviderLogo } from "../settings/ProviderLogo";
 import { ContextMentionMenu } from "./ContextMentionMenu";
+import { ContextUsageIndicator } from "./ContextUsageIndicator";
+import {
+  type ComposerDraft,
+  type ComposerDraftUpdate,
+  createEmptyComposerDraft,
+  messageFromParts,
+  resolveDraftUpdate,
+} from "./composerDraft";
 import { contextItemKey } from "./composerTokens";
 import { MentionEditor, type MentionEditorHandle, type MentionEditorPart } from "./MentionEditor";
+import { ModelSelect } from "./ModelSelect";
 import { SlashMenu } from "./SlashMenu";
-import {
-  type ComposerImage,
-  type ComposerImageUpdate,
-  useComposerImages,
-} from "./useComposerImages";
+import { type ComposerImageUpdate, useComposerImages } from "./useComposerImages";
 import { type MentionRow, useComposerMentions } from "./useComposerMentions";
 import { type SlashActionItem, type SlashItem, useComposerSlash } from "./useComposerSlash";
 
-const COMPOSER_PLACEHOLDER = "What will you build with Modus?";
-
-/** Shared with read-only user bubbles — single radius/chrome truth for the prompt shell. */
-export const COMPOSER_RADIUS_CLASS = "rounded-[12px]";
-export const COMPOSER_SHELL_CLASS = cn(
-  "border border-composer-border bg-surface shadow-composer-edge",
-  COMPOSER_RADIUS_CLASS,
-);
+const COMPOSER_PLACEHOLDER = "Ask anything";
 
 type ComposerProps = {
   sessionId?: string | undefined;
@@ -101,64 +85,6 @@ type ComposerProps = {
   draft?: ComposerDraft;
   onDraftChange?(update: ComposerDraftUpdate): void;
 };
-
-export type ComposerDraft = {
-  value: string;
-  images: ComposerImage[];
-  selectedSkills: SkillSelection[];
-  parts?: MentionEditorPart[] | undefined;
-};
-
-export type ComposerDraftUpdate = ComposerDraft | ((current: ComposerDraft) => ComposerDraft);
-
-export function createEmptyComposerDraft(): ComposerDraft {
-  return { value: "", images: [], selectedSkills: [] };
-}
-
-function inlinePartLabel(part: MentionEditorPart): string | undefined {
-  if (part.type === "context") {
-    // Design marks keep a short in-flow label. Every other context kind is shown
-    // via chips; the model payload travels on `context[]` IPC — omit from body.
-    // Returning undefined used to become the literal "[context]" placeholder.
-    if (part.item.type === "design-element") {
-      return (
-        part.item.element.componentName || part.item.element.tagName || part.item.element.label
-      );
-    }
-    if (part.item.type === "design-annotation") {
-      return part.item.annotation.label;
-    }
-    return "";
-  }
-  if (part.type === "skill") {
-    return `skill:${part.skill.name}`;
-  }
-  return undefined;
-}
-
-export function messageFromParts(parts: MentionEditorPart[] | undefined, fallback: string): string {
-  if (!parts || parts.length === 0) {
-    return fallback;
-  }
-  return parts
-    .map((part) => {
-      if (part.type === "text") {
-        return part.text;
-      }
-      const label = inlinePartLabel(part);
-      if (label === "") {
-        return "";
-      }
-      return `[${label ?? "context"}]`;
-    })
-    .join("")
-    .replace(/\u00a0/g, " ")
-    .trim();
-}
-
-function resolveUpdate<T>(update: T | ((current: T) => T), current: T): T {
-  return typeof update === "function" ? (update as (value: T) => T)(current) : update;
-}
 
 export function Composer({
   sessionId,
@@ -206,7 +132,7 @@ export function Composer({
   );
   const setValue = useCallback(
     (update: string | ((current: string) => string)): void => {
-      setDraft((current) => ({ ...current, value: resolveUpdate(update, current.value) }));
+      setDraft((current) => ({ ...current, value: resolveDraftUpdate(update, current.value) }));
     },
     [setDraft],
   );
@@ -214,14 +140,14 @@ export function Composer({
     (update: SkillSelection[] | ((current: SkillSelection[]) => SkillSelection[])): void => {
       setDraft((current) => ({
         ...current,
-        selectedSkills: resolveUpdate(update, current.selectedSkills),
+        selectedSkills: resolveDraftUpdate(update, current.selectedSkills),
       }));
     },
     [setDraft],
   );
   const setImages = useCallback(
     (update: ComposerImageUpdate): void => {
-      setDraft((current) => ({ ...current, images: resolveUpdate(update, current.images) }));
+      setDraft((current) => ({ ...current, images: resolveDraftUpdate(update, current.images) }));
     },
     [setDraft],
   );
@@ -326,19 +252,30 @@ export function Composer({
       return;
     }
 
-    onSubmit(
-      payload.message,
-      payload.contextItems,
-      payload.delivery,
-      payload.attachments,
-      payload.skills,
-      payload.mode,
-    );
-    setValue("");
-    clearImages();
-    setSelectedSkills([]);
-    onContextChange([]);
-    editorRef.current?.clear();
+    setSubmitError(undefined);
+    setSubmitting(true);
+    void Promise.resolve()
+      .then(() =>
+        onSubmit(
+          payload.message,
+          payload.contextItems,
+          payload.delivery,
+          payload.attachments,
+          payload.skills,
+          payload.mode,
+        ),
+      )
+      .then(() => {
+        setValue("");
+        clearImages();
+        setSelectedSkills([]);
+        onContextChange([]);
+        editorRef.current?.clear();
+      })
+      .catch((cause: unknown) => {
+        setSubmitError(cause instanceof Error ? cause.message : String(cause));
+      })
+      .finally(() => setSubmitting(false));
   }
 
   function selectSlashItem(item: SlashItem): void {
@@ -545,20 +482,12 @@ export function Composer({
   }
 
   return (
-    <div className={cn("relative flex flex-col items-stretch", footer ? "pb-12" : undefined)}>
-      {footer ? (
-        <div
-          className={cn(
-            "pointer-events-none absolute inset-x-0 top-12 bottom-0 z-0 bg-composer-tray shadow-composer",
-            COMPOSER_RADIUS_CLASS,
-          )}
-        />
-      ) : null}
+    <div className="relative flex flex-col items-stretch gap-3">
       {/* biome-ignore lint/a11y/noStaticElementInteractions: drag-drop is a pointer-only enhancement; keyboard users attach images via paste in the editor. */}
       <div
         className={cn(
           "relative border border-composer-border bg-surface shadow-composer-edge transition-[border-color] duration-150",
-          COMPOSER_RADIUS_CLASS,
+          "rounded-[20px]",
           Boolean(footer) && "z-10",
           // No focus glow: only text focus or drag nudges the border one notch brighter.
           !isRunning && "focus-within:border-composer-border-strong",
@@ -585,7 +514,7 @@ export function Composer({
           ) : null}
           {/* One typing line + airy pad (top/bottom) — not a multi-line empty runway. */}
           <MentionEditor
-            className="min-h-[calc(1lh+1.25rem)] px-4 pt-3 pb-2 text-md font-normal text-fg leading-normal"
+            className="min-h-[68px] px-4 pt-4 pb-2 text-md font-normal text-fg leading-normal"
             contextItems={contextItems}
             onChange={handleEditorChange}
             onKeyDown={handleKeyDown}
@@ -637,15 +566,9 @@ export function Composer({
         {/* @container: controls collapse their labels to icons as the composer
           narrows (responsive to the composer's own width, not the viewport). */}
         <div className="@container flex items-center gap-2 px-3 pt-1.5 pb-2.5">
-          <button
-            aria-label="Attach files"
-            className="app-no-drag flex size-[26px] shrink-0 items-center justify-center rounded-md text-fg-subtle transition-colors hover:bg-hover hover:text-fg-muted"
-            onClick={() => fileInputRef.current?.click()}
-            title="Attach files"
-            type="button"
-          >
+          <ToolbarButton label="Attach files" onClick={() => fileInputRef.current?.click()}>
             <IconPlus size={17} stroke={1.8} />
-          </button>
+          </ToolbarButton>
           <input
             accept="image/*"
             className="hidden"
@@ -660,19 +583,20 @@ export function Composer({
             type="file"
           />
 
-          {!isInlineEdit ? (
-            <>
-              {mode === "plan" ? <PlanModePill onExit={() => setMode("build")} /> : null}
-              <ModelSelect
-                model={model}
-                models={models}
-                onModelChange={onModelChange}
-                {...(onModelConfigChange ? { onModelConfigChange } : {})}
-              />
-            </>
+          {!isInlineEdit && mode === "plan" ? (
+            <PlanModePill onExit={() => setMode("build")} />
           ) : null}
 
           <div className="flex-1" />
+
+          {!isInlineEdit ? (
+            <ModelSelect
+              model={model}
+              models={models}
+              onModelChange={onModelChange}
+              {...(onModelConfigChange ? { onModelConfigChange } : {})}
+            />
+          ) : null}
 
           {submitError ? (
             <span className="min-w-0 truncate text-2xs text-danger" title={submitError}>
@@ -692,15 +616,9 @@ export function Composer({
           {trailingActions}
 
           {onCancel ? (
-            <button
-              aria-label="Cancel"
-              className="flex size-[26px] shrink-0 items-center justify-center rounded-md text-fg-subtle transition-colors hover:bg-hover hover:text-fg-muted"
-              disabled={submitting}
-              onClick={onCancel}
-              type="button"
-            >
+            <ToolbarButton label="Cancel" onClick={onCancel} disabled={submitting}>
               <IconX size={16} stroke={1.8} />
-            </button>
+            </ToolbarButton>
           ) : null}
 
           {/* Stop while running; otherwise the send button is always shown. */}
@@ -738,7 +656,7 @@ export function Composer({
           </AnimatePresence>
         </div>
       </div>
-      {footer ? <div className="absolute inset-x-0 bottom-2 z-20 px-5">{footer}</div> : null}
+      {footer ? <div className="px-2">{footer}</div> : null}
     </div>
   );
 }
@@ -762,337 +680,5 @@ function PlanModePill({ onExit }: { onExit: () => void }) {
         <IconX size={12} stroke={2} />
       </button>
     </span>
-  );
-}
-
-function ModelSelect({
-  model,
-  models,
-  onModelChange,
-  onModelConfigChange,
-}: {
-  model: string;
-  models: ModelInfo[];
-  onModelChange(model: string): void;
-  onModelConfigChange?(model: string, thinkingVariant: string): Promise<void> | void;
-}) {
-  const current = models.find((item) => item.id === model);
-  const thinkingOptions = current ? modelThinkingOptions(current) : [];
-  const thinkingSelection = current ? selectedThinkingOption(current) : undefined;
-  const effortAvailable = Boolean(current?.supportsThinking && thinkingOptions.length > 0);
-  const effortLabel = effortAvailable && current ? selectedThinkingLabel(current) : "Not supported";
-  const providerGroups = Array.from(
-    models
-      .reduce((groups, item) => {
-        const key = item.provider;
-        const group = groups.get(key);
-        if (group) {
-          group.models.push(item);
-        } else {
-          groups.set(key, {
-            provider: item.provider,
-            name: item.providerName ?? item.provider,
-            models: [item],
-          });
-        }
-        return groups;
-      }, new Map<string, { provider: string; name: string; models: ModelInfo[] }>())
-      .values(),
-  );
-  const tag = current?.name ?? (model ? `${model} (unavailable)` : "Select model");
-
-  return models.length ? (
-    <Menu.Root>
-      <Menu.Trigger className="app-no-drag flex h-[26px] min-w-0 items-center gap-1.5 rounded-md px-2 text-sm font-normal outline-none transition-colors hover:bg-hover data-popup-open:bg-hover">
-        {current ? (
-          <ProviderLogo
-            framed={false}
-            name={current.providerName ?? current.provider}
-            provider={current.provider}
-            size="sm"
-          />
-        ) : null}
-        <span className="min-w-0 truncate text-fg">{tag}</span>
-        <span className="hidden shrink-0 whitespace-nowrap text-fg-faint @md:inline">
-          {current ? selectedThinkingLabel(current) : "Unavailable"}
-        </span>
-        <IconChevronDown className="shrink-0 text-fg-faint" size={12} stroke={2} />
-      </Menu.Trigger>
-      <Menu.Portal>
-        <Menu.Positioner align="start" side="bottom" sideOffset={4}>
-          <Menu.Popup className="origin-(--transform-origin) w-[280px] max-w-[calc(100vw-24px)] popup-chrome p-1">
-            <Menu.SubmenuRoot>
-              <Menu.SubmenuTrigger className="flex h-8 cursor-default items-center justify-between gap-3 rounded-md px-2.5 text-sm outline-none select-none data-highlighted:bg-hover data-popup-open:bg-hover">
-                <span className="text-fg-subtle">Model</span>
-                <span className="flex min-w-0 items-center gap-1 text-fg-faint text-xs">
-                  <span className="max-w-[150px] truncate">{tag}</span>
-                  <IconChevronRight size={13} stroke={1.8} />
-                </span>
-              </Menu.SubmenuTrigger>
-              <Menu.Portal>
-                <Menu.Positioner align="start" side="right" sideOffset={5}>
-                  <Menu.Popup
-                    className="scroll-thin origin-(--transform-origin) w-[280px] max-w-[calc(100vw-24px)] overflow-y-auto popup-chrome p-1"
-                    style={{ maxHeight: "min(320px, var(--available-height))" }}
-                  >
-                    <div className="px-2.5 pt-1.5 pb-1 text-fg-faint text-xs">Model</div>
-                    {providerGroups.map((group) => (
-                      <div key={group.provider}>
-                        <div className="flex items-center gap-1.5 px-2.5 pt-2 pb-1 text-fg-faint text-2xs uppercase">
-                          <ProviderLogo
-                            framed={false}
-                            name={group.name}
-                            provider={group.provider}
-                            size="sm"
-                          />
-                          <span className="truncate">{group.name}</span>
-                        </div>
-                        {group.models.map((item) => (
-                          <Menu.Item
-                            className="flex h-8 cursor-default items-center justify-between gap-3 rounded-md px-2.5 text-fg-subtle text-sm outline-none select-none data-highlighted:bg-hover"
-                            key={item.id}
-                            onClick={() => onModelChange(item.id)}
-                          >
-                            <span className="min-w-0 truncate">{item.name}</span>
-                            <span className="flex shrink-0 items-center gap-2">
-                              {!item.available ? (
-                                <span className="rounded bg-chip px-1 text-2xs text-fg-faint">
-                                  off
-                                </span>
-                              ) : null}
-                              {item.id === model ? (
-                                <IconCheck className="text-fg-muted" size={15} stroke={1.8} />
-                              ) : null}
-                            </span>
-                          </Menu.Item>
-                        ))}
-                      </div>
-                    ))}
-                  </Menu.Popup>
-                </Menu.Positioner>
-              </Menu.Portal>
-            </Menu.SubmenuRoot>
-
-            <Menu.SubmenuRoot>
-              <Menu.SubmenuTrigger
-                className="flex h-8 cursor-default items-center justify-between gap-3 rounded-md px-2.5 text-sm outline-none select-none data-disabled:opacity-45 data-highlighted:bg-hover data-popup-open:bg-hover"
-                disabled={!effortAvailable || !onModelConfigChange}
-              >
-                <span className="text-fg-subtle">Effort</span>
-                <span className="flex min-w-0 items-center gap-1 text-fg-faint text-xs">
-                  <span className="max-w-[150px] truncate">{effortLabel}</span>
-                  <IconChevronRight size={13} stroke={1.8} />
-                </span>
-              </Menu.SubmenuTrigger>
-              <Menu.Portal>
-                <Menu.Positioner align="start" side="right" sideOffset={5}>
-                  <Menu.Popup className="origin-(--transform-origin) w-[220px] max-w-[calc(100vw-24px)] popup-chrome p-1">
-                    <div className="px-2.5 pt-1.5 pb-1 text-fg-faint text-xs">Effort</div>
-                    {thinkingOptions.map((option) => (
-                      <Menu.Item
-                        className="flex h-8 cursor-default items-center justify-between gap-3 rounded-md px-2.5 text-fg-subtle text-sm outline-none select-none data-highlighted:bg-hover"
-                        key={option.value}
-                        onClick={() => {
-                          if (current) void onModelConfigChange?.(current.id, option.value);
-                        }}
-                      >
-                        <span>{option.label}</span>
-                        {thinkingSelection?.value === option.value ? (
-                          <IconCheck className="text-fg-muted" size={15} stroke={1.8} />
-                        ) : null}
-                      </Menu.Item>
-                    ))}
-                  </Menu.Popup>
-                </Menu.Positioner>
-              </Menu.Portal>
-            </Menu.SubmenuRoot>
-
-            <div className="my-1 h-px bg-hairline" />
-            <EffortEnergySlider
-              disabled={!onModelConfigChange || thinkingOptions.length < 2}
-              label={effortLabel}
-              options={thinkingOptions}
-              selectedValue={thinkingSelection?.value}
-              syncKey={`${current?.id ?? model}:${thinkingSelection?.value ?? ""}`}
-              onCommit={(value) => {
-                if (current) void onModelConfigChange?.(current.id, value);
-              }}
-            />
-          </Menu.Popup>
-        </Menu.Positioner>
-      </Menu.Portal>
-    </Menu.Root>
-  ) : (
-    <span className="app-no-drag flex h-[26px] items-center px-2 text-sm text-fg-faint">
-      No available models
-    </span>
-  );
-}
-
-function EffortEnergySlider({
-  disabled,
-  label,
-  options,
-  selectedValue,
-  syncKey,
-  onCommit,
-}: {
-  disabled: boolean;
-  label: string;
-  options: ThinkingOption[];
-  selectedValue: string | undefined;
-  syncKey: string;
-  onCommit(value: string): void;
-}) {
-  const selectedIndex = Math.max(
-    0,
-    options.findIndex((option) => option.value === selectedValue),
-  );
-  const [preview, setPreview] = useState({ index: selectedIndex, syncKey });
-  const max = Math.max(1, options.length - 1);
-  const index = Math.min(preview.syncKey === syncKey ? preview.index : selectedIndex, max);
-  const energy = options.length > 1 ? index / (options.length - 1) : 0;
-  const previewOption = options[index];
-
-  return (
-    <div
-      className="effort-energy flex h-10 items-center gap-3 rounded-md px-2.5"
-      data-maximum={!disabled && options.length > 1 && index === options.length - 1}
-      style={
-        {
-          "--effort-opacity": 0.7 + energy * 0.3,
-        } as CSSProperties
-      }
-    >
-      <div className="flex min-w-0 flex-1 items-center gap-2 text-xs">
-        <IconAdjustmentsHorizontal className="shrink-0 text-fg-faint" size={15} stroke={1.7} />
-        <span className="min-w-0 truncate text-fg-subtle">
-          Effort <span className="text-fg-faint">({previewOption?.label ?? label})</span>
-        </span>
-      </div>
-      <Slider.Root
-        aria-label="Effort"
-        className="relative w-[102px] shrink-0"
-        disabled={disabled}
-        max={max}
-        min={0}
-        step={1}
-        thumbAlignment="edge"
-        value={index}
-        onValueChange={(nextIndex) => setPreview({ index: nextIndex, syncKey })}
-        onValueCommitted={(nextIndex) => {
-          const option = options[nextIndex];
-          if (option && option.value !== selectedValue) onCommit(option.value);
-        }}
-      >
-        <Slider.Control className="effort-energy-control relative flex h-[18px] touch-none items-center select-none data-disabled:opacity-35">
-          <Slider.Track className="effort-energy-track relative h-[18px] w-full overflow-hidden rounded-full">
-            <Slider.Indicator className="effort-energy-fill absolute inset-y-0 rounded-full" />
-            {options.map((option, optionIndex) => (
-              <span
-                aria-hidden="true"
-                className="effort-energy-stop absolute top-1/2 size-1 -translate-x-1/2 -translate-y-1/2 rounded-full"
-                data-unfilled={optionIndex > index}
-                key={option.value}
-                style={{
-                  left: `calc(${(optionIndex / max) * 100}% + ${8 - (optionIndex / max) * 16}px)`,
-                }}
-              />
-            ))}
-          </Slider.Track>
-          <Slider.Thumb
-            className="effort-energy-thumb size-4 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-focus-ring-soft"
-            getAriaLabel={() => "Effort"}
-            getAriaValueText={(_, value) => options[value]?.label ?? label}
-          />
-        </Slider.Control>
-      </Slider.Root>
-    </div>
-  );
-}
-
-function ContextUsageIndicator({
-  contextWindow,
-  usage,
-}: {
-  contextWindow?: number;
-  usage?: ContextUsageInfo;
-}) {
-  const percent = contextUsagePercent(usage);
-  const label = percent === undefined ? "not available yet" : `${Math.round(percent)}%`;
-
-  return (
-    <Popover.Root>
-      <Popover.Trigger
-        aria-label={`Context usage ${label}`}
-        className="app-no-drag flex h-[26px] w-[26px] items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-hover hover:text-fg data-popup-open:bg-hover data-popup-open:text-fg"
-      >
-        <ContextUsageRing percent={percent} />
-      </Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Positioner align="end" side="top" sideOffset={8}>
-          <Popover.Popup className="origin-(--transform-origin) popup-chrome p-2 transition-[transform,opacity] duration-100 data-ending-style:opacity-0 data-starting-style:opacity-0">
-            <ContextUsageTooltip
-              {...(contextWindow ? { contextWindow } : {})}
-              {...(usage ? { usage } : {})}
-            />
-          </Popover.Popup>
-        </Popover.Positioner>
-      </Popover.Portal>
-    </Popover.Root>
-  );
-}
-
-function ContextUsageTooltip({
-  contextWindow,
-  usage,
-}: {
-  contextWindow?: number;
-  usage?: ContextUsageInfo;
-}) {
-  const total = contextUsagePercent(usage);
-  const usageWindow = usage?.contextWindow ?? contextWindow;
-  const tokenLine =
-    usage?.tokens !== null && usage?.tokens !== undefined && usageWindow
-      ? `${usage.tokens.toLocaleString()} / ${usageWindow.toLocaleString()} tokens`
-      : undefined;
-
-  if (total === undefined && !tokenLine) {
-    return (
-      <div className="w-[260px] px-1 py-1.5 text-sm text-fg">
-        <div className="mb-1 font-medium text-fg-muted">Context usage</div>
-        <div className="text-fg-faint text-xs">No context usage yet.</div>
-        {usageWindow ? (
-          <div className="mt-2 text-2xs text-fg-faint">
-            Context window {usageWindow.toLocaleString()} tokens
-          </div>
-        ) : null}
-      </div>
-    );
-  }
-
-  return (
-    <div className="w-[320px] px-1 py-1.5 text-sm text-fg">
-      <div className="mb-2 font-medium text-fg-muted">Context usage</div>
-      <ContextUsageRow label="Total" strong value={formatUsagePercent(total)} />
-      {tokenLine ? <div className="mt-2 text-xs text-fg-faint">{tokenLine}</div> : null}
-    </div>
-  );
-}
-
-function ContextUsageRow({
-  label,
-  strong = false,
-  value,
-}: {
-  label: string;
-  strong?: boolean;
-  value: string;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-6 py-1">
-      <span className={strong ? "font-semibold text-fg" : "text-fg-muted"}>{label}</span>
-      <span className={strong ? "font-semibold text-fg" : "text-fg"}>{value}</span>
-    </div>
   );
 }

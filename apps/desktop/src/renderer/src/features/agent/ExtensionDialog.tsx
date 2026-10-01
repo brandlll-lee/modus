@@ -1,8 +1,11 @@
 import { Dialog } from "@base-ui/react/dialog";
 import { useState } from "react";
 import type { QuestionAnswer, QuestionRequest } from "../../../../shared/contracts";
+import { Button } from "../../components/ui/Button";
+import { useSuppressNativeSurface } from "../../components/ui/nativeSurface";
 
 export function ExtensionDialog({ request }: { request: QuestionRequest }) {
+  useSuppressNativeSurface();
   const question = request.questions[0];
   const [value, setValue] = useState(question?.prefill ?? "");
   const [busy, setBusy] = useState(false);
@@ -74,13 +77,9 @@ export function ExtensionDialog({ request }: { request: QuestionRequest }) {
                 disabled={busy}
                 className="min-h-24 rounded-md border border-hairline bg-surface p-3 text-sm text-fg outline-focus-ring"
               />
-              <button
-                type="submit"
-                disabled={busy}
-                className="rounded-md bg-fg px-3 py-2 text-canvas text-sm"
-              >
+              <Button type="submit" disabled={busy} variant="primary">
                 Continue
-              </button>
+              </Button>
             </form>
           )}
           {error ? <p className="mt-3 text-danger text-sm">{error}</p> : null}

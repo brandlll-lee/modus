@@ -1,0 +1,116 @@
+.pdf-page {
+  position: relative;
+  --total-scale-factor: 1;
+}
+.pdf-page > canvas {
+  display: block;
+  position: absolute;
+  inset: 0;
+}
+.pdf-page > .textLayer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: clip;
+  line-height: 1;
+  transform-origin: 0 0;
+  opacity: 1;
+}
+.pdf-page > .textLayer :is(span, br) {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+  user-select: text;
+}
+.pdf-page > .textLayer > :not(.markedContent),
+.pdf-page > .textLayer .markedContent span:not(.markedContent) {
+  z-index: 1;
+  --font-height: 0;
+  --scale-x: 1;
+  --rotate: 0deg;
+  --min-font-size: 1;
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+.pdf-page > .textLayer .markedContent {
+  display: contents;
+}
+
+.pdf-scroller.pdf-rect-selecting {
+  cursor: crosshair;
+  user-select: none;
+}
+.pdf-scroller.pdf-rect-selecting .textLayer {
+  user-select: none;
+}
+
+.pdf-marquee {
+  position: fixed;
+  z-index: 55;
+  display: none;
+  pointer-events: none;
+  box-sizing: border-box;
+  border: 1.5px solid color-mix(in srgb, var(--color-accent) 70%, transparent);
+  background: color-mix(in srgb, var(--color-selection) 55%, transparent);
+}
+
+.pdf-scroller {
+  scrollbar-gutter: stable;
+}
+
+.pdf-page-chrome {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  z-index: 20;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 28px;
+  padding: 0 6px 0 4px;
+  border-radius: 999px;
+  border: 1px solid var(--color-hairline);
+  background: color-mix(in srgb, var(--color-elevated) 92%, transparent);
+  color: var(--color-fg);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.04),
+    0 4px 14px rgba(0, 0, 0, 0.08);
+  backdrop-filter: blur(8px);
+}
+.pdf-page-chrome__label {
+  padding: 0 8px 0 4px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.pdf-rect-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-fg-muted);
+  cursor: pointer;
+}
+.pdf-rect-tool:hover {
+  color: var(--color-fg);
+  background: color-mix(in srgb, var(--color-fg) 8%, transparent);
+}
+.pdf-rect-tool.is-active {
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+}
+:root[data-theme="light"] .pdf-page-chrome {
+  background: color-mix(in srgb, var(--color-elevated) 94%, transparent);
+}

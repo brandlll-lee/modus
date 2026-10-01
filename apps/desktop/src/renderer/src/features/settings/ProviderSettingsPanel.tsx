@@ -1,7 +1,10 @@
-import { IconFolder, IconRefresh, IconSearch } from "@tabler/icons-react";
+import { IconFolder, IconRefresh } from "@tabler/icons-react";
 import { useEffect, useState } from "react";
 import type { ModelProviderDetail, ModelSettingsState } from "../../../../shared/contracts";
-import { ProviderLogo } from "./ProviderLogo";
+import { ProviderLogo } from "../../components/providers/ProviderLogo";
+import { SearchField } from "../../components/ui/SearchField";
+import { SettingsPageHeader } from "../../components/ui/SettingsPageHeader";
+import { cn } from "../../lib/cn";
 
 export function ProviderSettingsPanel({
   state,
@@ -51,30 +54,30 @@ export function ProviderSettingsPanel({
   );
   return (
     <>
-      <header className="flex items-center justify-between gap-4">
-        <h2 className="text-xl font-semibold">Models &amp; Providers</h2>
-        <button
-          type="button"
-          aria-label="Refresh models"
-          title="Refresh models"
-          disabled={busy}
-          onClick={() => void refresh()}
-          className="grid size-8 place-items-center text-fg-muted hover:text-fg disabled:opacity-40"
-        >
-          <IconRefresh size={17} />
-        </button>
-      </header>
+      <SettingsPageHeader
+        actions={
+          <button
+            type="button"
+            aria-label="Refresh models"
+            title="Refresh models"
+            disabled={busy}
+            onClick={() => void refresh()}
+            className="toolbar-icon-button flex items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-hover hover:text-fg disabled:opacity-40"
+          >
+            <IconRefresh aria-hidden size={16} stroke={1.8} />
+          </button>
+        }
+        description="View the models and authentication sources available to the current PI runtime."
+        title="Models and providers"
+      />
       <div className="flex flex-wrap items-center gap-4">
-        <label className="flex min-w-0 flex-1 items-center gap-2 border-b border-hairline-soft py-2">
-          <IconSearch size={16} />
-          <input
-            aria-label="Search providers"
-            placeholder="Search providers"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            className="min-w-0 flex-1 bg-transparent text-sm outline-none"
-          />
-        </label>
+        <SearchField
+          ariaLabel="Search providers"
+          className="min-w-[220px] flex-1"
+          onChange={setQuery}
+          placeholder="Search providers"
+          value={query}
+        />
         <label className="flex items-center gap-2 text-sm text-fg-muted">
           <input
             type="checkbox"
@@ -94,14 +97,17 @@ export function ProviderSettingsPanel({
           {message}
         </p>
       ))}
-      <div className="divide-y divide-hairline-soft">
+      <div className="space-y-1">
         {providers.map((provider) => (
           <button
             type="button"
             aria-pressed={selected === provider.id}
             key={provider.id}
             onClick={() => setSelected(provider.id)}
-            className="flex w-full items-center gap-3 py-3 text-left hover:bg-chip-faint"
+            className={cn(
+              "flex min-h-14 w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-hover",
+              selected === provider.id && "bg-active",
+            )}
           >
             <ProviderLogo provider={provider.id} name={provider.name} />
             <span className="min-w-0 flex-1 break-words text-sm">
@@ -140,9 +146,12 @@ export function ProviderSettingsPanel({
               <IconFolder size={17} />
             </button>
           </header>
-          <div className="mt-4 divide-y divide-hairline-soft">
+          <div className="space-y-1">
             {detail.models.map((model) => (
-              <div key={model.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 py-3">
+              <div
+                key={model.id}
+                className="flex min-h-14 flex-wrap items-center gap-x-4 gap-y-1 rounded-lg px-3 py-2.5 transition-colors hover:bg-hover"
+              >
                 <div className="min-w-0 flex-1">
                   <p className="break-words text-sm">{model.name}</p>
                   <p className="break-all text-xs text-fg-faint">{model.id}</p>

@@ -1,6 +1,9 @@
-import { IconFolder, IconRefresh, IconSearch } from "@tabler/icons-react";
+import { IconFolder, IconRefresh } from "@tabler/icons-react";
 import { useEffect, useState } from "react";
 import type { SkillState } from "../../../../shared/contracts";
+import { ResourceRow } from "../../components/ui/ResourceRow";
+import { SearchField } from "../../components/ui/SearchField";
+import { SettingsPageHeader } from "../../components/ui/SettingsPageHeader";
 
 export function SkillsSettingsPanel({
   cwd,
@@ -59,29 +62,28 @@ export function SkillsSettingsPanel({
   );
   return (
     <section className="min-w-0 space-y-5">
-      <header className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">Skills</h2>
-        <button
-          type="button"
-          title="Refresh resources"
-          aria-label="Refresh resources"
-          disabled={!sessionId || busy}
-          onClick={() => void refresh()}
-          className="rounded p-2 hover:bg-hover disabled:opacity-40"
-        >
-          <IconRefresh size={18} />
-        </button>
-      </header>
-      <label className="flex items-center gap-2 border-b border-hairline-soft py-2">
-        <IconSearch size={16} />
-        <input
-          aria-label="Search skills"
-          placeholder="Search skills"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          className="min-w-0 flex-1 bg-transparent text-sm outline-none"
-        />
-      </label>
+      <SettingsPageHeader
+        actions={
+          <button
+            type="button"
+            title="Refresh resources"
+            aria-label="Refresh resources"
+            disabled={!sessionId || busy}
+            onClick={() => void refresh()}
+            className="toolbar-icon-button flex items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-hover hover:text-fg disabled:opacity-40"
+          >
+            <IconRefresh aria-hidden size={16} stroke={1.8} />
+          </button>
+        }
+        description="See the skills loaded by the current session and where each one came from."
+        title="Skills"
+      />
+      <SearchField
+        ariaLabel="Search skills"
+        onChange={setQuery}
+        placeholder="Search skills"
+        value={query}
+      />
       {error ? (
         <p role="alert" className="break-words text-sm text-danger">
           {error}
@@ -102,29 +104,24 @@ export function SkillsSettingsPanel({
       ) : !filtered.length ? (
         <p className="text-sm text-fg-muted">No loaded skills match.</p>
       ) : null}
-      <div className="divide-y divide-hairline-soft">
+      <div className="space-y-1">
         {filtered.map((skill) => (
-          <div key={skill.path} className="flex min-w-0 items-center gap-3 py-3">
-            <div className="min-w-0 flex-1">
-              <h3 className="break-words text-sm font-medium">{skill.name}</h3>
-              <p className="break-words text-sm text-fg-muted">{skill.description}</p>
-              <p className="break-all text-xs text-fg-faint">{skill.path}</p>
-            </div>
-            <button
-              type="button"
-              title="Open skill folder"
-              aria-label={`Open ${skill.name} folder`}
-              className="shrink-0 rounded p-2 hover:bg-hover"
-              onClick={() => {
+          <ResourceRow
+            action={{
+              icon: <IconFolder aria-hidden size={16} stroke={1.8} />,
+              label: `Open ${skill.name} folder`,
+              onClick: () => {
                 if (sessionId)
                   void window.modus.skills
                     .openDir({ sessionId, path: skill.path })
                     .catch((cause: unknown) => setError(String(cause)));
-              }}
-            >
-              <IconFolder size={18} />
-            </button>
-          </div>
+              },
+            }}
+            description={skill.description}
+            key={skill.path}
+            meta={skill.path}
+            title={skill.name}
+          />
         ))}
       </div>
     </section>

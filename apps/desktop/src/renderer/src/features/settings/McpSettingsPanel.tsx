@@ -1,5 +1,7 @@
 import { IconFolder, IconRefresh } from "@tabler/icons-react";
 import { useEffect, useState } from "react";
+import { ResourceRow } from "../../components/ui/ResourceRow";
+import { SettingsPageHeader } from "../../components/ui/SettingsPageHeader";
 
 export function McpSettingsPanel({
   cwd,
@@ -56,19 +58,22 @@ export function McpSettingsPanel({
   }
   return (
     <section className="min-w-0 space-y-5">
-      <header className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">MCP</h2>
-        <button
-          type="button"
-          title="Refresh resources"
-          aria-label="Refresh resources"
-          disabled={!sessionId || busy}
-          onClick={() => void refresh()}
-          className="rounded p-2 hover:bg-hover disabled:opacity-40"
-        >
-          <IconRefresh size={18} />
-        </button>
-      </header>
+      <SettingsPageHeader
+        actions={
+          <button
+            type="button"
+            title="Refresh resources"
+            aria-label="Refresh resources"
+            disabled={!sessionId || busy}
+            onClick={() => void refresh()}
+            className="toolbar-icon-button flex items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-hover hover:text-fg disabled:opacity-40"
+          >
+            <IconRefresh aria-hidden size={16} stroke={1.8} />
+          </button>
+        }
+        description="See the MCP servers and configuration sources loaded by the current session."
+        title="MCP"
+      />
       {error ? (
         <p role="alert" className="break-words text-sm text-danger">
           {error}
@@ -76,27 +81,26 @@ export function McpSettingsPanel({
       ) : null}
       {!sessionId ? <p className="text-sm text-fg-muted">No active session.</p> : null}
       {report ? (
-        <pre className="whitespace-pre-wrap break-words text-sm text-fg-muted">{report}</pre>
+        <pre className="overflow-x-auto rounded-lg border border-hairline-soft bg-panel p-4 whitespace-pre-wrap break-words text-sm text-fg-muted">
+          {report}
+        </pre>
       ) : null}
-      <div className="divide-y divide-hairline-soft">
+      <div className="space-y-1">
         {locations.map((path) => (
-          <div key={path} className="flex min-w-0 items-center gap-3 py-3">
-            <p className="min-w-0 flex-1 break-all text-xs text-fg-muted">{path}</p>
-            <button
-              type="button"
-              title="Open configuration folder"
-              aria-label="Open configuration folder"
-              className="shrink-0 rounded p-2 hover:bg-hover"
-              onClick={() => {
+          <ResourceRow
+            key={path}
+            action={{
+              icon: <IconFolder aria-hidden size={16} stroke={1.8} />,
+              label: "Open configuration folder",
+              onClick: () => {
                 if (sessionId)
                   void window.modus.mcp
                     .openConfig({ sessionId, path })
                     .catch((cause: unknown) => setError(String(cause)));
-              }}
-            >
-              <IconFolder size={18} />
-            </button>
-          </div>
+              },
+            }}
+            title={path}
+          />
         ))}
       </div>
     </section>

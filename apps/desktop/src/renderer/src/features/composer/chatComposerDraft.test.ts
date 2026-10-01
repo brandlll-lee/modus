@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { BrowserEvent } from "../../../../shared/contracts";
-import { designEventToPromptInput } from "./ChatPane";
+import { designEventToPromptInput } from "./chatComposerDraft";
 
 describe("designEventToPromptInput", () => {
   it("keeps design chips, typed text, context, and screenshot together", () => {

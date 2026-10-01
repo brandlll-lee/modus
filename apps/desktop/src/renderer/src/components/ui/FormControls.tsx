@@ -23,7 +23,6 @@ export function Field({
   autoComplete?: string;
   description?: string;
   label: string;
-  /** Render the input in the mono face (ids, URLs, header values). */
   mono?: boolean;
   value: string;
   onChange(value: string): void;
@@ -35,10 +34,7 @@ export function Field({
       <span className="text-xs text-fg-muted">{label}</span>
       <input
         autoComplete={autoComplete}
-        className={cn(
-          "h-10 w-full rounded-md border border-hairline bg-canvas px-3 text-sm text-fg outline-none placeholder:text-fg-faint transition-colors hover:border-hairline-strong focus:border-hairline-strong focus:ring-2 focus:ring-white/5",
-          mono && "font-mono",
-        )}
+        className={cn("field-control h-10", mono && "font-mono")}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
         type={type}
@@ -73,7 +69,7 @@ export function SelectField<T extends string>({
       >
         <Select.Trigger
           aria-label={label}
-          className="flex h-10 w-full items-center justify-between gap-3 rounded-md border border-hairline bg-canvas px-3 text-sm text-fg outline-none transition-colors hover:border-hairline-strong focus-visible:border-hairline-strong focus-visible:ring-2 focus-visible:ring-white/5 data-popup-open:border-hairline-strong"
+          className="field-control flex h-10 items-center justify-between gap-3 data-popup-open:border-focus-ring"
         >
           <Select.Value>{(selected) => optionLabel(options, String(selected))}</Select.Value>
           <Select.Icon>
@@ -131,7 +127,7 @@ export function SwitchControl({
         "data-[checked]:border-fg data-[checked]:bg-fg",
         "data-[unchecked]:hover:bg-chip-strong",
         "data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50",
-        "focus-visible:border-hairline-strong focus-visible:ring-2 focus-visible:ring-white/10",
+        "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring",
       )}
       disabled={disabled}
       onCheckedChange={(nextChecked) => onCheckedChange(nextChecked)}
