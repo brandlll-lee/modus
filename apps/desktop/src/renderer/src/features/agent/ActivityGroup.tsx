@@ -1,4 +1,4 @@
-import { IconChevronRight } from "@tabler/icons-react";
+import { IconBrain, IconChevronRight, IconListCheck, IconRefresh } from "@tabler/icons-react";
 import { m } from "motion/react";
 import { memo, type ReactNode, useEffect, useId, useState } from "react";
 import type { PlanRef } from "../../../../shared/contracts";
@@ -9,7 +9,6 @@ import { cn } from "../../lib/cn";
 import { MessageBlock } from "./MessageBlock";
 import type {
   CompactionBlockItem,
-  GroupedWorkActivityItem,
   RunBlockItem,
   WorkActivityGroupItem,
   WorkActivityItem,
@@ -17,6 +16,7 @@ import type {
 } from "./Timeline";
 import { TodosCard } from "./TodosCard";
 import { ToolCard } from "./ToolCard";
+import { toolActionIcon } from "./toolIcons";
 
 export function formatElapsed(end: number, start: number): string {
   const seconds = Math.max(0, Math.round((end - start) / 1000));
@@ -26,6 +26,14 @@ export function formatElapsed(end: number, start: number): string {
   return rest === 0 ? `${minutes}m` : `${minutes}m ${rest}s`;
 }
 
+export function PreparingRow() {
+  return (
+    <div role="status" className="py-0.5 text-sm">
+      <ShinyText>Preparing</ShinyText>
+    </div>
+  );
+}
+
 /** Single-line tool-style compaction status (ShinyText while running). */
 export function CompactionRow({ status, detail }: Pick<CompactionBlockItem, "status" | "detail">) {
   const running = status === "running";
@@ -33,6 +41,7 @@ export function CompactionRow({ status, detail }: Pick<CompactionBlockItem, "sta
   const label = running ? "Compacting context" : (detail ?? "Context compacted");
   return (
     <div className="flex min-w-0 items-center gap-2 text-sm">
+      <IconRefresh aria-hidden className="action-icon" />
       {running ? (
         <ShinyText className="shrink-0 font-medium">{label}</ShinyText>
       ) : (
@@ -50,12 +59,14 @@ function FoldHeader({
   label,
   onToggle,
   open,
+  icon,
 }: {
   active?: boolean;
   controlsId?: string;
   label: string;
   onToggle(): void;
   open: boolean;
+  icon?: ReactNode;
 }) {
   return (
     <div className="flex min-w-0 items-center gap-1.5">
@@ -66,6 +77,7 @@ function FoldHeader({
         onClick={onToggle}
         type="button"
       >
+        {icon ? <span className="action-icon">{icon}</span> : null}
         {active ? (
           <ShinyText className="min-w-0 truncate">{label}</ShinyText>
         ) : (
@@ -93,13 +105,15 @@ function toolTarget(item: Extract<WorkActivityItem, { type: "tool" }>): string |
 
 const thoughtText = (text: string) => text.trim().replace(/\s+/g, " ");
 
-function isActivityActive(item: GroupedWorkActivityItem): boolean {
+function isActivityActive(item: WorkActivityItem): boolean {
+  if (item.type === "todos") return item.updating;
   if (item.type === "thought") return item.streaming === true;
   if (item.type === "tool") return item.isComplete !== true && item.isError !== true;
   return item.status === "running";
 }
 
-function activeActivityLabel(item: GroupedWorkActivityItem): string {
+function activeActivityLabel(item: WorkActivityItem): string {
+  if (item.type === "todos") return "Updating to-dos";
   if (item.type === "thought") {
     const preview = thoughtText(item.text);
     return preview ? `Thinking · ${preview}` : "Thinking";
@@ -107,10 +121,10 @@ function activeActivityLabel(item: GroupedWorkActivityItem): string {
   if (item.type === "compaction") return "Compacting context";
   const meta = getToolUiMeta(item.name);
   const target = toolTarget(item);
-  return `${meta?.activeVerb ?? meta?.verb ?? "Running"}${target ? ` ${target}` : ""}`;
+  return `${meta?.activeVerb ?? (meta ? meta.verb : `Running ${item.label ?? item.name}`)}${target ? ` ${target}` : ""}`;
 }
 
-function settledActivityLabel(items: GroupedWorkActivityItem[]): string {
+function settledActivityLabel(items: WorkActivityItem[]): string {
   const buckets = new Map<string, ToolSummaryMeta & { keys: Set<string> }>();
   let unspecifiedTools = 0;
   for (const item of items) {
@@ -132,6 +146,7 @@ function settledActivityLabel(items: GroupedWorkActivityItem[]): string {
   if (unspecifiedTools > 0) {
     parts.push(`used ${unspecifiedTools} ${unspecifiedTools === 1 ? "tool" : "tools"}`);
   }
+  if (items.some((item) => item.type === "todos")) parts.push("updated to-dos");
   const thought = items.findLast((item) => item.type === "thought" && item.text.trim());
   const label =
     parts.join(", ") ||
@@ -139,8 +154,9 @@ function settledActivityLabel(items: GroupedWorkActivityItem[]): string {
   return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
-export function workActivityPresentation(items: GroupedWorkActivityItem[]) {
-  const activeItem = items.findLast(isActivityActive);
+export function workActivityPresentation(items: WorkActivityItem[]) {
+  const activeTools = items.filter((item) => item.type === "tool" && isActivityActive(item));
+  const activeItem = activeTools.at(-1) ?? items.findLast(isActivityActive);
   const danger = items.some((item) =>
     item.type === "tool"
       ? item.isError === true
@@ -148,9 +164,22 @@ export function workActivityPresentation(items: GroupedWorkActivityItem[]) {
   );
   const label = activeItem ? activeActivityLabel(activeItem) : settledActivityLabel(items);
   return {
-    label: danger && !activeItem ? `Failed: ${label}` : label,
+    label:
+      danger && !activeItem
+        ? `Failed: ${label}`
+        : activeTools.length > 1
+          ? `${label} · ${activeTools.length} actions running`
+          : label,
     active: !!activeItem,
+    icon: activityIcon(activeItem ?? items.find((item) => item.type === "tool") ?? items[0]),
   };
+}
+
+function activityIcon(item: WorkActivityItem | undefined): ReactNode {
+  if (item?.type === "tool") return toolActionIcon(item.name);
+  if (item?.type === "todos") return <IconListCheck />;
+  if (item?.type === "compaction") return <IconRefresh />;
+  return <IconBrain />;
 }
 
 function WorkActivityGroup({
@@ -169,6 +198,7 @@ function WorkActivityGroup({
         active={presentation.active}
         controlsId={contentId}
         label={presentation.label}
+        icon={presentation.icon}
         onToggle={() => setOpen((value) => !value)}
         open={open}
       />
@@ -191,9 +221,12 @@ export function WorkActivityRow({
   if (item.type === "thought") {
     if (!item.streaming && !item.text.trim()) return null;
     return (
-      <pre className="max-w-full whitespace-pre-wrap text-2xs text-fg-faint leading-relaxed">
-        {item.text}
-      </pre>
+      <div className="flex min-w-0 items-start gap-2">
+        <IconBrain aria-hidden className="action-icon" />
+        <pre className="min-w-0 max-w-full whitespace-pre-wrap text-xs text-fg-faint leading-relaxed">
+          {item.text}
+        </pre>
+      </div>
     );
   }
   if (item.type === "todos") return <TodosCard {...item} />;
@@ -212,10 +245,6 @@ export function WorkActivityRow({
   );
 }
 
-/**
- * Cursor-style turn work fold: one header for the whole run's work.
- * A live turn mounts open; its authoritative settled transition closes it once.
- */
 export const WorkFold = memo(function WorkFold({
   run,
   items,
@@ -228,36 +257,41 @@ export const WorkFold = memo(function WorkFold({
   onOpenPlan?(plan: PlanRef): void;
 }) {
   const active = run.status === "running" || run.status === "blocked";
-  const [disclosure, setDisclosure] = useState({ active, open: active });
-  const open = disclosure.active === active ? disclosure.open : active;
+  const [open, setOpen] = useState(true);
   const contentId = useId();
   const [, setTick] = useState(0);
 
   useEffect(() => {
-    if (!active) return undefined;
+    if (!active || run.executionStartedAt === undefined || run.executionCompletedAt !== undefined)
+      return undefined;
     const id = window.setInterval(() => setTick((n) => n + 1), 1000);
     return () => window.clearInterval(id);
-  }, [active]);
+  }, [active, run.executionStartedAt, run.executionCompletedAt]);
 
   const elapsed = formatElapsed(
-    active ? Date.now() : (run.completedAt ?? run.startedAt),
-    run.startedAt,
+    run.executionCompletedAt ?? (active ? Date.now() : (run.completedAt ?? run.startedAt)),
+    run.executionStartedAt ?? run.startedAt,
   );
   const label =
     run.status === "failed"
       ? "Modus stopped"
       : run.status === "cancelled"
         ? "Stopped by you"
-        : active
-          ? `Working for ${elapsed}`
-          : `Worked for ${elapsed}`;
+        : run.executionStartedAt === undefined
+          ? active
+            ? "Preparing"
+            : "Request processed"
+          : active && run.executionCompletedAt === undefined
+            ? `Working for ${elapsed}`
+            : `Worked for ${elapsed}`;
 
   return (
     <div className="min-w-0 text-sm">
       <FoldHeader
+        active={active && run.executionCompletedAt === undefined}
         controlsId={contentId}
         label={label}
-        onToggle={() => setDisclosure({ active, open: !open })}
+        onToggle={() => setOpen((value) => !value)}
         open={open}
       />
       <CollapsibleMotion id={contentId} open={open} preset="timeline">
@@ -276,16 +310,6 @@ export const WorkFold = memo(function WorkFold({
                       />
                     ))}
                   </WorkActivityGroup>
-                );
-              }
-              if (item.type !== "notice" && item.type !== "message") {
-                return (
-                  <WorkActivityRow
-                    item={item}
-                    key={item.id}
-                    {...(onOpenFile ? { onOpenFile } : {})}
-                    {...(onOpenPlan ? { onOpenPlan } : {})}
-                  />
                 );
               }
               if (item.type === "notice") {

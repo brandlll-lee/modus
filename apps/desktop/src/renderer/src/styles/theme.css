@@ -32,6 +32,7 @@
   --color-active: rgba(255, 255, 255, 0.08);
 
   --color-fg: #eeeeee;
+  --color-working-beam: #ffffff;
   --color-fg-muted: #c2c2c2;
   --color-fg-subtle: #999999;
   --color-fg-faint: #858585;
@@ -183,6 +184,7 @@
   --color-active: rgba(0, 0, 0, 0.06);
 
   --color-fg: #222222;
+  --color-working-beam: #111111;
   --color-fg-muted: #3f3f3f;
   --color-fg-subtle: #666666;
   --color-fg-faint: #707070;

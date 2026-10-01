@@ -614,6 +614,11 @@ export function Composer({
           ) : null}
 
           {trailingActions}
+          {submitting && !isRunning ? (
+            <span role="status" className="text-xs text-fg-subtle">
+              Preparing
+            </span>
+          ) : null}
 
           {onCancel ? (
             <ToolbarButton label="Cancel" onClick={onCancel} disabled={submitting}>

@@ -23,6 +23,7 @@ export function ProviderDetailsDialog({
   const [loading, setLoading] = useState(true);
   const [revision, setRevision] = useState(0);
   const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(true);
   // biome-ignore lint/correctness/useExhaustiveDependencies: Explicit retry invalidates the request.
   useEffect(() => {
     let active = true;
@@ -57,8 +58,9 @@ export function ProviderDetailsDialog({
   });
   return (
     <Dialog.Root
-      open
-      onOpenChange={(open) => {
+      open={open}
+      onOpenChange={setOpen}
+      onOpenChangeComplete={(open) => {
         if (!open) onClose();
       }}
     >

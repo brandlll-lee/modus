@@ -7,6 +7,18 @@ function event(value: unknown): AgentSessionEvent {
 }
 
 describe("normalizePiEvent", () => {
+  it("publishes the native turn start separately from the agent loop lifecycle", () => {
+    const normalize = createPiEventNormalizer("session-1");
+    expect(normalize(event({ type: "agent_start" }))).toEqual([
+      { type: "agent.started", sessionId: "session-1" },
+    ]);
+    expect(normalize(event({ type: "turn_start" }))).toEqual([
+      { type: "turn.started", sessionId: "session-1" },
+    ]);
+    expect(normalize(event({ type: "agent_settled", messages: [] }))).toEqual([
+      { type: "agent.ended", sessionId: "session-1" },
+    ]);
+  });
   it("maps PI assistant text deltas to Modus message deltas", () => {
     expect(
       normalizePiEvent(

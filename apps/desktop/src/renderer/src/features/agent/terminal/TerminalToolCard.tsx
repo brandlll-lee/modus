@@ -3,6 +3,7 @@ import { memo, useMemo, useState } from "react";
 import { CollapsibleMotion } from "../../../components/ui/CollapsibleMotion";
 import { ShinyText } from "../../../components/ui/ShinyText";
 import { cn } from "../../../lib/cn";
+import { toolActionIcon } from "../toolIcons";
 import { parseTerminalOutput } from "./parseTerminal";
 
 type TerminalToolCardProps = {
@@ -68,6 +69,7 @@ export const TerminalToolCard = memo(
           onClick={() => setOpen((value) => !value)}
           type="button"
         >
+          <span className="action-icon">{toolActionIcon(name)}</span>
           <span className="min-w-0 flex-1 truncate" title={command}>
             {running ? <ShinyText>{summary}</ShinyText> : summary}
           </span>

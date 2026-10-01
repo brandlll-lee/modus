@@ -29,6 +29,41 @@ function tool(id: string, name: string, complete = true, isError = false) {
 }
 
 describe("buildBlocks", () => {
+  it("starts execution time at the first native turn and keeps it across later turns", () => {
+    const events = [
+      { type: "run.started", sessionId: "s", runId: "r", delivery: "normal" },
+      { type: "agent.started", sessionId: "s" },
+      { type: "turn.started", sessionId: "s" },
+      { type: "turn.started", sessionId: "s" },
+      { type: "agent.ended", sessionId: "s" },
+      { type: "run.completed", sessionId: "s", runId: "r" },
+    ] as AgentEvent[];
+    const entries = events.map((event, index) => ({
+      ...item(String(index), event),
+      createdAt: new Date(index * 1000).toISOString(),
+    }));
+    expect(buildBlocks(entries.slice(0, 2))[0]).toEqual(expect.objectContaining({ startedAt: 0 }));
+    expect(buildBlocks(entries.slice(0, 2))[0]).not.toHaveProperty("executionStartedAt");
+    expect(buildBlocks(entries)[0]).toEqual(
+      expect.objectContaining({
+        executionStartedAt: 2000,
+        executionCompletedAt: 4000,
+        completedAt: 5000,
+      }),
+    );
+  });
+
+  it("restores recorded native loop timing when a transcript has no turn events", () => {
+    const blocks = buildBlocks([
+      item("request", { type: "run.started", sessionId: "s", runId: "r", delivery: "normal" }),
+      {
+        ...item("native", { type: "agent.started", sessionId: "s" }),
+        createdAt: new Date(1000).toISOString(),
+      },
+      item("end", { type: "run.completed", sessionId: "s", runId: "r" }),
+    ]);
+    expect(blocks[0]).toEqual(expect.objectContaining({ executionStartedAt: 1000 }));
+  });
   it("renders an optimistic user prompt immediately", () => {
     const blocks = buildBlocks(
       optimisticUserPromptEvents({
@@ -842,7 +877,7 @@ describe("local work activity groups", () => {
       tool("c", "bash"),
     ]);
     expect(result.map((entry) => entry.type).join(",")).toBe(
-      "work-activity-group,message,work-activity-group,todos,tool,tool,work-activity-group",
+      "work-activity-group,message,work-activity-group",
     );
   });
 
@@ -864,9 +899,26 @@ describe("local work activity groups", () => {
 
   it("uses the full latest authoritative item and safely summarizes unknown tools", () => {
     const activities = [tool("live", "bash", false), thought("th", "123456789012345678901", true)];
-    expect(workActivityPresentation(activities).label).toBe("Thinking · 123456789012345678901");
+    expect(workActivityPresentation(activities).label).toBe("Running");
     expect(workActivityPresentation([tool("future", "brand_new_tool")]).label).toBe("Used 1 tool");
     expect(workActivityPresentation([thought("d", "plan")]).label).toBe("Thought · plan");
+  });
+
+  it("reports parallel tools while each group keeps its authoritative completion", () => {
+    const first = { ...tool("a", "brand_new_tool", false), label: "Native extension action" };
+    const second = { ...tool("b", "bash", false), args: { command: "arbitrary command" } };
+    expect(workActivityPresentation([first, second]).label).toBe(
+      "Running arbitrary command · 2 actions running",
+    );
+    expect(workActivityPresentation([first, { ...second, isComplete: true }]).label).toBe(
+      "Running Native extension action",
+    );
+    expect(
+      workActivityPresentation([
+        { ...first, isComplete: true },
+        { ...second, isComplete: true },
+      ]).active,
+    ).toBe(false);
   });
 });
 

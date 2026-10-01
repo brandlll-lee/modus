@@ -5,7 +5,7 @@ import { CollapsibleMotion } from "../../../components/ui/CollapsibleMotion";
 import { ShinyText } from "../../../components/ui/ShinyText";
 import { Tooltip } from "../../../components/ui/Tooltip";
 import { cn } from "../../../lib/cn";
-import { materialIconForFile } from "../../files/fileIcons";
+import { toolActionIcon } from "../toolIcons";
 import { type InlineDiff, inlineDiffFromToolArgs, toolTargetPath } from "./computeInlineDiff";
 import { InlineDiffView } from "./InlineDiff";
 
@@ -65,7 +65,7 @@ function diffToClipboardText(diff: InlineDiff): string {
 /**
  * Diff card for file-writing tools.
  *
- * Running: material icon + ShinyText progress phrase — no live ±.
+ * Running: action icon and progress phrase.
  * Done: verb + file + static ±; primary click opens Files; chevron expands diff.
  */
 export const DiffToolCard = memo(
@@ -85,7 +85,6 @@ export const DiffToolCard = memo(
     const argsRecord = argRecord(args);
     const fileName = displayName(path, meta, argsRecord, name);
     const fileTitle = path ? path.replace(/\\/g, "/") : fileName;
-    const iconUrl = materialIconForFile(fileName);
     const isNewFileDiff = meta?.diffSource === "newFile";
     const running = !isComplete && !isError;
     const bodyOpen = open && Boolean(diff) && !running;
@@ -118,11 +117,7 @@ export const DiffToolCard = memo(
             title={fileTitle}
             type="button"
           >
-            <span className="flex w-4 shrink-0 items-center justify-center">
-              {iconUrl ? (
-                <img alt="" className="size-3.5" draggable={false} src={iconUrl} />
-              ) : null}
-            </span>
+            <span className="action-icon">{toolActionIcon(name)}</span>
 
             {running ? (
               <ShinyText className="min-w-0 truncate">{progressPhrase(meta, fileName)}</ShinyText>

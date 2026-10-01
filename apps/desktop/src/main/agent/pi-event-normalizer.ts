@@ -134,6 +134,8 @@ export function normalizePiEvent(
   switch (event.type) {
     case "agent_start":
       return [{ type: "agent.started", sessionId }];
+    case "turn_start":
+      return [{ type: "turn.started", sessionId }];
     case "agent_settled":
       state.activeMessageIds = {};
       return [{ type: "agent.ended", sessionId }];

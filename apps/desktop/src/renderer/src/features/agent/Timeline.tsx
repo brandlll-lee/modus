@@ -13,16 +13,17 @@ import type {
   SkillSelection,
   TodoItem,
 } from "../../../../shared/contracts";
-import { getToolUiMeta, toolRenderKind } from "../../../../shared/tools";
+import { toolRenderKind } from "../../../../shared/tools";
 import { CopyButton } from "../../components/ui/CopyButton";
 import { formatClock } from "../../lib/formatClock";
-import { WorkActivityRow, WorkFold } from "./ActivityGroup";
+import { PreparingRow, WorkActivityRow, WorkFold } from "./ActivityGroup";
 import { MessageBlock } from "./MessageBlock";
 
 type TimelineProps = {
   sessionId?: string | undefined;
   /** Blocks built by the owner (ChatPane) — the single authority for this list. */
   blocks: TimelineBlock[];
+  preparing?: boolean;
   /** Session cwd — file chips / markdown file nav resolve against the workspace. */
   cwd?: string | undefined;
   /** Active pane model — needed so inline edit can mount the shared Composer. */
@@ -111,6 +112,8 @@ export type RunBlockItem = {
   delivery?: string;
   body?: string;
   startedAt: number;
+  executionStartedAt?: number;
+  executionCompletedAt?: number;
   completedAt?: number;
   /**
    * The whole turn's aggregated assistant markdown, attached once the run
@@ -152,19 +155,13 @@ export type WorkActivityItem =
   | TodosBlockItem
   | CompactionBlockItem;
 
-export type GroupedWorkActivityItem = ThoughtBlockItem | ToolBlockItem | CompactionBlockItem;
-
 export type WorkActivityGroupItem = {
   id: string;
   type: "work-activity-group";
-  items: GroupedWorkActivityItem[];
+  items: WorkActivityItem[];
 };
 
-export type WorkFoldItem =
-  | WorkActivityGroupItem
-  | WorkActivityItem
-  | NoticeBlockItem
-  | MessageBlockItem;
+export type WorkFoldItem = WorkActivityGroupItem | NoticeBlockItem | MessageBlockItem;
 
 /**
  * One turn's work under a single Cursor-style fold (Working for… / Worked for…).
@@ -205,6 +202,7 @@ export function buildBlocks(agentEvents: AgentEventItem[]): TimelineBlock[] {
   let order = 0;
   let activeAssistantMessageId: string | undefined;
   let activeRunId: string | undefined;
+  const loopStartedAtByRun = new Map<string, number>();
   let lastUserMessageBlock: MessageBlockItem | undefined;
   /** Thinking now streams as its own ordered block, keyed by its message. */
   const thoughtByMessage = new Map<string, ThoughtBlockItem>();
@@ -309,10 +307,27 @@ export function buildBlocks(agentEvents: AgentEventItem[]): TimelineBlock[] {
       continue;
     }
 
+    if (event.type === "agent.started") {
+      if (activeRunId && !loopStartedAtByRun.has(activeRunId))
+        loopStartedAtByRun.set(activeRunId, eventAt);
+      continue;
+    }
+
+    if (event.type === "turn.started" || event.type === "agent.ended") {
+      const run = activeRunId ? blockById.get(activeRunId) : undefined;
+      if (run?.type === "run") {
+        if (event.type === "turn.started") run.executionStartedAt ??= eventAt;
+        else run.executionCompletedAt = eventAt;
+      }
+      continue;
+    }
+
     if (event.type === "run.completed") {
       const block = blockById.get(event.runId);
       if (block?.type === "run") {
         block.status = "completed";
+        const loopStartedAt = loopStartedAtByRun.get(event.runId);
+        if (loopStartedAt !== undefined) block.executionStartedAt ??= loopStartedAt;
         block.completedAt = eventAt;
         order++;
         if (event.summary !== undefined) {
@@ -873,18 +888,13 @@ function isWorkActivity(block: TimelineBlock): block is WorkActivityItem {
   );
 }
 
-function isGroupedWorkActivity(item: TimelineBlock): item is GroupedWorkActivityItem {
-  if (item.type === "tool") return getToolUiMeta(item.name)?.groupInTimeline !== false;
-  return item.type === "thought" || item.type === "compaction";
-}
-
-/** Messages, notices, and standalone activities bound local activity folds. */
+/** Messages and notices bound local activity folds. */
 export function groupWorkItems(
   items: Array<WorkActivityItem | NoticeBlockItem | MessageBlockItem>,
 ): WorkFoldItem[] {
   const result: WorkFoldItem[] = [];
   for (const item of items) {
-    if (!isGroupedWorkActivity(item)) {
+    if (!isWorkActivity(item)) {
       result.push(item);
       continue;
     }
@@ -1073,6 +1083,7 @@ function TurnFooter({ turn }: { turn: TimelineTurn }) {
 export function Timeline({
   sessionId,
   blocks,
+  preparing = false,
   cwd,
   model,
   models,
@@ -1085,7 +1096,7 @@ export function Timeline({
   const renderKeys = useMemo(() => blockRenderKeys(blocks), [blocks]);
   const turns = useMemo(() => segmentTurns(blocks, renderKeys), [blocks, renderKeys]);
 
-  if (blocks.length === 0) {
+  if (blocks.length === 0 && !preparing) {
     return null;
   }
 
@@ -1178,6 +1189,11 @@ export function Timeline({
             <TurnFooter turn={turn} />
           </section>
         ))}
+        {preparing ? (
+          <div className="px-8">
+            <PreparingRow />
+          </div>
+        ) : null}
       </div>
     </div>
   );

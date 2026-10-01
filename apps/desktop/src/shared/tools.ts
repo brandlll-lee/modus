@@ -10,12 +10,16 @@ import type { PermissionAction } from "./contracts";
 /** Named tool sets. A session is created with one profile's active tools. */
 export type ToolProfileName = "chat" | "review" | "plan";
 
-/**
- * Leading row icons are the exception, not the rule: only web tools declare
- * one. `globe` is the generic web glyph; `favicon` derives the target site's
- * icon from the tool's primary URL argument at render time.
- */
-export type ToolIconName = "globe" | "favicon";
+/** Semantic action glyphs declared by tool owners. */
+export type ToolIconName =
+  | "globe"
+  | "favicon"
+  | "file"
+  | "edit"
+  | "terminal"
+  | "search"
+  | "folder"
+  | "tool";
 
 /**
  * How a tool's permission requirement is determined.
@@ -60,7 +64,7 @@ export type ToolSummaryMeta = {
 };
 
 export type ToolUiMeta = {
-  /** Leading row icon. Absent ⇒ the row leads with its verb label, no icon. */
+  /** Leading action glyph; undeclared tools use the generic tool glyph. */
   iconName?: ToolIconName;
   verb: string;
   /** Argument key used to derive the default target label shown after the verb. */
@@ -69,8 +73,6 @@ export type ToolUiMeta = {
   activeVerb?: string;
   /** Which renderer card this tool's calls use. Absent ⇒ `flat`. */
   render?: ToolRenderKind;
-  /** Whether this tool joins local timeline activity groups. Defaults to true. */
-  groupInTimeline?: boolean;
   /** Declarative completed-call digest; counting semantics come from the tool owner. */
   summary?: ToolSummaryMeta;
   /** Profiles where the tool is an intermediate artifact and should not create a timeline row. */
@@ -122,6 +124,7 @@ export const BUILTIN_TOOL_CATALOG: ToolCatalogEntry[] = [
     capabilities: ["read"],
     ui: {
       verb: "Read",
+      iconName: "file",
       activeVerb: "Reading",
       primaryArgKey: "path",
       summary: { verb: "read", noun: { one: "file", other: "files" }, countBy: "target" },
@@ -193,7 +196,7 @@ export const BUILTIN_TOOL_CATALOG: ToolCatalogEntry[] = [
     profiles: ["chat", "review", "plan"],
     permission: { danger: "safe" },
     capabilities: ["read"],
-    ui: { verb: "Grepped", activeVerb: "Searching", primaryArgKey: "pattern" },
+    ui: { verb: "Grepped", activeVerb: "Searching", primaryArgKey: "pattern", iconName: "search" },
   },
   {
     name: "find",
@@ -201,7 +204,7 @@ export const BUILTIN_TOOL_CATALOG: ToolCatalogEntry[] = [
     profiles: ["chat", "review", "plan"],
     permission: { danger: "safe" },
     capabilities: ["read"],
-    ui: { verb: "Searched", activeVerb: "Searching", primaryArgKey: "pattern" },
+    ui: { verb: "Searched", activeVerb: "Searching", primaryArgKey: "pattern", iconName: "search" },
   },
   {
     name: "ls",
@@ -209,7 +212,7 @@ export const BUILTIN_TOOL_CATALOG: ToolCatalogEntry[] = [
     profiles: ["chat", "review", "plan"],
     permission: { danger: "safe" },
     capabilities: ["read"],
-    ui: { verb: "Listed", activeVerb: "Listing", primaryArgKey: "path" },
+    ui: { verb: "Listed", activeVerb: "Listing", primaryArgKey: "path", iconName: "folder" },
   },
 ];
 
@@ -293,7 +296,6 @@ export const PLAN_TOOL_UI: ToolUiMeta = {
   verb: "Plan",
   primaryArgKey: "title",
   render: "plan",
-  groupInTimeline: false,
 };
 
 /** Agent-facing interactive question tool — asks the user, blocks on the answer. */
@@ -306,7 +308,6 @@ export const ASK_USER_TOOL_NAME = "ask_user";
 export const ASK_USER_TOOL_UI: ToolUiMeta = {
   verb: "Asking",
   render: "question",
-  groupInTimeline: false,
 };
 
 /** Agent-facing web tool names (custom tools registered at runtime). */

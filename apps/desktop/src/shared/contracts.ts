@@ -198,6 +198,7 @@ export type SessionRunStatus =
 
 export type AgentEvent =
   | { type: "agent.started"; sessionId: string }
+  | { type: "turn.started"; sessionId: string }
   | { type: "agent.ended"; sessionId: string }
   | {
       type: "run.started";

@@ -1,22 +1,41 @@
-import { IconWorld } from "@tabler/icons-react";
+import {
+  IconFile,
+  IconFolder,
+  IconPencil,
+  IconSearch,
+  IconTerminal2,
+  IconTool,
+  IconWorld,
+} from "@tabler/icons-react";
 import { type ReactNode, useState } from "react";
+import { getToolUiMeta, type ToolIconName } from "../../../../shared/tools";
 import { cn } from "../../lib/cn";
-import type { ToolIconName } from "../../../../shared/tools";
 
 /** Session-scoped: one failed host never retries (shared by tool rows + markdown). */
 const failedHosts = new Set<string>();
 
-/**
- * Leading icon for a tool row. Only web tools declare one: a globe for web
- * search, and the target site's favicon for web fetch — so the row shows WHICH
- * site was read. Every other row leads with its bold verb, no icon.
- */
-export function toolIcon(name: ToolIconName, target?: string): ReactNode {
-  if (name === "favicon") {
-    // Keyed by URL so a new target resets a previous load failure.
-    return <Favicon key={target ?? ""} url={target ?? ""} />;
-  }
-  return <IconWorld size={14} stroke={1.7} />;
+const ACTION_ICONS = {
+  file: IconFile,
+  folder: IconFolder,
+  edit: IconPencil,
+  search: IconSearch,
+  terminal: IconTerminal2,
+  tool: IconTool,
+  globe: IconWorld,
+  favicon: IconWorld,
+};
+
+export function toolIcon(name: ToolIconName): ReactNode {
+  const Icon = ACTION_ICONS[name];
+  return <Icon aria-hidden size={16} stroke={1.7} />;
+}
+
+export function toolActionIcon(name: string): ReactNode {
+  const meta = getToolUiMeta(name);
+  return toolIcon(
+    meta?.iconName ??
+      (meta?.render === "diff" ? "edit" : meta?.render === "terminal" ? "terminal" : "tool"),
+  );
 }
 
 /** The site's favicon for an external URL, falling back to a globe. */

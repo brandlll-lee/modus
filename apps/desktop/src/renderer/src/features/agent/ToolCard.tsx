@@ -9,7 +9,7 @@ import { PlanTimelineCard } from "../plan/PlanTimelineCard";
 import { DiffToolCard } from "./diff/DiffToolCard";
 import { QuestionToolCard } from "./QuestionToolCard";
 import { TerminalToolCard } from "./terminal/TerminalToolCard";
-import { toolIcon } from "./toolIcons";
+import { toolActionIcon } from "./toolIcons";
 
 type ToolCardProps = {
   name: string;
@@ -30,8 +30,7 @@ type ToolCardProps = {
 const MAX_DETAIL_CHARS = 12_000;
 
 type ToolView = {
-  /** Leading icon — only when the tool's catalog entry declares one (web tools). */
-  icon?: ReactNode;
+  icon: ReactNode;
   verb: string;
   /** Main target shown after the verb. Always truncated so it can't widen chat. */
   target: string;
@@ -158,7 +157,7 @@ function LiveToolCard({
   const [open, setOpen] = useState(() => running || isError);
   const sawRunningRef = useRef(false);
   const scrollRef = useRef<HTMLPreElement>(null);
-  const view = describeTool(name, args);
+  const view = describeTool(name, args, running);
   const status = running ? liveStatus(output) || "Starting" : isError ? "Failed" : "Complete";
   const rawDetail = clampTailDetail(output.trimEnd());
   const fallbackDetail = running || isError ? status : "";
@@ -196,17 +195,21 @@ function LiveToolCard({
         onClick={() => setOpen((value) => !value)}
         type="button"
       >
-        {view.icon ? <span className="shrink-0 text-fg-faint">{view.icon}</span> : null}
+        <span className="action-icon">{view.icon}</span>
         {running ? (
-          <ShinyText className="shrink-0">{view.verb}</ShinyText>
+          <ShinyText className="min-w-0 flex-1 truncate">
+            {`${view.verb}${view.target ? ` ${view.target}` : ""}`}
+          </ShinyText>
         ) : (
-          <span className={cn("shrink-0", isError ? "text-danger" : "text-fg-subtle")}>
-            {view.verb}
-          </span>
+          <>
+            <span className={cn("shrink-0", isError ? "text-danger" : "text-fg-subtle")}>
+              {view.verb}
+            </span>
+            <span className="min-w-0 flex-1 truncate text-fg-subtle" title={view.target}>
+              {view.target}
+            </span>
+          </>
         )}
-        <span className="min-w-0 flex-1 truncate text-fg-subtle" title={view.target}>
-          {view.target}
-        </span>
         <span
           className={cn(
             "min-w-0 max-w-[35%] truncate text-xs",
@@ -252,18 +255,20 @@ function FlatToolRow({
 }: FlatToolRowProps) {
   const [open, setOpen] = useState(false);
   const running = !isComplete && !isError;
-  const view = describeTool(name, args, running, output);
-  if (label) view.verb = label;
+  const view = describeTool(name, args, running);
+  if (label) view.verb = running ? (getToolUiMeta(name)?.activeVerb ?? `Running ${label}`) : label;
   const status = running ? liveStatus(output) : "";
   const detail = running ? "" : toolDetail(name, args, output);
   const expandable = detail.trim().length > 0;
 
   const body = (
     <>
-      {view.icon ? <span className="shrink-0 text-fg-faint">{view.icon}</span> : null}
+      <span className="action-icon">{view.icon}</span>
       {running ? (
         <>
-          <ShinyText className="shrink-0">{view.verb}</ShinyText>
+          <ShinyText className="min-w-0 truncate">
+            {`${view.verb}${view.target ? ` ${view.target}` : ""}`}
+          </ShinyText>
           {status ? (
             <span className="min-w-0 flex-1 truncate text-fg-faint" title={status}>
               {status}
@@ -323,17 +328,19 @@ function FlatToolRow({
   );
 }
 
-function describeTool(name: string, args: unknown, _running = false, _output = ""): ToolView {
+function describeTool(name: string, args: unknown, running: boolean): ToolView {
   const a = (args && typeof args === "object" ? args : {}) as Record<string, unknown>;
   const meta = getToolUiMeta(name);
   if (!meta) {
-    return { verb: humanize(name), target: bestEffortArg(a) };
+    return {
+      icon: toolActionIcon(name),
+      verb: `${running ? "Running " : ""}${humanize(name)}`,
+      target: bestEffortArg(a),
+    };
   }
   const base: ToolView = {
-    ...(meta.iconName
-      ? { icon: toolIcon(meta.iconName, meta.primaryArgKey ? str(a[meta.primaryArgKey]) : "") }
-      : {}),
-    verb: meta.verb,
+    icon: toolActionIcon(name),
+    verb: running ? (meta.activeVerb ?? meta.verb) : meta.verb,
     target: primaryTarget(meta, a),
   };
   switch (name) {
@@ -354,16 +361,6 @@ function describeTool(name: string, args: unknown, _running = false, _output = "
     default:
       return base;
   }
-}
-
-/** Everything after the verb on the wait tool's authoritative first line. */
-function _waitedTargetLabel(output: string): string {
-  const first =
-    output
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .find(Boolean) ?? "";
-  return first.replace(/^Waited\s+/i, "").trim();
 }
 
 /** Default target label derived from the tool's declared primary argument. */

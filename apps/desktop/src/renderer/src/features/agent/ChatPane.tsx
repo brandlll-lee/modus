@@ -586,6 +586,14 @@ export function ChatPane({
           <Timeline
             sessionId={sessionId}
             blocks={visibleBlocks}
+            preparing={
+              isRunning &&
+              !visibleBlocks.some(
+                (block) =>
+                  block.type === "work-fold" &&
+                  (block.run.status === "running" || block.run.status === "blocked"),
+              )
+            }
             cwd={activeCwd}
             model={paneModel}
             models={models}

@@ -9,11 +9,20 @@ export function ExtensionDialog({ request }: { request: QuestionRequest }) {
   const [value, setValue] = useState(question?.prefill ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const [open, setOpen] = useState(true);
+  const [response, setResponse] = useState<{ selected?: string; skipped: boolean }>();
   if (!question) return null;
 
-  async function respond(selected?: string, skipped = false): Promise<void> {
+  function respond(selected?: string, skipped = false): void {
     if (busy || !question) return;
     setBusy(true);
+    setResponse({ ...(selected !== undefined ? { selected } : {}), skipped });
+    setOpen(false);
+  }
+
+  async function submitResponse(): Promise<void> {
+    if (!question || !response) return;
+    const { selected, skipped } = response;
     try {
       const answer: QuestionAnswer = {
         questionId: question.id,
@@ -27,15 +36,19 @@ export function ExtensionDialog({ request }: { request: QuestionRequest }) {
       });
     } catch (caught) {
       setBusy(false);
+      setOpen(true);
       setError(caught instanceof Error ? caught.message : String(caught));
     }
   }
 
   return (
     <Dialog.Root
-      open
+      open={open}
       onOpenChange={(open) => {
-        if (!open) void respond(undefined, true);
+        if (!open) respond(undefined, true);
+      }}
+      onOpenChangeComplete={(open) => {
+        if (!open) void submitResponse();
       }}
     >
       <DialogSurface size="compact">

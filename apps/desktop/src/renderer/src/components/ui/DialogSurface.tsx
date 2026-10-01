@@ -10,7 +10,7 @@ export function DialogSurface({
 }: Omit<Dialog.Popup.Props, "className"> & { size?: "detail" | "compact"; className?: string }) {
   return (
     <Dialog.Portal>
-      <Dialog.Backdrop className="fixed inset-0 z-50 bg-fg/20" />
+      <Dialog.Backdrop className="dialog-backdrop fixed inset-0 z-50 bg-fg/20" />
       <SurfacePopup
         {...props}
         className={cn("dialog-surface", size === "compact" && "dialog-compact", className)}

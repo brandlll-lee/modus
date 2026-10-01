@@ -20,6 +20,7 @@ import { listSkills } from "../skills/skills-service";
 import { createAgentResourceLoader } from "./agent-resources";
 import { createAgentSettings } from "./agent-settings";
 import { createExtensionUI } from "./extension-ui";
+import { createPiEventNormalizer } from "./pi-event-normalizer";
 import { registerSessionResources, releaseSessionResources } from "./session-resources";
 
 let root: string;
@@ -129,7 +130,21 @@ it("restores persisted SDK usage and skills and keeps desktop tools deferred", a
     cost: { input: 0.01, output: 0.02, cacheRead: 0.003, cacheWrite: 0.004, total: 0.037 },
   };
   faux.setResponses([response]);
+  const lifecycle: string[] = [];
+  const normalize = createPiEventNormalizer("fixture");
+  const unsubscribe = session.subscribe((event) => {
+    for (const item of normalize(event)) {
+      if (
+        item.type === "agent.started" ||
+        item.type === "turn.started" ||
+        item.type === "agent.ended"
+      )
+        lifecycle.push(item.type);
+    }
+  });
   await session.prompt("hello");
+  unsubscribe();
+  expect(lifecycle).toEqual(["agent.started", "turn.started", "agent.ended"]);
   expect(session.getActiveToolNames()).toEqual(expect.arrayContaining(["read", "tool_search"]));
   expect(session.getActiveToolNames()).not.toContain("desktop_fixture");
   expect(session.getActiveToolNames()).not.toContain("codemode");

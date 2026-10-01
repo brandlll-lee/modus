@@ -1,4 +1,4 @@
-import { IconChevronRight } from "@tabler/icons-react";
+import { IconChevronRight, IconMessageQuestion } from "@tabler/icons-react";
 import { memo, useMemo, useState } from "react";
 import type { QuestionAnswer, QuestionRequest } from "../../../../shared/contracts";
 import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
@@ -82,6 +82,7 @@ export const QuestionToolCard = memo(function QuestionToolCard({
   if (running) {
     return (
       <div className="flex min-w-0 items-center gap-2 py-0.5 text-sm">
+        <IconMessageQuestion aria-hidden className="action-icon" />
         <ShinyText className="min-w-0 flex-1 truncate">Asking…</ShinyText>
       </div>
     );
@@ -97,6 +98,7 @@ export const QuestionToolCard = memo(function QuestionToolCard({
         onClick={() => setOpen((value) => !value)}
         type="button"
       >
+        <IconMessageQuestion aria-hidden className="action-icon" />
         <span className="font-medium">{label}</span>
         <IconChevronRight
           className={cn(
