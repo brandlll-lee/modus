@@ -24,45 +24,12 @@ function sanitizeSegment(value: string): string {
 
 type PlanMeta = Omit<PlanRef, "content">;
 
-/** Historical plan.json may still store visual blocks; project them to Markdown. */
-type LegacyPlanBlock =
-  | PlanBlock
-  | {
-      type: "visual";
-      title?: string;
-      kind?: string;
-      content?: string;
-      fallback?: string;
-    };
-
 function buildTodos(items: ReadonlyArray<{ content: string }>): PlanTodo[] {
   return items.map((item, index) => ({
     id: hashContent(`${index}:${item.content}`),
     content: item.content,
     status: "pending",
   }));
-}
-
-function blockToMarkdown(block: LegacyPlanBlock): string {
-  if (block.type === "markdown") return block.content.trim();
-  const title = typeof block.title === "string" ? block.title.trim() : "";
-  const fallback = typeof block.fallback === "string" ? block.fallback.trim() : "";
-  return [title ? `### ${title}` : "", fallback].filter(Boolean).join("\n\n");
-}
-
-/** Coerce stored blocks (including legacy visual) into markdown-only PlanBlocks. */
-function normalizeBlocks(
-  rawBlocks: readonly LegacyPlanBlock[] | undefined,
-  content: string,
-): PlanBlock[] {
-  if (!Array.isArray(rawBlocks) || rawBlocks.length === 0) {
-    return [{ type: "markdown", content }];
-  }
-  return rawBlocks.map((block) =>
-    block.type === "markdown"
-      ? block
-      : { type: "markdown" as const, content: blockToMarkdown(block) },
-  );
 }
 
 function readMeta(dir: string): Partial<PlanMeta> | undefined {
@@ -80,7 +47,7 @@ function readPlanDir(dir: string): PlanRef | undefined {
   const path = typeof raw?.path === "string" ? raw.path : join(dir, PLAN_FILE);
   if (!raw || !existsSync(path)) return undefined;
   const content = readFileSync(path, "utf8");
-  const blocks = normalizeBlocks(raw.blocks as LegacyPlanBlock[] | undefined, content);
+  const blocks: PlanBlock[] = [{ type: "markdown", content }];
   return {
     id: raw.id ?? raw.sessionId ?? "legacy-plan",
     title: raw.title ?? "Plan",

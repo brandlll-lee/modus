@@ -10,8 +10,6 @@ import remarkBreaks from "remark-breaks";
 import type {
   AnimateOptions,
   Components,
-  CustomRenderer,
-  CustomRendererProps,
   MermaidErrorComponentProps,
   StreamdownProps,
 } from "streamdown";
@@ -28,7 +26,6 @@ import { FileRefChip, MarkdownFileCode } from "./FileRefChip";
 import { useMarkdownFileNav } from "./markdownFileNav";
 import { normalizeMathDelimiters } from "./normalizeMathDelimiters";
 import { Favicon } from "./toolIcons";
-import { VisualToolCard } from "./VisualToolCard";
 import { parseModusFileHref, rehypeWorkspaceFileLinks } from "./workspaceFileLinks";
 
 type MarkdownMessageRendererProps = {
@@ -166,24 +163,6 @@ function MermaidErrorSurface({ error }: MermaidErrorComponentProps) {
   );
 }
 
-/** Streamdown custom renderer: fenced html/svg grows via message.delta, not tool-arg dump. */
-function VisualFenceRenderer({ code, isIncomplete, language }: CustomRendererProps) {
-  return (
-    <VisualToolCard
-      args={{
-        title: "Visual",
-        kind: language === "svg" ? "svg" : "html",
-        content: code,
-      }}
-      isComplete={!isIncomplete}
-    />
-  );
-}
-
-const VISUAL_FENCE_RENDERERS: CustomRenderer[] = [
-  { language: ["html", "svg"], component: VisualFenceRenderer },
-];
-
 /* ── Controls ──────────────────────────────────────────────────────── */
 const controls = {
   code: {
@@ -301,7 +280,6 @@ export default function MarkdownMessageRenderer({
         code: codePlugin,
         math,
         mermaid: createMermaidPlugin({ config: mermaidConfig }),
-        renderers: VISUAL_FENCE_RENDERERS,
       }) satisfies NonNullable<StreamdownProps["plugins"]>,
     [codePlugin, mermaidConfig],
   );

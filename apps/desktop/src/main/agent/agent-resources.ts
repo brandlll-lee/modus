@@ -15,7 +15,6 @@ export async function createAgentResourceLoader(
   cwd: string,
   settingsManager: SettingsManager,
   extensionFactories: InlineExtension[],
-  hostPrompt: () => string[] = () => [],
 ): Promise<ResourceLoader> {
   async function load(
     options?: Parameters<ResourceLoader["reload"]>[0],
@@ -52,7 +51,7 @@ export async function createAgentResourceLoader(
       additionalPromptTemplatePaths: enabled(resources.prompts),
       additionalThemePaths: enabled(resources.themes),
       ...(systemPrompt ? { systemPrompt } : {}),
-      appendSystemPrompt: [...(append ? [append] : []), ...hostPrompt()],
+      appendSystemPrompt: append ? [append] : [],
       agentsFilesOverride: () => {
         const roots = [
           getPiCliAgentDir(),

@@ -78,15 +78,7 @@ export function useAgentEvents(
         event.type === "run.failed" ||
         event.type === "run.cancelled" ||
         event.type === "run.blocked" ||
-        event.type === "session.updated" ||
-        event.type === "subagent.started" ||
-        // Activity-only subagent.updated (writing/thinking/tool) must NOT list
-        // sessions — that re-rendered the whole app on every child token.
-        (event.type === "subagent.updated" &&
-          (event.status === "completed" ||
-            event.status === "failed" ||
-            event.status === "cancelled" ||
-            event.status === "blocked"))
+        event.type === "session.updated"
       ) {
         void refreshSessions();
       }

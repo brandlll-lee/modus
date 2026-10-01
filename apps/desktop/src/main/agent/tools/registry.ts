@@ -2,7 +2,6 @@ import type { ToolCallEvent, ToolDefinition, ToolInfo } from "@earendil-works/pi
 import type { PermissionAction } from "../../../shared/contracts";
 import {
   BUILTIN_TOOL_CATALOG,
-  type ToolCapability,
   type ToolCatalogEntry,
   type ToolProfileName,
 } from "../../../shared/tools";
@@ -27,8 +26,6 @@ export type ToolOverrides = {
   enable?: string[];
   disable?: string[];
 };
-
-const WRITE_CAPABILITIES = new Set<ToolCapability>(["write", "shell", "process"]);
 
 export type RegisterToolInput = {
   /** Catalog metadata; `kind` is forced to "custom". */
@@ -158,52 +155,6 @@ export class ToolRegistry {
     if (isRuntimeTool(definition)) return true;
     return (
       this.entryFor(name, definition, source)?.profiles.includes(profile) ?? profile === "chat"
-    );
-  }
-
-  capabilitiesFor(
-    name: string,
-    definition?: ToolDefinition,
-    source?: ToolInfo["sourceInfo"],
-  ): ToolCapability[] {
-    if (isRuntimeTool(definition)) return ["read"];
-    const entry = this.entryFor(name, definition, source);
-    if (!entry) {
-      return ["write"];
-    }
-    if (entry.capabilities) {
-      return entry.capabilities;
-    }
-    if (entry.readOnly === false || entry.permission.danger !== "safe") {
-      return ["write"];
-    }
-    return ["read"];
-  }
-
-  isReadOnlySafe(
-    name: string,
-    definition?: ToolDefinition,
-    source?: ToolInfo["sourceInfo"],
-  ): boolean {
-    return !this.capabilitiesFor(name, definition, source).some((capability) =>
-      WRITE_CAPABILITIES.has(capability),
-    );
-  }
-
-  matchesSelector(
-    name: string,
-    selector: string,
-    definition?: ToolDefinition,
-    source?: ToolInfo["sourceInfo"],
-  ): boolean {
-    const normalized = selector.trim();
-    if (!normalized) {
-      return false;
-    }
-    if (this.entries.has(normalized)) return name === normalized;
-    return (
-      name === normalized ||
-      this.capabilitiesFor(name, definition, source).includes(normalized as ToolCapability)
     );
   }
 }

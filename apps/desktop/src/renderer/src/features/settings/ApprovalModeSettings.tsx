@@ -42,7 +42,7 @@ function settingsProjectTabs(
 }
 
 /**
- * Approval mode settings — same scope UX as MCP/Subagents:
+ * Approval mode settings — same scope UX as MCP:
  * Home = global default; project tabs = optional override. One mode list at a time.
  */
 export function ApprovalModeSettings({ cwd, workspaces = [] }: ApprovalModeSettingsProps) {
@@ -121,7 +121,7 @@ export function ApprovalModeSettings({ cwd, workspaces = [] }: ApprovalModeSetti
 
   return (
     <div className="flex flex-col gap-6">
-      {/* Same tab chrome as MCP / Subagents */}
+      {/* Same tab chrome as MCP */}
       <div className="flex flex-wrap items-center gap-1">
         <button
           className={cn(

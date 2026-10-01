@@ -47,7 +47,7 @@ export function resolvePanelLayout({
 
 export function usePanelLayout(hasWorkspace: boolean) {
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [sidebarWidth, setSidebarWidth] = useState(290);
+  const [sidebarWidth, setSidebarWidth] = useState(240);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [inspectorWidth, setInspectorWidth] = useState(384);
   const [layoutWidth, setLayoutWidth] = useState(0);

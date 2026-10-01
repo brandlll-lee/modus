@@ -44,16 +44,7 @@ export type ToolCapability = "read" | "write" | "shell" | "network" | "process";
  * - `todo`: rendered as the live to-do list, not as a tool row.
  * - `question`: a collapsible "Asked N questions" card listing each question + the chosen answer.
  */
-export type ToolRenderKind =
-  | "flat"
-  | "diff"
-  | "terminal"
-  | "live"
-  | "todo"
-  | "plan"
-  | "question"
-  | "subagent"
-  | "visual";
+export type ToolRenderKind = "flat" | "diff" | "terminal" | "live" | "todo" | "plan" | "question";
 
 /**
  * How a `render: "diff"` tool's diff is derived from its call arguments.
@@ -287,15 +278,6 @@ export const FAST_CODEBASE_TOOL_UI: ToolUiMeta = {
   render: "live",
 };
 
-/** Agent-facing inline custom visual tool. */
-export const VISUAL_TOOL_NAME = "visual_write";
-/** UI metadata for inline custom visuals (Claude-style temporary widgets). */
-export const VISUAL_TOOL_UI: ToolUiMeta = {
-  verb: "Visual",
-  primaryArgKey: "title",
-  render: "visual",
-};
-
 /** Agent-facing to-do tool (custom tool registered at runtime). */
 export const TODO_TOOL_NAME = "todo_write";
 /** UI metadata for the to-do tool (its calls render as the live TodosCard). */
@@ -325,30 +307,6 @@ export const ASK_USER_TOOL_UI: ToolUiMeta = {
   verb: "Asking",
   render: "question",
   groupInTimeline: false,
-};
-
-/** Agent-facing subagent delegation tool (custom tool registered at runtime). */
-export const SUBAGENT_TOOL_NAMES = ["task"] as const;
-
-export type SubagentToolName = (typeof SUBAGENT_TOOL_NAMES)[number];
-
-export const SUBAGENT_TOOL_UI: Record<SubagentToolName, ToolUiMeta> = {
-  task: {
-    verb: "Started subagent",
-    primaryArgKey: "description",
-    render: "subagent",
-  },
-};
-
-/**
- * Same-turn wait for background subagents / terminals. Verb flips in the
- * renderer: running → "Waiting", complete → "Waited".
- */
-export const WAIT_TOOL_NAME = "wait";
-
-export const WAIT_TOOL_UI: ToolUiMeta = {
-  verb: "Waited",
-  primaryArgKey: "timeout_ms",
 };
 
 /** Agent-facing web tool names (custom tools registered at runtime). */
@@ -425,16 +383,11 @@ export function getToolUiMeta(name: string): ToolUiMeta | undefined {
   if (name === ASK_USER_TOOL_NAME) {
     return ASK_USER_TOOL_UI;
   }
-  if (name === WAIT_TOOL_NAME) {
-    return WAIT_TOOL_UI;
-  }
   return (
     getBuiltinToolUiMeta(name) ??
     TERMINAL_TOOL_UI[name as TerminalToolName] ??
     APP_TOOL_UI[name as AppToolName] ??
     (name === FAST_CODEBASE_TOOL_NAME ? FAST_CODEBASE_TOOL_UI : undefined) ??
-    (name === VISUAL_TOOL_NAME ? VISUAL_TOOL_UI : undefined) ??
-    SUBAGENT_TOOL_UI[name as SubagentToolName] ??
     WEB_TOOL_UI[name as WebToolName] ??
     BROWSER_TOOL_UI[name as BrowserToolName]
   );

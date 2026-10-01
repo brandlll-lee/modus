@@ -1,12 +1,7 @@
 import { IconChevronRight } from "@tabler/icons-react";
 import { memo, type ReactNode, useEffect, useRef, useState } from "react";
 import type { PlanRef, QuestionAnswer, QuestionRequest } from "../../../../shared/contracts";
-import {
-  getToolUiMeta,
-  type ToolUiMeta,
-  toolRenderKind,
-  WAIT_TOOL_NAME,
-} from "../../../../shared/tools";
+import { getToolUiMeta, type ToolUiMeta, toolRenderKind } from "../../../../shared/tools";
 import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
 import { ShinyText } from "../../components/ui/ShinyText";
 import { cn } from "../../lib/cn";
@@ -15,7 +10,6 @@ import { DiffToolCard } from "./diff/DiffToolCard";
 import { QuestionToolCard } from "./QuestionToolCard";
 import { TerminalToolCard } from "./terminal/TerminalToolCard";
 import { toolIcon } from "./toolIcons";
-import { VisualToolCard } from "./VisualToolCard";
 
 type ToolCardProps = {
   name: string;
@@ -121,10 +115,6 @@ export const ToolCard = memo(
           {...(plan ? { plan } : {})}
         />
       );
-    }
-
-    if (render === "visual") {
-      return <VisualToolCard args={args} isComplete={isComplete} isError={isError} />;
     }
 
     return (
@@ -333,14 +323,8 @@ function FlatToolRow({
   );
 }
 
-function describeTool(name: string, args: unknown, running = false, output = ""): ToolView {
+function describeTool(name: string, args: unknown, _running = false, _output = ""): ToolView {
   const a = (args && typeof args === "object" ? args : {}) as Record<string, unknown>;
-  if (name === WAIT_TOOL_NAME) {
-    if (running) {
-      return { verb: "Waiting", target: "" };
-    }
-    return { verb: "Waited", target: waitedTargetLabel(output) };
-  }
   const meta = getToolUiMeta(name);
   if (!meta) {
     return { verb: humanize(name), target: bestEffortArg(a) };
@@ -373,7 +357,7 @@ function describeTool(name: string, args: unknown, running = false, output = "")
 }
 
 /** Everything after the verb on the wait tool's authoritative first line. */
-function waitedTargetLabel(output: string): string {
+function _waitedTargetLabel(output: string): string {
   const first =
     output
       .split(/\r?\n/)

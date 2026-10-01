@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { app } from "electron";
+import { migrateSessionSchema } from "./session-schema";
 
 let database: DatabaseSync | undefined;
 
@@ -143,27 +144,9 @@ function migrate(db: DatabaseSync): void {
   addColumn(db, "agent_sessions", "model", "text");
   addColumn(db, "agent_sessions", "pi_session_id", "text");
   addColumn(db, "agent_sessions", "pi_session_file", "text");
-  addColumn(
-    db,
-    "agent_sessions",
-    "parent_session_id",
-    "text references agent_sessions(id) on delete cascade",
-  );
-  addColumn(db, "agent_sessions", "subagent_task", "text");
-  addColumn(db, "agent_sessions", "subagent_type", "text");
-  addColumn(db, "agent_sessions", "subagent_readonly", "integer not null default 0");
-  addColumn(db, "agent_sessions", "subagent_worktree_path", "text");
-  addColumn(db, "agent_sessions", "subagent_worktree_branch", "text");
-  addColumn(db, "agent_sessions", "subagent_worktree_base_sha", "text");
-  addColumn(db, "agent_sessions", "subagent_integration_status", "text");
-  addColumn(db, "agent_sessions", "subagent_changed_files_json", "text");
-  addColumn(db, "agent_sessions", "subagent_conflict_files_json", "text");
   addColumn(db, "agent_sessions", "pinned_at", "text");
   addColumn(db, "agent_sessions", "archived_at", "text");
-  db.exec(`
-    create index if not exists idx_agent_sessions_parent
-      on agent_sessions(parent_session_id);
-  `);
+  migrateSessionSchema(db);
   // Sidebar project pinning: pinned projects sort to the top (pinned_at breaks ties).
   addColumn(db, "workspaces", "pinned", "integer not null default 0");
   addColumn(db, "workspaces", "pinned_at", "text");

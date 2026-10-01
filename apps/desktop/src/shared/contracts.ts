@@ -19,11 +19,6 @@ export type AgentSessionInfo = {
   thinkingLevel?: ThinkingLevel;
   piSessionId?: string;
   piSessionFile?: string;
-  parentSessionId?: string;
-  subagentTask?: string;
-  subagentType?: string;
-  subagentReadOnly?: boolean;
-  subagentWorktree?: SubagentWorktreeInfo;
   pinnedAt?: string;
   archivedAt?: string;
   createdAt: string;
@@ -31,15 +26,6 @@ export type AgentSessionInfo = {
 };
 
 export type AgentRunStatus = "running" | "completed" | "failed" | "blocked" | "cancelled";
-
-export type SubagentWorktreeInfo = {
-  path: string;
-  branch: string;
-  baseSha: string;
-  integrationStatus: "running" | "ready" | "no_changes" | "applied" | "conflict" | "cleaned";
-  changedFiles?: string[];
-  conflictFiles?: string[];
-};
 
 export type PromptDelivery = "normal" | "steer" | "follow-up";
 
@@ -56,6 +42,13 @@ export type ContextUsageInfo = {
   tokens: number | null;
   contextWindow: number;
   percent: number | null;
+  totals?: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    cost: number;
+  };
 };
 
 /** Why PI started/finished an auto or manual compaction (authoritative from the SDK). */
@@ -203,13 +196,6 @@ export type SessionRunStatus =
       nextAt: number;
     };
 
-export type SubagentActivity =
-  | { kind: "tool"; name: string }
-  | { kind: "thinking" }
-  | { kind: "writing" };
-
-export type SubagentStatus = "running" | "completed" | "failed" | "blocked" | "cancelled";
-
 export type AgentEvent =
   | { type: "agent.started"; sessionId: string }
   | { type: "agent.ended"; sessionId: string }
@@ -335,21 +321,6 @@ export type AgentEvent =
   | { type: "checkpoint.created"; sessionId: string; checkpoint: CheckpointInfo }
   | { type: "checkpoint.restored"; sessionId: string; checkpointId: string }
   | { type: "todos.updated"; sessionId: string; todos: TodoItem[] }
-  | {
-      type: "subagent.started";
-      sessionId: string;
-      childSessionId: string;
-      task: string;
-      subagentType: string;
-      model?: string;
-    }
-  | {
-      type: "subagent.updated";
-      sessionId: string;
-      childSessionId: string;
-      status: SubagentStatus;
-      activity?: SubagentActivity;
-    }
   | { type: "session.status"; sessionId: string; status: SessionRunStatus }
   | { type: "session.updated"; sessionId: string; title: string }
   | {
@@ -1142,7 +1113,7 @@ export type PlanRef = {
   hash: string;
   workspaceId: string;
   sessionId: string;
-  /** Markdown presentation blocks (normalized; legacy visual blocks are projected to text). */
+  /** Markdown presentation blocks. */
   blocks: PlanBlock[];
   /** Markdown plan body — executor source of truth (`plan.md`). */
   content: string;
@@ -1191,39 +1162,4 @@ export type SkillInfo = {
 export type SkillState = {
   skills: SkillInfo[];
   diagnostics: Array<{ type: "warning" | "error" | "collision"; message: string; path?: string }>;
-};
-
-export type SubagentInfo = {
-  name: string;
-  description: string;
-  scope: ConfigScope;
-  source: string;
-  path: string;
-  model: string;
-  readOnly: boolean;
-  tools?: string[];
-  disallowedTools?: string[];
-  isolation: "shared" | "worktree";
-  editable: boolean;
-  deletable: boolean;
-};
-
-export type SubagentDetail = SubagentInfo & { body: string };
-
-export type CreateSubagentInput = {
-  cwd: string;
-  /** New subagents are written to the selected agents folder. */
-  scope?: ConfigScope | undefined;
-  name: string;
-  description: string;
-  model?: string;
-  readOnly: boolean;
-  tools?: string[];
-  disallowedTools?: string[];
-  isolation?: "shared" | "worktree";
-  body: string;
-};
-
-export type UpdateSubagentInput = CreateSubagentInput & {
-  path: string;
 };

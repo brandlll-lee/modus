@@ -5,7 +5,6 @@ import {
   IconPlugConnected,
   IconServerCog,
   IconSettings,
-  IconUser,
 } from "@tabler/icons-react";
 import { type ReactNode, useState } from "react";
 import type { ModelSettingsState, WorkspaceInfo } from "../../../../shared/contracts";
@@ -16,7 +15,6 @@ import { GeneralSettingsPanel } from "./GeneralSettingsPanel";
 import { McpSettingsPanel } from "./McpSettingsPanel";
 import { ProviderSettingsPanel } from "./ProviderSettingsPanel";
 import { SkillsSettingsPanel } from "./SkillsSettingsPanel";
-import { SubagentsSettingsPanel } from "./SubagentsSettingsPanel";
 
 type SettingsPanelProps = {
   sessionId?: string | undefined;
@@ -27,13 +25,7 @@ type SettingsPanelProps = {
   workspaces?: WorkspaceInfo[] | undefined;
 };
 
-type SettingsSectionId =
-  | "general"
-  | "model-provider"
-  | "appearance"
-  | "skills"
-  | "subagents"
-  | "mcp";
+type SettingsSectionId = "general" | "model-provider" | "appearance" | "skills" | "mcp";
 const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   id: SettingsSectionId;
   label: string;
@@ -48,7 +40,6 @@ const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   { id: "appearance", label: "Appearance", icon: <IconPalette size={16} stroke={1.7} /> },
   { id: "mcp", label: "MCP", icon: <IconPlugConnected size={16} stroke={1.7} /> },
   { id: "skills", label: "Skills", icon: <IconCube size={16} stroke={1.7} /> },
-  { id: "subagents", label: "Subagents", icon: <IconUser size={16} stroke={1.7} /> },
 ];
 
 export function SettingsPanel({
@@ -84,9 +75,6 @@ export function SettingsPanel({
           ) : null}
           {activeSection === "mcp" ? (
             <McpSettingsPanel cwd={workspaceCwd} sessionId={sessionId} />
-          ) : null}
-          {activeSection === "subagents" ? (
-            <SubagentsSettingsPanel cwd={workspaceCwd} workspaces={workspaces} />
           ) : null}
         </div>
       </main>

@@ -35,7 +35,6 @@ Modus 还很早期，目前推荐从源码运行。
 - **Git 工作流** - 查看工作区改动、文件 diff、分支、提交历史、commit、push 和会话改动统计。
 - **Terminal、Browser 和 Files** - 使用真实 PTY 终端、带 tab 和 DevTools 的内置浏览器，以及 workspace 文件浏览器。
 - **Fast Codebase** - Agent 先构建紧凑的本地代码地图，再读取文件，减少大范围 grep/read 探索。
-- **Subagents** - 创建专用子 Agent，跟踪活动，并应用或清理它们的 worktree。
 - **Plan 和 Build 模式** - 先生成可审查计划、回答结构化问题，再进入实现。
 - **Context 和图片** - 挂载文件、文件夹、docs、Git diff、终端输出、浏览器状态、选中的页面元素、rules 和图片。
 - **MCP、Skills 和 Rules** - 加载 Modus MCP server，用 `/` 调用本地 skills，并读取 AGENTS/Claude/Cursor 风格规则文件。

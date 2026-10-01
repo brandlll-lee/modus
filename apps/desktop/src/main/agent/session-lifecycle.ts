@@ -8,7 +8,6 @@ import {
   getAgentSession,
   listAgentSessions,
   listArchivedAgentSessions,
-  listSubagentSessions,
   setAgentSessionArchived,
 } from "./agent-store";
 import { deleteSessionCheckpoints } from "./checkpoint-service";
@@ -22,10 +21,7 @@ import { getAgentRuntime } from "./runtime-registry";
  * workspace-level "Delete chats" / "Remove project" so they can never leave
  * orphaned runtimes or checkpoints behind.
  */
-export async function deleteAgentSessionTree(sessionId: string): Promise<void> {
-  for (const child of listSubagentSessions(sessionId)) {
-    await deleteAgentSessionTree(child.id);
-  }
+export async function removeAgentSession(sessionId: string): Promise<void> {
   await getAgentRuntime().dispose(sessionId);
   const session = getAgentSession(sessionId);
   if (session) {
@@ -37,23 +33,10 @@ export async function deleteAgentSessionTree(sessionId: string): Promise<void> {
   deleteAgentSession(sessionId);
 }
 
-export async function setAgentSessionArchivedTree(
-  sessionId: string,
-  archived: boolean,
-): Promise<void> {
-  for (const child of listSubagentSessions(sessionId)) {
-    await setAgentSessionArchivedTree(child.id, archived);
-  }
-  setAgentSessionArchived(sessionId, archived);
-}
-
-/** Soft-archive visible root sessions in a workspace. Returns the count changed. */
 export async function archiveWorkspaceSessions(workspaceId: string): Promise<number> {
-  const sessions = listAgentSessions().filter(
-    (session) => session.workspaceId === workspaceId && !session.parentSessionId,
-  );
+  const sessions = listAgentSessions().filter((session) => session.workspaceId === workspaceId);
   for (const session of sessions) {
-    await setAgentSessionArchivedTree(session.id, true);
+    setAgentSessionArchived(session.id, true);
   }
   return sessions.length;
 }
@@ -61,10 +44,10 @@ export async function archiveWorkspaceSessions(workspaceId: string): Promise<num
 /** Permanently delete every session belonging to a workspace. Returns the count removed. */
 export async function deleteWorkspaceSessions(workspaceId: string): Promise<number> {
   const sessions = [...listAgentSessions(), ...listArchivedAgentSessions(workspaceId)].filter(
-    (session) => session.workspaceId === workspaceId && !session.parentSessionId,
+    (session) => session.workspaceId === workspaceId,
   );
   for (const session of sessions) {
-    await deleteAgentSessionTree(session.id);
+    await removeAgentSession(session.id);
   }
   return sessions.length;
 }

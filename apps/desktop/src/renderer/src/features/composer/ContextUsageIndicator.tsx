@@ -22,7 +22,7 @@ export function ContextUsageIndicator({
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Positioner align="end" side="top" sideOffset={8}>
-          <Popover.Popup className="origin-(--transform-origin) popup-chrome p-2 transition-[transform,opacity] duration-100 data-ending-style:opacity-0 data-starting-style:opacity-0">
+          <Popover.Popup className="origin-(--transform-origin) popup-chrome max-w-[calc(100vw-32px)] p-3 transition-[transform,opacity] duration-100 data-ending-style:opacity-0 data-starting-style:opacity-0">
             <ContextUsageTooltip
               {...(contextWindow ? { contextWindow } : {})}
               {...(usage ? { usage } : {})}
@@ -48,42 +48,40 @@ function ContextUsageTooltip({
       ? `${usage.tokens.toLocaleString()} / ${usageWindow.toLocaleString()} tokens`
       : undefined;
 
-  if (total === undefined && !tokenLine) {
-    return (
-      <div className="w-[260px] px-1 py-1.5 text-sm text-fg">
-        <div className="mb-1 font-medium text-fg-muted">Context usage</div>
-        <div className="text-fg-faint text-xs">No context usage yet.</div>
-        {usageWindow ? (
-          <div className="mt-2 text-2xs text-fg-faint">
-            Context window {usageWindow.toLocaleString()} tokens
-          </div>
-        ) : null}
-      </div>
-    );
-  }
-
   return (
-    <div className="w-[320px] px-1 py-1.5 text-sm text-fg">
-      <div className="mb-2 font-medium text-fg-muted">Context usage</div>
-      <ContextUsageRow label="Total" strong value={formatUsagePercent(total)} />
-      {tokenLine ? <div className="mt-2 text-xs text-fg-faint">{tokenLine}</div> : null}
+    <div className="w-[260px] max-w-full text-sm text-fg tabular-nums">
+      <Popover.Title className="mb-2 font-medium">Context usage</Popover.Title>
+      <ContextUsageRow label="Current context" value={formatUsagePercent(total)} />
+      <div className="mt-1 text-xs text-fg-subtle">
+        {tokenLine ??
+          (usageWindow ? `Not measured / ${usageWindow.toLocaleString()} tokens` : "Not measured")}
+      </div>
+      <div className="mt-3 border-t border-hairline pt-3">
+        <div className="mb-1 text-xs text-fg-subtle">Session totals</div>
+        <ContextUsageRow label="Input" value={usage?.totals?.input.toLocaleString() ?? "—"} />
+        <ContextUsageRow label="Output" value={usage?.totals?.output.toLocaleString() ?? "—"} />
+        <ContextUsageRow
+          label="Cache read (R)"
+          value={usage?.totals?.cacheRead.toLocaleString() ?? "—"}
+        />
+        <ContextUsageRow
+          label="Cache write (W)"
+          value={usage?.totals?.cacheWrite.toLocaleString() ?? "—"}
+        />
+        <ContextUsageRow
+          label="Cost"
+          value={usage?.totals ? `$${usage.totals.cost.toFixed(3)}` : "—"}
+        />
+      </div>
     </div>
   );
 }
 
-function ContextUsageRow({
-  label,
-  strong = false,
-  value,
-}: {
-  label: string;
-  strong?: boolean;
-  value: string;
-}) {
+function ContextUsageRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-center justify-between gap-6 py-1">
-      <span className={strong ? "font-semibold text-fg" : "text-fg-muted"}>{label}</span>
-      <span className={strong ? "font-semibold text-fg" : "text-fg"}>{value}</span>
+      <span className="text-fg-muted">{label}</span>
+      <span>{value}</span>
     </div>
   );
 }

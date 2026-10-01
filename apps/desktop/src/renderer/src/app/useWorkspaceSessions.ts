@@ -37,7 +37,7 @@ export function useWorkspaceSessions(setSettingsOpen: (open: boolean) => void) {
     [activeSessionId, agentSessions],
   );
   const rootSessions = useMemo(
-    () => agentSessions.filter((session) => !session.parentSessionId && !session.archivedAt),
+    () => agentSessions.filter((session) => !session.archivedAt),
     [agentSessions],
   );
 

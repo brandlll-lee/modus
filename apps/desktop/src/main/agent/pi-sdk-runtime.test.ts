@@ -1,6 +1,5 @@
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -138,11 +137,7 @@ vi.mock("./model-service", () => ({
 const { getDatabase } = await import("../db/database");
 const { PiSdkRuntime } = await import("./pi-sdk-runtime");
 const { toolRegistry } = await import("./tools/registry");
-const { deleteAgentSessionTree } = await import("./session-lifecycle");
-const { recordAgentEvent } = await import("./agent-event-store");
-const { getAgentSession } = await import("./agent-store");
 const { writePlan, readPlanById } = await import("../plan/plan-store");
-const { setAgentToolContext } = await import("./tools/tool-context");
 
 function createMockPiSession(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -168,10 +163,10 @@ function createMockPiSession(overrides: Record<string, unknown> = {}): Record<st
     getActiveToolNames: () => toolRegistry.resolveActiveTools("chat"),
     cycleModel: vi.fn(async () => ({ model: mocks.model })),
     dispose: vi.fn(),
-    getContextUsage: vi.fn(() => ({
-      contextWindow: 1000,
-      percent: 24,
-      tokens: 240,
+    getSessionStats: vi.fn(() => ({
+      contextUsage: { contextWindow: 1000, percent: 24, tokens: 240 },
+      tokens: { input: 1200, output: 300, cacheRead: 800, cacheWrite: 40 },
+      cost: 0.071604,
     })),
     model: mocks.model,
     prompt: vi.fn(async () => undefined),
@@ -228,36 +223,6 @@ function insertSession(
   );
 }
 
-function insertSubagentSession(
-  sessionId: string,
-  parentSessionId: string,
-  workspaceId: string,
-): void {
-  const now = new Date().toISOString();
-  getDatabase()
-    .prepare(
-      `insert into agent_sessions (
-        id, workspace_id, title, cwd, status, runtime, model, parent_session_id,
-        subagent_task, subagent_type, created_at, updated_at
-       )
-       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      sessionId,
-      workspaceId,
-      "child",
-      cwd,
-      "idle",
-      "pi-sdk",
-      "mock/model",
-      parentSessionId,
-      "child task",
-      "worker",
-      now,
-      now,
-    );
-}
-
 async function initGitRepo(): Promise<void> {
   await execFileAsync("git", ["init"], { cwd, windowsHide: true });
   await execFileAsync("git", ["config", "user.email", "test@example.com"], { cwd });
@@ -289,17 +254,6 @@ afterAll(async () => {
 });
 
 describe("PiSdkRuntime", () => {
-  it("registers task and wait for same-turn background work", () => {
-    new PiSdkRuntime();
-
-    expect(toolRegistry.resolveActiveTools("chat")).toContain("task");
-    expect(toolRegistry.resolveActiveTools("chat")).toContain("wait");
-    expect(toolRegistry.resolveActiveTools("chat")).not.toContain("list_agents");
-    expect(toolRegistry.resolveActiveTools("chat")).not.toContain("send_message");
-    expect(toolRegistry.resolveActiveTools("chat")).not.toContain("wait_agent");
-    expect(toolRegistry.resolveActiveTools("chat")).not.toContain("close_agent");
-  });
-
   it("compacts an idle session without creating a prompt run", async () => {
     const sessionId = `session-${crypto.randomUUID()}`;
     insertSession(sessionId, `workspace-${crypto.randomUUID()}`, join(userData, "missing.jsonl"));
@@ -409,170 +363,6 @@ describe("PiSdkRuntime", () => {
     expect(types).toContain("run.completed");
   });
 
-  it("activates plan_write without visual_write in plan mode", async () => {
-    const sessionId = `session-${crypto.randomUUID()}`;
-    const workspaceId = `workspace-${crypto.randomUUID()}`;
-    insertSession(sessionId, workspaceId, join(userData, "missing.jsonl"), "New chat");
-    const session = createMockPiSession({
-      prompt: vi.fn(async () => {
-        mocks.emitPiEvent({ type: "message_start", message: { role: "assistant" } });
-        mocks.emitPiEvent({
-          type: "message_update",
-          message: { role: "assistant" },
-          assistantMessageEvent: { type: "text_delta", delta: "plan complete" },
-        });
-        mocks.emitPiEvent({ type: "message_end", message: { role: "assistant" } });
-      }),
-    });
-    mocks.createAgentSession.mockImplementationOnce(async () => ({ session }));
-    const runtime = new PiSdkRuntime();
-
-    await runtime.prompt(createWindowStub(), {
-      context: [],
-      delivery: "normal",
-      message: "plan this",
-      mode: "plan",
-      sessionId,
-      userMessageId: "local-user-plan-tools",
-    });
-
-    expect(session.setActiveToolsByName).toHaveBeenCalledWith(
-      expect.arrayContaining(["plan_write"]),
-    );
-    const setActiveToolsByName = session.setActiveToolsByName as ReturnType<typeof vi.fn>;
-    const activeTools = setActiveToolsByName.mock.calls.at(-1)?.[0] as string[];
-    expect(activeTools).not.toContain("visual_write");
-  });
-
-  it("task tool returns immediately; wait harvests the child output", async () => {
-    const parentSessionId = `session-${crypto.randomUUID()}`;
-    const workspaceId = `workspace-${crypto.randomUUID()}`;
-    insertSession(parentSessionId, workspaceId, join(userData, "missing.jsonl"), "Parent chat");
-    const agentsDir = join(cwd, ".modus", "agents");
-    await mkdir(agentsDir, { recursive: true });
-    await writeFile(
-      join(agentsDir, "security-auditor.md"),
-      "---\nname: security-auditor\n---\nSecurity reviewer.",
-      "utf8",
-    );
-    let releaseChild: (() => void) | undefined;
-    mocks.createAgentSession.mockImplementationOnce(async () => ({
-      session: createMockPiSession({
-        prompt: vi.fn(
-          () =>
-            new Promise<void>((resolve) => {
-              releaseChild = () => {
-                mocks.emitPiEvent({ type: "message_start", message: { role: "assistant" } });
-                mocks.emitPiEvent({
-                  type: "message_update",
-                  message: { role: "assistant" },
-                  assistantMessageEvent: { type: "text_delta", delta: "audit complete" },
-                });
-                mocks.emitPiEvent({ type: "message_end", message: { role: "assistant" } });
-                resolve();
-              };
-            }),
-        ),
-      }),
-    }));
-    new PiSdkRuntime();
-    const window = createWindowStub();
-    setAgentToolContext({ workspaceId, cwd, sessionId: parentSessionId, window });
-    const tools = toolRegistry.getCustomToolDefinitions("chat");
-    const taskTool = tools.find((definition) => definition.name === "task") as {
-      execute(
-        toolCallId: string,
-        params: { description: string; prompt: string; subagent?: string },
-        signal: AbortSignal,
-        onUpdate: undefined,
-        ctx: { cwd: string },
-      ): Promise<{ content: Array<{ type: "text"; text: string }> }>;
-    };
-    const waitTool = tools.find((definition) => definition.name === "wait") as {
-      execute(
-        toolCallId: string,
-        params: { timeout_ms?: number },
-        signal: AbortSignal,
-        onUpdate: undefined,
-        ctx: { cwd: string },
-      ): Promise<{ content: Array<{ type: "text"; text: string }> }>;
-    };
-
-    const started = await taskTool.execute(
-      "task-call",
-      {
-        description: "Audit auth",
-        prompt: "Audit login.",
-        subagent: "security-auditor",
-      },
-      new AbortController().signal,
-      undefined,
-      { cwd },
-    );
-    expect(started.content[0]?.text).toContain("Background task started");
-    expect(started.content[0]?.text).not.toContain("audit complete");
-
-    await vi.waitFor(() => expect(releaseChild).toBeTypeOf("function"));
-    const waiting = waitTool.execute(
-      "wait-1",
-      { timeout_ms: 5_000 },
-      new AbortController().signal,
-      undefined,
-      { cwd },
-    );
-    releaseChild?.();
-    const waited = await waiting;
-    expect(waited.content[0]?.text).toContain("audit complete");
-  });
-
-  it("falls back unknown subagent names to generic task type and still spawns async", async () => {
-    const parentSessionId = `session-${crypto.randomUUID()}`;
-    const workspaceId = `workspace-${crypto.randomUUID()}`;
-    insertSession(parentSessionId, workspaceId, join(userData, "missing.jsonl"), "Parent chat");
-    mocks.createAgentSession.mockImplementationOnce(async () => ({
-      session: createMockPiSession({
-        prompt: vi.fn(async () => {
-          mocks.emitPiEvent({ type: "message_start", message: { role: "assistant" } });
-          mocks.emitPiEvent({
-            type: "message_update",
-            message: { role: "assistant" },
-            assistantMessageEvent: { type: "text_delta", delta: "generic task complete" },
-          });
-          mocks.emitPiEvent({ type: "message_end", message: { role: "assistant" } });
-        }),
-      }),
-    }));
-    new PiSdkRuntime();
-    const window = createWindowStub();
-    setAgentToolContext({ workspaceId, cwd, sessionId: parentSessionId, window });
-    const taskTool = toolRegistry
-      .getCustomToolDefinitions("chat")
-      .find((definition) => definition.name === "task") as {
-      execute(
-        toolCallId: string,
-        params: { description: string; prompt: string; subagent?: string },
-        signal: AbortSignal,
-        onUpdate: undefined,
-        ctx: { cwd: string },
-      ): Promise<{ content: Array<{ type: "text"; text: string }> }>;
-    };
-
-    const result = await taskTool.execute(
-      "task-call",
-      { description: "Check files", prompt: "Check the files.", subagent: "general-purpose" },
-      new AbortController().signal,
-      undefined,
-      { cwd },
-    );
-
-    expect(result.content[0]?.text).toContain("Background task started");
-    expect(
-      getDatabase()
-        .prepare("select subagent_type from agent_sessions where parent_session_id = ?")
-        .get(parentSessionId),
-    ).toEqual({ subagent_type: "task" });
-  });
-
   it("creates new sessions directly in the workspace checkout", async () => {
     const workspaceId = `workspace-${crypto.randomUUID()}`;
     const now = new Date().toISOString();
@@ -671,31 +461,6 @@ describe("PiSdkRuntime", () => {
     expect(row.updated_at).toBe("2026-01-01T00:00:00.000Z");
   });
 
-  it("releaseRuntime drops the SDK session without cancelling descendant DB rows", async () => {
-    const parentSessionId = `session-${crypto.randomUUID()}`;
-    const childSessionId = `session-${crypto.randomUUID()}`;
-    const workspaceId = `workspace-${crypto.randomUUID()}`;
-    insertSession(parentSessionId, workspaceId, join(userData, "missing.jsonl"), "Parent");
-    insertSubagentSession(childSessionId, parentSessionId, workspaceId);
-
-    const parentPi = createMockPiSession({ sessionId: "pi-parent" });
-    mocks.createAgentSession.mockImplementationOnce(async () => ({ session: parentPi }));
-    const runtime = new PiSdkRuntime();
-    const window = createWindowStub();
-    await runtime.ensure(window, parentSessionId);
-    expect(parentPi.dispose).not.toHaveBeenCalled();
-
-    await runtime.releaseRuntime(parentSessionId);
-
-    expect(parentPi.dispose).toHaveBeenCalled();
-    expect(mocks.listManagedProcesses).not.toHaveBeenCalled();
-    expect(mocks.killManagedProcess).not.toHaveBeenCalled();
-    const child = getDatabase()
-      .prepare("select status from agent_sessions where id = ?")
-      .get(childSessionId) as { status: string };
-    expect(child.status).toBe("idle");
-  });
-
   it("records the user prompt as persisted message events before running PI", async () => {
     const sessionId = `session-${crypto.randomUUID()}`;
     const workspaceId = `workspace-${crypto.randomUUID()}`;
@@ -739,8 +504,10 @@ describe("PiSdkRuntime", () => {
       delta: "介绍一下你自己",
     });
     await vi.waitFor(() => expect(mocks.createAgentSession).toHaveBeenCalled());
-    resolveBacking({ session: createMockPiSession() });
+    const backing = createMockPiSession();
+    resolveBacking({ session: backing });
     await promptPromise;
+    expect(backing.prompt).toHaveBeenCalledWith("介绍一下你自己", { source: "rpc" });
     const allRows = getDatabase()
       .prepare(
         "select type from agent_events where session_id = ? order by created_at asc, rowid asc",
@@ -758,7 +525,7 @@ describe("PiSdkRuntime", () => {
     });
   });
 
-  it("publishes context usage snapshots without persisting them to the timeline", async () => {
+  it("publishes SDK context and cumulative usage when a session is restored", async () => {
     const sessionId = `session-${crypto.randomUUID()}`;
     const workspaceId = `workspace-${crypto.randomUUID()}`;
     insertSession(sessionId, workspaceId, join(userData, "missing.jsonl"));
@@ -774,12 +541,49 @@ describe("PiSdkRuntime", () => {
         contextWindow: 1000,
         percent: 24,
         tokens: 240,
+        totals: { input: 1200, output: 300, cacheRead: 800, cacheWrite: 40, cost: 0.071604 },
       },
     });
     const rows = getDatabase()
       .prepare("select type from agent_events where session_id = ?")
       .all(sessionId) as Array<{ type: string }>;
     expect(rows.map((row) => row.type)).not.toContain("context.updated");
+  });
+
+  it("keeps cumulative usage while PI measures context again after compaction", async () => {
+    const sessionId = `session-${crypto.randomUUID()}`;
+    insertSession(sessionId, `workspace-${crypto.randomUUID()}`, join(userData, "missing.jsonl"));
+    const stats = {
+      contextUsage: {
+        tokens: null as number | null,
+        percent: null as number | null,
+        contextWindow: 1000,
+      },
+      tokens: { input: 3000, output: 1000, cacheRead: 2000, cacheWrite: 500 },
+      cost: 0.125,
+    };
+    const backing = createMockPiSession({ getSessionStats: () => stats });
+    mocks.createAgentSession.mockImplementationOnce(async () => ({ session: backing }));
+    const runtime = new PiSdkRuntime();
+    const window = createWindowStub();
+    await runtime.ensure(window, sessionId);
+    expect(window.webContents.send).toHaveBeenCalledWith("agent:event", {
+      type: "context.updated",
+      sessionId,
+      usage: { ...stats.contextUsage, totals: { ...stats.tokens, cost: stats.cost } },
+    });
+    stats.contextUsage = { tokens: 180, percent: 9, contextWindow: 2000 };
+    stats.tokens.output = 1100;
+    mocks.emitPiEvent({
+      type: "message_end",
+      message: { role: "assistant", content: [], stopReason: "stop" },
+    });
+    expect(window.webContents.send).toHaveBeenCalledWith("agent:event", {
+      type: "context.updated",
+      sessionId,
+      usage: { ...stats.contextUsage, totals: { ...stats.tokens, cost: stats.cost } },
+    });
+    await runtime.dispose(sessionId);
   });
 
   it("marks a run as failed when PI completes without visible output", async () => {
@@ -889,921 +693,6 @@ describe("PiSdkRuntime", () => {
     // The composer's lock follows this: working while the turn runs, released
     // exactly once it ends.
     expect(statuses).toEqual(["busy", "idle"]);
-  });
-
-  it("spawns immediately and wait harvests output after the child settles", async () => {
-    const parentSessionId = `session-${crypto.randomUUID()}`;
-    const workspaceId = `workspace-${crypto.randomUUID()}`;
-    insertSession(parentSessionId, workspaceId, join(userData, "missing.jsonl"), "Parent chat");
-    let releasePrompt: (() => void) | undefined;
-    const prompt = vi.fn(
-      () =>
-        new Promise<void>((resolve) => {
-          releasePrompt = () => {
-            mocks.emitPiEvent({ type: "message_start", message: { role: "assistant" } });
-            mocks.emitPiEvent({
-              type: "message_update",
-              message: { role: "assistant" },
-              assistantMessageEvent: { type: "text_delta", delta: "done" },
-            });
-            mocks.emitPiEvent({ type: "message_end", message: { role: "assistant" } });
-            resolve();
-          };
-        }),
-    );
-    const childPiSession = createMockPiSession({ prompt });
-    mocks.createAgentSession.mockImplementationOnce(async () => ({ session: childPiSession }));
-    const runtime = new PiSdkRuntime();
-    const window = createWindowStub();
-
-    const started = await runtime.runSubagent(window, {
-      parentSessionId,
-      task: "Audit files",
-      prompt: "Audit files and report back.",
-      subagentType: "reviewer",
-    });
-
-    expect(started.session.parentSessionId).toBe(parentSessionId);
-    await vi.waitFor(() => expect(prompt).toHaveBeenCalled());
-    expect(childPiSession.dispose).not.toHaveBeenCalled();
-    mocks.setManagedProcesses([
-      {
-        id: "terminal-child",
-        kind: "terminal",
-        origin: "agent",
-        sessionId: started.session.id,
-        label: "dev server",
-        status: "running",
-        startedAt: new Date().toISOString(),
-      },
-    ]);
-    const waiting = runtime.waitBackground({
-      sessionId: parentSessionId,
-      timeoutMs: 5_000,
-      subagentIds: [started.session.id],
-    });
-    releasePrompt?.();
-    const waited = await waiting;
-
-    expect(waited.subagents).toEqual([
-      expect.objectContaining({
-        id: started.session.id,
-        status: "completed",
-        output: "done",
-      }),
-    ]);
-    expect(childPiSession.dispose).toHaveBeenCalled();
-    expect(mocks.listManagedProcesses).toHaveBeenCalledWith({
-      sessionId: started.session.id,
-      origin: "agent",
-    });
-    expect(mocks.killManagedProcess).toHaveBeenCalledWith("terminal-child");
-  });
-
-  it("returns immediately for background subagents and stashes results for wait", async () => {
-    const parentSessionId = `session-${crypto.randomUUID()}`;
-    const workspaceId = `workspace-${crypto.randomUUID()}`;
-    insertSession(parentSessionId, workspaceId, join(userData, "missing.jsonl"), "Parent chat");
-
-    let releaseChild: (() => void) | undefined;
-    const childPrompt = vi.fn(
-      () =>
-        new Promise<void>((resolve) => {
-          releaseChild = () => {
-            mocks.emitPiEvent({ type: "message_start", message: { role: "assistant" } });
-            mocks.emitPiEvent({
-              type: "message_update",
-              message: { role: "assistant" },
-              assistantMessageEvent: { type: "text_delta", delta: "bg research done" },
-            });
-            mocks.emitPiEvent({ type: "message_end", message: { role: "assistant" } });
-            resolve();
-          };
-        }),
-    );
-
-    mocks.createAgentSession.mockImplementation(async () => ({
-      session: createMockPiSession({ prompt: childPrompt }),
-    }));
-
-    const runtime = new PiSdkRuntime();
-    const window = createWindowStub();
-
-    const started = await runtime.runSubagent(window, {
-      parentSessionId,
-      task: "Research topic",
-      prompt: "Dig deep.",
-      subagentType: "researcher",
-    });
-
-    expect(started.session.id).toBeTruthy();
-    await vi.waitFor(() => expect(childPrompt).toHaveBeenCalled());
-
-    // Harvest while/after the child finishes — wait is the only delivery path.
-    const waiting = runtime.waitBackground({
-      sessionId: parentSessionId,
-      timeoutMs: 5_000,
-    });
-    releaseChild?.();
-    const waited = await waiting;
-    expect(waited.timedOut).toBe(false);
-    expect(waited.subagents).toEqual([
-      expect.objectContaining({
-        id: started.session.id,
-        status: "completed",
-        output: "bg research done",
-      }),
-    ]);
-
-    const again = await runtime.waitBackground({
-      sessionId: parentSessionId,
-      timeoutMs: 0,
-    });
-    expect(again.subagents).toEqual([]);
-  });
-
-  it("keeps background results for wait even when finished outside an active wait", async () => {
-    const parentSessionId = `session-${crypto.randomUUID()}`;
-    const workspaceId = `workspace-${crypto.randomUUID()}`;
-    insertSession(parentSessionId, workspaceId, join(userData, "missing.jsonl"), "Parent chat");
-
-    let releaseChild: (() => void) | undefined;
-    const childPrompt = vi.fn(
-      () =>
-        new Promise<void>((resolve) => {
-          releaseChild = () => {
-            mocks.emitPiEvent({ type: "message_start", message: { role: "assistant" } });
-            mocks.emitPiEvent({
-              type: "message_update",
-              message: { role: "assistant" },
-              assistantMessageEvent: { type: "text_delta", delta: "async done" },
-            });
-            mocks.emitPiEvent({ type: "message_end", message: { role: "assistant" } });
-            resolve();
-          };
-        }),
-    );
-    const parentPrompt = vi.fn(async (message: string) => {
-      void message;
-    });
-
-    let createCount = 0;
-    mocks.createAgentSession.mockImplementation(async () => {
-      createCount += 1;
-      if (createCount === 1) {
-        return { session: createMockPiSession({ prompt: childPrompt }) };
-      }
-      return { session: createMockPiSession({ prompt: parentPrompt }) };
-    });
-
-    const runtime = new PiSdkRuntime();
-    const window = createWindowStub();
-    const started = await runtime.runSubagent(window, {
-      parentSessionId,
-      task: "Async dig",
-      prompt: "Go.",
-      subagentType: "researcher",
-    });
-    await vi.waitFor(() => expect(childPrompt).toHaveBeenCalled());
-    releaseChild?.();
-    // No follow-up inject — parent prompt must not be called for delivery.
-    await vi.waitFor(() => {
-      expect(getAgentSession(started.session.id)?.status).toBe("idle");
-    });
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(parentPrompt).not.toHaveBeenCalled();
-
-    const waited = await runtime.waitBackground({
-      sessionId: parentSessionId,
-      timeoutMs: 0,
-    });
-    expect(waited.subagents).toEqual([
-      expect.objectContaining({
-        id: started.session.id,
-        status: "completed",
-        output: "async done",
-      }),
-    ]);
-  });
-
-  it("releaseRuntime does not wipe unharvested background results", async () => {
-    const parentSessionId = `session-${crypto.randomUUID()}`;
-    const workspaceId = `workspace-${crypto.randomUUID()}`;
-    insertSession(parentSessionId, workspaceId, join(userData, "missing.jsonl"), "Parent chat");
-
-    let releaseChild: (() => void) | undefined;
-    mocks.createAgentSession.mockImplementation(async () => ({
-      session: createMockPiSession({
-        prompt: vi.fn(
-          () =>
-            new Promise<void>((resolve) => {
-              releaseChild = () => {
-                mocks.emitPiEvent({ type: "message_start", message: { role: "assistant" } });
-                mocks.emitPiEvent({
-                  type: "message_update",
-                  message: { role: "assistant" },
-                  assistantMessageEvent: { type: "text_delta", delta: "survived release" },
-                });
-                mocks.emitPiEvent({ type: "message_end", message: { role: "assistant" } });
-                resolve();
-              };
-            }),
-        ),
-      }),
-    }));
-
-    const runtime = new PiSdkRuntime();
-    const window = createWindowStub();
-    const started = await runtime.runSubagent(window, {
-      parentSessionId,
-      task: "Keep me",
-      prompt: "Go.",
-      subagentType: "researcher",
-    });
-    await vi.waitFor(() => expect(releaseChild).toBeTypeOf("function"));
-    releaseChild?.();
-    await vi.waitFor(() => {
-      const session = getAgentSession(started.session.id);
-      expect(session?.status).toBe("idle");
-    });
-    // Allow finishBackgroundSubagent to stash after prompt settles.
-    await new Promise((resolve) => setTimeout(resolve, 50));
-
-    await runtime.releaseRuntime(started.session.id);
-
-    const waited = await runtime.waitBackground({
-      sessionId: parentSessionId,
-      timeoutMs: 0,
-      subagentIds: [started.session.id],
-    });
-    expect(waited.subagents).toEqual([
-      expect.objectContaining({
-        id: started.session.id,
-        status: "completed",
-        output: "survived release",
-      }),
-    ]);
-  });
-
-  it("wait holds until all watched subagents settle", async () => {
-    const parentSessionId = `session-${crypto.randomUUID()}`;
-    const workspaceId = `workspace-${crypto.randomUUID()}`;
-    insertSession(parentSessionId, workspaceId, join(userData, "missing.jsonl"), "Parent chat");
-    const releases: Array<() => void> = [];
-    const makeSession = (output: string): Record<string, unknown> => {
-      let subscriber: ((event: unknown) => void) | undefined;
-      return createMockPiSession({
-        subscribe: vi.fn((callback: (event: unknown) => void) => {
-          subscriber = callback;
-          return vi.fn();
-        }),
-        prompt: vi.fn(
-          () =>
-            new Promise<void>((resolve) => {
-              releases.push(() => {
-                subscriber?.({ type: "message_start", message: { role: "assistant" } });
-                subscriber?.({
-                  type: "message_update",
-                  message: { role: "assistant" },
-                  assistantMessageEvent: { type: "text_delta", delta: output },
-                });
-                subscriber?.({ type: "message_end", message: { role: "assistant" } });
-                resolve();
-              });
-            }),
-        ),
-      });
-    };
-    mocks.createAgentSession
-      .mockImplementationOnce(async () => ({ session: makeSession("first done") }))
-      .mockImplementationOnce(async () => ({ session: makeSession("second done") }));
-
-    const runtime = new PiSdkRuntime();
-    const window = createWindowStub();
-    const first = await runtime.runSubagent(window, {
-      parentSessionId,
-      task: "First",
-      prompt: "A",
-      subagentType: "worker",
-    });
-    const second = await runtime.runSubagent(window, {
-      parentSessionId,
-      task: "Second",
-      prompt: "B",
-      subagentType: "worker",
-    });
-    await vi.waitFor(() => expect(releases).toHaveLength(2));
-
-    const waiting = runtime.waitBackground({
-      sessionId: parentSessionId,
-      timeoutMs: 5_000,
-    });
-    releases[0]?.();
-    // One finished is not enough — wait must still be pending.
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    releases[1]?.();
-    const waited = await waiting;
-    expect(waited.timedOut).toBe(false);
-    expect(waited.subagents).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: first.session.id,
-          status: "completed",
-          output: "first done",
-        }),
-        expect.objectContaining({
-          id: second.session.id,
-          status: "completed",
-          output: "second done",
-        }),
-      ]),
-    );
-  });
-
-  it("wait times out while a background subagent is still running", async () => {
-    const parentSessionId = `session-${crypto.randomUUID()}`;
-    const workspaceId = `workspace-${crypto.randomUUID()}`;
-    insertSession(parentSessionId, workspaceId, join(userData, "missing.jsonl"), "Parent chat");
-    let releaseChild: (() => void) | undefined;
-    mocks.createAgentSession.mockImplementation(async () => ({
-      session: createMockPiSession({
-        prompt: vi.fn(
-          () =>
-            new Promise<void>((resolve) => {
-              releaseChild = () => resolve();
-            }),
-        ),
-      }),
-    }));
-    const runtime = new PiSdkRuntime();
-    const window = createWindowStub();
-    const started = await runtime.runSubagent(window, {
-      parentSessionId,
-      task: "Slow dig",
-      prompt: "Take your time.",
-      subagentType: "researcher",
-    });
-    const waited = await runtime.waitBackground({
-      sessionId: parentSessionId,
-      timeoutMs: 300,
-    });
-    expect(waited.timedOut).toBe(true);
-    expect(waited.subagents).toEqual([
-      expect.objectContaining({ id: started.session.id, status: "running" }),
-    ]);
-    releaseChild?.();
-  });
-
-  it("task tool returns before the child finishes", async () => {
-    const parentSessionId = `session-${crypto.randomUUID()}`;
-    const workspaceId = `workspace-${crypto.randomUUID()}`;
-    insertSession(parentSessionId, workspaceId, join(userData, "missing.jsonl"), "Parent chat");
-    let releaseChild: (() => void) | undefined;
-    mocks.createAgentSession.mockImplementation(async () => ({
-      session: createMockPiSession({
-        prompt: vi.fn(
-          () =>
-            new Promise<void>((resolve) => {
-              releaseChild = () => resolve();
-            }),
-        ),
-      }),
-    }));
-    new PiSdkRuntime();
-    const window = createWindowStub();
-    setAgentToolContext({ workspaceId, cwd, sessionId: parentSessionId, window });
-    const taskTool = toolRegistry
-      .getCustomToolDefinitions("chat")
-      .find((definition) => definition.name === "task") as {
-      execute(
-        toolCallId: string,
-        params: { description: string; prompt: string },
-        signal: AbortSignal,
-        onUpdate: undefined,
-        ctx: { cwd: string },
-      ): Promise<{ content: Array<{ type: "text"; text: string }> }>;
-    };
-
-    const result = await taskTool.execute(
-      "task-bg",
-      { description: "Parallel dig", prompt: "Go dig." },
-      new AbortController().signal,
-      undefined,
-      { cwd },
-    );
-    expect(result.content[0]?.text).toContain("Background task started");
-    expect(result.content[0]?.text).toContain("wait()");
-    expect(result.content[0]?.text).toContain("DO NOT sleep");
-    releaseChild?.();
-  });
-
-  it("wait tool collects a background subagent result in-process", async () => {
-    const parentSessionId = `session-${crypto.randomUUID()}`;
-    const workspaceId = `workspace-${crypto.randomUUID()}`;
-    insertSession(parentSessionId, workspaceId, join(userData, "missing.jsonl"), "Parent chat");
-    let releaseChild: (() => void) | undefined;
-    mocks.createAgentSession.mockImplementation(async () => ({
-      session: createMockPiSession({
-        prompt: vi.fn(
-          () =>
-            new Promise<void>((resolve) => {
-              releaseChild = () => {
-                mocks.emitPiEvent({ type: "message_start", message: { role: "assistant" } });
-                mocks.emitPiEvent({
-                  type: "message_update",
-                  message: { role: "assistant" },
-                  assistantMessageEvent: { type: "text_delta", delta: "tool wait done" },
-                });
-                mocks.emitPiEvent({ type: "message_end", message: { role: "assistant" } });
-                resolve();
-              };
-            }),
-        ),
-      }),
-    }));
-    new PiSdkRuntime();
-    const window = createWindowStub();
-    setAgentToolContext({ workspaceId, cwd, sessionId: parentSessionId, window });
-    const tools = toolRegistry.getCustomToolDefinitions("chat");
-    const taskTool = tools.find((definition) => definition.name === "task") as {
-      execute(
-        toolCallId: string,
-        params: { description: string; prompt: string },
-        signal: AbortSignal,
-        onUpdate: undefined,
-        ctx: { cwd: string },
-      ): Promise<{ content: Array<{ type: "text"; text: string }> }>;
-    };
-    const waitTool = tools.find((definition) => definition.name === "wait") as {
-      execute(
-        toolCallId: string,
-        params: { timeout_ms?: number },
-        signal: AbortSignal,
-        onUpdate: undefined,
-        ctx: { cwd: string },
-      ): Promise<{ content: Array<{ type: "text"; text: string }> }>;
-    };
-
-    await taskTool.execute(
-      "task-bg-wait",
-      { description: "Collect me", prompt: "Finish." },
-      new AbortController().signal,
-      undefined,
-      { cwd },
-    );
-    await vi.waitFor(() => expect(releaseChild).toBeTypeOf("function"));
-    const waiting = waitTool.execute(
-      "wait-1",
-      { timeout_ms: 5_000 },
-      new AbortController().signal,
-      undefined,
-      { cwd },
-    );
-    releaseChild?.();
-    const waited = await waiting;
-    expect(waited.content[0]?.text).toContain("Waited");
-    expect(waited.content[0]?.text).toMatch(/for subagent/i);
-    expect(waited.content[0]?.text).toContain("tool wait done");
-  });
-
-  it("runs independent subagents concurrently; wait joins both results", async () => {
-    const parentSessionId = `session-${crypto.randomUUID()}`;
-    const workspaceId = `workspace-${crypto.randomUUID()}`;
-    insertSession(parentSessionId, workspaceId, join(userData, "missing.jsonl"), "Parent chat");
-    const releases: Array<() => void> = [];
-    const makeSession = (output: string): Record<string, unknown> => {
-      let subscriber: ((event: unknown) => void) | undefined;
-      return createMockPiSession({
-        subscribe: vi.fn((callback: (event: unknown) => void) => {
-          subscriber = callback;
-          return vi.fn();
-        }),
-        prompt: vi.fn(
-          () =>
-            new Promise<void>((resolve) => {
-              releases.push(() => {
-                subscriber?.({ type: "message_start", message: { role: "assistant" } });
-                subscriber?.({
-                  type: "message_update",
-                  message: { role: "assistant" },
-                  assistantMessageEvent: { type: "text_delta", delta: output },
-                });
-                subscriber?.({ type: "message_end", message: { role: "assistant" } });
-                resolve();
-              });
-            }),
-        ),
-      });
-    };
-    mocks.createAgentSession
-      .mockImplementationOnce(async () => ({ session: makeSession("first result") }))
-      .mockImplementationOnce(async () => ({ session: makeSession("second result") }));
-    const runtime = new PiSdkRuntime();
-    const window = createWindowStub();
-
-    const first = await runtime.runSubagent(window, {
-      parentSessionId,
-      task: "First task",
-      prompt: "Do first task.",
-      subagentType: "worker",
-    });
-    const second = await runtime.runSubagent(window, {
-      parentSessionId,
-      task: "Second task",
-      prompt: "Do second task.",
-      subagentType: "worker",
-    });
-
-    await vi.waitFor(() => expect(releases).toHaveLength(2));
-    const waiting = runtime.waitBackground({
-      sessionId: parentSessionId,
-      timeoutMs: 5_000,
-    });
-    for (const release of releases) {
-      release();
-    }
-    const waited = await waiting;
-    expect(waited.timedOut).toBe(false);
-    expect(waited.subagents).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: first.session.id,
-          status: "completed",
-          output: "first result",
-        }),
-        expect.objectContaining({
-          id: second.session.id,
-          status: "completed",
-          output: "second result",
-        }),
-      ]),
-    );
-  });
-
-  it("stashes subagent failures for wait and disposes the child runtime", async () => {
-    const parentSessionId = `session-${crypto.randomUUID()}`;
-    const workspaceId = `workspace-${crypto.randomUUID()}`;
-    insertSession(parentSessionId, workspaceId, join(userData, "missing.jsonl"), "Parent chat");
-    const childPiSession = createMockPiSession({
-      prompt: vi.fn(async () => {
-        throw new Error("child failed");
-      }),
-    });
-    mocks.createAgentSession.mockImplementationOnce(async () => ({ session: childPiSession }));
-    const runtime = new PiSdkRuntime();
-
-    const started = await runtime.runSubagent(createWindowStub(), {
-      parentSessionId,
-      task: "Failing task",
-      prompt: "Fail now.",
-      subagentType: "worker",
-    });
-    const waited = await runtime.waitBackground({
-      sessionId: parentSessionId,
-      timeoutMs: 5_000,
-      subagentIds: [started.session.id],
-    });
-    expect(waited.subagents).toEqual([
-      expect.objectContaining({
-        id: started.session.id,
-        status: "error",
-        output: "child failed",
-      }),
-    ]);
-    expect(childPiSession.dispose).toHaveBeenCalled();
-  });
-
-  it("applies configured subagent prompt and readonly tools", async () => {
-    const parentSessionId = `session-${crypto.randomUUID()}`;
-    const workspaceId = `workspace-${crypto.randomUUID()}`;
-    insertSession(parentSessionId, workspaceId, join(userData, "missing.jsonl"), "Parent chat");
-    const prompt = vi.fn(async (_message: string) => {
-      mocks.emitPiEvent({ type: "message_start", message: { role: "assistant" } });
-      mocks.emitPiEvent({
-        type: "message_update",
-        message: { role: "assistant" },
-        assistantMessageEvent: { type: "text_delta", delta: "done" },
-      });
-      mocks.emitPiEvent({ type: "message_end", message: { role: "assistant" } });
-    });
-    const childPiSession = createMockPiSession({ prompt });
-    mocks.createAgentSession.mockImplementationOnce(async () => ({ session: childPiSession }));
-    const runtime = new PiSdkRuntime();
-    const window = createWindowStub();
-
-    toolRegistry.registerTool({
-      entry: {
-        name: "synthetic_mutator",
-        profiles: ["chat"],
-        permission: { danger: "dangerous", action: "file.write" },
-        ui: { iconName: "favicon", verb: "Mutated" },
-      },
-      definition: { name: "synthetic_mutator" } as never,
-    });
-    try {
-      await runtime.runSubagent(window, {
-        parentSessionId,
-        task: "Audit auth",
-        prompt: "Check login changes.",
-        subagentType: "security-auditor",
-        subagent: {
-          name: "security-auditor",
-          body: "You are a security reviewer.",
-          model: "inherit",
-          readOnly: true,
-        },
-      });
-
-      await vi.waitFor(() => expect(prompt).toHaveBeenCalled());
-      const message = prompt.mock.calls[0]?.[0] as unknown as string;
-      expect(message).toContain('<subagent_definition name="security-auditor">');
-      expect(message).toContain("You are a security reviewer.");
-      expect(message).toContain("<task>\nCheck login changes.\n</task>");
-
-      const setActiveToolsByName = childPiSession.setActiveToolsByName as ReturnType<typeof vi.fn>;
-      const activeTools = setActiveToolsByName.mock.calls[0]?.[0] as string[];
-      expect(activeTools).toEqual(expect.arrayContaining(["read", "grep", "find", "ls"]));
-      expect(activeTools).not.toEqual(
-        expect.arrayContaining(["bash", "edit", "write", "terminal_run", "browser_cdp", "task"]),
-      );
-      expect(activeTools).not.toContain("wait");
-      expect(activeTools).not.toContain("synthetic_mutator");
-
-      const send = window.webContents.send as unknown as ReturnType<typeof vi.fn>;
-      expect(send).toHaveBeenCalledWith(
-        "agent:event",
-        expect.objectContaining({
-          type: "subagent.started",
-          subagentType: "security-auditor",
-        }),
-      );
-    } finally {
-      toolRegistry.unregisterTool("synthetic_mutator");
-    }
-  });
-
-  it("applies configured subagent tool allow and deny lists", async () => {
-    const parentSessionId = `session-${crypto.randomUUID()}`;
-    const workspaceId = `workspace-${crypto.randomUUID()}`;
-    insertSession(parentSessionId, workspaceId, join(userData, "missing.jsonl"), "Parent chat");
-    const agentsDir = join(cwd, ".modus", "agents");
-    await mkdir(agentsDir, { recursive: true });
-    await writeFile(
-      join(agentsDir, "limited-agent.md"),
-      "---\nname: limited-agent\ntools: [read, grep, web_search]\ndisallowedTools: [grep]\n---\nLimited agent.",
-      "utf8",
-    );
-    const childPiSession = createMockPiSession({
-      prompt: vi.fn(async () => {
-        mocks.emitPiEvent({ type: "message_start", message: { role: "assistant" } });
-        mocks.emitPiEvent({
-          type: "message_update",
-          message: { role: "assistant" },
-          assistantMessageEvent: { type: "text_delta", delta: "done" },
-        });
-        mocks.emitPiEvent({ type: "message_end", message: { role: "assistant" } });
-      }),
-    });
-    mocks.createAgentSession.mockImplementationOnce(async () => ({ session: childPiSession }));
-    const runtime = new PiSdkRuntime();
-
-    await runtime.runSubagent(createWindowStub(), {
-      parentSessionId,
-      task: "Limited work",
-      prompt: "Read only selected tools.",
-      subagentType: "limited-agent",
-      subagent: {
-        name: "limited-agent",
-        body: "Limited agent.",
-        model: "inherit",
-        readOnly: false,
-      },
-    });
-
-    await vi.waitFor(() => expect(childPiSession.setActiveToolsByName).toHaveBeenCalled());
-    const activeTools = (childPiSession.setActiveToolsByName as ReturnType<typeof vi.fn>).mock
-      .calls[0]?.[0] as string[];
-    expect(activeTools).toContain("read");
-    expect(activeTools).toContain("web_search");
-    expect(activeTools).not.toContain("grep");
-    expect(activeTools).not.toContain("find");
-  });
-
-  it("creates writable worktree-isolated subagents in their own checkout", async () => {
-    await initGitRepo();
-    const parentSessionId = `session-${crypto.randomUUID()}`;
-    const workspaceId = `workspace-${crypto.randomUUID()}`;
-    insertSession(parentSessionId, workspaceId, join(userData, "missing.jsonl"), "Parent chat");
-    let childCwd = "";
-    const childPiSession = createMockPiSession({
-      prompt: vi.fn(async () => {
-        mocks.emitPiEvent({ type: "message_start", message: { role: "assistant" } });
-        mocks.emitPiEvent({
-          type: "message_update",
-          message: { role: "assistant" },
-          assistantMessageEvent: { type: "text_delta", delta: "worktree complete" },
-        });
-        mocks.emitPiEvent({ type: "message_end", message: { role: "assistant" } });
-      }),
-    });
-    mocks.createAgentSession.mockImplementationOnce(async (options: unknown) => {
-      childCwd = (options as { cwd: string }).cwd;
-      return { session: childPiSession };
-    });
-    const runtime = new PiSdkRuntime();
-
-    const result = await runtime.runSubagent(createWindowStub(), {
-      parentSessionId,
-      task: "Write child file",
-      prompt: "Create child.txt.",
-      subagentType: "writer",
-      subagent: {
-        name: "writer",
-        body: "Write code.",
-        model: "inherit",
-        readOnly: false,
-        isolation: "worktree",
-      },
-    });
-
-    expect(result.session.cwd.replace(/\\/g, "/")).toContain("/.modus/worktrees/writer-");
-    await vi.waitFor(() => expect(childCwd).toBe(result.session.cwd));
-    expect(existsSync(result.session.cwd)).toBe(true);
-    expect(existsSync(join(cwd, ".modus", "worktrees"))).toBe(true);
-
-    await runtime.waitBackground({
-      sessionId: parentSessionId,
-      timeoutMs: 5_000,
-      subagentIds: [result.session.id],
-    });
-    expect(getAgentSession(result.session.id)?.subagentWorktree?.integrationStatus).toBe(
-      "no_changes",
-    );
-  });
-
-  it("does not inject subagent run status into root prompts", async () => {
-    const parentSessionId = `session-${crypto.randomUUID()}`;
-    const childSessionId = `session-${crypto.randomUUID()}`;
-    const workspaceId = `workspace-${crypto.randomUUID()}`;
-    insertSession(parentSessionId, workspaceId, join(userData, "missing.jsonl"), "Parent chat");
-    insertSubagentSession(childSessionId, parentSessionId, workspaceId);
-    recordAgentEvent({
-      type: "message.started",
-      sessionId: childSessionId,
-      messageId: "assistant-message",
-      role: "assistant",
-    });
-    recordAgentEvent({
-      type: "message.delta",
-      sessionId: childSessionId,
-      messageId: "assistant-message",
-      delta: "final result",
-    });
-    recordAgentEvent({
-      type: "message.completed",
-      sessionId: childSessionId,
-      messageId: "assistant-message",
-    });
-    const prompt = vi.fn(async (_message: string) => {
-      mocks.emitPiEvent({ type: "message_start", message: { role: "assistant" } });
-      mocks.emitPiEvent({
-        type: "message_update",
-        message: { role: "assistant" },
-        assistantMessageEvent: { type: "text_delta", delta: "parent done" },
-      });
-      mocks.emitPiEvent({ type: "message_end", message: { role: "assistant" } });
-    });
-    mocks.createAgentSession.mockImplementationOnce(async () => ({
-      session: createMockPiSession({ prompt }),
-    }));
-    const runtime = new PiSdkRuntime();
-
-    await runtime.prompt(createWindowStub(), {
-      context: [],
-      delivery: "normal",
-      message: "continue",
-      sessionId: parentSessionId,
-      userMessageId: "local-user-subagent-runs",
-    });
-
-    const message = prompt.mock.calls[0]?.[0] as string;
-    expect(message).not.toContain("<subagent_runs>");
-    expect(message).not.toContain(childSessionId);
-    expect(message).not.toContain("last_result");
-    expect(message).not.toContain("final result");
-  });
-
-  it("aborts active subagents when the parent session is aborted", async () => {
-    const parentSessionId = `session-${crypto.randomUUID()}`;
-    const workspaceId = `workspace-${crypto.randomUUID()}`;
-    insertSession(parentSessionId, workspaceId, join(userData, "missing.jsonl"), "Parent chat");
-    let rejectPrompt: ((error: Error) => void) | undefined;
-    const childPrompt = vi.fn(
-      () =>
-        new Promise<void>((_resolve, reject) => {
-          rejectPrompt = reject;
-        }),
-    );
-    const childAbort = vi.fn(async () => rejectPrompt?.(new Error("aborted")));
-    const childPiSession = createMockPiSession({ abort: childAbort, prompt: childPrompt });
-    mocks.createAgentSession.mockImplementationOnce(async () => ({ session: childPiSession }));
-    const runtime = new PiSdkRuntime();
-    const window = createWindowStub();
-
-    const started = await runtime.runSubagent(window, {
-      parentSessionId,
-      task: "Run checks",
-      prompt: "Run checks.",
-      subagentType: "worker",
-    });
-    await vi.waitFor(() => expect(childPrompt).toHaveBeenCalled());
-    mocks.setManagedProcesses([
-      {
-        id: "app-child",
-        kind: "app",
-        origin: "agent",
-        sessionId: started.session.id,
-        label: "Preview",
-        status: "running",
-        startedAt: new Date().toISOString(),
-      },
-    ]);
-
-    await runtime.abort(parentSessionId);
-
-    expect(childAbort).toHaveBeenCalledOnce();
-    expect(childPiSession.dispose).toHaveBeenCalled();
-    expect(mocks.killManagedProcess).toHaveBeenCalledWith("app-child");
-    expect(
-      getDatabase()
-        .prepare("select status from agent_sessions where id = ?")
-        .get(started.session.id),
-    ).toEqual({ status: "cancelled" });
-  });
-
-  it("does not count completed subagents against the active subagent limit", async () => {
-    const parentSessionId = `session-${crypto.randomUUID()}`;
-    const workspaceId = `workspace-${crypto.randomUUID()}`;
-    insertSession(parentSessionId, workspaceId, join(userData, "missing.jsonl"), "Parent chat");
-    for (let index = 0; index < 6; index += 1) {
-      insertSubagentSession(`child-${crypto.randomUUID()}`, parentSessionId, workspaceId);
-    }
-    mocks.createAgentSession.mockImplementationOnce(async () => ({
-      session: createMockPiSession({
-        prompt: vi.fn(async () => {
-          mocks.emitPiEvent({ type: "message_start", message: { role: "assistant" } });
-          mocks.emitPiEvent({
-            type: "message_update",
-            message: { role: "assistant" },
-            assistantMessageEvent: { type: "text_delta", delta: "done" },
-          });
-          mocks.emitPiEvent({ type: "message_end", message: { role: "assistant" } });
-        }),
-      }),
-    }));
-    const runtime = new PiSdkRuntime();
-
-    await expect(
-      runtime.runSubagent(createWindowStub(), {
-        parentSessionId,
-        task: "Fresh child",
-        prompt: "Do work.",
-        subagentType: "worker",
-      }),
-    ).resolves.toMatchObject({
-      session: expect.objectContaining({
-        parentSessionId,
-        subagentTask: "Fresh child",
-      }),
-    });
-  });
-
-  it("archives child sessions before deleting the parent session", async () => {
-    const parentSessionId = `session-${crypto.randomUUID()}`;
-    const childSessionId = `session-${crypto.randomUUID()}`;
-    const workspaceId = `workspace-${crypto.randomUUID()}`;
-    insertSession(parentSessionId, workspaceId, join(userData, "missing.jsonl"), "Parent chat");
-    insertSubagentSession(childSessionId, parentSessionId, workspaceId);
-    mocks.setManagedProcesses([
-      {
-        id: "terminal-archive-child",
-        kind: "terminal",
-        origin: "agent",
-        sessionId: childSessionId,
-        label: "dev server",
-        status: "running",
-        startedAt: new Date().toISOString(),
-      },
-    ]);
-
-    await deleteAgentSessionTree(parentSessionId);
-
-    expect(mocks.killManagedProcess).toHaveBeenCalledWith("terminal-archive-child");
-    expect(
-      getDatabase()
-        .prepare("select count(*) as count from agent_sessions where id in (?, ?)")
-        .get(parentSessionId, childSessionId),
-    ).toEqual({ count: 0 });
   });
 
   it("queues a steer message into the live turn without opening a phantom run", async () => {

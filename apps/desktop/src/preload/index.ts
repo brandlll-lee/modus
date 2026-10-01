@@ -44,12 +44,6 @@ const api: ModusApi = {
     archive: (sessionId) => ipcRenderer.invoke("agent:archive", sessionId),
     restore: (sessionId) => ipcRenderer.invoke("agent:restore", sessionId),
     delete: (sessionId) => ipcRenderer.invoke("agent:delete", sessionId),
-    applySubagentWorktree: (sessionId) =>
-      ipcRenderer.invoke("agent:apply-subagent-worktree", sessionId),
-    abortSubagentWorktreeApply: (sessionId) =>
-      ipcRenderer.invoke("agent:abort-subagent-worktree-apply", sessionId),
-    cleanupSubagentWorktree: (sessionId) =>
-      ipcRenderer.invoke("agent:cleanup-subagent-worktree", sessionId),
     setModel: (input) => ipcRenderer.invoke("agent:set-model", input),
     cycleModel: (input) => ipcRenderer.invoke("agent:cycle-model", input),
     onEvent: (callback) => {
@@ -215,14 +209,6 @@ const api: ModusApi = {
       };
     },
     openDir: (cwd) => ipcRenderer.invoke("skills:open-dir", cwd),
-  },
-  subagents: {
-    list: (cwd) => ipcRenderer.invoke("subagents:list", cwd),
-    get: (input) => ipcRenderer.invoke("subagents:get", input),
-    create: (input) => ipcRenderer.invoke("subagents:create", input),
-    update: (input) => ipcRenderer.invoke("subagents:update", input),
-    delete: (input) => ipcRenderer.invoke("subagents:delete", input),
-    openDir: (input) => ipcRenderer.invoke("subagents:open-dir", input),
   },
   window: {
     minimize: () => ipcRenderer.invoke("window:minimize") as Promise<void>,

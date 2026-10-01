@@ -2,7 +2,6 @@ import { Tabs } from "@base-ui/react/tabs";
 import {
   IconFileText,
   IconGitBranch,
-  IconGridDots,
   IconLayoutList,
   IconLayoutSidebarRight,
   IconShieldCheck,
@@ -13,14 +12,7 @@ import {
 import { animate, m, useMotionValue } from "motion/react";
 import { lazy, type PointerEvent, Suspense, useEffect, useRef, useState } from "react";
 import type { SecurityState } from "../../../../preload/types";
-import type {
-  AgentSessionInfo,
-  ContextItem,
-  ContextUsageInfo,
-  ModelInfo,
-  PlanRef,
-  WorkspaceInfo,
-} from "../../../../shared/contracts";
+import type { ContextItem, PlanRef, WorkspaceInfo } from "../../../../shared/contracts";
 import { INSPECTOR_MIN_WIDTH } from "../../components/layout/usePanelLayout";
 import { ChromeMoreMenu } from "../../components/ui/ChromeMoreMenu";
 import { ModusLoadingFallback } from "../../components/ui/ModusLoadingMark";
@@ -28,11 +20,9 @@ import { PanelHeader } from "../../components/ui/Panel";
 import { TOOLBAR_ICON, ToolbarButton } from "../../components/ui/ToolbarButton";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
-import type { AgentEventHub } from "../agent/agentEventHub";
 import { DiffPanel } from "../diff/DiffPanel";
 import { FilesPanel } from "../files/FilesPanel";
 import { PlanPanel } from "../plan/PlanPanel";
-import { SubagentsPanel } from "./SubagentsPanel";
 
 type InspectorProps = {
   activeWorkspace: WorkspaceInfo | null;
@@ -48,20 +38,7 @@ type InspectorProps = {
   onTabChange?(tab: string): void;
   /** The session's active plan, shown in the Plan tab (not the file tree). */
   plan?: PlanRef | undefined;
-  sessions: AgentSessionInfo[];
-  selectedSubagentId?: string | undefined;
-  hub: AgentEventHub;
-  models: ModelInfo[];
-  defaultModel: string;
-  contextUsageBySession: Record<string, ContextUsageInfo>;
-  onSelectSubagent(id: string | undefined): void;
-  onSessionsChanged(): void;
-  onModelChange(model: string): void;
-  onModelConfigChange(model: string, thinkingVariant: string): Promise<void> | void;
-  onOpenReview(cwd?: string): void;
   onOpenSettings(): void;
-  onOpenSubagent(childSessionId: string): void;
-  onPlanUpdated(plan: PlanRef): void;
   onOpenChange(open: boolean): void;
   onWidthChange(width: number): void;
   onAddToChat?(item: ContextItem): void;
@@ -104,11 +81,6 @@ const TABS = [
     icon: <IconFileText size={TOOLBAR_ICON.size} stroke={TOOLBAR_ICON.stroke} />,
   },
   {
-    value: "subagents",
-    label: "Subagents",
-    icon: <IconGridDots size={TOOLBAR_ICON.size} stroke={TOOLBAR_ICON.stroke} />,
-  },
-  {
     value: "browser",
     label: "Browser",
     icon: <IconWorld size={TOOLBAR_ICON.size} stroke={TOOLBAR_ICON.stroke} />,
@@ -136,20 +108,7 @@ export function Inspector({
   tab: controlledTab,
   onTabChange,
   plan,
-  sessions,
-  selectedSubagentId,
-  hub,
-  models,
-  defaultModel,
-  contextUsageBySession,
-  onSelectSubagent,
-  onSessionsChanged,
-  onModelChange,
-  onModelConfigChange,
-  onOpenReview,
   onOpenSettings,
-  onOpenSubagent,
-  onPlanUpdated,
   onOpenChange,
   onWidthChange,
   onAddToChat,
@@ -341,29 +300,7 @@ export function Inspector({
                     revealPath={revealPath}
                   />
                 </Tabs.Panel>
-                <Tabs.Panel className="min-h-0 flex-1 outline-none" value="subagents">
-                  <SubagentsPanel
-                    contextUsageBySession={contextUsageBySession}
-                    defaultModel={defaultModel}
-                    hub={hub}
-                    models={models}
-                    onModelChange={onModelChange}
-                    onModelConfigChange={onModelConfigChange}
-                    onOpenReview={onOpenReview}
-                    onOpenPlan={(nextPlan) => {
-                      onPlanUpdated(nextPlan);
-                      onTabChange?.("plan");
-                    }}
-                    onOpenSubagent={onOpenSubagent}
-                    onPlanUpdated={onPlanUpdated}
-                    onSelect={onSelectSubagent}
-                    onSessionsChanged={onSessionsChanged}
-                    parentSessionId={sessionId}
-                    selectedId={selectedSubagentId}
-                    sessions={sessions}
-                    workspace={activeWorkspace}
-                  />
-                </Tabs.Panel>
+
                 <Tabs.Panel className="min-h-0 flex-1 outline-none" keepMounted value="browser">
                   {shouldRenderBrowser ? (
                     <Suspense fallback={<ModusLoadingFallback />}>

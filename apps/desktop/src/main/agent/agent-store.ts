@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { AgentSessionInfo, SubagentWorktreeInfo } from "../../shared/contracts";
+import type { AgentSessionInfo } from "../../shared/contracts";
 import { getDatabase } from "../db/database";
 
 type AgentSessionRow = {
@@ -12,16 +12,6 @@ type AgentSessionRow = {
   model: string | null;
   pi_session_id: string | null;
   pi_session_file: string | null;
-  parent_session_id: string | null;
-  subagent_task: string | null;
-  subagent_type: string | null;
-  subagent_readonly: number;
-  subagent_worktree_path: string | null;
-  subagent_worktree_branch: string | null;
-  subagent_worktree_base_sha: string | null;
-  subagent_integration_status: string | null;
-  subagent_changed_files_json: string | null;
-  subagent_conflict_files_json: string | null;
   pinned_at: string | null;
   archived_at: string | null;
   created_at: string;
@@ -29,22 +19,7 @@ type AgentSessionRow = {
 };
 
 const SESSION_COLUMNS = `id, workspace_id, title, cwd, status, runtime, model, pi_session_id,
-  pi_session_file, parent_session_id, subagent_task, subagent_type, subagent_readonly,
-  subagent_worktree_path, subagent_worktree_branch, subagent_worktree_base_sha,
-  subagent_integration_status, subagent_changed_files_json, subagent_conflict_files_json,
-  pinned_at, archived_at, created_at, updated_at`;
-
-function parseJsonArray(text: string | null): string[] | undefined {
-  if (!text) return undefined;
-  try {
-    const parsed = JSON.parse(text) as unknown;
-    return Array.isArray(parsed)
-      ? parsed.filter((item): item is string => typeof item === "string")
-      : undefined;
-  } catch {
-    return undefined;
-  }
-}
+  pi_session_file, pinned_at, archived_at, created_at, updated_at`;
 
 function toSession(row: AgentSessionRow): AgentSessionInfo {
   const session: AgentSessionInfo = {
@@ -67,42 +42,11 @@ function toSession(row: AgentSessionRow): AgentSessionInfo {
   if (row.pi_session_file !== null) {
     session.piSessionFile = row.pi_session_file;
   }
-  if (row.parent_session_id !== null) {
-    session.parentSessionId = row.parent_session_id;
-  }
   if (row.pinned_at !== null) {
     session.pinnedAt = row.pinned_at;
   }
   if (row.archived_at !== null) {
     session.archivedAt = row.archived_at;
-  }
-  if (row.subagent_task !== null) {
-    session.subagentTask = row.subagent_task;
-  }
-  if (row.subagent_type !== null) {
-    session.subagentType = row.subagent_type;
-  }
-  if (row.subagent_readonly !== 0) {
-    session.subagentReadOnly = true;
-  }
-  if (
-    row.subagent_worktree_path !== null &&
-    row.subagent_worktree_branch !== null &&
-    row.subagent_worktree_base_sha !== null
-  ) {
-    const integrationStatus = row.subagent_integration_status as
-      | SubagentWorktreeInfo["integrationStatus"]
-      | null;
-    const changedFiles = parseJsonArray(row.subagent_changed_files_json);
-    const conflictFiles = parseJsonArray(row.subagent_conflict_files_json);
-    session.subagentWorktree = {
-      path: row.subagent_worktree_path,
-      branch: row.subagent_worktree_branch,
-      baseSha: row.subagent_worktree_base_sha,
-      integrationStatus: integrationStatus ?? "running",
-      ...(changedFiles ? { changedFiles } : {}),
-      ...(conflictFiles ? { conflictFiles } : {}),
-    };
   }
   return session;
 }
@@ -116,11 +60,6 @@ export function createAgentSessionRecord(input: {
   model?: string;
   piSessionId?: string;
   piSessionFile?: string;
-  parentSessionId?: string;
-  subagentTask?: string;
-  subagentType?: string;
-  subagentReadOnly?: boolean;
-  subagentWorktree?: SubagentWorktreeInfo;
 }): AgentSessionInfo {
   const now = new Date().toISOString();
   const runtime = input.runtime ?? "pi-sdk";
@@ -144,31 +83,13 @@ export function createAgentSessionRecord(input: {
   if (input.piSessionFile !== undefined) {
     session.piSessionFile = input.piSessionFile;
   }
-  if (input.parentSessionId !== undefined) {
-    session.parentSessionId = input.parentSessionId;
-  }
-  if (input.subagentTask !== undefined) {
-    session.subagentTask = input.subagentTask;
-  }
-  if (input.subagentType !== undefined) {
-    session.subagentType = input.subagentType;
-  }
-  if (input.subagentReadOnly !== undefined) {
-    session.subagentReadOnly = input.subagentReadOnly;
-  }
-  if (input.subagentWorktree !== undefined) {
-    session.subagentWorktree = input.subagentWorktree;
-  }
   getDatabase()
     .prepare(
       `insert into agent_sessions (
         id, workspace_id, title, cwd, status, runtime, model, pi_session_id, pi_session_file,
-        parent_session_id, subagent_task, subagent_type, subagent_readonly,
-        subagent_worktree_path, subagent_worktree_branch, subagent_worktree_base_sha,
-        subagent_integration_status, subagent_changed_files_json, subagent_conflict_files_json,
         created_at, updated_at
        )
-       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       session.id,
@@ -180,58 +101,11 @@ export function createAgentSessionRecord(input: {
       session.model ?? null,
       session.piSessionId ?? null,
       session.piSessionFile ?? null,
-      session.parentSessionId ?? null,
-      session.subagentTask ?? null,
-      session.subagentType ?? null,
-      session.subagentReadOnly ? 1 : 0,
-      session.subagentWorktree?.path ?? null,
-      session.subagentWorktree?.branch ?? null,
-      session.subagentWorktree?.baseSha ?? null,
-      session.subagentWorktree?.integrationStatus ?? null,
-      session.subagentWorktree?.changedFiles
-        ? JSON.stringify(session.subagentWorktree.changedFiles)
-        : null,
-      session.subagentWorktree?.conflictFiles
-        ? JSON.stringify(session.subagentWorktree.conflictFiles)
-        : null,
       session.createdAt,
       session.updatedAt,
     );
 
   return session;
-}
-
-export function updateAgentSessionWorktree(
-  sessionId: string,
-  worktree: SubagentWorktreeInfo | undefined,
-): AgentSessionInfo | undefined {
-  const existing = getAgentSession(sessionId);
-  if (!existing) {
-    return undefined;
-  }
-
-  getDatabase()
-    .prepare(
-      `update agent_sessions
-       set subagent_worktree_path = ?,
-           subagent_worktree_branch = ?,
-           subagent_worktree_base_sha = ?,
-           subagent_integration_status = ?,
-           subagent_changed_files_json = ?,
-           subagent_conflict_files_json = ?
-       where id = ?`,
-    )
-    .run(
-      worktree?.path ?? null,
-      worktree?.branch ?? null,
-      worktree?.baseSha ?? null,
-      worktree?.integrationStatus ?? null,
-      worktree?.changedFiles ? JSON.stringify(worktree.changedFiles) : null,
-      worktree?.conflictFiles ? JSON.stringify(worktree.conflictFiles) : null,
-      sessionId,
-    );
-
-  return getAgentSession(sessionId);
 }
 
 /**
@@ -250,9 +124,7 @@ export function updateAgentSessionStatus(
   sessionId: string,
   status: AgentSessionInfo["status"],
 ): void {
-  getDatabase()
-    .prepare("update agent_sessions set status = ? where id = ?")
-    .run(status, sessionId);
+  getDatabase().prepare("update agent_sessions set status = ? where id = ?").run(status, sessionId);
 }
 
 export function updateAgentSessionMetadata(
@@ -333,23 +205,10 @@ export function listArchivedAgentSessions(workspaceId: string): AgentSessionInfo
     .prepare(
       `select ${SESSION_COLUMNS}
        from agent_sessions
-       where workspace_id = ? and parent_session_id is null and archived_at is not null
+       where workspace_id = ? and archived_at is not null
        order by archived_at desc`,
     )
     .all(workspaceId) as AgentSessionRow[];
-
-  return rows.map(toSession);
-}
-
-export function listSubagentSessions(parentSessionId: string): AgentSessionInfo[] {
-  const rows = getDatabase()
-    .prepare(
-      `select ${SESSION_COLUMNS}
-       from agent_sessions
-       where parent_session_id = ?
-       order by created_at asc, rowid asc`,
-    )
-    .all(parentSessionId) as AgentSessionRow[];
 
   return rows.map(toSession);
 }

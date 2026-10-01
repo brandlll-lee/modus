@@ -3,11 +3,6 @@ import { cn } from "../../lib/cn";
 import { useTheme } from "../../lib/theme";
 import type { SessionActivity } from "./agentEventHub";
 
-/**
- * Sidebar session glyph: ThinkingOrb while running (same package/preset as
- * WorkFold — only size 20|64 are valid), solid danger for needs-input /
- * failed, success for unread, soft secondary idle dot otherwise.
- */
 export function SessionStatusDot({
   activity,
   className,
@@ -58,10 +53,5 @@ export function SessionStatusDot({
       />
     );
   }
-  return (
-    <span
-      className={cn("size-1 shrink-0 rounded-full bg-fg-faint/40", className)}
-      title="Idle"
-    />
-  );
+  return null;
 }

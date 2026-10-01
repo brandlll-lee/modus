@@ -76,7 +76,6 @@ export function App() {
     setWorkspaces,
     activeWorkspace,
     setActiveWorkspace,
-    agentSessions,
     setAgentSessions,
     activeSessionId,
     setActiveSessionId,
@@ -142,7 +141,6 @@ export function App() {
   const [filesRevealPath, setFilesRevealPath] = useState<string | undefined>();
   const [terminalRevealId, setTerminalRevealId] = useState<string | undefined>();
   const [reviewCwd, setReviewCwd] = useState<string | undefined>();
-  const [selectedSubagentId, setSelectedSubagentId] = useState<string | undefined>();
   // Plans are scoped per session (the authoritative key), so switching sessions
   // shows that session's own plan — never the last one any session emitted.
   const [activePlanBySession, setActivePlanBySession] = useState<Record<string, PlanRef>>({});
@@ -177,12 +175,6 @@ export function App() {
     });
     return () => window.cancelIdleCallback(idleCallback);
   }, []);
-
-  function openSubagent(childSessionId: string): void {
-    setSelectedSubagentId(childSessionId);
-    setInspectorTab("subagents");
-    setInspectorOpen(true);
-  }
 
   function openReview(cwd?: string): void {
     setReviewCwd(cwd);
@@ -520,15 +512,6 @@ export function App() {
                                   onOpenPlan={openPlan}
                                   onOpenFile={openWorkspaceFile}
                                   onOpenTerminal={openTerminal}
-                                  onOpenSubagent={openSubagent}
-                                  subagentSessions={agentSessions.filter(
-                                    (session) => session.parentSessionId === activeSession.id,
-                                  )}
-                                  {...(responsiveInspectorOpen &&
-                                  inspectorTab === "subagents" &&
-                                  selectedSubagentId
-                                    ? { inspectorLiveSessionId: selectedSubagentId }
-                                    : {})}
                                   onPlanUpdated={rememberActivePlan}
                                   onSessionsChanged={() => void refreshSessions()}
                                   session={activeSession}
@@ -619,28 +602,11 @@ export function App() {
                         >
                           <Inspector
                             activeWorkspace={activeWorkspace}
-                            contextUsageBySession={contextUsageBySession}
                             cwd={reviewCwd ?? activeCwd}
-                            defaultModel={model}
-                            hub={hubRef.current}
                             sessionId={activeSession?.id}
                             maxWidth={inspectorMaxWidth}
-                            models={models}
-                            onModelChange={(next) =>
-                              void changeDefaultModel(next).catch(reportModelFailure)
-                            }
-                            onModelConfigChange={(next, thinkingVariant) =>
-                              void updateModelThinking(next, thinkingVariant).catch(
-                                reportModelFailure,
-                              )
-                            }
                             onOpenChange={setInspectorOpen}
-                            onOpenReview={openReview}
                             onOpenSettings={() => setSettingsOpen(true)}
-                            onOpenSubagent={openSubagent}
-                            onPlanUpdated={rememberActivePlan}
-                            onSelectSubagent={setSelectedSubagentId}
-                            onSessionsChanged={() => void refreshSessions()}
                             onTabChange={setInspectorTab}
                             onWidthChange={setInspectorWidth}
                             onAddToChat={addContextToChat}
@@ -653,8 +619,6 @@ export function App() {
                               ? { plan: activePlanBySession[activeSession.id] }
                               : {})}
                             securityState={securityState}
-                            selectedSubagentId={selectedSubagentId}
-                            sessions={agentSessions}
                             tab={inspectorTab}
                             width={inspectorWidth}
                           />

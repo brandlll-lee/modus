@@ -45,48 +45,6 @@ describe("session plan persistence", () => {
     expect(readPlan(root, "session-1")?.content).toContain("Client calls the router");
   });
 
-  it("projects legacy visual blocks to markdown on read", () => {
-    const dir = join(root, "session-legacy");
-    mkdirSync(dir, { recursive: true });
-    const path = join(dir, "plan.md");
-    const body = "### Request flow\n\nClient calls the router, then the store.";
-    writeFileSync(path, body, "utf8");
-    writeFileSync(
-      join(dir, "plan.json"),
-      JSON.stringify({
-        id: "session-legacy",
-        sessionId: "session-legacy",
-        workspaceId: "ws-1",
-        title: "Legacy",
-        overview: "Old visual plan.",
-        path,
-        blocks: [
-          { type: "markdown", content: "# Feature" },
-          {
-            type: "visual",
-            title: "Request flow",
-            kind: "svg",
-            content: "<svg><path /></svg>",
-            fallback: "Client calls the router, then the store.",
-          },
-        ],
-        todos: [],
-        buildStatus: "not_built",
-      }),
-      "utf8",
-    );
-
-    const plan = readPlan(root, "session-legacy");
-    expect(plan?.blocks).toEqual([
-      { type: "markdown", content: "# Feature" },
-      {
-        type: "markdown",
-        content: "### Request flow\n\nClient calls the router, then the store.",
-      },
-    ]);
-    expect(plan?.content).toBe(body);
-  });
-
   it("isolates equal plan titles by session and rewrites only the owning session", () => {
     const first = write();
     const other = write({ sessionId: "session-2" });

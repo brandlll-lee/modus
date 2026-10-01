@@ -11,8 +11,6 @@ import type {
   QuestionAnswer,
   QuestionRequest,
   SkillSelection,
-  SubagentActivity,
-  SubagentStatus,
   TodoItem,
 } from "../../../../shared/contracts";
 import { getToolUiMeta, toolRenderKind } from "../../../../shared/tools";
@@ -43,13 +41,10 @@ type TimelineProps = {
     contextItems?: ContextItem[],
     skills?: SkillSelection[],
   ): Promise<void>;
-  onOpenSubagent?(childSessionId: string): void;
   onOpenPlan?(plan: PlanRef): void;
   /** Open a workspace file path in the Files inspector. */
   onOpenFile?(path: string): void;
   workspaceId?: string | undefined;
-  /** Tighter padding when embedded in the subagent preview sheet (no composer clearance). */
-  embedded?: boolean | undefined;
 };
 
 export type MessageBlockItem = {
@@ -151,22 +146,10 @@ type TodosBlockItem = {
   updating: boolean;
 };
 
-export type SubagentBlockItem = {
-  id: string;
-  type: "subagent";
-  childSessionId: string;
-  task: string;
-  subagentType: string;
-  status: SubagentStatus;
-  model?: string;
-  activity?: SubagentActivity;
-};
-
 export type WorkActivityItem =
   | ThoughtBlockItem
   | ToolBlockItem
   | TodosBlockItem
-  | SubagentBlockItem
   | CompactionBlockItem;
 
 export type GroupedWorkActivityItem = ThoughtBlockItem | ToolBlockItem | CompactionBlockItem;
@@ -202,20 +185,16 @@ export type TimelineBlock =
   | NoticeBlockItem
   | CompactionBlockItem
   | WorkFoldBlockItem
-  | TodosBlockItem
-  | SubagentBlockItem;
+  | TodosBlockItem;
 
 export function buildBlocks(agentEvents: AgentEventItem[]): TimelineBlock[] {
   const blocks: TimelineBlock[] = [];
   const blockById = new Map<string, TimelineBlock>();
   /** todo_write tool calls render through the TodosCard, not as tool rows. */
   const todoToolCallIds = new Set<string>();
-  const subagentToolCallIds = new Set<string>();
-  const subagentsByChild = new Map<string, SubagentBlockItem>();
   /** Open compaction row id so started/ended upsert into one tool-like line. */
   let openCompactionId: string | undefined;
   const questionToolByRequest = new Map<string, string>();
-  const visualToolById = new Map<string, ToolBlockItem>();
   const planToolByHash = new Map<string, ToolBlockItem>();
   let activeQuestionToolId: string | undefined;
   let activePlanToolId: string | undefined;
@@ -286,23 +265,10 @@ export function buildBlocks(agentEvents: AgentEventItem[]): TimelineBlock[] {
   }
 
   function upsertToolBlock(toolCallId: string, toolName: string, args: unknown): ToolBlockItem {
-    const visualId = toolRenderKind(toolName) === "visual" ? visualIdFromArgs(args) : undefined;
     const existing = blockById.get(toolCallId);
     if (existing?.type === "tool") {
       existing.args = args;
-      if (visualId) {
-        visualToolById.set(visualId, existing);
-      }
       return existing;
-    }
-    const visualBlock = visualId ? visualToolById.get(visualId) : undefined;
-    if (visualBlock) {
-      visualBlock.args = args;
-      visualBlock.output = "";
-      visualBlock.isComplete = false;
-      visualBlock.isError = false;
-      blockById.set(toolCallId, visualBlock);
-      return visualBlock;
     }
     const block: ToolBlockItem = {
       id: toolCallId,
@@ -313,9 +279,6 @@ export function buildBlocks(agentEvents: AgentEventItem[]): TimelineBlock[] {
     };
     blocks.push(block);
     blockById.set(toolCallId, block);
-    if (visualId) {
-      visualToolById.set(visualId, block);
-    }
     return block;
   }
 
@@ -550,18 +513,14 @@ export function buildBlocks(agentEvents: AgentEventItem[]): TimelineBlock[] {
         }
         continue;
       }
-      if (deltaKind === "subagent") {
-        subagentToolCallIds.add(event.toolCallId);
-        continue;
-      }
       if (deltaKind === "question") {
         activeQuestionToolId = event.toolCallId;
       }
       if (deltaKind === "plan") {
         activePlanToolId = event.toolCallId;
       }
-      // Diff/visual bind live partial args; title-facing tools wait for tool.started.
-      if (deltaKind === "diff" || deltaKind === "visual") {
+      // Diff tools bind live partial args; title-facing tools wait for tool.started.
+      if (deltaKind === "diff") {
         upsertToolBlock(event.toolCallId, event.toolName, event.args);
       }
       continue;
@@ -574,10 +533,6 @@ export function buildBlocks(agentEvents: AgentEventItem[]): TimelineBlock[] {
           todoToolCallIds.add(event.toolCallId);
           todoUpdatesInFlight += 1;
         }
-        continue;
-      }
-      if (toolRenderKind(event.toolName) === "subagent") {
-        subagentToolCallIds.add(event.toolCallId);
         continue;
       }
       if (toolRenderKind(event.toolName) === "question") {
@@ -599,9 +554,6 @@ export function buildBlocks(agentEvents: AgentEventItem[]): TimelineBlock[] {
       if (todoToolCallIds.has(event.toolCallId)) {
         continue;
       }
-      if (subagentToolCallIds.has(event.toolCallId)) {
-        continue;
-      }
       const block = blockById.get(event.toolCallId);
       if (block?.type === "tool") {
         // Pi's tool_execution_update carries the full partialResult each time —
@@ -618,10 +570,6 @@ export function buildBlocks(agentEvents: AgentEventItem[]): TimelineBlock[] {
         if (latestTodosBlock) {
           latestTodosBlock.updating = todoUpdatesInFlight > 0;
         }
-        continue;
-      }
-      if (subagentToolCallIds.has(event.toolCallId)) {
-        subagentToolCallIds.delete(event.toolCallId);
         continue;
       }
       const block = blockById.get(event.toolCallId);
@@ -688,44 +636,6 @@ export function buildBlocks(agentEvents: AgentEventItem[]): TimelineBlock[] {
         blocks.push(latestTodosBlock);
         hasRenderedAnyTodoBlock = true;
         todoLifecycleOpen = !allComplete;
-      }
-      continue;
-    }
-
-    if (event.type === "subagent.started") {
-      const block: SubagentBlockItem = {
-        id: `subagent:${event.childSessionId}`,
-        type: "subagent",
-        childSessionId: event.childSessionId,
-        task: event.task,
-        subagentType: event.subagentType,
-        status: "running",
-        ...(event.model ? { model: event.model } : {}),
-      };
-      subagentsByChild.set(event.childSessionId, block);
-      blocks.push(block);
-      blockById.set(block.id, block);
-      continue;
-    }
-
-    if (event.type === "subagent.updated") {
-      let block = subagentsByChild.get(event.childSessionId);
-      if (!block) {
-        block = {
-          id: `subagent:${event.childSessionId}`,
-          type: "subagent",
-          childSessionId: event.childSessionId,
-          task: "Subagent",
-          subagentType: "worker",
-          status: event.status,
-        };
-        subagentsByChild.set(event.childSessionId, block);
-        blocks.push(block);
-        blockById.set(block.id, block);
-      }
-      block.status = event.status;
-      if (event.activity) {
-        block.activity = event.activity;
       }
       continue;
     }
@@ -956,7 +866,6 @@ function isWorkAnchor(block: TimelineBlock): boolean {
     block.type === "tool" ||
     block.type === "thought" ||
     block.type === "todos" ||
-    block.type === "subagent" ||
     (block.type === "compaction" && block.reason !== "manual") ||
     block.type === "notice"
   );
@@ -967,7 +876,6 @@ function isWorkActivity(block: TimelineBlock): block is WorkActivityItem {
     block.type === "tool" ||
     block.type === "thought" ||
     block.type === "todos" ||
-    block.type === "subagent" ||
     block.type === "compaction"
   );
 }
@@ -1178,10 +1086,8 @@ export function Timeline({
   workspaceId,
   onRestoreCheckpoint,
   onEditResend,
-  onOpenSubagent,
   onOpenPlan,
   onOpenFile,
-  embedded = false,
 }: TimelineProps) {
   const renderKeys = useMemo(() => blockRenderKeys(blocks), [blocks]);
   const turns = useMemo(() => segmentTurns(blocks, renderKeys), [blocks, renderKeys]);
@@ -1191,13 +1097,7 @@ export function Timeline({
   }
 
   return (
-    <div
-      className={
-        embedded
-          ? "min-w-0 w-full max-w-full px-4 pt-4 pb-6"
-          : "min-w-0 w-full max-w-full px-4 pt-8 pb-24"
-      }
-    >
+    <div className="min-w-0 w-full max-w-full px-4 pt-8 pb-24">
       {/* Same .chat-column token as ChatPane's composer wrapper — one width authority,
           shared by content only. The scroll container above stays full-bleed. */}
       <div className="chat-column relative">
@@ -1244,11 +1144,9 @@ export function Timeline({
                   {block.type === "work-fold" ? (
                     <WorkFold
                       items={block.items}
-                      {...(models ? { models } : {})}
                       run={block.run}
                       {...(onOpenFile ? { onOpenFile } : {})}
                       {...(onOpenPlan ? { onOpenPlan } : {})}
-                      {...(onOpenSubagent ? { onOpenSubagent } : {})}
                     />
                   ) : null}
                   {block.type === "message" ? (
@@ -1277,10 +1175,8 @@ export function Timeline({
                   {isWorkActivity(block) ? (
                     <WorkActivityRow
                       item={block}
-                      {...(models ? { models } : {})}
                       {...(onOpenFile ? { onOpenFile } : {})}
                       {...(onOpenPlan ? { onOpenPlan } : {})}
-                      {...(onOpenSubagent ? { onOpenSubagent } : {})}
                     />
                   ) : null}
                 </div>
@@ -1292,13 +1188,6 @@ export function Timeline({
       </div>
     </div>
   );
-}
-
-function visualIdFromArgs(args: unknown): string | undefined {
-  if (!args || typeof args !== "object") return undefined;
-  const value = (args as Record<string, unknown>).visualId;
-  const visualId = typeof value === "string" ? value.trim() : "";
-  return visualId || undefined;
 }
 
 function eventTime(createdAt: string | undefined, fallbackOrder: number): number {

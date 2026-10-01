@@ -35,7 +35,6 @@ Modus is early and currently runs best from source.
 - **Git workflow** - Review working tree changes, file diffs, branches, commit history, commits, pushes, and session change stats.
 - **Terminal, browser, and files** - Use a real PTY terminal, an in-app browser with tabs and DevTools, and a workspace file explorer.
 - **Fast Codebase** - Let the agent build a compact local code map before reading files, reducing broad grep/read exploration.
-- **Subagents** - Create specialized subagents, track their activity, and apply or clean up their worktrees.
 - **Plan and build modes** - Start with a reviewable plan, answer structured questions, then move into implementation.
 - **Context and images** - Attach files, folders, docs, Git diffs, terminal output, browser state, selected page elements, rules, and images.
 - **MCP, skills, and rules** - Load Modus MCP servers, invoke local skills with `/`, and apply project rules from AGENTS/Claude/Cursor-style files.

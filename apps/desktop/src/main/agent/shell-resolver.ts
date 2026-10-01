@@ -265,34 +265,3 @@ export function resolveAgentShellWith(declaredPath: string | undefined): Resolve
   }
   return resolveAgentShell();
 }
-
-/**
- * Build the OS/shell context appended to the agent's system prompt so the model
- * writes shell commands compatible with the actual environment.
- */
-export function describeAgentShellForPrompt(shell: ResolvedAgentShell): string {
-  const osName =
-    shell.platform === "win32" ? "Windows" : shell.platform === "darwin" ? "macOS" : "Linux";
-
-  const lines = [
-    "<runtime_environment>",
-    `You are running inside the Modus desktop app on ${osName}.`,
-    `The \`bash\` tool executes commands through a POSIX shell: ${shell.label}.`,
-    "Always write POSIX-compatible shell commands (ls, cat, grep, rg, find, test, head, etc.).",
-  ];
-
-  if (shell.platform === "win32") {
-    lines.push(
-      "This is a POSIX bash (Git Bash/MSYS2), NOT cmd.exe or PowerShell. " +
-        "Use forward-slash paths and POSIX syntax; do not use Windows-only commands " +
-        "like dir, type, findstr, or PowerShell cmdlets.",
-    );
-  }
-
-  if (!shell.usable && shell.warning) {
-    lines.push(`WARNING: ${shell.warning}`);
-  }
-
-  lines.push("</runtime_environment>");
-  return lines.join("\n");
-}

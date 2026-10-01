@@ -2,12 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import {
-  describeAgentShellForPrompt,
-  resolveAgentShellWith,
-  resolveShellWith,
-  type ShellProbe,
-} from "./shell-resolver";
+import { resolveAgentShellWith, resolveShellWith, type ShellProbe } from "./shell-resolver";
 
 function probe(overrides: Partial<ShellProbe>): ShellProbe {
   return {
@@ -123,36 +118,6 @@ describe("resolveShellWith — macOS/Linux", () => {
     expect(result.shellPath).toBeUndefined();
     expect(result.source).toBe("unix-default");
     expect(result.usable).toBe(true);
-  });
-});
-
-describe("describeAgentShellForPrompt", () => {
-  it("tells the model it's a POSIX bash, not cmd/PowerShell, on Windows", () => {
-    const text = describeAgentShellForPrompt({
-      platform: "win32",
-      shellPath: "F:\\Git\\Git\\bin\\bash.exe",
-      source: "git-bash",
-      usable: true,
-      label: "Git Bash (F:\\Git\\Git\\bin\\bash.exe)",
-    });
-
-    expect(text).toContain("Windows");
-    expect(text).toContain("POSIX");
-    expect(text).toMatch(/not cmd\.exe or PowerShell/i);
-  });
-
-  it("surfaces the warning when no shell is usable", () => {
-    const text = describeAgentShellForPrompt({
-      platform: "win32",
-      shellPath: undefined,
-      source: "none",
-      usable: false,
-      label: "no POSIX shell found",
-      warning: "No usable bash was found.",
-    });
-
-    expect(text).toContain("WARNING");
-    expect(text).toContain("No usable bash was found.");
   });
 });
 

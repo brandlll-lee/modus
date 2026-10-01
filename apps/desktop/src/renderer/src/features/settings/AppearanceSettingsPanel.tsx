@@ -56,7 +56,7 @@ export function AppearanceSettingsPanel() {
         <SettingsList>
           <SettingsRow
             title="Font"
-            control={<span className="text-sm text-fg-muted">Inter / Noto Sans SC</span>}
+            control={<span className="text-sm text-fg-muted">System</span>}
           />
         </SettingsList>
       </SettingsSection>

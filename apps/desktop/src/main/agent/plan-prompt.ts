@@ -31,7 +31,6 @@ const PLAN_MODE_INSTRUCTION = [
   "- Lay out structure to the depth the task earns: for a from-scratch project, give the file/module layout with each unit's responsibility; for a change in existing code, name the real files/symbols you found. No artificial cap on how many — and no padding either.",
   "",
   "## Output shape (let structure follow the task)",
-  "- The plan is Markdown only. Do not emit inline visuals: no fenced `html`/`svg` operable widgets, no `visual_write`, no mermaid-as-substitute for the plan body. Put every implementation-relevant fact in the Markdown itself.",
   "- When the plan is final, call plan_write with FOUR parts: `title` (short), `overview` (1–3 sentence summary), `todos` (ordered implementation steps as plain strings), and `content` (the Markdown plan body after the title, last). Modus renders `title` separately, so do not repeat it inside `content`. The todos drive execution, so they must mirror the plan, not restate the title.",
   "- CHOOSE headings that fit THIS task — there is no fixed template.",
   "- Whatever the shape, a reader must be able to answer: the outcome being pursued, what changes (grouped however is clearest), how we will know it worked (testable acceptance), and what was assumed or left open. Cover these as the task needs — as content, NOT as mandatory headings.",

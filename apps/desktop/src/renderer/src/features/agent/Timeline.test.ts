@@ -1,9 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { AgentEvent, PlanRef } from "../../../../shared/contracts";
-import { PLAN_TOOL_NAME, VISUAL_TOOL_NAME } from "../../../../shared/tools";
+import { PLAN_TOOL_NAME } from "../../../../shared/tools";
 import { formatElapsed, workActivityPresentation } from "./ActivityGroup";
 import { optimisticUserPromptEvents } from "./agentEventHub";
-import { subagentColor } from "./subagentUi";
 import {
   attachTurnActions,
   blockRenderKeys,
@@ -53,28 +52,6 @@ describe("buildBlocks", () => {
     expect(blocks).toEqual([
       expect.objectContaining({ type: "run", runId: "r", status: "completed" }),
     ]);
-  });
-
-  it("replaces tool output on each update (full partialResult)", () => {
-    const blocks = buildBlocks([
-      item("1", { type: "tool.started", sessionId: "s", toolCallId: "t", toolName: "bash" }),
-      item("2", { type: "tool.output", sessionId: "s", toolCallId: "t", output: "hello" }),
-      item("3", {
-        type: "tool.output",
-        sessionId: "s",
-        toolCallId: "t",
-        output: "Waited 12s for subagent\n",
-      }),
-      item("4", { type: "tool.ended", sessionId: "s", toolCallId: "t", isError: false }),
-    ]);
-
-    expect(blocks[0]).toEqual(
-      expect.objectContaining({
-        type: "tool",
-        output: "Waited 12s for subagent\n",
-        isError: false,
-      }),
-    );
   });
 
   it("binds persisted plans to current and legacy plan tool events", () => {
@@ -153,58 +130,6 @@ describe("buildBlocks", () => {
     ).toEqual(expect.objectContaining({ args: { command: "ls -la" } }));
   });
 
-  it("updates the first visual block when a later visual reuses its visualId", () => {
-    const blocks = buildBlocks([
-      item("1", {
-        type: "tool.started",
-        sessionId: "s",
-        toolCallId: "v1",
-        toolName: VISUAL_TOOL_NAME,
-        args: { visualId: "chart", title: "Chart", kind: "svg", content: "<svg>one</svg>" },
-      }),
-      item("2", { type: "tool.ended", sessionId: "s", toolCallId: "v1", isError: false }),
-      item("3", {
-        type: "tool.started",
-        sessionId: "s",
-        toolCallId: "v2",
-        toolName: VISUAL_TOOL_NAME,
-        args: { visualId: " chart ", title: "Chart", kind: "svg", content: "<svg>two</svg>" },
-      }),
-    ]);
-
-    expect(blocks.filter((block) => block.type === "tool")).toHaveLength(1);
-    expect(blocks[0]).toEqual(
-      expect.objectContaining({
-        type: "tool",
-        id: "v1",
-        args: expect.objectContaining({ content: "<svg>two</svg>" }),
-        isComplete: false,
-        isError: false,
-      }),
-    );
-  });
-
-  it("does not merge visuals without the same visualId", () => {
-    const blocks = buildBlocks([
-      item("1", {
-        type: "tool.started",
-        sessionId: "s",
-        toolCallId: "v1",
-        toolName: VISUAL_TOOL_NAME,
-        args: { title: "One", kind: "svg", content: "<svg />" },
-      }),
-      item("2", {
-        type: "tool.started",
-        sessionId: "s",
-        toolCallId: "v2",
-        toolName: VISUAL_TOOL_NAME,
-        args: { visualId: "other", title: "Two", kind: "svg", content: "<svg />" },
-      }),
-    ]);
-
-    expect(blocks.filter((block) => block.type === "tool")).toHaveLength(2);
-  });
-
   it("attaches resolved ask_user answers to the question tool block", () => {
     const request = {
       id: "question-request",
@@ -264,42 +189,6 @@ describe("buildBlocks", () => {
     ]);
 
     expect(blocks).toEqual([]);
-  });
-
-  it("aggregates subagent activity by child session id", () => {
-    const blocks = buildBlocks([
-      item("1", {
-        type: "subagent.started",
-        sessionId: "parent",
-        childSessionId: "child-a",
-        task: "Audit files",
-        subagentType: "reviewer",
-        model: "mock/model",
-      }),
-      item("2", {
-        type: "subagent.updated",
-        sessionId: "parent",
-        childSessionId: "child-a",
-        status: "running",
-        activity: { kind: "tool", name: "read" },
-      }),
-      item("3", {
-        type: "subagent.updated",
-        sessionId: "parent",
-        childSessionId: "child-a",
-        status: "completed",
-      }),
-    ]);
-
-    expect(blocks.filter((block) => block.type === "subagent")).toEqual([
-      expect.objectContaining({
-        type: "subagent",
-        childSessionId: "child-a",
-        task: "Audit files",
-        status: "completed",
-        activity: { kind: "tool", name: "read" },
-      }),
-    ]);
   });
 
   it("marks the active assistant message streaming with no thought when nothing is thought yet", () => {
@@ -1024,13 +913,6 @@ describe("activity duration labels", () => {
     expect(formatElapsed(5000, 0)).toBe("5s");
     expect(formatElapsed(120000, 0)).toBe("2m");
     expect(formatElapsed(125000, 0)).toBe("2m 5s");
-  });
-});
-
-describe("subagentColor", () => {
-  it("derives a stable color from the child session id", () => {
-    expect(subagentColor("child-a")).toBe(subagentColor("child-a"));
-    expect(subagentColor("child-a")).toMatch(/^#[0-9a-f]{6}$/);
   });
 });
 

@@ -162,16 +162,3 @@ export function listApps(filter?: { sessionId?: string; workspaceId?: string }):
     })
     .map((info) => ({ ...info }));
 }
-
-/** Compact, model-facing summary of tracked apps for passive awareness. */
-export function summarizeApps(filter?: { sessionId?: string; workspaceId?: string }): string {
-  const lines = listApps(filter)
-    .sort((a, b) => a.startedAt.localeCompare(b.startedAt))
-    .slice(-12)
-    .map((info) => {
-      const state = info.status === "running" ? "running" : "exited";
-      const title = info.windowTitle ? ` "${info.windowTitle.slice(0, 60)}"` : "";
-      return `- ${info.id} [${state}, pid ${info.pid}] app: ${info.name}${title}`;
-    });
-  return lines.join("\n");
-}

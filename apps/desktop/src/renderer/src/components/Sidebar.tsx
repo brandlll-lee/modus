@@ -31,6 +31,7 @@ import type { SessionActivity } from "../features/agent/agentEventHub";
 import { SessionStatusDot } from "../features/agent/SessionStatusDot";
 import { cn } from "../lib/cn";
 import { useScrollFade } from "../lib/useScrollFade";
+import { NavItem } from "./layout/NavItem";
 import { SIDEBAR_MIN_WIDTH } from "./layout/usePanelLayout";
 import { CollapsibleMotion } from "./ui/CollapsibleMotion";
 import { SearchField } from "./ui/SearchField";
@@ -39,17 +40,9 @@ import { TOOLBAR_ICON, ToolbarButton } from "./ui/ToolbarButton";
 const SIDEBAR_MAX_WIDTH = 480;
 export const SIDEBAR_TRANSITION = { duration: 0.18, ease: [0.22, 1, 0.36, 1] } as const;
 
-/**
- * Sidebar density contract — one icon rail for nav / folder / session dots.
- * Nested blocks indent by exactly one rail (no magic pl-[30px]).
- */
-const SB_RAIL = "pointer-events-none flex w-5 shrink-0 items-center justify-center";
-const SB_ROW =
-  "flex h-9 w-full items-center gap-2 rounded-md pr-1 pl-2 text-sm font-normal transition-colors";
-/** Session titles — one step quieter/smaller than nav & project rows (Cursor density). */
-const SB_SESSION =
-  "flex h-9 w-full items-center gap-2 rounded-md pr-1 pl-2 text-sm font-normal transition-colors";
-const SB_NEST = "pl-5"; // 20px = one rail
+const SB_RAIL = "pointer-events-none flex w-4 shrink-0 items-center justify-center";
+const SB_ROW = "navigation-row";
+const SB_SESSION = "navigation-row relative pl-[calc(8px+var(--spacing-nav-indent))]";
 const SB_ICON = 16;
 const SB_STROKE = 1.5;
 
@@ -185,27 +178,29 @@ export function Sidebar({
         style={{ width: panelWidth }}
         transition={{ layout: SIDEBAR_TRANSITION }}
       >
-        <div className="flex h-14 shrink-0 items-center justify-between px-5">
-          <span className="text-[16px] font-semibold">Modus</span>
-          <ToolbarButton label="Collapse sidebar" onClick={() => onOpenChange(false)}>
-            <IconLayoutSidebar size={TOOLBAR_ICON.size} stroke={TOOLBAR_ICON.stroke} />
-          </ToolbarButton>
+        <div className="flex h-12 shrink-0 items-center justify-between px-4">
+          <span className="text-lg font-semibold">Modus</span>
+          <div className="flex items-center gap-1">
+            <ToolbarButton
+              label="Search chats"
+              active={searchOpen}
+              onClick={() => setSearchOpen((open) => !open)}
+            >
+              <IconSearch size={16} stroke={SB_STROKE} />
+            </ToolbarButton>
+            <ToolbarButton label="Collapse sidebar" onClick={() => onOpenChange(false)}>
+              <IconLayoutSidebar size={TOOLBAR_ICON.size} stroke={TOOLBAR_ICON.stroke} />
+            </ToolbarButton>
+          </div>
         </div>
         <div className="px-3 pt-1 pb-3">
-          <NavRow
+          <NavItem
             disabled={!canCreateSession}
             icon={<IconEdit size={SB_ICON} stroke={SB_STROKE} />}
             onClick={onNewSession}
           >
             New chat
-          </NavRow>
-          <NavRow
-            highlight={searchOpen}
-            icon={<IconSearch size={SB_ICON} stroke={SB_STROKE} />}
-            onClick={() => setSearchOpen((open) => !open)}
-          >
-            Search
-          </NavRow>
+          </NavItem>
           {searchOpen ? (
             <SearchField
               ariaLabel="Search chats"
@@ -235,13 +230,13 @@ export function Sidebar({
 
           <CollapsibleMotion open={projectsExpanded} preset="default">
             {workspaces.length === 0 ? (
-              <NavRow
+              <NavItem
                 icon={<IconFolder size={SB_ICON} stroke={SB_STROKE} />}
-                muted
+                className="text-fg-faint"
                 onClick={onOpenWorkspace}
               >
                 Open a repository…
-              </NavRow>
+              </NavItem>
             ) : (
               workspaces.map((workspace) => (
                 <WorkspaceItem
@@ -277,13 +272,13 @@ export function Sidebar({
             )}
 
             <div className="mt-1">
-              <NavRow
+              <NavItem
                 icon={<IconFolderPlus size={SB_ICON} stroke={SB_STROKE} />}
-                muted
+                className="text-fg-faint"
                 onClick={onOpenWorkspace}
               >
                 Open workspace
-              </NavRow>
+              </NavItem>
             </div>
           </CollapsibleMotion>
         </div>
@@ -351,7 +346,7 @@ function WorkspaceItem({
   const [archivedSessions, setArchivedSessions] = useState<AgentSessionInfo[] | undefined>();
   const [showAllSessions, setShowAllSessions] = useState(false);
 
-  const previewLimit = 2;
+  const previewLimit = 5;
   const visibleSessions = (() => {
     if (showAllSessions || sessions.length <= previewLimit) {
       return sessions;
@@ -430,12 +425,11 @@ function WorkspaceItem({
             onClick={() => setShowAllSessions((value) => !value)}
             type="button"
           >
-            <span aria-hidden className={SB_RAIL} />
-            {showAllSessions ? "See less" : "See more"}
+            {showAllSessions ? "Show less" : "Show more"}
           </button>
         ) : null}
         <CollapsibleMotion open={archivedOpen} preset="default">
-          <div className={cn("mt-1 space-y-0.5", SB_NEST)}>
+          <div className="mt-1 space-y-0.5">
             {archivedSessions === undefined ? (
               <div className="px-2 py-1 text-2xs text-fg-faint">Loading archived chats…</div>
             ) : archivedSessions.length === 0 ? (
@@ -497,7 +491,7 @@ function SessionRow({
       className={cn(
         SB_SESSION,
         "group",
-        isActive ? "bg-active text-fg-muted" : "text-fg-subtle hover:bg-hover hover:text-fg-muted",
+        isActive ? "bg-active text-fg" : "text-fg-muted hover:bg-hover hover:text-fg",
       )}
       layout
       onBlurCapture={(event) => {
@@ -508,7 +502,7 @@ function SessionRow({
       onMouseLeave={() => setConfirmDelete(false)}
       transition={{ duration: 0.14, ease: "easeOut" }}
     >
-      <span className={SB_RAIL}>
+      <span className="pointer-events-none absolute left-2 flex w-4 items-center justify-center">
         <SessionStatusDot activity={activity} />
       </span>
       <button
@@ -568,7 +562,6 @@ function ArchivedSessionRow({
 }) {
   return (
     <div className={cn(SB_SESSION, "group text-fg-faint hover:bg-hover hover:text-fg-subtle")}>
-      <span aria-hidden className={SB_RAIL} />
       <button
         className="min-w-0 flex-1 truncate-fade pr-1 text-left"
         onClick={onOpen}
@@ -752,58 +745,6 @@ function RenameInput({
   );
 }
 
-function NavRow({
-  icon,
-  children,
-  onClick,
-  active = false,
-  muted = false,
-  disabled = false,
-  trailing,
-  layoutHighlight = false,
-  highlight = false,
-  title,
-}: {
-  icon: ReactNode;
-  children: ReactNode;
-  onClick?: () => void;
-  active?: boolean;
-  muted?: boolean;
-  disabled?: boolean;
-  trailing?: ReactNode;
-  layoutHighlight?: boolean;
-  highlight?: boolean;
-  title?: string;
-}) {
-  return (
-    <button
-      className={cn(
-        SB_ROW,
-        "group relative text-left",
-        "text-fg-muted hover:bg-hover hover:text-fg",
-        highlight && "bg-active text-fg hover:bg-hover",
-        muted && "text-fg-faint hover:text-fg-muted",
-        disabled && "cursor-not-allowed opacity-40 hover:bg-transparent hover:text-fg-faint",
-      )}
-      disabled={disabled}
-      onClick={onClick}
-      title={title}
-      type="button"
-    >
-      {active && layoutHighlight ? (
-        <m.span
-          className="absolute inset-0 rounded-md bg-active"
-          layoutId="sidebar-active"
-          transition={{ duration: 0.12, ease: "easeOut" }}
-        />
-      ) : null}
-      <span className={cn(SB_RAIL, "relative text-current")}>{icon}</span>
-      <span className="relative flex min-w-0 flex-1 items-center truncate">{children}</span>
-      {trailing ? <span className="relative shrink-0">{trailing}</span> : null}
-    </button>
-  );
-}
-
 /**
  * The "…" project menu (Figure-2). Render-prop so the trigger lives inline with
  * the hover actions while the row still knows whether the menu is open (to keep
@@ -943,7 +884,7 @@ function SectionHeader({
   onToggle(): void;
 }) {
   return (
-    <div className="group mt-3 mb-0.5 flex h-6 items-center px-2 text-2xs font-normal text-fg-faint">
+    <div className="group mt-3 mb-1 flex h-6 items-center px-2 text-[length:var(--text-nav-heading)] font-medium text-fg-faint">
       <button
         aria-expanded={expanded}
         className="flex items-center gap-1 transition-colors hover:text-fg-subtle"

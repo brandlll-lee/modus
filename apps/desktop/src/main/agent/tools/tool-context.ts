@@ -16,7 +16,6 @@ export type AgentToolContext = {
   cwd: string;
   sessionId: string;
   profile?: ToolProfileName;
-  parentSessionId?: string;
   window?: BrowserWindowType;
   /** Persists + pushes an agent event (recordAgentEvent + webContents.send). */
   emit?: EmitAgentEvent;

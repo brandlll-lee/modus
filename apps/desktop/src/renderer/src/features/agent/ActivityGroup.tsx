@@ -1,14 +1,12 @@
 import { IconChevronRight } from "@tabler/icons-react";
 import { m } from "motion/react";
 import { memo, type ReactNode, useEffect, useId, useState } from "react";
-import type { ModelInfo, PlanRef } from "../../../../shared/contracts";
+import type { PlanRef } from "../../../../shared/contracts";
 import { getToolUiMeta, type ToolSummaryMeta } from "../../../../shared/tools";
 import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
 import { ShinyText } from "../../components/ui/ShinyText";
 import { cn } from "../../lib/cn";
 import { MessageBlock } from "./MessageBlock";
-import { SubagentRow } from "./SubagentRow";
-import { subagentActivityLabel } from "./subagentUi";
 import type {
   CompactionBlockItem,
   GroupedWorkActivityItem,
@@ -183,15 +181,11 @@ function WorkActivityGroup({
 
 export function WorkActivityRow({
   item,
-  models,
   onOpenFile,
-  onOpenSubagent,
   onOpenPlan,
 }: {
   item: WorkActivityItem;
-  models?: ModelInfo[];
   onOpenFile?(path: string): void;
-  onOpenSubagent?(childSessionId: string): void;
   onOpenPlan?(plan: PlanRef): void;
 }) {
   if (item.type === "thought") {
@@ -203,17 +197,6 @@ export function WorkActivityRow({
     );
   }
   if (item.type === "todos") return <TodosCard {...item} />;
-  if (item.type === "subagent") {
-    return (
-      <SubagentRow
-        {...item}
-        activityLabel={subagentActivityLabel(item.status, item.activity)}
-        modelId={item.model}
-        models={models}
-        onClick={() => onOpenSubagent?.(item.childSessionId)}
-      />
-    );
-  }
   if (item.type === "compaction") return <CompactionRow {...item} />;
   return (
     <div
@@ -236,16 +219,12 @@ export function WorkActivityRow({
 export const WorkFold = memo(function WorkFold({
   run,
   items,
-  models,
   onOpenFile,
-  onOpenSubagent,
   onOpenPlan,
 }: {
   run: RunBlockItem;
   items: WorkFoldItem[];
-  models?: ModelInfo[];
   onOpenFile?(path: string): void;
-  onOpenSubagent?(childSessionId: string): void;
   onOpenPlan?(plan: PlanRef): void;
 }) {
   const active = run.status === "running" || run.status === "blocked";
@@ -292,10 +271,8 @@ export const WorkFold = memo(function WorkFold({
                       <WorkActivityRow
                         item={activity}
                         key={activity.id}
-                        {...(models ? { models } : {})}
                         {...(onOpenFile ? { onOpenFile } : {})}
                         {...(onOpenPlan ? { onOpenPlan } : {})}
-                        {...(onOpenSubagent ? { onOpenSubagent } : {})}
                       />
                     ))}
                   </WorkActivityGroup>
@@ -306,10 +283,8 @@ export const WorkFold = memo(function WorkFold({
                   <WorkActivityRow
                     item={item}
                     key={item.id}
-                    {...(models ? { models } : {})}
                     {...(onOpenFile ? { onOpenFile } : {})}
                     {...(onOpenPlan ? { onOpenPlan } : {})}
-                    {...(onOpenSubagent ? { onOpenSubagent } : {})}
                   />
                 );
               }

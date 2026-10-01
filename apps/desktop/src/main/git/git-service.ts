@@ -1,6 +1,5 @@
 import { existsSync } from "node:fs";
-import { appendFile, mkdir, readFile, rm } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { createTwoFilesPatch } from "diff";
 import type {
   DiffFilePatch,
@@ -17,7 +16,6 @@ import type {
   GitCommitResult,
   GitStatusSummary,
   ReviewFile,
-  SubagentWorktreeInfo,
   WorkingChangeStats,
 } from "../../shared/contracts";
 import { GitError, messageForCode } from "./git-errors";
@@ -353,7 +351,12 @@ export async function listCommitLog(cwd: string, limit = 50): Promise<GitCommit[
       date: date ?? "",
       relativeDate: relativeDate ?? "",
       parents: parents ? parents.split(/\s+/) : [],
-      refs: refs ? refs.split(", ").map((ref) => ref.trim()).filter(Boolean) : [],
+      refs: refs
+        ? refs
+            .split(", ")
+            .map((ref) => ref.trim())
+            .filter(Boolean)
+        : [],
     });
   }
   return commits;
@@ -1028,175 +1031,6 @@ export async function checkoutBranch(
   return { kind: "ok", output: await git(cwd, ["switch", "--track", target]) };
 }
 
-function subagentSlug(value: string): string {
-  return (
-    value
-      .toLowerCase()
-      .replace(/[^a-z0-9._-]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 48) || "task"
-  );
-}
-
-function assertManagedWorktreePath(repoRoot: string, worktreePath: string): void {
-  const root = resolve(repoRoot, ".modus", "worktrees");
-  const target = resolve(worktreePath);
-  const rel = relative(root, target);
-  if (!rel || rel.startsWith("..") || isAbsolute(rel)) {
-    throw new Error("Refusing to manage a worktree outside .modus/worktrees.");
-  }
-}
-
-async function changedFilesBetween(cwd: string, base: string, target: string): Promise<string[]> {
-  return (await gitSafe(cwd, ["diff", "--name-only", "-z", base, target]))
-    .split("\0")
-    .filter(Boolean);
-}
-
-async function unmergedFiles(cwd: string): Promise<string[]> {
-  return (await gitSafe(cwd, ["diff", "--name-only", "--diff-filter=U", "-z"]))
-    .split("\0")
-    .filter(Boolean);
-}
-
-async function excludeManagedWorktrees(commonGitDir: string): Promise<void> {
-  const excludePath = join(commonGitDir, "info", "exclude");
-  const marker = ".modus/worktrees/";
-  const current = await readFile(excludePath, "utf8").catch(() => "");
-  if (!current.split(/\r?\n/).includes(marker)) {
-    await appendFile(excludePath, `${current.endsWith("\n") || !current ? "" : "\n"}${marker}\n`);
-  }
-}
-
-export async function createSubagentWorktree(
-  cwd: string,
-  input: { sessionId: string; name: string },
-): Promise<SubagentWorktreeInfo> {
-  const repo = resolveRepo(cwd);
-  if (!repo) {
-    throw new Error("Worktree isolation requires a Git repository.");
-  }
-  const baseSha = await gitSafe(repo.root, ["rev-parse", "--verify", "HEAD"]);
-  if (!baseSha) {
-    throw new Error("Worktree isolation requires an initial commit.");
-  }
-
-  const shortId = input.sessionId.replace(/[^a-f0-9]/gi, "").slice(0, 8);
-  const name = `${subagentSlug(input.name)}-${shortId || input.sessionId.slice(0, 8)}`;
-  const worktreeRoot = join(repo.root, ".modus", "worktrees");
-  const worktreePath = join(worktreeRoot, name);
-  const branch = `modus/subagent/${name}`;
-  await mkdir(worktreeRoot, { recursive: true });
-  await excludeManagedWorktrees(repo.commonGitDir);
-  await git(repo.root, ["worktree", "add", "-b", branch, worktreePath, baseSha]);
-  return { path: worktreePath, branch, baseSha, integrationStatus: "running" };
-}
-
-export async function finishSubagentWorktree(
-  worktree: SubagentWorktreeInfo,
-  task: string,
-): Promise<SubagentWorktreeInfo> {
-  const dirty = (await gitSafe(worktree.path, ["status", "--porcelain=v1"])).trim();
-  if (dirty) {
-    await git(worktree.path, ["add", "-A"]);
-    if ((await gitSafe(worktree.path, ["diff", "--cached", "--name-only"])).trim()) {
-      await runGit(
-        worktree.path,
-        [
-          "-c",
-          "user.name=Modus",
-          "-c",
-          "user.email=subagent@modus.local",
-          "commit",
-          "-m",
-          `subagent: ${task.trim() || "worktree changes"}`,
-        ],
-        { hookPath: await resolveUserPath() },
-      );
-    }
-  }
-  const changedFiles = await changedFilesBetween(worktree.path, worktree.baseSha, "HEAD");
-  return {
-    ...worktree,
-    integrationStatus: changedFiles.length > 0 ? "ready" : "no_changes",
-    changedFiles,
-  };
-}
-
-export async function applySubagentWorktree(
-  parentCwd: string,
-  worktree: SubagentWorktreeInfo,
-): Promise<SubagentWorktreeInfo> {
-  if (await mergeHead(parentCwd)) {
-    throw new Error("Commit or abort the pending worktree apply before applying another worktree.");
-  }
-  if ((await gitSafe(parentCwd, ["status", "--porcelain=v1"])).trim()) {
-    throw new Error("Apply requires a clean main workspace.");
-  }
-  try {
-    await git(parentCwd, ["merge", "--no-commit", "--no-ff", worktree.branch]);
-    return {
-      path: worktree.path,
-      branch: worktree.branch,
-      baseSha: worktree.baseSha,
-      integrationStatus: "applied",
-      ...(worktree.changedFiles ? { changedFiles: worktree.changedFiles } : {}),
-    };
-  } catch (error) {
-    const conflictFiles = await unmergedFiles(parentCwd);
-    if (conflictFiles.length > 0) {
-      return { ...worktree, integrationStatus: "conflict", conflictFiles };
-    }
-    throw error;
-  }
-}
-
-export async function abortSubagentWorktreeApply(
-  parentCwd: string,
-  worktree: SubagentWorktreeInfo,
-): Promise<SubagentWorktreeInfo> {
-  if (!(await mergeHead(parentCwd))) {
-    throw new Error("No pending worktree apply to abort.");
-  }
-  if (!(await mergeHeadBelongsToWorktree(parentCwd, worktree))) {
-    throw new Error("The pending merge does not belong to this subagent worktree.");
-  }
-  await git(parentCwd, ["merge", "--abort"]);
-  const { conflictFiles: _conflictFiles, ...rest } = worktree;
-  return { ...rest, integrationStatus: "ready" };
-}
-
-export async function cleanupSubagentWorktree(
-  parentCwd: string,
-  worktree: SubagentWorktreeInfo,
-): Promise<SubagentWorktreeInfo> {
-  const repo = resolveRepo(parentCwd);
-  if (!repo) {
-    throw new Error("Worktree cleanup requires a Git repository.");
-  }
-  assertManagedWorktreePath(repo.root, worktree.path);
-  if (await mergeHeadBelongsToWorktree(repo.root, worktree)) {
-    throw new Error("Commit or abort the pending worktree apply before cleanup.");
-  }
-  await git(repo.root, ["worktree", "remove", "--force", worktree.path]);
-  await gitSafe(repo.root, ["branch", "-D", worktree.branch]);
-  await rm(worktree.path, { recursive: true, force: true }).catch(() => undefined);
-  return { ...worktree, integrationStatus: "cleaned" };
-}
-
-async function mergeHead(cwd: string): Promise<string | undefined> {
-  return (await gitSafe(cwd, ["rev-parse", "--verify", "MERGE_HEAD"])) || undefined;
-}
-
-async function mergeHeadBelongsToWorktree(
-  cwd: string,
-  worktree: SubagentWorktreeInfo,
-): Promise<boolean> {
-  const head = await mergeHead(cwd);
-  if (!head) return false;
-  return head === (await gitSafe(cwd, ["rev-parse", "--verify", `${worktree.branch}^{commit}`]));
-}
-
 /* ── Agent checkpoints ───────────────────────────────────────────────────
  * A snapshot is a dangling commit of the ENTIRE working tree (tracked +
  * untracked, .gitignore respected) built through a TEMPORARY index file, so
@@ -1208,6 +1042,11 @@ export type CheckoutSnapshot = {
   commit: string;
   tree: string;
 };
+
+async function unmergedFiles(cwd: string): Promise<string[]> {
+  const output = await git(cwd, ["diff", "--name-only", "--diff-filter=U", "-z"]);
+  return output.split("\0").filter(Boolean);
+}
 
 export async function captureCheckoutSnapshot(
   cwd: string,

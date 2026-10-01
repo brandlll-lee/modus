@@ -15,11 +15,10 @@ import type { DiffReview, DiffReviewReady, DiffTarget } from "../../shared/contr
 import { listAgentEvents, recordAgentEvent } from "../agent/agent-event-store";
 import { listAgentRuns } from "../agent/agent-run-store";
 import {
-  getAgentSession,
   listAgentSessions,
   listArchivedAgentSessions,
+  setAgentSessionArchived,
   setAgentSessionPinned,
-  updateAgentSessionWorktree,
 } from "../agent/agent-store";
 import {
   getLastTurnComparison,
@@ -39,20 +38,12 @@ import {
 import { listAgentReviews, startAgentReview } from "../agent/review-service";
 import { rollbackToUserMessage } from "../agent/rollback-service";
 import { getAgentRuntime } from "../agent/runtime-registry";
-import { deleteAgentSessionTree, setAgentSessionArchivedTree } from "../agent/session-lifecycle";
+import { removeAgentSession } from "../agent/session-lifecycle";
 import {
   onSessionResourcesChanged,
   reloadSessionResources,
   sessionResources,
 } from "../agent/session-resources";
-import {
-  createSubagent,
-  deleteSubagent,
-  ensureSubagentsDir,
-  getSubagent,
-  listSubagents,
-  updateSubagent,
-} from "../agent/subagents-config";
 import { deleteBrowserRecent, listBrowserRecents } from "../browser/browser-recents-store";
 import {
   closeBrowserTab,
@@ -78,10 +69,7 @@ import { listDirectory, readWorkspaceFile, writeWorkspaceFile } from "../files/f
 import { emitFilesEvent, unwatchWorkspace, watchWorkspace } from "../files/files-watcher";
 import { readWorkspacePreview } from "../files/preview-kind";
 import {
-  abortSubagentWorktreeApply,
-  applySubagentWorktree,
   checkoutBranch,
-  cleanupSubagentWorktree,
   commitOrPush,
   discardUnstagedFile,
   type GitDiffTarget,
@@ -196,11 +184,6 @@ import {
   sessionPinSchema,
   setModelThinkingSchema,
   startupMetricSchema,
-  subagentsCreateSchema,
-  subagentsDeleteSchema,
-  subagentsGetSchema,
-  subagentsOpenDirSchema,
-  subagentsUpdateSchema,
   terminalCreateSchema,
   terminalResizeSchema,
   terminalWriteSchema,
@@ -485,80 +468,19 @@ export function registerAppIpc({
   ipcMain.handle(IPC_CHANNELS.agentArchive, async (event, sessionId: string) => {
     assertTrustedSender(event);
     const id = parseIpcInput(sessionIdSchema, sessionId, IPC_CHANNELS.agentArchive);
-    await setAgentSessionArchivedTree(id, true);
+    setAgentSessionArchived(id, true);
   });
 
   ipcMain.handle(IPC_CHANNELS.agentRestore, async (event, sessionId: string) => {
     assertTrustedSender(event);
     const id = parseIpcInput(sessionIdSchema, sessionId, IPC_CHANNELS.agentRestore);
-    await setAgentSessionArchivedTree(id, false);
+    setAgentSessionArchived(id, false);
   });
 
   ipcMain.handle(IPC_CHANNELS.agentDelete, async (event, sessionId: string) => {
     assertTrustedSender(event);
     const id = parseIpcInput(sessionIdSchema, sessionId, IPC_CHANNELS.agentDelete);
-    await deleteAgentSessionTree(id);
-  });
-
-  ipcMain.handle(IPC_CHANNELS.agentApplySubagentWorktree, async (event, sessionId: string) => {
-    assertTrustedSender(event);
-    const id = parseIpcInput(sessionIdSchema, sessionId, IPC_CHANNELS.agentApplySubagentWorktree);
-    const child = getAgentSession(id);
-    if (!child?.parentSessionId || !child.subagentWorktree) {
-      throw new Error("Subagent worktree not found.");
-    }
-    const parent = getAgentSession(child.parentSessionId);
-    if (!parent) {
-      throw new Error("Parent session not found.");
-    }
-    const worktree = await applySubagentWorktree(parent.cwd, child.subagentWorktree);
-    const updated = updateAgentSessionWorktree(child.id, worktree) ?? child;
-    emitGitEvent({ cwd: parent.cwd, kind: "index" });
-    return updated;
-  });
-
-  ipcMain.handle(IPC_CHANNELS.agentAbortSubagentWorktreeApply, async (event, sessionId: string) => {
-    assertTrustedSender(event);
-    const id = parseIpcInput(
-      sessionIdSchema,
-      sessionId,
-      IPC_CHANNELS.agentAbortSubagentWorktreeApply,
-    );
-    const child = getAgentSession(id);
-    if (!child?.parentSessionId || !child.subagentWorktree) {
-      throw new Error("Subagent worktree not found.");
-    }
-    if (!["applied", "conflict"].includes(child.subagentWorktree.integrationStatus)) {
-      throw new Error("Only applied or conflicted worktree applies can be aborted.");
-    }
-    const parent = getAgentSession(child.parentSessionId);
-    if (!parent) {
-      throw new Error("Parent session not found.");
-    }
-    const worktree = await abortSubagentWorktreeApply(parent.cwd, child.subagentWorktree);
-    const updated = updateAgentSessionWorktree(child.id, worktree) ?? child;
-    emitGitEvent({ cwd: parent.cwd, kind: "index" });
-    return updated;
-  });
-
-  ipcMain.handle(IPC_CHANNELS.agentCleanupSubagentWorktree, async (event, sessionId: string) => {
-    assertTrustedSender(event);
-    const id = parseIpcInput(sessionIdSchema, sessionId, IPC_CHANNELS.agentCleanupSubagentWorktree);
-    const child = getAgentSession(id);
-    if (!child?.parentSessionId || !child.subagentWorktree) {
-      throw new Error("Subagent worktree not found.");
-    }
-    if (!["applied", "no_changes"].includes(child.subagentWorktree.integrationStatus)) {
-      throw new Error("Only applied or no-change worktrees can be cleaned up.");
-    }
-    const parent = getAgentSession(child.parentSessionId);
-    if (!parent) {
-      throw new Error("Parent session not found.");
-    }
-    const worktree = await cleanupSubagentWorktree(parent.cwd, child.subagentWorktree);
-    const updated = updateAgentSessionWorktree(child.id, worktree) ?? child;
-    emitGitEvent({ cwd: parent.cwd, kind: "refs" });
-    return updated;
+    await removeAgentSession(id);
   });
 
   ipcMain.handle(IPC_CHANNELS.agentSetModel, async (event, input) => {
@@ -1184,57 +1106,6 @@ export function registerAppIpc({
     assertTrustedSender(event);
     const parsed = parseIpcInput(resourceLocationSchema, input, IPC_CHANNELS.skillsOpenDir);
     await revealSkill(parsed.sessionId, parsed.path);
-  });
-
-  ipcMain.handle(IPC_CHANNELS.subagentsList, (event, cwd: string) => {
-    assertTrustedSender(event);
-    return listSubagents(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.subagentsList));
-  });
-
-  ipcMain.handle(IPC_CHANNELS.subagentsGet, (event, input) => {
-    assertTrustedSender(event);
-    const parsed = parseIpcInput(subagentsGetSchema, input, IPC_CHANNELS.subagentsGet);
-    return getSubagent(parsed.cwd, parsed.path);
-  });
-
-  ipcMain.handle(IPC_CHANNELS.subagentsCreate, (event, input) => {
-    assertTrustedSender(event);
-    const parsed = parseIpcInput(subagentsCreateSchema, input, IPC_CHANNELS.subagentsCreate);
-    const { model, tools, disallowedTools, isolation, ...rest } = parsed;
-    return createSubagent({
-      ...rest,
-      ...(model !== undefined ? { model } : {}),
-      ...(tools !== undefined ? { tools } : {}),
-      ...(disallowedTools !== undefined ? { disallowedTools } : {}),
-      ...(isolation !== undefined ? { isolation } : {}),
-    });
-  });
-
-  ipcMain.handle(IPC_CHANNELS.subagentsUpdate, (event, input) => {
-    assertTrustedSender(event);
-    const parsed = parseIpcInput(subagentsUpdateSchema, input, IPC_CHANNELS.subagentsUpdate);
-    const { model, tools, disallowedTools, isolation, ...rest } = parsed;
-    return updateSubagent({
-      ...rest,
-      ...(model !== undefined ? { model } : {}),
-      ...(tools !== undefined ? { tools } : {}),
-      ...(disallowedTools !== undefined ? { disallowedTools } : {}),
-      ...(isolation !== undefined ? { isolation } : {}),
-    });
-  });
-
-  ipcMain.handle(IPC_CHANNELS.subagentsDelete, (event, input) => {
-    assertTrustedSender(event);
-    const parsed = parseIpcInput(subagentsDeleteSchema, input, IPC_CHANNELS.subagentsDelete);
-    return deleteSubagent(parsed.cwd, parsed.path);
-  });
-
-  ipcMain.handle(IPC_CHANNELS.subagentsOpenDir, async (event, input) => {
-    assertTrustedSender(event);
-    const parsed = parseIpcInput(subagentsOpenDirSchema, input, IPC_CHANNELS.subagentsOpenDir);
-    const dir = ensureSubagentsDir(parsed.cwd, parsed.scope);
-    await shell.openPath(dir);
-    return dir;
   });
 
   ipcMain.handle(IPC_CHANNELS.modelList, (event) => {

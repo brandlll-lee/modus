@@ -227,38 +227,6 @@ export const resourceLocationSchema = z.object({
   path: nonEmptyString,
 });
 
-export const subagentsGetSchema = z.object({
-  cwd: nonEmptyString,
-  path: nonEmptyString,
-});
-
-export const subagentsCreateSchema = z.object({
-  cwd: nonEmptyString,
-  scope: z.enum(["user", "workspace"]).optional(),
-  name: nonEmptyString.max(64),
-  description: z.string().trim().max(280),
-  model: z.string().trim().max(120).optional(),
-  readOnly: z.boolean(),
-  tools: z.array(z.string().trim().min(1).max(80)).optional(),
-  disallowedTools: z.array(z.string().trim().min(1).max(80)).optional(),
-  isolation: z.enum(["shared", "worktree"]).optional(),
-  body: z.string().trim().min(1).max(20_000),
-});
-
-export const subagentsUpdateSchema = subagentsCreateSchema.extend({
-  path: nonEmptyString,
-});
-
-export const subagentsDeleteSchema = z.object({
-  cwd: nonEmptyString,
-  path: nonEmptyString,
-});
-
-export const subagentsOpenDirSchema = z.object({
-  cwd: nonEmptyString,
-  scope: z.enum(["user", "workspace"]).optional(),
-});
-
 export const diffReadSchema = z.object({
   cwd: nonEmptyString,
   path: optionalNonEmptyString,

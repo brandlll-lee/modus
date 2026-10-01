@@ -138,7 +138,6 @@ describe("ToolRegistry classify", () => {
       dangerous: true,
     });
     expect(registry.allowsProfile("read", "plan", definition)).toBe(false);
-    expect(registry.isReadOnlySafe("read", definition)).toBe(false);
   });
 });
 

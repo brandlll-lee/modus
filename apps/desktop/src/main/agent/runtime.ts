@@ -18,11 +18,6 @@ export type CreateAgentRuntimeInput = {
   cwd: string;
   title: string;
   model?: string;
-  parentSessionId?: string;
-  subagentTask?: string;
-  subagentType?: string;
-  subagentReadOnly?: boolean;
-  subagentWorktree?: AgentSessionInfo["subagentWorktree"];
 };
 
 export type PromptAgentInput = {
@@ -55,38 +50,6 @@ export type AgentRuntime = {
   ensure(window: BrowserWindowType, sessionId: string): Promise<AgentSessionInfo>;
   prompt(window: BrowserWindowType, input: PromptAgentInput): Promise<void>;
   compact(window: BrowserWindowType, sessionId: string): Promise<void>;
-  /** Spawn a child subagent and return immediately. Collect results with waitBackground. */
-  runSubagent(
-    window: BrowserWindowType,
-    input: {
-      parentSessionId: string;
-      task: string;
-      prompt: string;
-      subagentType: string;
-      subagent?: {
-        name: string;
-        body: string;
-        model: string;
-        readOnly: boolean;
-        tools?: string[];
-        disallowedTools?: string[];
-        isolation?: "shared" | "worktree";
-      };
-    },
-  ): Promise<{ session: AgentSessionInfo }>;
-  /**
-   * Block the current tool call until background subagents settle
-   * or timeout — keeps the same agent turn open. Sole harvest path for task().
-   */
-  waitBackground(
-    input: {
-      sessionId: string;
-      timeoutMs: number;
-      subagentIds?: string[];
-      signal?: AbortSignal;
-      onProgress?: (text: string) => void;
-    },
-  ): Promise<BackgroundWaitResult>;
   abort(sessionId: string): Promise<void>;
   listRuns(sessionId: string): Promise<AgentRunInfo[]>;
   dispose(sessionId: string): Promise<void>;
@@ -106,17 +69,6 @@ export type AgentRuntime = {
     sessionId: string | undefined,
     direction?: "forward" | "backward",
   ): Promise<ModelInfo>;
-};
-
-export type BackgroundWaitResult = {
-  waitedMs: number;
-  timedOut: boolean;
-  subagents: Array<{
-    id: string;
-    task: string;
-    status: "running" | "completed" | "error" | "missing";
-    output?: string;
-  }>;
 };
 
 export type EmitAgentEvent = (event: AgentEvent) => void;

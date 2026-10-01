@@ -48,8 +48,6 @@ import type {
   ResolvedContext,
   SkillSelection,
   SkillState,
-  SubagentDetail,
-  SubagentInfo,
   TerminalEvent,
   TerminalInfo,
   ThinkingLevel,
@@ -150,9 +148,6 @@ export type ModusApi = {
     archive(sessionId: string): Promise<void>;
     restore(sessionId: string): Promise<void>;
     delete(sessionId: string): Promise<void>;
-    applySubagentWorktree(sessionId: string): Promise<AgentSessionInfo>;
-    abortSubagentWorktreeApply(sessionId: string): Promise<AgentSessionInfo>;
-    cleanupSubagentWorktree(sessionId: string): Promise<AgentSessionInfo>;
     setModel(input: {
       sessionId: string;
       model: string;
@@ -360,36 +355,6 @@ export type ModusApi = {
     refresh(cwd: string): Promise<void>;
     onChanged(callback: (cwd: string) => void): () => void;
     openDir(input: { sessionId: string; path: string }): Promise<void>;
-  };
-  subagents: {
-    list(cwd: string): Promise<SubagentInfo[]>;
-    get(input: { cwd: string; path: string }): Promise<SubagentDetail | undefined>;
-    create(input: {
-      cwd: string;
-      scope?: "user" | "workspace";
-      name: string;
-      description: string;
-      model?: string;
-      readOnly: boolean;
-      tools?: string[];
-      disallowedTools?: string[];
-      isolation?: "shared" | "worktree";
-      body: string;
-    }): Promise<SubagentInfo>;
-    update(input: {
-      cwd: string;
-      path: string;
-      name: string;
-      description: string;
-      model?: string;
-      readOnly: boolean;
-      tools?: string[];
-      disallowedTools?: string[];
-      isolation?: "shared" | "worktree";
-      body: string;
-    }): Promise<SubagentInfo>;
-    delete(input: { cwd: string; path: string }): Promise<SubagentInfo[]>;
-    openDir(input: { cwd: string; scope?: "user" | "workspace" }): Promise<string>;
   };
   window: {
     minimize(): Promise<void>;
