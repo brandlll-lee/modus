@@ -1,6 +1,5 @@
-import { ThinkingOrb } from "thinking-orbs";
+import { IconLoader2 } from "@tabler/icons-react";
 import { cn } from "../../lib/cn";
-import { useTheme } from "../../lib/theme";
 import type { SessionActivity } from "./agentEventHub";
 
 export function SessionStatusDot({
@@ -10,8 +9,6 @@ export function SessionStatusDot({
   activity: SessionActivity | undefined;
   className?: string;
 }) {
-  const [mode] = useTheme();
-
   if (activity?.needsInput) {
     return (
       <span className={cn("relative flex size-1.5 shrink-0", className)} title="Needs your input">
@@ -23,16 +20,12 @@ export function SessionStatusDot({
   if (activity?.running) {
     return (
       <span
-        className={cn("flex size-5 shrink-0 items-center justify-center", className)}
+        className={cn("flex size-5 shrink-0 items-center justify-center text-fg-muted", className)}
         title="Agent running"
       >
-        <ThinkingOrb
-          aria-label="Working"
-          className="shrink-0"
-          size={20}
-          state="solving"
-          theme={mode === "light" ? "light" : "dark"}
-        />
+        <span className="animate-spin motion-reduce:animate-none" aria-hidden>
+          <IconLoader2 size={16} stroke={1.5} />
+        </span>
         <span className="sr-only">Agent running</span>
       </span>
     );

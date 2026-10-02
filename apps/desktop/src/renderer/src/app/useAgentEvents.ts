@@ -11,6 +11,7 @@ export function useAgentEvents(
   watchedSessionId: string | undefined,
   refreshSessions: () => Promise<void>,
   setActiveSessionId: (id: string) => void,
+  updateSessionTitle: (sessionId: string, title: string) => void,
   watching = true,
 ) {
   const [notice, setNotice] = useState<Extract<AgentEvent, { type: "extension.notice" }>>();
@@ -85,15 +86,13 @@ export function useAgentEvents(
       }
 
       if (
-        event.type === "agent.started" ||
-        event.type === "agent.ended" ||
-        event.type === "message.completed" ||
         event.type === "run.completed" ||
         event.type === "run.failed" ||
         event.type === "run.cancelled" ||
         event.type === "run.blocked" ||
         event.type === "session.updated"
       ) {
+        if (event.type === "session.updated") updateSessionTitle(event.sessionId, event.title);
         void refreshSessions();
       }
     });
@@ -107,7 +106,7 @@ export function useAgentEvents(
       unsubscribe();
       unsubscribeFocus();
     };
-  }, [refreshSessions, setActiveSessionId]);
+  }, [refreshSessions, setActiveSessionId, updateSessionTitle]);
 
   useEffect(() => {
     if (!activeSessionId) return;

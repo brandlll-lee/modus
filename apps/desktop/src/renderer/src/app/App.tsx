@@ -21,6 +21,7 @@ import { TOOLBAR_ICON, ToolbarButton } from "../components/ui/ToolbarButton";
 import { TooltipProvider } from "../components/ui/Tooltip";
 import { WindowTitleBar } from "../components/ui/WindowTitleBar";
 import { type AgentEventItem, optimisticUserPromptEvents } from "../features/agent/agentEventHub";
+import { ChatPane } from "../features/agent/ChatPane";
 import { ExtensionDialog } from "../features/agent/ExtensionDialog";
 import { SessionTitlePopover } from "../features/agent/SessionTitlePopover";
 import { Composer } from "../features/composer/Composer";
@@ -42,12 +43,8 @@ import { useWorkspaceSessions } from "./useWorkspaceSessions";
 import { WorkspaceHeaderActions } from "./WorkspaceHeaderActions";
 import { WorkspacePicker } from "./WorkspacePicker";
 
-const loadChatPane = () => import("../features/agent/ChatPane");
 const loadInspector = () => import("../features/inspector/Inspector");
 const loadSettingsPanel = () => import("../features/settings/SettingsPanel");
-const ChatPane = lazy(() =>
-  loadChatPane().then(({ ChatPane: Component }) => ({ default: Component })),
-);
 const Inspector = lazy(() =>
   loadInspector().then(({ Inspector: Component }) => ({
     default: Component,
@@ -83,6 +80,7 @@ export function App() {
     activeSession,
     rootSessions,
     refreshSessions,
+    updateSessionTitle,
     sessionCreateError,
     setSessionCreateError,
     openWorkspace,
@@ -116,7 +114,13 @@ export function App() {
     dismissNotice,
     restoreError,
     publishLocalAgentEvent,
-  } = useAgentEvents(activeSessionId, refreshSessions, focusSession, !settingsOpen);
+  } = useAgentEvents(
+    activeSessionId,
+    refreshSessions,
+    focusSession,
+    updateSessionTitle,
+    !settingsOpen,
+  );
   const {
     models,
     model,
@@ -173,13 +177,6 @@ export function App() {
     });
   }, [activeWorkspace?.id, setInspectorOpen]);
 
-  useEffect(() => {
-    const idleCallback = window.requestIdleCallback(() => {
-      void Promise.allSettled([loadChatPane(), loadInspector(), loadSettingsPanel()]);
-    });
-    return () => window.cancelIdleCallback(idleCallback);
-  }, []);
-
   function openReview(cwd?: string): void {
     setReviewCwd(cwd);
     setInspectorTab("changes");
@@ -217,7 +214,16 @@ export function App() {
     if (!message.trim() && !attachments?.length) {
       return;
     }
-    const session = await createSession(activeWorkspace, model);
+    const session = await createSession(
+      activeWorkspace,
+      model,
+      message.trim() ||
+        attachments
+          ?.map((image) => image.name)
+          .filter(Boolean)
+          .join(" ") ||
+        "",
+    );
     if (!session) {
       throw new Error("Select a workspace and model before sending.");
     }
@@ -482,7 +488,9 @@ export function App() {
                               animate={{ opacity: 1 }}
                               className="flex min-h-0 min-w-0 flex-1"
                               exit={{ opacity: 0 }}
-                              initial={{ opacity: 0 }}
+                              initial={
+                                initialEventsBySession[activeSession.id] ? false : { opacity: 0 }
+                              }
                               key="conversation"
                               layout={reduceMotion ? false : "position"}
                               layoutDependency={responsiveSidebarOpen}
@@ -535,7 +543,7 @@ export function App() {
                             <m.div
                               animate={{ opacity: 1 }}
                               className="flex min-h-0 flex-1 flex-col items-center justify-center px-6"
-                              exit={{ opacity: 0 }}
+                              exit={{ opacity: 0, transition: { duration: 0 } }}
                               initial={{ opacity: 0 }}
                               key="hero"
                               transition={{ duration: 0.12, ease: "easeOut" }}

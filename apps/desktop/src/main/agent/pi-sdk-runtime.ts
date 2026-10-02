@@ -18,6 +18,7 @@ import type {
   ModelInfo,
   PlanBuildStatus,
 } from "../../shared/contracts";
+import { deriveSessionTitle, shouldReplaceSessionTitle } from "../../shared/session-title";
 import type { ToolProfileName } from "../../shared/tools";
 import { releaseAgentBrowserControl } from "../browser/browser-service";
 import { formatResolvedContext, resolveContext } from "../context/context-service";
@@ -75,7 +76,6 @@ import type {
   PromptAgentInput,
 } from "./runtime";
 import { registerSessionResources, releaseSessionResources } from "./session-resources";
-import { deriveSessionTitle, shouldReplaceSessionTitle } from "./session-title";
 import { registerAppTools } from "./tools/app-tools";
 import { registerBrowserTools } from "./tools/browser-tools";
 import { registerFastCodebaseTools } from "./tools/fast-codebase-tools";
@@ -493,6 +493,7 @@ export class PiSdkRuntime implements AgentRuntime {
     mkdirSync(sessionDir, { recursive: true });
 
     const warmup = (async () => {
+      await new Promise<void>((resolve) => setImmediate(resolve));
       const { settingsManager, loader } = await this.createSessionResources(
         input.cwd,
         info.id,

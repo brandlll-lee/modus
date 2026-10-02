@@ -256,6 +256,38 @@ afterAll(async () => {
 });
 
 describe("PiSdkRuntime", () => {
+  it("returns the persisted titled session while native initialization is pending", async () => {
+    const workspaceId = `workspace-${crypto.randomUUID()}`;
+    const now = new Date().toISOString();
+    getDatabase()
+      .prepare(
+        "insert into workspaces (id, root_path, display_name, is_git_repository, last_opened_at, created_at) values (?, ?, ?, ?, ?, ?)",
+      )
+      .run(workspaceId, cwd, "project", 0, now, now);
+    const nativeSession = createMockPiSession();
+    let finishInitialization!: (result: { session: typeof nativeSession }) => void;
+    mocks.createAgentSession.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishInitialization = resolve;
+        }),
+    );
+    const runtime = new PiSdkRuntime();
+    const window = createWindowStub();
+    const record = await runtime.create(window, { workspaceId, cwd, title: "First message title" });
+    expect(record.title).toBe("First message title");
+    expect(mocks.createAgentSession).not.toHaveBeenCalled();
+    expect(
+      getDatabase().prepare("select title from agent_sessions where id = ?").get(record.id),
+    ).toMatchObject({ title: record.title });
+    const restored = runtime.ensure(window, record.id);
+    await vi.waitFor(() => expect(finishInitialization).toBeTypeOf("function"));
+    finishInitialization({ session: nativeSession });
+    expect((await restored).id).toBe(record.id);
+    expect(mocks.createAgentSession).toHaveBeenCalledTimes(1);
+    await runtime.releaseRuntime(record.id);
+  });
+
   it("compacts an idle session without creating a prompt run", async () => {
     const sessionId = `session-${crypto.randomUUID()}`;
     insertSession(sessionId, `workspace-${crypto.randomUUID()}`, join(userData, "missing.jsonl"));

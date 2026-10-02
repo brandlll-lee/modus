@@ -18,6 +18,7 @@ const runStarted: AgentEvent = {
   delivery: "normal",
 };
 const runCompleted: AgentEvent = { type: "run.completed", sessionId: "s", runId: "r" };
+const agentStarted: AgentEvent = { type: "agent.started", sessionId: "s" };
 const runFailed: AgentEvent = { type: "run.failed", sessionId: "s", runId: "r", message: "boom" };
 const permissionRequested: AgentEvent = {
   type: "permission.requested",
@@ -31,7 +32,9 @@ function item(event: AgentEvent, id = crypto.randomUUID()): AgentEventItem {
 
 describe("reduceActivity", () => {
   it("tracks a watched run through start and completion without unread", () => {
-    const running = reduceActivity(undefined, runStarted, true);
+    const preparing = reduceActivity(undefined, runStarted, true);
+    expect(preparing.running).toBe(false);
+    const running = reduceActivity(preparing, agentStarted, true);
     expect(running).toMatchObject({ running: true, needsInput: false, failed: false });
 
     const done = reduceActivity(running, runCompleted, true);
@@ -39,7 +42,7 @@ describe("reduceActivity", () => {
   });
 
   it("marks background completions unread and failures failed", () => {
-    const running = reduceActivity(undefined, runStarted, false);
+    const running = reduceActivity(undefined, agentStarted, false);
     expect(reduceActivity(running, runCompleted, false)).toMatchObject({
       running: false,
       unread: true,
@@ -53,7 +56,7 @@ describe("reduceActivity", () => {
   });
 
   it("raises and clears the needs-input flag around permission requests", () => {
-    const running = reduceActivity(undefined, runStarted, true);
+    const running = reduceActivity(undefined, agentStarted, true);
     const blocked = reduceActivity(running, permissionRequested, true);
     expect(blocked.needsInput).toBe(true);
 
@@ -67,7 +70,7 @@ describe("reduceActivity", () => {
   });
 
   it("returns the same reference for irrelevant events so state updates can bail", () => {
-    const running = reduceActivity(undefined, runStarted, true);
+    const running = reduceActivity(undefined, agentStarted, true);
     const after = reduceActivity(
       running,
       { type: "message.delta", sessionId: "s", messageId: "m", delta: "x" },
@@ -78,6 +81,10 @@ describe("reduceActivity", () => {
       affectsActivity({ type: "message.delta", sessionId: "s", messageId: "m", delta: "x" }),
     ).toBe(false);
     expect(affectsActivity(runStarted)).toBe(true);
+    expect(affectsActivity(agentStarted)).toBe(true);
+    const ended: AgentEvent = { type: "agent.ended", sessionId: "s" };
+    expect(affectsActivity(ended)).toBe(true);
+    expect(reduceActivity(running, ended, true).running).toBe(false);
   });
 
   it("starts from idle defaults", () => {

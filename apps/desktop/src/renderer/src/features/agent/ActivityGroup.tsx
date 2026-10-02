@@ -211,9 +211,13 @@ export const WorkFold = memo(function WorkFold({
   items,
   onOpenFile,
   onOpenPlan,
+  enteringMessageId,
+  onMessageEntered,
 }: {
   run: RunBlockItem;
   items: WorkFoldItem[];
+  enteringMessageId?: string | undefined;
+  onMessageEntered?(messageId: string): void;
   onOpenFile?(path: string): void;
   onOpenPlan?(plan: PlanRef): void;
 }) {
@@ -286,6 +290,13 @@ export const WorkFold = memo(function WorkFold({
               if (item.type === "message") {
                 return (
                   <MessageBlock
+                    animateEntry={item.id === enteringMessageId}
+                    {...(item.id === enteringMessageId && onMessageEntered
+                      ? { onEntryComplete: () => onMessageEntered(item.id) }
+                      : {})}
+                    {...(item.attachments ? { attachments: item.attachments } : {})}
+                    {...(item.contextChips ? { contextChips: item.contextChips } : {})}
+                    {...(item.skills ? { skills: item.skills } : {})}
                     content={item.content}
                     key={item.id}
                     messageId={item.id}

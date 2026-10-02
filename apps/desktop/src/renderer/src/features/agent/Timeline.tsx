@@ -26,6 +26,8 @@ type TimelineProps = {
   /** Blocks built by the owner (ChatPane) — the single authority for this list. */
   blocks: TimelineBlock[];
   preparing?: boolean;
+  enteringMessageId?: string | undefined;
+  onMessageEntered?(messageId: string): void;
   /** Session cwd — file chips / markdown file nav resolve against the workspace. */
   cwd?: string | undefined;
   /** Active pane model — needed so inline edit can mount the shared Composer. */
@@ -1162,6 +1164,8 @@ export function Timeline({
   sessionId,
   blocks,
   preparing = false,
+  enteringMessageId,
+  onMessageEntered,
   cwd,
   model,
   models,
@@ -1196,6 +1200,10 @@ export function Timeline({
                 }
                 return (
                   <MessageBlock
+                    animateEntry={block.id === enteringMessageId}
+                    {...(block.id === enteringMessageId && onMessageEntered
+                      ? { onEntryComplete: () => onMessageEntered(block.id) }
+                      : {})}
                     sessionId={sessionId}
                     key={key}
                     {...(block.attachments ? { attachments: block.attachments } : {})}
@@ -1225,6 +1233,8 @@ export function Timeline({
                 <div className="w-full px-8" key={key}>
                   {block.type === "work-fold" ? (
                     <WorkFold
+                      enteringMessageId={enteringMessageId}
+                      {...(onMessageEntered ? { onMessageEntered } : {})}
                       items={block.items}
                       run={block.run}
                       {...(onOpenFile ? { onOpenFile } : {})}

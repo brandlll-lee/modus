@@ -2,10 +2,10 @@ import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import type { AgentRunStatus, CheckpointInfo } from "../../shared/contracts";
 import { getDatabase } from "../db/database";
+import { isInsideRepo } from "../git/git-repo";
 import {
   captureCheckoutSnapshot,
   deleteSnapshotRef,
-  isGitRepository,
   restoreCheckoutSnapshot,
 } from "../git/git-service";
 
@@ -188,7 +188,7 @@ export type CreateCheckpointInput = {
 export async function createCheckpoint(
   input: CreateCheckpointInput,
 ): Promise<CheckpointInfo | undefined> {
-  if (!(await isGitRepository(input.cwd))) {
+  if (!isInsideRepo(input.cwd)) {
     return undefined;
   }
 

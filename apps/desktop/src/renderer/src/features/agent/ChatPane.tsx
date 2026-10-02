@@ -109,13 +109,23 @@ export function ChatPane({
   onOpenTerminal,
 }: ChatPaneProps) {
   const sessionId = session.id;
-  const [agentEvents, setAgentEvents] = useState<AgentEventItem[]>([]);
+  const [agentEvents, setAgentEvents] = useState<AgentEventItem[]>(initialEvents ?? []);
+  const initialPrompt = initialEvents?.find(
+    (item) =>
+      item.optimistic && item.event.type === "message.started" && item.event.role === "user",
+  );
+  const [enteringMessageId, setEnteringMessageId] = useState<string | undefined>(
+    initialPrompt?.event.type === "message.started" ? initialPrompt.event.messageId : undefined,
+  );
+  const completeMessageEntry = useCallback((messageId: string): void => {
+    setEnteringMessageId((current) => (current === messageId ? undefined : current));
+  }, []);
   const loadedSessionRef = useRef<string | undefined>(undefined);
   const [localComposerDraft, setLocalComposerDraft] = useState<ChatComposerDraft>(
     createEmptyChatComposerDraft,
   );
   const [promptError, setPromptError] = useState<string | undefined>();
-  const [pendingPrompt, setPendingPrompt] = useState(false);
+  const [pendingPrompt, setPendingPrompt] = useState(Boolean(initialPrompt));
   const [aborting, setAborting] = useState(false);
   const [workingStats, setWorkingStats] = useState<WorkingChangeStats | undefined>();
   const [dismissedPlanHash, setDismissedPlanHash] = useState<string | undefined>(undefined);
@@ -298,12 +308,17 @@ export function ChatPane({
   // biome-ignore lint/correctness/useExhaustiveDependencies: see above.
   useEffect(() => {
     let cancelled = false;
-    if (loadedSessionRef.current !== sessionId) setAgentEvents(initialEvents ?? []);
+    if (loadedSessionRef.current !== sessionId) {
+      setAgentEvents(initialEvents ?? []);
+      setEnteringMessageId(
+        initialPrompt?.event.type === "message.started" ? initialPrompt.event.messageId : undefined,
+      );
+    }
     if (initialEvents && initialEvents.length > 0) {
       onInitialEventsConsumed?.(sessionId);
     }
     setPromptError(undefined);
-    setPendingPrompt(false);
+    setPendingPrompt(Boolean(initialPrompt));
     setAborting(false);
     setWorkingStats(undefined);
     refreshStats();
@@ -416,6 +431,7 @@ export function ChatPane({
     const turnModel = models.find((item) => item.id === paneModel);
     const turnThinking = turnModel?.thinkingVariant ?? turnModel?.thinkingLevel;
     const userMessageId = `local-user:${crypto.randomUUID()}`;
+    setEnteringMessageId(userMessageId);
     setAgentEvents((events) =>
       appendAgentEvents(
         events,
@@ -594,6 +610,8 @@ export function ChatPane({
           <Timeline
             sessionId={sessionId}
             blocks={visibleBlocks}
+            enteringMessageId={enteringMessageId}
+            onMessageEntered={completeMessageEntry}
             preparing={
               isRunning &&
               !visibleBlocks.some(

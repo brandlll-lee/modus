@@ -53,7 +53,11 @@ export function reduceActivity(
   const activity = current ?? IDLE_ACTIVITY;
   switch (event.type) {
     case "run.started":
+      return { ...activity, needsInput: false, unread: false, failed: false };
+    case "agent.started":
       return { running: true, needsInput: false, unread: false, failed: false };
+    case "agent.ended":
+      return { ...activity, running: false, needsInput: false };
     case "permission.requested":
       return { ...activity, needsInput: true, unread: watched ? activity.unread : true };
     case "permission.resolved":
@@ -84,6 +88,8 @@ export function reduceActivity(
 export function affectsActivity(event: AgentEvent): boolean {
   switch (event.type) {
     case "run.started":
+    case "agent.started":
+    case "agent.ended":
     case "run.completed":
     case "run.failed":
     case "run.cancelled":

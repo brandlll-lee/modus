@@ -10,6 +10,7 @@ import {
   IconTerminal2,
   IconWorld,
 } from "@tabler/icons-react";
+import { m, useReducedMotion } from "motion/react";
 import { memo, useState } from "react";
 import type {
   ContextItem,
@@ -65,6 +66,8 @@ type MessageBlockProps = {
   contextItems?: ContextItem[];
   /** User only: selected skills attached to the prompt. */
   skills?: SkillSelection[];
+  animateEntry?: boolean;
+  onEntryComplete?(): void;
 };
 
 export const MessageBlock = memo(function MessageBlock({
@@ -86,8 +89,11 @@ export const MessageBlock = memo(function MessageBlock({
   contextChips,
   contextItems,
   skills,
+  animateEntry = false,
+  onEntryComplete,
 }: MessageBlockProps) {
   const [editing, setEditing] = useState(false);
+  const reduceMotion = useReducedMotion();
   // Pause measurement while the edit composer owns the slot — remounting the
   // clip surface must re-run the observer (active flip), not reuse a stale one.
   const { boxRef, contentRef, clipped } = useClipFade(!editing);
@@ -104,7 +110,6 @@ export const MessageBlock = memo(function MessageBlock({
     const showEditor = Boolean(editing && canEdit && onEditResend);
     const bubbleBody = (
       <>
-        <PromptAttachmentRow {...(attachments ? { attachments } : {})} />
         {hasText || hasInlineTokens ? (
           <div className="whitespace-pre-wrap wrap-break-word">
             {contextChips
@@ -127,7 +132,15 @@ export const MessageBlock = memo(function MessageBlock({
     );
 
     return (
-      <div className="flex w-full min-w-0 justify-end">
+      <m.div
+        className="flex w-full min-w-0 justify-end"
+        initial={
+          animateEntry && !reduceMotion ? { transform: "translateY(20px)", opacity: 0 } : false
+        }
+        animate={{ transform: "translateY(0px)", opacity: 1 }}
+        transition={{ duration: reduceMotion ? 0 : 0.18, ease: [0.22, 1, 0.36, 1] }}
+        {...(animateEntry && onEntryComplete ? { onAnimationComplete: onEntryComplete } : {})}
+      >
         {showEditor && onEditResend ? (
           <InlineEditComposer
             sessionId={sessionId}
@@ -147,43 +160,57 @@ export const MessageBlock = memo(function MessageBlock({
             workspaceId={workspaceId}
           />
         ) : (
-          /* biome-ignore lint/a11y: The conditional control can contain nested image buttons. */
-          <div
-            aria-label={canEdit ? "Edit message" : undefined}
-            className={cn(
-              "block w-fit min-w-0 max-w-[85%] rounded-2xl bg-card px-4 py-3 text-left text-md text-fg leading-relaxed transition-colors hover:bg-surface",
-              canEdit && "cursor-pointer",
-            )}
-            onClick={canEdit ? () => setEditing(true) : undefined}
-            onKeyDown={
-              canEdit
-                ? (event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      setEditing(true);
-                    }
-                  }
-                : undefined
-            }
-            role={canEdit ? "button" : undefined}
-            tabIndex={canEdit ? 0 : undefined}
-          >
-            {/* 3.5 lines at leading-relaxed (1.625em × 3.5 = 5.6875em): 3
+          <div className="group/message flex min-w-0 max-w-[85%] flex-col items-end gap-3">
+            <PromptAttachmentRow {...(attachments ? { attachments } : {})} />
+            {hasText || hasInlineTokens ? (
+              /* biome-ignore lint/a11y: The conditional control renders an editable message. */
+              <div
+                aria-label={canEdit ? "Edit message" : undefined}
+                className={cn(
+                  "block w-fit min-w-0 max-w-full rounded-2xl bg-card px-4 py-3 text-left text-md text-fg leading-relaxed transition-colors hover:bg-surface",
+                  canEdit && "cursor-pointer",
+                )}
+                onClick={canEdit ? () => setEditing(true) : undefined}
+                onKeyDown={
+                  canEdit
+                    ? (event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          setEditing(true);
+                        }
+                      }
+                    : undefined
+                }
+                role={canEdit ? "button" : undefined}
+                tabIndex={canEdit ? 0 : undefined}
+              >
+                {/* 3.5 lines at leading-relaxed (1.625em × 3.5 = 5.6875em): 3
                 clear lines + a half-line peek for the bottom dissolve.
                 Mask MUST live on this clipped viewport — on the tall inner
                 content the gradient is sized to the full text height, so
                 the visible window stays opaque. */}
-            <div
-              className={cn("max-h-[5.6875em] overflow-hidden", clipped && "clip-fade")}
-              ref={boxRef}
-            >
-              <div className="space-y-2" ref={contentRef}>
-                {bubbleBody}
+                <div
+                  className={cn("max-h-[5.6875em] overflow-hidden", clipped && "clip-fade")}
+                  ref={boxRef}
+                >
+                  <div className="space-y-2" ref={contentRef}>
+                    {bubbleBody}
+                  </div>
+                </div>
               </div>
-            </div>
+            ) : canEdit ? (
+              <button
+                aria-label="Edit message"
+                className="rounded-md p-1 text-fg-muted opacity-0 transition-opacity hover:text-fg focus-visible:opacity-100 group-hover/message:opacity-100"
+                onClick={() => setEditing(true)}
+                type="button"
+              >
+                <IconPencil size={16} stroke={1.5} />
+              </button>
+            ) : null}
           </div>
         )}
-      </div>
+      </m.div>
     );
   }
 
@@ -295,7 +322,6 @@ function attachmentsToComposerImages(
   }));
 }
 
-/** Shared prompt image strip — same size/fit as Composer draft thumbnails. */
 function PromptAttachmentRow({
   attachments,
   className,
@@ -307,12 +333,13 @@ function PromptAttachmentRow({
     return null;
   }
   return (
-    <div className={cn("flex flex-wrap gap-2", className)}>
+    <div className={cn("flex max-w-full flex-wrap justify-end gap-[12px]", className)}>
       {attachments.map((attachment, index) => (
         <ImageThumb
           alt={attachment.name ?? `attachment ${index + 1}`}
-          className="size-14 rounded-lg border border-hairline bg-canvas object-contain"
-          key={`${attachment.name ?? "image"}:${attachment.data.length}:${attachment.data.slice(-24)}`}
+          className="size-[100px] max-w-full rounded-[8px] border border-hairline bg-canvas object-cover"
+          // biome-ignore lint/suspicious/noArrayIndexKey: Sent attachments retain their order for the lifetime of the message.
+          key={`${attachment.name ?? "image"}:${attachment.data.length}:${index}`}
           src={`data:${attachment.mimeType};base64,${attachment.data}`}
           title={attachment.name}
         />

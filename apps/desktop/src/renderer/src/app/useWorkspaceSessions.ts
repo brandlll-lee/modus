@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AgentSessionInfo, WorkspaceInfo } from "../../../shared/contracts";
+import { deriveSessionTitle } from "../../../shared/session-title";
 
 export function useWorkspaceSessions(setSettingsOpen: (open: boolean) => void) {
   const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([]);
@@ -9,6 +10,8 @@ export function useWorkspaceSessions(setSettingsOpen: (open: boolean) => void) {
   const [sessionCreateError, setSessionCreateError] = useState<string | undefined>();
   const activeSessionIdRef = useRef<string | undefined>(undefined);
   const activeWorkspaceRef = useRef<WorkspaceInfo | null>(null);
+  const refreshRef = useRef<Promise<void> | undefined>(undefined);
+  const refreshVersionRef = useRef(0);
   useEffect(() => {
     activeSessionIdRef.current = activeSessionId;
   }, [activeSessionId]);
@@ -17,9 +20,28 @@ export function useWorkspaceSessions(setSettingsOpen: (open: boolean) => void) {
     activeWorkspaceRef.current = activeWorkspace;
   }, [activeWorkspace]);
 
-  const refreshSessions = useCallback(async (): Promise<void> => {
-    setAgentSessions(
-      await window.modus.agent.list({ includeSessionId: activeSessionIdRef.current }),
+  const refreshSessions = useCallback((): Promise<void> => {
+    refreshVersionRef.current++;
+    if (refreshRef.current) return refreshRef.current;
+    const refresh = async (): Promise<void> => {
+      let version: number;
+      do {
+        version = refreshVersionRef.current;
+        const sessions = await window.modus.agent.list({
+          includeSessionId: activeSessionIdRef.current,
+        });
+        if (version === refreshVersionRef.current) setAgentSessions(sessions);
+      } while (version !== refreshVersionRef.current);
+    };
+    refreshRef.current = refresh().finally(() => {
+      refreshRef.current = undefined;
+    });
+    return refreshRef.current;
+  }, []);
+
+  const updateSessionTitle = useCallback((sessionId: string, title: string): void => {
+    setAgentSessions((sessions) =>
+      sessions.map((session) => (session.id === sessionId ? { ...session, title } : session)),
     );
   }, []);
 
@@ -54,6 +76,7 @@ export function useWorkspaceSessions(setSettingsOpen: (open: boolean) => void) {
   async function createSession(
     workspace: WorkspaceInfo | null,
     model: string,
+    prompt: string,
   ): Promise<AgentSessionInfo | null> {
     if (!workspace) {
       return null;
@@ -68,8 +91,9 @@ export function useWorkspaceSessions(setSettingsOpen: (open: boolean) => void) {
         workspaceId: workspace.id,
         cwd: workspace.rootPath,
         ...(model ? { model } : {}),
-        title: "New chat",
+        title: deriveSessionTitle(prompt),
       });
+      refreshVersionRef.current++;
       setSessionCreateError(undefined);
       setActiveWorkspace(workspace);
       setAgentSessions((current) => {
@@ -79,7 +103,6 @@ export function useWorkspaceSessions(setSettingsOpen: (open: boolean) => void) {
           : [session, ...current];
       });
       setActiveSessionId(session.id);
-      void refreshSessions();
       return session;
     } catch (error) {
       setSessionCreateError(error instanceof Error ? error.message : String(error));
@@ -213,6 +236,7 @@ export function useWorkspaceSessions(setSettingsOpen: (open: boolean) => void) {
     activeSession,
     rootSessions,
     refreshSessions,
+    updateSessionTitle,
     sessionCreateError,
     setSessionCreateError,
     openWorkspace,
