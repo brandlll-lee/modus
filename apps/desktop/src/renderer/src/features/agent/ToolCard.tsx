@@ -10,6 +10,7 @@ type ToolCardProps = {
   label?: string | undefined;
   args?: unknown;
   output: string;
+  details?: unknown;
   isError?: boolean;
   isComplete?: boolean;
   onOpenFile?: ((path: string) => void) | undefined;
@@ -31,6 +32,7 @@ export const ToolCard = memo(
     label,
     args,
     output,
+    details,
     isComplete = false,
     isError = false,
     onOpenFile,
@@ -40,6 +42,8 @@ export const ToolCard = memo(
       return (
         <DiffToolCard
           args={args}
+          details={details}
+          output={output}
           isComplete={isComplete}
           isError={isError}
           name={name}
@@ -75,6 +79,7 @@ export const ToolCard = memo(
     prev.name === next.name &&
     prev.label === next.label &&
     prev.output === next.output &&
+    prev.details === next.details &&
     prev.isComplete === next.isComplete &&
     prev.isError === next.isError &&
     prev.onOpenFile === next.onOpenFile &&
@@ -94,7 +99,7 @@ function FlatToolRow({
   const running = !isComplete && !isError;
   const view = describeTool(name, args, running);
   if (label) view.verb = running ? (getToolUiMeta(name)?.activeVerb ?? `Running ${label}`) : label;
-  const detail = running ? "" : toolDetail(name, args, output);
+  const detail = running ? "" : output;
   return (
     <ActionRow
       icon={view.icon}
@@ -125,10 +130,6 @@ function describeTool(name: string, args: unknown, running: boolean): ToolView {
   switch (name) {
     case "read":
       return { ...base, target: `${shortenPath(str(a.path))}${lineRange(a.offset, a.limit)}` };
-    case "edit": {
-      const count = Array.isArray(a.edits) ? a.edits.length : 0;
-      return count > 1 ? { ...base, target: `${shortenPath(str(a.path))} (${count} edits)` } : base;
-    }
     case "grep": {
       const where = a.path ? ` in ${shortenPath(str(a.path))}` : a.glob ? ` in ${str(a.glob)}` : "";
       return { ...base, target: `${str(a.pattern)}${where}` };
@@ -148,21 +149,6 @@ function primaryTarget(meta: ToolUiMeta, a: Record<string, unknown>): string {
   const value = str(a[meta.primaryArgKey]);
   if (meta.primaryArgKey === "path") return value ? shortenPath(value) : ".";
   return value;
-}
-
-function toolDetail(name: string, args: unknown, output: string): string {
-  const a = (args && typeof args === "object" ? args : {}) as Record<string, unknown>;
-  const meta = getToolUiMeta(name);
-  // A terminal-style command tool: prefix the command even with no output yet.
-  if (meta?.render === "terminal" && meta.primaryArgKey === "command") {
-    const command = str(a.command);
-    return output.trim() ? `$ ${command}\n\n${output}` : `$ ${command}`;
-  }
-  // A new-file writer with no textual output: show the content being written.
-  if (meta?.diffSource === "newFile" && !output.trim()) {
-    return typeof a.content === "string" ? a.content : "";
-  }
-  return output;
 }
 
 function clampDetail(detail: string): string {

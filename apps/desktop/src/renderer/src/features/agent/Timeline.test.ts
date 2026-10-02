@@ -28,6 +28,52 @@ function tool(id: string, name: string, complete = true, isError = false) {
 }
 
 describe("buildBlocks", () => {
+  it("replaces progress details with the native executed diff after folding", () => {
+    const events: AgentEvent[] = [
+      {
+        type: "tool.started",
+        sessionId: "s",
+        toolCallId: "e",
+        toolName: "edit",
+        args: { path: "example.ts" },
+      },
+      {
+        type: "tool.output",
+        sessionId: "s",
+        toolCallId: "e",
+        output: "first",
+        details: { diff: "+1 partial" },
+      },
+      {
+        type: "tool.output",
+        sessionId: "s",
+        toolCallId: "e",
+        output: "second",
+        details: { diff: "+1 preview" },
+      },
+    ];
+    const entries = events.map((event, i) => item(String(i), event));
+    expect(buildBlocks(foldAgentEvents(entries))[0]).toMatchObject({
+      output: "second",
+      details: { diff: "+1 preview" },
+    });
+    entries.push(
+      item("final", {
+        type: "tool.ended",
+        sessionId: "s",
+        toolCallId: "e",
+        output: "done",
+        isError: false,
+        details: { diff: "-7 old\n+7 new", patch: "native patch" },
+      }),
+    );
+    expect(buildBlocks(foldAgentEvents(entries))[0]).toMatchObject({
+      isComplete: true,
+      output: "done",
+      details: { diff: "-7 old\n+7 new", patch: "native patch" },
+    });
+  });
+
   it("keeps an image-only user message visible after events are folded", () => {
     const attachments = [
       { type: "image" as const, data: "pixels", mimeType: "image/png", path: "C:/photo.png" },

@@ -7,6 +7,11 @@ type ShinyTextProps = {
 
 export function ShinyText({ children, className }: ShinyTextProps) {
   return (
-    <span className={cn("shiny-text inline-block text-fg-subtle", className)}>{children}</span>
+    <span className={cn("shiny-text relative inline-block text-fg-subtle", className)}>
+      {children}
+      <span className="shiny-text-beam" aria-hidden="true">
+        <span className="shiny-text-beam-text">{children}</span>
+      </span>
+    </span>
   );
 }

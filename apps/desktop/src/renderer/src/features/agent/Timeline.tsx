@@ -78,6 +78,7 @@ export type ToolBlockItem = {
   args?: unknown;
   output: string;
   images?: ImageContent[];
+  details?: unknown;
   isComplete?: boolean;
   isError?: boolean;
 };
@@ -541,6 +542,7 @@ export function buildBlocks(agentEvents: AgentEventItem[]): TimelineBlock[] {
         // Pi's tool_execution_update carries the full partialResult each time —
         // replace, don't append, or progress frames concatenate and final labels break.
         block.output = event.output;
+        block.details = event.details;
         if (event.images) block.images = event.images;
         else delete block.images;
       }
@@ -553,6 +555,7 @@ export function buildBlocks(agentEvents: AgentEventItem[]): TimelineBlock[] {
         block.isComplete = true;
         block.isError = event.isError;
         if (event.output !== undefined) block.output = event.output;
+        block.details = event.details;
         if (event.images) block.images = event.images;
         else if (event.output !== undefined) delete block.images;
       }

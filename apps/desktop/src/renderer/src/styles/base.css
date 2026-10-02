@@ -51,26 +51,38 @@
 }
 
 .shiny-text {
-  background-image: linear-gradient(
-    110deg,
-    currentColor 47%,
-    var(--color-working-beam) 50%,
-    currentColor 53%
-  );
-  background-size: 300% 100%;
-  background-clip: text;
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  animation: modus-text-sweep 2.6s cubic-bezier(0.37, 0, 0.63, 1) infinite;
+  overflow: hidden;
 }
 
-@keyframes modus-text-sweep {
-  0% {
-    background-position: 100% center;
+.shiny-text-beam {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  color: var(--color-working-beam);
+  mask-image: linear-gradient(to right, transparent 32%, black 47%, black 53%, transparent 68%);
+  animation: modus-beam-window 1.6s linear infinite;
+}
+
+.shiny-text-beam-text {
+  display: block;
+  animation: modus-beam-text 1.6s linear infinite;
+}
+
+@keyframes modus-beam-window {
+  from {
+    transform: translateX(-70%);
   }
-  80%,
-  100% {
-    background-position: 0% center;
+  to {
+    transform: translateX(70%);
+  }
+}
+
+@keyframes modus-beam-text {
+  from {
+    transform: translateX(70%);
+  }
+  to {
+    transform: translateX(-70%);
   }
 }
 
@@ -325,10 +337,8 @@ body {
   .dialog-backdrop {
     transition: none;
   }
-  .shiny-text {
-    animation: none;
-    background: none;
-    -webkit-text-fill-color: currentColor;
+  .shiny-text-beam {
+    display: none;
   }
   .modus-markdown [data-sd-animate] {
     animation: none;

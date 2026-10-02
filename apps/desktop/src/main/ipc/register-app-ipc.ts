@@ -19,6 +19,7 @@ import {
   listAgentSessions,
   setAgentSessionPinned,
 } from "../agent/agent-store";
+import { previewEdits } from "../agent/file-preview";
 import {
   getModelSettings,
   getProviderDetail,
@@ -318,6 +319,11 @@ export function registerAppIpc({
         description: template.description,
       })),
     ];
+  });
+
+  ipcMain.handle(IPC_CHANNELS.agentPreviewEdits, (event, input: unknown) => {
+    assertTrustedSender(event);
+    return previewEdits(input);
   });
   ipcMain.handle(IPC_CHANNELS.agentListEvents, (event, sessionId: string) => {
     assertTrustedSender(event);

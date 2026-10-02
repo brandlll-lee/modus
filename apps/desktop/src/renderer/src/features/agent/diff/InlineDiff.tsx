@@ -3,16 +3,17 @@ import type { ThemedToken } from "shiki/core";
 import { cn } from "../../../lib/cn";
 import { highlightToLines, languageForPath, useCodeHighlighter } from "../../../lib/codeHighlight";
 import { useTheme } from "../../../lib/theme";
-import type { InlineDiff, InlineDiffLine } from "./computeInlineDiff";
+import type { FileDiff, FileDiffLine } from "./fileDiff";
 
 type InlineDiffViewProps = {
-  diff: InlineDiff;
+  diff: FileDiff;
   /** Target file path, used to pick the syntax-highlighting grammar. */
   path?: string | undefined;
+  streaming?: boolean;
 };
 
 /** Marker glyph shown in the sign column for each line kind. */
-const SIGN: Record<InlineDiffLine["kind"], string> = {
+const SIGN: Record<FileDiffLine["kind"], string> = {
   add: "+",
   del: "-",
   context: "",
@@ -26,9 +27,13 @@ const SIGN: Record<InlineDiffLine["kind"], string> = {
  * rows are excluded from the code blob and mapped back by index. While a grammar
  * loads, rows fall back to plain text and re-render once it's ready.
  */
-export const InlineDiffView = memo(function InlineDiffView({ diff, path }: InlineDiffViewProps) {
+export const InlineDiffView = memo(function InlineDiffView({
+  diff,
+  path,
+  streaming,
+}: InlineDiffViewProps) {
   const [themeMode] = useTheme();
-  const lang = languageForPath(path);
+  const lang = streaming ? undefined : languageForPath(path);
   const ready = useCodeHighlighter(lang);
 
   const tokenByLine = useMemo(() => {
@@ -64,7 +69,7 @@ export const InlineDiffView = memo(function InlineDiffView({ diff, path }: Inlin
           />
         ))}
       </div>
-      {diff.truncated ? (
+      {diff.hiddenLineCount > 0 ? (
         <div className="border-hairline-soft border-t px-3 py-1.5 text-2xs text-fg-faint">
           … {diff.hiddenLineCount} more line{diff.hiddenLineCount === 1 ? "" : "s"} hidden
         </div>
@@ -78,11 +83,11 @@ export const InlineDiffView = memo(function InlineDiffView({ diff, path }: Inlin
  * line's identity (kind + both side line numbers) plus its ordinal to stay
  * unique even when identical text repeats.
  */
-function diffRowKey(line: InlineDiffLine, index: number): string {
+function diffRowKey(line: FileDiffLine, index: number): string {
   return `${index}:${line.kind}:${line.oldLine ?? ""}:${line.newLine ?? ""}`;
 }
 
-function DiffRow({ line, tokens }: { line: InlineDiffLine; tokens?: ThemedToken[] | undefined }) {
+function DiffRow({ line, tokens }: { line: FileDiffLine; tokens?: ThemedToken[] | undefined }) {
   if (line.kind === "gap") {
     return (
       <div className="flex select-none items-center text-fg-faint">
@@ -128,7 +133,7 @@ function DiffLineText({
   line,
   tokens,
 }: {
-  line: InlineDiffLine;
+  line: FileDiffLine;
   tokens?: ThemedToken[] | undefined;
 }) {
   if (line.text === "") {

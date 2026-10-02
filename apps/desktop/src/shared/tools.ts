@@ -10,8 +10,6 @@ export type ToolIconName =
 
 export type ToolRenderKind = "flat" | "diff" | "terminal";
 
-export type DiffSource = "edits" | "newFile";
-
 export type ToolSummaryMeta = {
   verb: string;
   noun: { one: string; other: string };
@@ -32,7 +30,7 @@ export type ToolUiMeta = {
 
   summary?: ToolSummaryMeta;
 
-  diffSource?: DiffSource;
+  filePreview?: "edits" | "content";
 };
 
 export type ToolCatalogEntry = {
@@ -79,19 +77,19 @@ export const BUILTIN_TOOL_CATALOG: ToolCatalogEntry[] = [
       activeVerb: "Editing",
       primaryArgKey: "path",
       render: "diff",
-      diffSource: "edits",
+      filePreview: "edits",
       summary: { verb: "edited", noun: { one: "file", other: "files" }, countBy: "target" },
     },
   },
   {
     name: "write",
     ui: {
-      verb: "Created",
-      activeVerb: "Creating",
+      verb: "Wrote",
+      activeVerb: "Writing",
       primaryArgKey: "path",
       render: "diff",
-      diffSource: "newFile",
-      summary: { verb: "created", noun: { one: "file", other: "files" }, countBy: "target" },
+      filePreview: "content",
+      summary: { verb: "wrote", noun: { one: "file", other: "files" }, countBy: "target" },
     },
   },
   {

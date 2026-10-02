@@ -103,7 +103,7 @@ it.each([
   expect(getAgentSession(id)?.status).toBe("error");
   expect(listAgentSessions().some((item) => item.id === id)).toBe(true);
 });
-it("restores tool images, errors, and native branch selection", () => {
+it("restores tool details, images, errors, and native branch selection", () => {
   const { id, manager, user } = fixture();
   manager.appendMessage(
     fauxAssistantMessage(
@@ -120,6 +120,7 @@ it("restores tool images, errors, and native branch selection", () => {
       { type: "image", data: "pixels", mimeType: "image/png" },
     ],
     isError: false,
+    details: { diff: "-7 old\n+7 new", patch: "@@ -7 +7 @@\n-old\n+new" },
     timestamp: Date.now(),
   });
   manager.appendMessage(
@@ -129,6 +130,7 @@ it("restores tool images, errors, and native branch selection", () => {
   expect(history.runs.at(-1)).toMatchObject({ status: "failed", error: "Quota exhausted" });
   expect(history.events.find(({ event }) => event.type === "tool.ended")?.event).toMatchObject({
     images: [{ type: "image", data: "pixels", mimeType: "image/png" }],
+    details: { diff: "-7 old\n+7 new", patch: "@@ -7 +7 @@\n-old\n+new" },
   });
   manager.branch(user);
   expect(readAgentHistory(id).events.some(({ event }) => event.type === "tool.ended")).toBe(false);

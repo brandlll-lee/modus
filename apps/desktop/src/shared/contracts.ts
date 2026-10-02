@@ -174,14 +174,7 @@ export type AgentEvent =
       args?: unknown;
     }
   | {
-      /**
-       * Live, non-persisted progress for a tool call while the model is still
-       * streaming its arguments (path first, then content). Carries the
-       * best-effort partial args so the tool card renders immediately and its
-       * diff +/- counts grow in real time — instead of appearing only once the
-       * whole (possibly huge) call has been generated. Same shape as
-       * `tool.started`; the durable `tool.started` supersedes it on completion.
-       */
+      /** PI's partial arguments. Fields can arrive in any order. */
       type: "tool.delta";
       sessionId: string;
       toolCallId: string;
@@ -195,6 +188,7 @@ export type AgentEvent =
       parentToolCallId?: string;
       output: string;
       images?: ImageContent[];
+      details?: unknown;
     }
   | {
       type: "tool.ended";
@@ -203,6 +197,7 @@ export type AgentEvent =
       parentToolCallId?: string;
       output?: string;
       images?: ImageContent[];
+      details?: unknown;
       isError: boolean;
     }
   | { type: "question.requested"; sessionId: string; request: QuestionRequest }

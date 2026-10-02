@@ -76,7 +76,33 @@ describe("normalizePiEvent", () => {
     ]);
   });
 
-  it("extracts text content from tool execution updates", () => {
+  it("publishes the complete arguments from the native toolcall_end event", () => {
+    const toolCall = {
+      id: "write",
+      name: "write",
+      arguments: { content: "body", path: "late.html" },
+    };
+    expect(
+      normalizePiEvent(
+        "s",
+        event({
+          type: "message_update",
+          message: { role: "assistant" },
+          assistantMessageEvent: { type: "toolcall_end", toolCall },
+        }),
+      ),
+    ).toEqual([
+      {
+        type: "tool.delta",
+        sessionId: "s",
+        toolCallId: "write",
+        toolName: "write",
+        args: toolCall.arguments,
+      },
+    ]);
+  });
+
+  it("extracts text and details from tool execution updates", () => {
     expect(
       normalizePiEvent(
         "session-1",
@@ -97,6 +123,7 @@ describe("normalizePiEvent", () => {
         toolCallId: "tooluse_abc",
         output: "indexing: parsed 120 files\n",
         images: [],
+        details: { project: "demo" },
       },
     ]);
   });
@@ -106,6 +133,7 @@ describe("normalizePiEvent", () => {
     const result = {
       content: [{ type: "text", text: "Image ready" }, image],
       structuredContent: { width: 100 },
+      details: { diff: "-7 old\n+7 new", patch: "@@ -7 +7 @@\n-old\n+new" },
     };
     const normalize = createPiEventNormalizer("s");
     for (const native of [
@@ -116,6 +144,7 @@ describe("normalizePiEvent", () => {
       expect(mapped).toMatchObject({
         toolCallId: "t",
         images: [image],
+        details: result.details,
         output: 'Image ready\n{\n  "width": 100\n}\n',
       });
       expect(mapped && "output" in mapped ? mapped.output : "").not.toContain(image.data);

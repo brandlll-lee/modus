@@ -158,10 +158,18 @@ export function normalizePiEvent(
           },
         ];
       }
-      // Streaming tool call: surface the partial call (id + name + best-effort
-      // parsed args) so the tool card appears the instant the model starts
-      // emitting it, and its diff grows live as arguments stream. pi parses the
-      // accumulating arguments into `partial.content[contentIndex]` for us.
+      if (event.assistantMessageEvent.type === "toolcall_end") {
+        const call = event.assistantMessageEvent.toolCall;
+        return [
+          {
+            type: "tool.delta",
+            sessionId,
+            toolCallId: call.id,
+            toolName: call.name,
+            args: call.arguments,
+          },
+        ];
+      }
       if (
         event.assistantMessageEvent.type === "toolcall_start" ||
         event.assistantMessageEvent.type === "toolcall_delta"

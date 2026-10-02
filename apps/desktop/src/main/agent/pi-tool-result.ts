@@ -1,6 +1,10 @@
 import type { ImageContent } from "../../shared/contracts";
 
-export function toolResultContent(value: unknown): { output: string; images: ImageContent[] } {
+export function toolResultContent(value: unknown): {
+  output: string;
+  images: ImageContent[];
+  details?: unknown;
+} {
   if (typeof value === "string") return { output: value, images: [] };
   if (!value || typeof value !== "object" || !("content" in value) || !Array.isArray(value.content))
     return { output: JSON.stringify(value, null, 2) ?? "", images: [] };
@@ -18,5 +22,6 @@ export function toolResultContent(value: unknown): { output: string; images: Ima
   return {
     output: output && !output.endsWith("\n") ? `${output}\n` : output,
     images,
+    ...("details" in value && value.details !== undefined ? { details: value.details } : {}),
   };
 }

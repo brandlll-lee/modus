@@ -14,6 +14,7 @@ export const IPC_CHANNELS = {
   agentCreate: "agent:create",
   agentList: "agent:list",
   agentCommands: "agent:commands",
+  agentPreviewEdits: "agent:preview-edits",
   agentListEvents: "agent:list-events",
   agentListRuns: "agent:list-runs",
   agentEnsure: "agent:ensure",

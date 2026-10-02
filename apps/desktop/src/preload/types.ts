@@ -74,6 +74,7 @@ export type ModusApi = {
     prepareImage(input: Pick<PromptImageAttachment, "data" | "mimeType" | "path">): Promise<string>;
   };
   agent: {
+    previewEdits(args: unknown): Promise<string[]>;
     create(input: {
       workspaceId: string;
       cwd: string;

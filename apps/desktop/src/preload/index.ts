@@ -31,6 +31,7 @@ const api: ModusApi = {
     prepareImage: (input) => ipcRenderer.invoke("file:prepare-image", input),
   },
   agent: {
+    previewEdits: (args) => ipcRenderer.invoke("agent:preview-edits", args),
     create: (input) => ipcRenderer.invoke("agent:create", input),
     list: () => ipcRenderer.invoke("agent:list"),
     commands: (sessionId) => ipcRenderer.invoke("agent:commands", sessionId),
