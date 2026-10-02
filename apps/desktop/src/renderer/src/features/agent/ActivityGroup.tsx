@@ -1,11 +1,11 @@
-import { IconBrain, IconChevronRight, IconListCheck, IconRefresh } from "@tabler/icons-react";
-import { m } from "motion/react";
+import { IconBrain, IconListCheck, IconRefresh } from "@tabler/icons-react";
 import { memo, type ReactNode, useEffect, useId, useState } from "react";
 import type { PlanRef } from "../../../../shared/contracts";
 import { getToolUiMeta, type ToolSummaryMeta } from "../../../../shared/tools";
 import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
 import { ShinyText } from "../../components/ui/ShinyText";
 import { cn } from "../../lib/cn";
+import { ActivityHeader } from "./ActivityHeader";
 import { MessageBlock } from "./MessageBlock";
 import { RequestStatusRow } from "./RequestStatusRow";
 import type {
@@ -17,6 +17,7 @@ import type {
 } from "./Timeline";
 import { TodosCard } from "./TodosCard";
 import { ToolCard } from "./ToolCard";
+import { ToolImageGroup } from "./ToolImageGroup";
 import { toolActionIcon } from "./toolIcons";
 
 export function formatElapsed(end: number, start: number): string {
@@ -50,48 +51,6 @@ export function CompactionRow({ status, detail }: Pick<CompactionBlockItem, "sta
           {label}
         </span>
       )}
-    </div>
-  );
-}
-
-function FoldHeader({
-  active = false,
-  controlsId,
-  label,
-  onToggle,
-  open,
-  icon,
-}: {
-  active?: boolean;
-  controlsId?: string;
-  label: string;
-  onToggle(): void;
-  open: boolean;
-  icon?: ReactNode;
-}) {
-  return (
-    <div className="flex min-w-0 items-center gap-1.5">
-      <button
-        aria-controls={controlsId}
-        aria-expanded={open}
-        className="group/activity flex min-w-0 max-w-full items-center gap-1.5 rounded-md py-0.5 text-left text-sm font-medium text-fg-subtle transition-colors hover:text-fg-muted"
-        onClick={onToggle}
-        type="button"
-      >
-        {icon ? <span className="action-icon">{icon}</span> : null}
-        {active ? (
-          <ShinyText className="min-w-0 truncate">{label}</ShinyText>
-        ) : (
-          <span className="min-w-0 truncate text-fg-subtle">{label}</span>
-        )}
-        <m.span
-          animate={{ rotate: open ? 90 : 0 }}
-          className="flex size-4 shrink-0 items-center justify-center text-fg-faint"
-          transition={{ duration: 0.16, ease: "easeOut" }}
-        >
-          <IconChevronRight size={12} stroke={1.8} />
-        </m.span>
-      </button>
     </div>
   );
 }
@@ -195,7 +154,7 @@ function WorkActivityGroup({
   const presentation = workActivityPresentation(group.items);
   return (
     <div className="min-w-0">
-      <FoldHeader
+      <ActivityHeader
         active={presentation.active}
         controlsId={contentId}
         label={presentation.label}
@@ -232,6 +191,7 @@ export function WorkActivityRow({
   }
   if (item.type === "todos") return <TodosCard {...item} />;
   if (item.type === "compaction") return <CompactionRow {...item} />;
+  if (item.images?.length) return <ToolImageGroup items={[item]} />;
   return (
     <div
       className={item.parentToolCallId ? "ml-4 border-hairline-soft border-l pl-3" : undefined}
@@ -286,7 +246,7 @@ export const WorkFold = memo(function WorkFold({
 
   return (
     <div className="min-w-0 text-sm">
-      <FoldHeader
+      <ActivityHeader
         active={active && run.executionCompletedAt === undefined}
         controlsId={contentId}
         label={label}
@@ -297,6 +257,8 @@ export const WorkFold = memo(function WorkFold({
         <div className="mt-0.5">
           <div className="space-y-2.5 pt-1.5 pb-2">
             {items.map((item) => {
+              if (item.type === "work-image-group")
+                return <ToolImageGroup key={item.id} items={item.items} />;
               if (item.type === "request-status")
                 return <RequestStatusRow key={item.id} item={item} />;
               if (item.type === "work-activity-group") {

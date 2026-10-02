@@ -71,6 +71,8 @@ export type ToolUiMeta = {
   primaryArgKey?: string;
   /** Present-tense label while a call is in flight. */
   activeVerb?: string;
+  /** Image result caption when the tool owner declares its operation. */
+  imageVerb?: string;
   /** Which renderer card this tool's calls use. Absent ⇒ `flat`. */
   render?: ToolRenderKind;
   /** Declarative completed-call digest; counting semantics come from the tool owner. */
@@ -124,6 +126,7 @@ export const BUILTIN_TOOL_CATALOG: ToolCatalogEntry[] = [
     capabilities: ["read"],
     ui: {
       verb: "Read",
+      imageVerb: "Viewed",
       iconName: "file",
       activeVerb: "Reading",
       primaryArgKey: "path",
@@ -357,7 +360,7 @@ export const BROWSER_TOOL_UI: Record<BrowserToolName, ToolUiMeta> = {
   },
   browser_events: { verb: "Read browser events" },
   browser_snapshot: { verb: "Captured snapshot" },
-  browser_screenshot: { verb: "Captured page" },
+  browser_screenshot: { verb: "Captured page", imageVerb: "Captured" },
 };
 
 /** Tool names belonging to a profile, derived from a catalog. */

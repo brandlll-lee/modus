@@ -37,6 +37,38 @@ afterAll(async () => {
 });
 
 describe("agent-event-store", () => {
+  it("restores image blocks and the latest progress snapshot from SQLite", () => {
+    const sessionId = `session-${crypto.randomUUID()}`;
+    insertSession(sessionId);
+    const image = { type: "image" as const, data: "native-image", mimeType: "image/png" };
+    recordAgentEvent({ type: "tool.started", sessionId, toolCallId: "t", toolName: "fixture" });
+    recordAgentEvent({
+      type: "tool.output",
+      sessionId,
+      toolCallId: "t",
+      output: "first",
+      images: [image],
+    });
+    recordAgentEvent({
+      type: "tool.output",
+      sessionId,
+      toolCallId: "t",
+      output: "final",
+      images: [image],
+    });
+    recordAgentEvent({
+      type: "tool.ended",
+      sessionId,
+      toolCallId: "t",
+      output: "final",
+      images: [image],
+      isError: false,
+    });
+    const events = listAgentEvents(sessionId);
+    expect(events.filter(({ event }) => event.type === "tool.output")).toHaveLength(1);
+    expect(events[1]?.event).toMatchObject({ output: "final", images: [image] });
+    expect(events[2]?.event).toMatchObject({ type: "tool.ended", images: [image] });
+  });
   it("backfills persisted user prompts for older sessions without user message events", () => {
     const sessionId = `session-${crypto.randomUUID()}`;
     insertSession(sessionId);

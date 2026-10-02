@@ -29,12 +29,7 @@ export async function createAgentResourceLoader(
         name: "tool-search",
         builtin: true,
         replaceable: true,
-        factory: withRuntimeToolPolicy((pi) =>
-          createToolSearchExtension()({
-            ...pi,
-            registerTool: (definition) => pi.registerTool({ ...definition, defaultActive: true }),
-          }),
-        ),
+        factory: withRuntimeToolPolicy(createToolSearchExtension()),
       },
       { name: "mcp", builtin: true, replaceable: true, factory: createModusMcpExtension() },
       ...extensionFactories,

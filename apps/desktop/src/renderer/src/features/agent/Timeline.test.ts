@@ -29,6 +29,72 @@ function tool(id: string, name: string, complete = true, isError = false) {
 }
 
 describe("buildBlocks", () => {
+  it("groups consecutive image results separately from commands and intermediate text", () => {
+    const image = { type: "image" as const, data: "pixels", mimeType: "image/png" };
+    const entries = [
+      item("start", { type: "run.started", sessionId: "s", runId: "r", delivery: "normal" }),
+      item("command", {
+        type: "tool.started",
+        sessionId: "s",
+        toolCallId: "cmd",
+        toolName: "bash",
+      }),
+      ...["one", "two"].flatMap((id) => [
+        item(`${id}:start`, {
+          type: "tool.started",
+          sessionId: "s",
+          toolCallId: id,
+          toolName: "read",
+        }),
+        item(`${id}:progress`, {
+          type: "tool.output",
+          sessionId: "s",
+          toolCallId: id,
+          output: "",
+          images: [image],
+        }),
+        item(`${id}:end`, {
+          type: "tool.ended",
+          sessionId: "s",
+          toolCallId: id,
+          output: "",
+          images: [image],
+          isError: false,
+        }),
+      ]),
+      item("text", { type: "message.delta", sessionId: "s", messageId: "m", delta: "Next action" }),
+      item("last:start", {
+        type: "tool.started",
+        sessionId: "s",
+        toolCallId: "last",
+        toolName: "extension",
+      }),
+      item("last:end", {
+        type: "tool.ended",
+        sessionId: "s",
+        toolCallId: "last",
+        output: "",
+        images: [image],
+        isError: false,
+      }),
+    ];
+    const grouped = groupTurnWork(buildBlocks(foldAgentEvents(entries)));
+    expect(grouped[0]).toMatchObject({
+      type: "work-fold",
+      items: [
+        { type: "work-activity-group" },
+        {
+          type: "work-image-group",
+          items: [
+            { id: "one", images: [image] },
+            { id: "two", images: [image] },
+          ],
+        },
+        { type: "message", content: "Next action" },
+        { type: "work-image-group", items: [{ id: "last", images: [image] }] },
+      ],
+    });
+  });
   it("updates one retry row through exhaustion and restores it from history", () => {
     const events: AgentEvent[] = [
       { type: "run.started", sessionId: "s", runId: "r", delivery: "normal" },

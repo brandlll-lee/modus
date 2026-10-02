@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { foldAgentEvents } from "../../shared/agent-events";
 import type { AgentEvent, TodoItem } from "../../shared/contracts";
 import { getDatabase } from "../db/database";
+import { getAgentSession } from "./agent-store";
+import { restoreToolImages } from "./pi-tool-history";
 
 type AgentEventRow = {
   id: string;
@@ -83,7 +85,10 @@ export function listAgentEvents(
   // Fold streamed deltas into one accumulated item per part before they cross
   // IPC, so opening a long session ships O(parts) rows, not O(deltas) — the
   // renderer parses and builds blocks over the bounded set.
-  return foldAgentEvents(backfillUserPromptEvents(sessionId, events, runs));
+  return restoreToolImages(
+    foldAgentEvents(backfillUserPromptEvents(sessionId, events, runs)),
+    getAgentSession(sessionId)?.piSessionFile,
+  );
 }
 
 function backfillUserPromptEvents(

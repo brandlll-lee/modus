@@ -4,6 +4,7 @@ import type { AgentEventItem } from "../../../../shared/agent-events";
 import type {
   CompactionReason,
   ContextItem,
+  ImageContent,
   MessageContextChip,
   ModelInfo,
   PlanRef,
@@ -89,6 +90,7 @@ export type ToolBlockItem = {
   parentToolCallId?: string;
   args?: unknown;
   output: string;
+  images?: ImageContent[];
   isComplete?: boolean;
   isError?: boolean;
   questionRequest?: QuestionRequest;
@@ -173,8 +175,15 @@ export type WorkActivityGroupItem = {
   items: WorkActivityItem[];
 };
 
+export type WorkImageGroupItem = {
+  id: string;
+  type: "work-image-group";
+  items: ToolBlockItem[];
+};
+
 export type WorkFoldItem =
   | WorkActivityGroupItem
+  | WorkImageGroupItem
   | NoticeBlockItem
   | MessageBlockItem
   | RequestStatusBlockItem;
@@ -629,6 +638,8 @@ export function buildBlocks(agentEvents: AgentEventItem[]): TimelineBlock[] {
         // Pi's tool_execution_update carries the full partialResult each time —
         // replace, don't append, or progress frames concatenate and final labels break.
         block.output = event.output;
+        if (event.images) block.images = event.images;
+        else delete block.images;
       }
       continue;
     }
@@ -647,6 +658,8 @@ export function buildBlocks(agentEvents: AgentEventItem[]): TimelineBlock[] {
         block.isComplete = true;
         block.isError = event.isError;
         if (event.output !== undefined) block.output = event.output;
+        if (event.images) block.images = event.images;
+        else if (event.output !== undefined) delete block.images;
       }
       if (activeQuestionToolId === event.toolCallId) {
         activeQuestionToolId = undefined;
@@ -946,6 +959,12 @@ export function groupWorkItems(
 ): WorkFoldItem[] {
   const result: WorkFoldItem[] = [];
   for (const item of items) {
+    if (item.type === "tool" && item.images?.length) {
+      const current = result.at(-1);
+      if (current?.type === "work-image-group") current.items.push(item);
+      else result.push({ id: `work-images:${item.id}`, type: "work-image-group", items: [item] });
+      continue;
+    }
     if (!isWorkActivity(item)) {
       result.push(item);
       continue;

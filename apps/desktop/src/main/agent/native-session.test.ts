@@ -228,3 +228,26 @@ it("uses native skill invocation and GUI dialog callbacks after reload", async (
   expect(JSON.stringify(session.messages)).toContain("NATIVE SKILL BODY");
   expect(JSON.stringify(session.messages)).toContain("<skill name=");
 });
+
+it("carries a native read image through the SDK event adapter", async () => {
+  const data =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+  writeFileSync(join(root, "fixture.png"), Buffer.from(data, "base64"));
+  faux.setResponses([
+    fauxAssistantMessage(fauxToolCall("read", { path: "fixture.png" }, { id: "native-image" }), {
+      stopReason: "toolUse",
+    }),
+    fauxAssistantMessage("Viewed"),
+  ]);
+  await session.prompt("Inspect fixture.png");
+  const result = events.find(
+    (event) => event.type === "tool.ended" && event.toolCallId === "native-image",
+  );
+  expect(result).toMatchObject({
+    type: "tool.ended",
+    isError: false,
+    output: expect.stringContaining("Read image file"),
+    images: [{ type: "image", mimeType: "image/png", data: expect.any(String) }],
+  });
+  expect(result && "output" in result ? result.output : "").not.toContain(data);
+});

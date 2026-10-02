@@ -91,7 +91,34 @@ describe("reduceActivity", () => {
 });
 
 describe("appendAgentEvents", () => {
-  it("merges adjacent deltas of the same message and tool", () => {
+  it("keeps the latest native image snapshot through live and persisted folding", () => {
+    const image = { type: "image" as const, data: "pixels", mimeType: "image/png" };
+    const entries = [
+      item({
+        type: "tool.output",
+        sessionId: "s",
+        toolCallId: "t",
+        output: "first",
+        images: [image],
+      }),
+      item({ type: "tool.output", sessionId: "s", toolCallId: "other", output: "other" }),
+      item({
+        type: "tool.output",
+        sessionId: "s",
+        toolCallId: "t",
+        output: "final",
+        images: [image],
+      }),
+    ];
+    const live = appendAgentEvents([], entries);
+    expect(live).toEqual(foldAgentEvents(JSON.parse(JSON.stringify(entries))));
+    expect(live[0]?.event).toMatchObject({ output: "final", images: [image] });
+    const cleared = appendAgentEvents(live, [
+      item({ type: "tool.output", sessionId: "s", toolCallId: "t", output: "cleared", images: [] }),
+    ]);
+    expect(cleared[0]?.event).toMatchObject({ output: "cleared", images: [] });
+  });
+  it("accumulates message deltas and replaces tool snapshots", () => {
     const merged = appendAgentEvents(
       [item({ type: "message.delta", sessionId: "s", messageId: "m", delta: "Hel" })],
       [
@@ -103,7 +130,7 @@ describe("appendAgentEvents", () => {
 
     expect(merged).toHaveLength(2);
     expect(merged[0]?.event).toMatchObject({ type: "message.delta", delta: "Hello" });
-    expect(merged[1]?.event).toMatchObject({ type: "tool.output", output: "ab" });
+    expect(merged[1]?.event).toMatchObject({ type: "tool.output", output: "b" });
   });
 
   it("keeps deltas of different messages separate", () => {
@@ -191,7 +218,7 @@ describe("appendAgentEvents", () => {
       delta: "ans-1 ans-2",
     });
     expect(folded.find((f) => f.event.type === "tool.output")?.event).toMatchObject({
-      output: "out-1-out-2",
+      output: "-out-2",
     });
   });
 

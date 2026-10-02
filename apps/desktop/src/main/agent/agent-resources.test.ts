@@ -1,9 +1,11 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxProvider, InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import {
   createAgentSession,
+  createMcpExtension,
   DefaultResourceLoader,
   ModelRuntime,
   SessionManager,
@@ -45,6 +47,146 @@ beforeAll(() => {
   );
 });
 afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+it("enables native orchestration tools through the user's PI defaultTools", async () => {
+  const faux = fauxProvider({ tokensPerSecond: 0 });
+  const modelRuntime = await ModelRuntime.create({
+    credentials: new InMemoryCredentialStore(),
+    modelsPath: null,
+    refreshOnCreate: false,
+  });
+  modelRuntime.registerNativeProvider(faux.provider);
+  await modelRuntime.refresh({ allowNetwork: false });
+  const settings = SettingsManager.inMemory(
+    { defaultTools: ["read", "+tool_search", "+codemode"] },
+    { projectTrusted: true },
+  );
+  const loader = await createAgentResourceLoader(cwd, settings, []);
+  const { session } = await createAgentSession({
+    cwd,
+    agentDir: paths.agent,
+    modelRuntime,
+    model: faux.getModel(),
+    settingsManager: settings,
+    resourceLoader: loader,
+    sessionManager: SessionManager.inMemory(cwd),
+  });
+  try {
+    await session.bindExtensions({ mode: "rpc" });
+    expect(session.getActiveToolNames().sort()).toEqual(["codemode", "read", "tool_search"]);
+  } finally {
+    session.dispose();
+  }
+}, 30_000);
+
+it("lets native MCP exposure activate discovery and restores discovered tools on reload", async () => {
+  const server = createServer(async (request, response) => {
+    if (request.method !== "POST") {
+      response.writeHead(405).end();
+      return;
+    }
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const rpc = JSON.parse(Buffer.concat(chunks).toString());
+    if (rpc.id === undefined) {
+      response.writeHead(202).end();
+      return;
+    }
+    const result =
+      rpc.method === "initialize"
+        ? {
+            protocolVersion: rpc.params.protocolVersion,
+            capabilities: { tools: {} },
+            serverInfo: { name: "fixture", version: "1" },
+          }
+        : {
+            tools: [
+              {
+                name: "inspect_fixture",
+                description: "Inspect a synthetic fixture",
+                inputSchema: { type: "object", properties: {} },
+              },
+            ],
+          };
+    response.writeHead(200, { "Content-Type": "application/json" });
+    response.end(JSON.stringify({ jsonrpc: "2.0", id: rpc.id, result }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address() as { port: number };
+  const faux = fauxProvider({ tokensPerSecond: 0 });
+  const modelRuntime = await ModelRuntime.create({
+    credentials: new InMemoryCredentialStore(),
+    modelsPath: null,
+    refreshOnCreate: false,
+  });
+  modelRuntime.registerNativeProvider(faux.provider);
+  await modelRuntime.refresh({ allowNetwork: false });
+  const settings = SettingsManager.inMemory({ defaultTools: ["read"] }, { projectTrusted: true });
+  const project = join(root, "mcp-project");
+  mkdirSync(project, { recursive: true });
+  const loader = await createAgentResourceLoader(project, settings, [
+    {
+      name: "fixture-mcp",
+      factory: createMcpExtension({
+        loadConfig: () => ({
+          servers: [
+            {
+              name: "fixture",
+              source: "fixture",
+              scope: "extension",
+              config: { url: `http://127.0.0.1:${address.port}`, exposure: "deferred" },
+            },
+          ],
+          errors: [],
+        }),
+        logPath: join(root, "mcp.log"),
+      }),
+    },
+  ]);
+  const { session } = await createAgentSession({
+    cwd: project,
+    agentDir: paths.agent,
+    modelRuntime,
+    model: faux.getModel(),
+    settingsManager: settings,
+    resourceLoader: loader,
+    sessionManager: SessionManager.inMemory(project),
+  });
+  try {
+    await session.bindExtensions({
+      mode: "rpc",
+      uiContext: createExtensionUI(session, "mcp-fixture", () => {}),
+    });
+    expect(session.getActiveToolNames()).toContain("tool_search");
+    await vi.waitFor(() =>
+      expect(
+        session.getAllTools().some((tool) => tool.name === "mcp__fixture__inspect_fixture"),
+      ).toBe(true),
+    );
+    const discover = fauxAssistantMessage("");
+    discover.content = [
+      {
+        type: "toolCall",
+        id: "discover",
+        name: "tool_search",
+        arguments: { query: "inspect_fixture", limit: 1 },
+      },
+    ];
+    discover.stopReason = "toolUse";
+    faux.setResponses([discover, fauxAssistantMessage("Discovered")]);
+    await session.prompt("Inspect the fixture");
+    expect(session.getActiveToolNames()).toContain("mcp__fixture__inspect_fixture");
+    await session.reload();
+    await vi.waitFor(() =>
+      expect(session.getActiveToolNames()).toContain("mcp__fixture__inspect_fixture"),
+    );
+    expect(session.getActiveToolNames()).not.toContain("codemode");
+  } finally {
+    session.dispose();
+    server.closeAllConnections();
+    server.close();
+  }
+}, 30_000);
 
 it("uses native discovery and lets a trusted extension replace builtin MCP", async () => {
   const settings = createAgentSettings({ cwd });
@@ -145,7 +287,7 @@ it("restores persisted SDK usage and skills and keeps desktop tools deferred", a
   await session.prompt("hello");
   unsubscribe();
   expect(lifecycle).toEqual(["agent.started", "turn.started", "agent.ended"]);
-  expect(session.getActiveToolNames()).toEqual(expect.arrayContaining(["read", "tool_search"]));
+  expect(session.getActiveToolNames()).toEqual(["read"]);
   expect(session.getActiveToolNames()).not.toContain("desktop_fixture");
   expect(session.getActiveToolNames()).not.toContain("codemode");
   const stats = session.getSessionStats();

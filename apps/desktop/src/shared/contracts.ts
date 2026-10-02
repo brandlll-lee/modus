@@ -29,11 +29,14 @@ export type AgentRunStatus = "running" | "completed" | "failed" | "blocked" | "c
 
 export type PromptDelivery = "normal" | "steer" | "follow-up";
 
-/** Image attached to a prompt. `data` is the base64 payload (no data: prefix). */
-export type PromptImageAttachment = {
+/** PI image block. `data` is the base64 payload (no data: prefix). */
+export type ImageContent = {
   type: "image";
   data: string;
   mimeType: string;
+};
+
+export type PromptImageAttachment = ImageContent & {
   /** Original file name, shown in the timeline chip. */
   name?: string | undefined;
 };
@@ -270,6 +273,7 @@ export type AgentEvent =
       toolCallId: string;
       parentToolCallId?: string;
       output: string;
+      images?: ImageContent[];
     }
   | {
       type: "tool.ended";
@@ -277,6 +281,7 @@ export type AgentEvent =
       toolCallId: string;
       parentToolCallId?: string;
       output?: string;
+      images?: ImageContent[];
       isError: boolean;
     }
   | { type: "permission.requested"; sessionId: string; request: PermissionRequest }

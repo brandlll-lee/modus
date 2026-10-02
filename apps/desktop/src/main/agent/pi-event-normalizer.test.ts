@@ -96,8 +96,40 @@ describe("normalizePiEvent", () => {
         sessionId: "session-1",
         toolCallId: "tooluse_abc",
         output: "indexing: parsed 120 files\n",
+        images: [],
       },
     ]);
+  });
+
+  it("preserves native image blocks beside text and structured output", () => {
+    const image = { type: "image", data: "native-pixels", mimeType: "image/png" };
+    const result = {
+      content: [{ type: "text", text: "Image ready" }, image],
+      structuredContent: { width: 100 },
+    };
+    const normalize = createPiEventNormalizer("s");
+    for (const native of [
+      { type: "tool_execution_update", partialResult: result },
+      { type: "tool_execution_end", result, isError: false },
+    ]) {
+      const [mapped] = normalize(event({ ...native, toolCallId: "t", toolName: "fixture" }));
+      expect(mapped).toMatchObject({
+        toolCallId: "t",
+        images: [image],
+        output: 'Image ready\n{\n  "width": 100\n}\n',
+      });
+      expect(mapped && "output" in mapped ? mapped.output : "").not.toContain(image.data);
+    }
+    expect(
+      normalize(
+        event({
+          type: "tool_execution_end",
+          toolCallId: "t",
+          result: { content: [image] },
+          isError: false,
+        }),
+      ),
+    ).toMatchObject([{ output: "", images: [image] }]);
   });
 
   it("ignores a streaming tool call until the provider assigns it an id", () => {

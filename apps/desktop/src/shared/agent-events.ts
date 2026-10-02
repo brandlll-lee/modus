@@ -14,7 +14,7 @@ export type AgentEventItem = {
  * Fold key = the event's own authoritative stream identity.
  *
  * Streamed deltas of one logical part (a message's text, a message's thinking,
- * a tool call's output, a tool call's live args) all carry the id that part was
+ * a tool call's result, a tool call's live args) all carry the id that part was
  * opened with — `messageId` or `toolCallId`. We key the fold on that id, never
  * on array position. So interleaved streams (thinking → text → tool → thinking)
  * still collapse correctly, and a session's event list stays O(parts) instead
@@ -44,10 +44,7 @@ function foldKey(event: AgentEvent): string | undefined {
 }
 
 /**
- * Accumulate `next` into the matching `previous` item. The accumulation rule is
- * a property of the field, not the tool/message identity: text-bearing deltas
- * concatenate their growing field; a `tool.delta` carries the full args-so-far,
- * so the latest simply wins. `foldKey` guarantees both share the same type.
+ * Text deltas concatenate; tool args and results are complete PI snapshots.
  */
 function foldInto<T extends AgentEventItem>(previous: T, next: T): T {
   if (previous.optimistic && !next.optimistic) {
@@ -66,10 +63,7 @@ function foldInto<T extends AgentEventItem>(previous: T, next: T): T {
   if (prev.type === "thinking.delta" && cur.type === "thinking.delta") {
     return withEnd({ ...previous, event: { ...prev, delta: prev.delta + cur.delta } } as T);
   }
-  if (prev.type === "tool.output" && cur.type === "tool.output") {
-    return withEnd({ ...previous, event: { ...prev, output: prev.output + cur.output } } as T);
-  }
-  return next;
+  return withEnd({ ...previous, event: cur } as T);
 }
 
 /**

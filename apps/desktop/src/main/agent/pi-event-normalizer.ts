@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type { AgentEvent } from "../../shared/contracts";
+import { toolResultContent } from "./pi-tool-result";
 
 type MessageRole = "assistant" | "user";
 
@@ -53,32 +54,6 @@ function messageId(message: unknown, role: MessageRole, state: NormalizerState):
   const fallback = `${state.idPrefix}${role}:${++state.nextFallbackId}`;
   state.activeMessageIds[role] = fallback;
   return fallback;
-}
-
-function stringify(value: unknown): string {
-  if (typeof value === "string") {
-    return value;
-  }
-  if (value && typeof value === "object" && "structuredContent" in value)
-    return JSON.stringify(value, null, 2);
-  if (
-    value &&
-    typeof value === "object" &&
-    Array.isArray((value as { content?: unknown }).content)
-  ) {
-    const text = (value as { content: unknown[] }).content
-      .map((item) =>
-        item && typeof item === "object" && typeof (item as { text?: unknown }).text === "string"
-          ? (item as { text: string }).text
-          : "",
-      )
-      .filter(Boolean)
-      .join("\n");
-    if (text) {
-      return text.endsWith("\n") ? text : `${text}\n`;
-    }
-  }
-  return JSON.stringify(value, null, 2);
 }
 
 /** Short preview for timeline; full summary stays in the PI session entry. */
@@ -231,7 +206,7 @@ export function normalizePiEvent(
           type: "tool.output",
           sessionId,
           toolCallId: event.toolCallId,
-          output: stringify(event.partialResult),
+          ...toolResultContent(event.partialResult),
           ...(event.parentToolCallId ? { parentToolCallId: event.parentToolCallId } : {}),
         },
       ];
@@ -243,7 +218,7 @@ export function normalizePiEvent(
           toolCallId: event.toolCallId,
           isError: event.isError,
           ...(event.parentToolCallId ? { parentToolCallId: event.parentToolCallId } : {}),
-          ...(event.result !== undefined ? { output: stringify(event.result) } : {}),
+          ...(event.result !== undefined ? toolResultContent(event.result) : {}),
         },
       ];
     case "queue_update":
