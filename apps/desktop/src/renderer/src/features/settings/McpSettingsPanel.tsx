@@ -1,4 +1,4 @@
-import { IconFolder, IconRefresh } from "@tabler/icons-react";
+import { IconFolder } from "@tabler/icons-react";
 import { useEffect, useState } from "react";
 import { Button } from "../../components/ui/Button";
 import { Field, SelectField } from "../../components/ui/FormControls";
@@ -17,12 +17,10 @@ export function McpSettingsPanel({
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(Boolean(sessionId));
-  const [revision, setRevision] = useState(0);
   const [commands, setCommands] = useState<Array<{ name: string; description?: string }>>([]);
   const [command, setCommand] = useState("mcp");
   const [args, setArgs] = useState("");
   const [result, setResult] = useState("");
-  // biome-ignore lint/correctness/useExhaustiveDependencies: Explicit retry invalidates the request.
   useEffect(() => {
     let active = true;
     let request = 0;
@@ -64,21 +62,7 @@ export function McpSettingsPanel({
       active = false;
       unsubscribe();
     };
-  }, [cwd, sessionId, revision]);
-  async function refresh() {
-    if (!cwd || busy) return;
-    setBusy(true);
-    setError(undefined);
-    try {
-      if (sessionId) await window.modus.agent.ensure(sessionId);
-      await window.modus.mcp.sync(cwd);
-      setRevision((value) => value + 1);
-    } catch (cause) {
-      setError(String(cause));
-    } finally {
-      setBusy(false);
-    }
-  }
+  }, [cwd, sessionId]);
   async function runCommand() {
     if (!sessionId || busy) return;
     setBusy(true);
@@ -95,21 +79,7 @@ export function McpSettingsPanel({
   }
   return (
     <section className="min-w-0 space-y-5">
-      <SettingsPageHeader
-        actions={
-          <button
-            type="button"
-            title="Refresh resources"
-            aria-label="Refresh resources"
-            disabled={!sessionId || busy || loading}
-            onClick={() => void refresh()}
-            className="toolbar-icon-button flex items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-hover hover:text-fg disabled:opacity-40"
-          >
-            <IconRefresh aria-hidden size={16} stroke={1.8} />
-          </button>
-        }
-        title="MCP"
-      />
+      <SettingsPageHeader title="MCP" />
       {error ? (
         <p role="alert" className="break-words text-sm text-danger">
           {error}

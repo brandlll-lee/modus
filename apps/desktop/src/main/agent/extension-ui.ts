@@ -7,6 +7,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { AgentEvent } from "../../shared/contracts";
 import { requestQuestions } from "../interaction/question-broker";
+import { assertConfigurationReady } from "./session-resources";
 
 const commandOutput = new AsyncLocalStorage<string[]>();
 const activeCommands = new WeakSet<AgentSession>();
@@ -74,6 +75,7 @@ export async function invokeExtensionCommand(
   name: string,
   args = "",
 ): Promise<string> {
+  assertConfigurationReady();
   if (!session.extensionRunner?.getCommand(name))
     throw new Error(`The ${name} extension is not loaded in this session.`);
   if (activeCommands.has(session))

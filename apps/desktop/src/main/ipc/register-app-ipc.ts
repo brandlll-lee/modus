@@ -17,26 +17,19 @@ import { listAgentRuns } from "../agent/agent-run-store";
 import {
   discoverAgentSessions,
   listAgentSessions,
-  listArchivedAgentSessions,
-  setAgentSessionArchived,
   setAgentSessionPinned,
 } from "../agent/agent-store";
 import {
   getModelSettings,
   getProviderDetail,
   listModels,
-  refreshRemoteModelCatalog,
   revealProviderConfig,
   setDefaultModel,
   setModelThinking,
 } from "../agent/model-service";
 import { getAgentRuntime } from "../agent/runtime-registry";
 import { removeAgentSession } from "../agent/session-lifecycle";
-import {
-  onSessionResourcesChanged,
-  reloadSessionResources,
-  sessionResources,
-} from "../agent/session-resources";
+import { onSessionResourcesChanged, sessionResources } from "../agent/session-resources";
 import { deleteBrowserRecent, listBrowserRecents } from "../browser/browser-recents-store";
 import {
   closeBrowserTab,
@@ -87,7 +80,6 @@ import {
   getMcpStatus,
   revealMcpConfig,
   runMcpCommand,
-  syncWorkspaceMcp,
 } from "../mcp/mcp-service";
 import { listSkills, revealSkill } from "../skills/skills-service";
 import type { StartupTimeline } from "../startup/startup-timeline";
@@ -100,7 +92,6 @@ import {
   writeTerminal,
 } from "../terminal/terminal-service";
 import {
-  archiveProjectChats,
   deleteProjectChats,
   getRecentWorkspaces,
   openWorkspace,
@@ -114,7 +105,6 @@ import { IPC_CHANNELS } from "./channels";
 import {
   agentCreateSchema,
   agentCycleModelSchema,
-  agentListSchema,
   agentNavigateSchema,
   agentPromptSchema,
   agentSetModelSchema,
@@ -251,12 +241,6 @@ export function registerAppIpc({
     return renameProject(parsed.id, parsed.displayName);
   });
 
-  ipcMain.handle(IPC_CHANNELS.workspaceArchiveChats, async (event, input) => {
-    assertTrustedSender(event);
-    const parsed = parseIpcInput(workspaceIdSchema, input, IPC_CHANNELS.workspaceArchiveChats);
-    return await archiveProjectChats(parsed.id);
-  });
-
   ipcMain.handle(IPC_CHANNELS.workspaceDeleteChats, async (event, input) => {
     assertTrustedSender(event);
     const parsed = parseIpcInput(workspaceIdSchema, input, IPC_CHANNELS.workspaceDeleteChats);
@@ -302,13 +286,10 @@ export function registerAppIpc({
     });
   });
 
-  ipcMain.handle(IPC_CHANNELS.agentList, async (event, input) => {
+  ipcMain.handle(IPC_CHANNELS.agentList, async (event) => {
     assertTrustedSender(event);
-    const parsed = parseIpcInput(agentListSchema, input, IPC_CHANNELS.agentList);
     await discoverAgentSessions();
-    return listAgentSessions(
-      parsed?.includeSessionId ? { includeSessionId: parsed.includeSessionId } : {},
-    ).map((info) => {
+    return listAgentSessions().map((info) => {
       const native = sessionResources().find(({ id }) => id === info.id)?.session;
       return native?.model
         ? {
@@ -318,12 +299,6 @@ export function registerAppIpc({
           }
         : info;
     });
-  });
-
-  ipcMain.handle(IPC_CHANNELS.agentListArchived, (event, workspaceId: string) => {
-    assertTrustedSender(event);
-    const id = parseIpcInput(sessionIdSchema, workspaceId, IPC_CHANNELS.agentListArchived);
-    return listArchivedAgentSessions(id);
   });
 
   ipcMain.handle(IPC_CHANNELS.agentCommands, async (event, input) => {
@@ -420,22 +395,10 @@ export function registerAppIpc({
     return setAgentSessionPinned(parsed.id, parsed.pinned);
   });
 
-  ipcMain.handle(IPC_CHANNELS.agentArchive, async (event, sessionId: string) => {
-    assertTrustedSender(event);
-    const id = parseIpcInput(sessionIdSchema, sessionId, IPC_CHANNELS.agentArchive);
-    setAgentSessionArchived(id, true);
-  });
-
-  ipcMain.handle(IPC_CHANNELS.agentRestore, async (event, sessionId: string) => {
-    assertTrustedSender(event);
-    const id = parseIpcInput(sessionIdSchema, sessionId, IPC_CHANNELS.agentRestore);
-    setAgentSessionArchived(id, false);
-  });
-
   ipcMain.handle(IPC_CHANNELS.agentDelete, async (event, sessionId: string) => {
     assertTrustedSender(event);
     const id = parseIpcInput(sessionIdSchema, sessionId, IPC_CHANNELS.agentDelete);
-    await removeAgentSession(id);
+    return await removeAgentSession(id);
   });
 
   ipcMain.handle(IPC_CHANNELS.agentSetModel, async (event, input) => {
@@ -843,11 +806,6 @@ export function registerAppIpc({
     },
   );
 
-  ipcMain.handle(IPC_CHANNELS.mcpSync, async (event, cwd: string) => {
-    assertTrustedSender(event);
-    return await syncWorkspaceMcp(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.mcpSync));
-  });
-
   ipcMain.handle(IPC_CHANNELS.mcpOpenConfig, async (event, input) => {
     assertTrustedSender(event);
     const parsed = parseIpcInput(resourceLocationSchema, input, IPC_CHANNELS.mcpOpenConfig);
@@ -859,12 +817,6 @@ export function registerAppIpc({
     const id = parseIpcInput(sessionIdSchema, sessionId, IPC_CHANNELS.skillsList);
     await getAgentRuntime().ensure(getSenderWindow(event), id);
     return listSkills(id);
-  });
-
-  ipcMain.handle(IPC_CHANNELS.skillsRefresh, async (event, cwd: string) => {
-    assertTrustedSender(event);
-    const target = parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.skillsRefresh);
-    await reloadSessionResources(target);
   });
 
   ipcMain.handle(IPC_CHANNELS.skillsOpenDir, async (event, input) => {
@@ -888,9 +840,13 @@ export function registerAppIpc({
     return getModelSettings();
   });
 
-  ipcMain.handle(IPC_CHANNELS.modelRefreshCatalog, (event) => {
+  ipcMain.handle(IPC_CHANNELS.appReloadConfiguration, async (event) => {
     assertTrustedSender(event);
-    return refreshRemoteModelCatalog();
+    const state = await getAgentRuntime().reloadConfiguration();
+    for (const window of BrowserWindow.getAllWindows())
+      if (!window.isDestroyed() && window.webContents !== event.sender)
+        window.webContents.send(IPC_CHANNELS.modelCatalogChanged);
+    return state;
   });
 
   ipcMain.handle(IPC_CHANNELS.modelProviderDetail, (event, provider: string) => {

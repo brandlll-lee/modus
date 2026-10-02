@@ -143,7 +143,6 @@ export function importDesktopData(): void {
         }
         preferences.sessions[destination] = {
           ...(row.pinned_at ? { pinnedAt: String(row.pinned_at) } : {}),
-          ...(row.archived_at ? { archivedAt: String(row.archived_at) } : {}),
         };
       }
     }

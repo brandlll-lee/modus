@@ -11,6 +11,7 @@ import type { ModusApi, SecurityState } from "./types";
 
 const api: ModusApi = {
   app: {
+    reloadConfiguration: () => ipcRenderer.invoke("app:reload-configuration"),
     version: () => ipcRenderer.invoke("app:version") as Promise<string>,
     securityState: () => ipcRenderer.invoke("app:security-state") as Promise<SecurityState>,
     startupMetric: (input) => ipcRenderer.invoke("app:startup-metric", input),
@@ -20,7 +21,6 @@ const api: ModusApi = {
     list: () => ipcRenderer.invoke("workspace:list"),
     pin: (input) => ipcRenderer.invoke("workspace:pin", input),
     rename: (input) => ipcRenderer.invoke("workspace:rename", input),
-    archiveChats: (id) => ipcRenderer.invoke("workspace:archive-chats", { id }),
     deleteChats: (id) => ipcRenderer.invoke("workspace:delete-chats", { id }),
     remove: (id) => ipcRenderer.invoke("workspace:remove", { id }),
     reveal: (id) => ipcRenderer.invoke("workspace:reveal", { id }),
@@ -32,8 +32,7 @@ const api: ModusApi = {
   },
   agent: {
     create: (input) => ipcRenderer.invoke("agent:create", input),
-    list: (input) => ipcRenderer.invoke("agent:list", input),
-    listArchived: (workspaceId) => ipcRenderer.invoke("agent:list-archived", workspaceId),
+    list: () => ipcRenderer.invoke("agent:list"),
     commands: (sessionId) => ipcRenderer.invoke("agent:commands", sessionId),
     listEvents: (sessionId) => ipcRenderer.invoke("agent:list-events", sessionId),
     listRuns: (sessionId) => ipcRenderer.invoke("agent:list-runs", sessionId),
@@ -44,8 +43,6 @@ const api: ModusApi = {
     abort: (sessionId) => ipcRenderer.invoke("agent:abort", sessionId),
     navigate: (input) => ipcRenderer.invoke("agent:navigate", input),
     pin: (input) => ipcRenderer.invoke("agent:pin", input),
-    archive: (sessionId) => ipcRenderer.invoke("agent:archive", sessionId),
-    restore: (sessionId) => ipcRenderer.invoke("agent:restore", sessionId),
     delete: (sessionId) => ipcRenderer.invoke("agent:delete", sessionId),
     setModel: (input) => ipcRenderer.invoke("agent:set-model", input),
     cycleModel: (input) => ipcRenderer.invoke("agent:cycle-model", input),
@@ -149,7 +146,6 @@ const api: ModusApi = {
     list: () => ipcRenderer.invoke("model:list"),
     setDefault: (model) => ipcRenderer.invoke("model:set-default", model),
     settings: () => ipcRenderer.invoke("model:settings"),
-    refreshCatalog: () => ipcRenderer.invoke("model:refresh-catalog"),
     onCatalogChanged: (callback) => {
       const listener = () => callback();
       ipcRenderer.on("model:catalog-changed", listener);
@@ -164,12 +160,10 @@ const api: ModusApi = {
     runCommand: (input) => ipcRenderer.invoke("mcp:run-command", input),
     locations: (sessionId) => ipcRenderer.invoke("mcp:locations", sessionId),
     status: (sessionId) => ipcRenderer.invoke("mcp:status", sessionId),
-    sync: (cwd) => ipcRenderer.invoke("mcp:sync", cwd),
     openConfig: (cwd) => ipcRenderer.invoke("mcp:open-config", cwd),
   },
   skills: {
     list: (sessionId) => ipcRenderer.invoke("skills:list", sessionId),
-    refresh: (cwd) => ipcRenderer.invoke("skills:refresh", cwd),
     onChanged: (callback) => {
       const listener = (_event: IpcRendererEvent, cwd: string) => callback(cwd);
       ipcRenderer.on("resources:changed", listener);

@@ -72,12 +72,6 @@ export const agentPromptSchema = z
 
 export const sessionIdSchema = nonEmptyString;
 
-export const agentListSchema = z
-  .object({
-    includeSessionId: optionalNonEmptyString,
-  })
-  .optional();
-
 export const agentNavigateSchema = z.object({
   sessionId: nonEmptyString,
   userMessageId: nonEmptyString,

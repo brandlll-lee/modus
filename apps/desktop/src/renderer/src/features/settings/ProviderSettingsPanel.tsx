@@ -1,36 +1,16 @@
-import { IconChevronRight, IconRefresh } from "@tabler/icons-react";
+import { IconChevronRight } from "@tabler/icons-react";
 import { useRef, useState } from "react";
 import type { ModelProviderInfo, ModelSettingsState } from "../../../../shared/contracts";
 import { ProviderLogo } from "../../components/providers/ProviderLogo";
 import { SearchField } from "../../components/ui/SearchField";
 import { SettingsPageHeader } from "../../components/ui/SettingsPageHeader";
-import { ToolbarButton } from "../../components/ui/ToolbarButton";
 import { ProviderDetailsDialog } from "./ProviderDetailsDialog";
 
-export function ProviderSettingsPanel({
-  state,
-  onRefresh,
-}: {
-  state: ModelSettingsState | null;
-  onRefresh(): Promise<void>;
-}) {
+export function ProviderSettingsPanel({ state }: { state: ModelSettingsState | null }) {
   const [query, setQuery] = useState("");
   const [configuredOnly, setConfiguredOnly] = useState(true);
   const [selected, setSelected] = useState<ModelProviderInfo>();
-  const [error, setError] = useState<string>();
-  const [busy, setBusy] = useState(false);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
-  async function refresh() {
-    setBusy(true);
-    setError(undefined);
-    try {
-      await onRefresh();
-    } catch (cause) {
-      setError(String(cause));
-    } finally {
-      setBusy(false);
-    }
-  }
   const providers = (state?.providers ?? []).filter(
     (provider) =>
       (!configuredOnly || provider.configured) &&
@@ -38,14 +18,7 @@ export function ProviderSettingsPanel({
   );
   return (
     <>
-      <SettingsPageHeader
-        title="Models and providers"
-        actions={
-          <ToolbarButton label="Refresh models" disabled={busy} onClick={() => void refresh()}>
-            <IconRefresh size={16} />
-          </ToolbarButton>
-        }
-      />
+      <SettingsPageHeader title="Models and providers" />
       <div className="flex flex-wrap items-center gap-4">
         <SearchField
           ariaLabel="Search providers"
@@ -63,11 +36,6 @@ export function ProviderSettingsPanel({
           Configured only
         </label>
       </div>
-      {error ? (
-        <p role="alert" className="break-words text-sm text-danger">
-          {error}
-        </p>
-      ) : null}
       {state?.errors.map((message) => (
         <p role="alert" key={message} className="break-words text-sm text-danger">
           {message}

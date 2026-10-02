@@ -30,7 +30,6 @@ vi.mock("../agent/session-resources", () => ({
     { id: "selected", cwd: "workspace", session: mocks.session },
     { id: "other", cwd: "workspace", session: {} },
   ],
-  reloadSessionResources: vi.fn(),
 }));
 vi.mock("../agent/agent-paths", () => ({ getPiCliAgentDir: () => "missing-fixture" }));
 vi.mock("../agent/agent-store", () => ({ getAgentSession: () => undefined }));

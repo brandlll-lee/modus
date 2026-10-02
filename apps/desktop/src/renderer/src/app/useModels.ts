@@ -14,9 +14,12 @@ export function useModels(
     applyModelSettings(settings);
   }, []);
 
-  const refreshModelCatalog = useCallback(async (): Promise<void> => {
-    applyModelSettings(await window.modus.model.refreshCatalog());
-  }, []);
+  const reloadConfiguration = useCallback(async (): Promise<void> => {
+    const state = await window.modus.app.reloadConfiguration();
+    applyModelSettings(state);
+    await refreshSessions();
+    if (state.errors.length) throw new Error(state.errors.join("\n"));
+  }, [refreshSessions]);
 
   useEffect(
     () => window.modus?.model.onCatalogChanged(() => void refreshModelSettings()),
@@ -96,7 +99,7 @@ export function useModels(
     model,
     modelSettings,
     applyModelSettings,
-    refreshModelCatalog,
+    reloadConfiguration,
     changeDefaultModel,
     updateModelThinking,
   };

@@ -74,7 +74,7 @@ export function App() {
     activeSessionId,
     setActiveSessionId,
     activeSession,
-    rootSessions,
+    agentSessions,
     refreshSessions,
     updateSessionTitle,
     sessionCreateError,
@@ -84,12 +84,9 @@ export function App() {
     selectSession,
     openNewChat,
     pinSession,
-    archiveSession,
-    restoreSession,
     deleteSession,
     pinProject,
     renameProject,
-    archiveProjectChats,
     deleteProjectChats,
     removeProject,
     revealProject,
@@ -122,7 +119,7 @@ export function App() {
     model,
     modelSettings,
     applyModelSettings,
-    refreshModelCatalog,
+    reloadConfiguration,
     changeDefaultModel,
     updateModelThinking,
   } = useModels(activeSession, refreshSessions);
@@ -253,14 +250,6 @@ export function App() {
 
   const environmentStats = useEnvironmentStats(activeCwd, activeRunning);
 
-  const workspaceRoot = activeWorkspace?.rootPath;
-  useEffect(() => {
-    if (!workspaceRoot) {
-      return;
-    }
-    void window.modus.mcp.sync(workspaceRoot).catch(() => {});
-  }, [workspaceRoot]);
-
   const canCreateSession = Boolean(activeWorkspace) && Boolean(model);
   const workspaceById = useMemo(
     () => new Map(workspaces.map((workspace) => [workspace.id, workspace])),
@@ -335,9 +324,8 @@ export function App() {
                       <SettingsPanel
                         sessionId={activeSessionId ?? undefined}
                         onClose={() => setSettingsOpen(false)}
-                        onRefreshCatalog={refreshModelCatalog}
+                        onReloadConfiguration={reloadConfiguration}
                         state={modelSettings}
-                        workspaces={workspaces}
                         workspaceCwd={activeWorkspace?.rootPath}
                       />
                     </Suspense>
@@ -346,20 +334,14 @@ export function App() {
                     <div className="workspace-layout" ref={layoutRowRef}>
                       <Sidebar
                         activityBySession={activityBySession}
-                        agentSessions={rootSessions}
+                        agentSessions={agentSessions}
                         canCreateSession={canCreateSession}
-                        onArchiveSession={(session) => void archiveSession(session)}
-                        onDeleteSession={(session) => void deleteSession(session)}
-                        onListArchivedSessions={(workspaceId) =>
-                          window.modus.agent.listArchived(workspaceId)
-                        }
+                        onDeleteSession={deleteSession}
                         onPinProject={(id, pinned) => void pinProject(id, pinned)}
                         onPinSession={(session, pinned) => void pinSession(session, pinned)}
                         onRenameProject={(id, displayName) => void renameProject(id, displayName)}
-                        onArchiveProjectChats={(id) => void archiveProjectChats(id)}
-                        onDeleteProjectChats={(id) => void deleteProjectChats(id)}
+                        onDeleteProjectChats={deleteProjectChats}
                         onRemoveProject={(id) => void removeProject(id)}
-                        onRestoreSession={(session) => void restoreSession(session)}
                         onRevealProject={(id) => void revealProject(id)}
                         onNewSession={() => openNewChat()}
                         onNewWorkspaceSession={(workspace) => openNewChat(workspace)}

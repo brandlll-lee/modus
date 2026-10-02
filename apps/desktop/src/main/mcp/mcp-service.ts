@@ -9,7 +9,7 @@ import { shell } from "electron";
 import { getPiCliAgentDir } from "../agent/agent-paths";
 import { getAgentSession } from "../agent/agent-store";
 import { invokeExtensionCommand } from "../agent/extension-ui";
-import { reloadSessionResources, sessionResources } from "../agent/session-resources";
+import { sessionResources } from "../agent/session-resources";
 
 const reports = new WeakMap<AgentSession, Promise<string>>();
 
@@ -70,10 +70,6 @@ export async function runMcpCommand(
   if (!resource || !getMcpCommands(sessionId).some((command) => command.name === name))
     throw new Error("This MCP command is not available.");
   return invokeExtensionCommand(resource.session, name, args);
-}
-
-export async function syncWorkspaceMcp(cwd: string): Promise<void> {
-  await reloadSessionResources(cwd);
 }
 
 export async function revealMcpConfig(sessionId: string, path: string): Promise<void> {

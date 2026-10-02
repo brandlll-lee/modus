@@ -1,6 +1,6 @@
 import { dialog, shell } from "electron";
-import type { WorkspaceInfo } from "../../shared/contracts";
-import { archiveWorkspaceSessions, deleteWorkspaceSessions } from "../agent/session-lifecycle";
+import type { SessionDeletionResult, WorkspaceInfo } from "../../shared/contracts";
+import { deleteWorkspaceSessions } from "../agent/session-lifecycle";
 import { isGitRepository } from "../git/git-service";
 import {
   getWorkspace,
@@ -39,22 +39,14 @@ export function renameProject(id: string, displayName: string): WorkspaceInfo[] 
   return listWorkspaces();
 }
 
-/** Soft-archive all of a project's visible chats. Returns count archived. */
-export async function archiveProjectChats(id: string): Promise<number> {
-  return archiveWorkspaceSessions(id);
-}
-
-/** Permanently delete all chats in a project. Returns count deleted. */
-export async function deleteProjectChats(id: string): Promise<number> {
+export async function deleteProjectChats(id: string): Promise<SessionDeletionResult[]> {
   return deleteWorkspaceSessions(id);
 }
 
 export async function removeProject(id: string): Promise<WorkspaceInfo[]> {
   const { getAgentRuntime } = await import("../agent/runtime-registry");
-  const { listAgentSessions, listArchivedAgentSessions } = await import("../agent/agent-store");
-  for (const session of [...listAgentSessions(), ...listArchivedAgentSessions(id)].filter(
-    (item) => item.workspaceId === id,
-  ))
+  const { listAgentSessions } = await import("../agent/agent-store");
+  for (const session of listAgentSessions().filter((item) => item.workspaceId === id))
     await getAgentRuntime().dispose(session.id);
   removeWorkspace(id);
   return listWorkspaces();

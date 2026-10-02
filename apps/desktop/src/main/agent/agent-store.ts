@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, statSync, unlinkSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { basename } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import type { AgentSessionInfo } from "../../shared/contracts";
@@ -81,7 +81,6 @@ export function getAgentSession(id: string): AgentSessionInfo | undefined {
       createdAt: time,
       updatedAt: memory?.updatedAt ?? time,
       ...(preference.pinnedAt ? { pinnedAt: preference.pinnedAt } : {}),
-      ...(preference.archivedAt ? { archivedAt: preference.archivedAt } : {}),
     };
   }
   if (!manager) return undefined;
@@ -121,7 +120,6 @@ export function getAgentSession(id: string): AgentSessionInfo | undefined {
       statSync(memory.piSessionFile ?? "").mtime.toISOString(),
     ...(model ? { model } : {}),
     ...(preference.pinnedAt ? { pinnedAt: preference.pinnedAt } : {}),
-    ...(preference.archivedAt ? { archivedAt: preference.archivedAt } : {}),
   };
   sessions.set(id, info);
   return info;
@@ -185,29 +183,18 @@ export function updateAgentSessionTitle(id: string, title: string): AgentSession
   return next;
 }
 
-export function listAgentSessions(options: { includeSessionId?: string } = {}): AgentSessionInfo[] {
+export function listAgentSessions(): AgentSessionInfo[] {
   const workspaceIds = new Set(listWorkspaces().map((item) => item.id));
   return [...sessions.keys()]
     .map(getAgentSession)
     .filter(
       (item): item is AgentSessionInfo =>
-        Boolean(item) &&
-        workspaceIds.has(item?.workspaceId ?? "") &&
-        (!item?.archivedAt || item.id === options.includeSessionId),
+        Boolean(item) && workspaceIds.has(item?.workspaceId ?? ""),
     )
     .sort(
       (a, b) =>
         (b.pinnedAt ?? "").localeCompare(a.pinnedAt ?? "") ||
         b.updatedAt.localeCompare(a.updatedAt),
-    );
-}
-
-export function listArchivedAgentSessions(workspaceId: string): AgentSessionInfo[] {
-  return [...sessions.keys()]
-    .map(getAgentSession)
-    .filter(
-      (item): item is AgentSessionInfo =>
-        Boolean(item) && item?.workspaceId === workspaceId && Boolean(item.archivedAt),
     );
 }
 
@@ -223,24 +210,8 @@ export function setAgentSessionPinned(id: string, pinned: boolean): AgentSession
   return getAgentSession(id);
 }
 
-export function setAgentSessionArchived(
-  id: string,
-  archived: boolean,
-): AgentSessionInfo | undefined {
-  const file = getAgentSession(id)?.piSessionFile;
-  if (!file) return undefined;
-  const preferences = desktopPreferences();
-  const preference = preferences.sessions[file] ?? {};
-  if (archived) preference.archivedAt = new Date().toISOString();
-  else delete preference.archivedAt;
-  preferences.sessions[file] = preference;
-  saveDesktopPreferences();
-  return getAgentSession(id);
-}
-
-export function deleteAgentSession(id: string): void {
+export function forgetAgentSession(id: string): void {
   const info = getAgentSession(id);
-  if (info?.piSessionFile && existsSync(info.piSessionFile)) unlinkSync(info.piSessionFile);
   if (info?.piSessionFile) {
     delete desktopPreferences().sessions[info.piSessionFile];
     saveDesktopPreferences();

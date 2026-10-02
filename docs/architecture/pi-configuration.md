@@ -4,11 +4,15 @@ Modus embeds PI 1.0.0. PI owns settings, credentials, models, instruction files,
 
 ## Configuration
 
-PI_CODING_AGENT_DIR selects the global directory. Its default is ~/.pi/agent. PI resolves project trust, including extension decisions and temporary trust. Desktop appearance, layout, pins, and archive preferences stay in the application profile.
+PI_CODING_AGENT_DIR selects the global directory. Its default is ~/.pi/agent. PI resolves project trust, including extension decisions and temporary trust. Desktop appearance, layout, and pins stay in the application profile.
+
+The Settings title has one configuration reload action. It refreshes the native model runtime and reloads each loaded session through the SDK. It keeps the selected model and thinking level. Agent execution, initialization, compaction, and extension commands must finish first. Process environment changes require an application restart.
 
 ## Sessions
 
-SessionManager files are the persistent conversation source. Session paths follow PI_CODING_AGENT_SESSION_DIR and native sessionDir settings. A desktop JSON file stores project shortcuts, pins, and archive preferences. It contains no conversation messages. Startup discovers native sessions for registered workspaces.
+SessionManager files are the persistent conversation source. Session paths follow PI_CODING_AGENT_SESSION_DIR and native sessionDir settings. A desktop JSON file stores project shortcuts and pins. It contains no conversation messages. Startup discovers native sessions for registered workspaces.
+
+Session deletion requires confirmation. The file adapter follows the CLI deletion rule: use the trash command when available, then fall back to unlink. The GUI reports the result. Both clients share the deleted session file.
 
 Opening a conversation restores the native session and reads getSessionStats(). SDK events update context, cost, cache, retry, and running state. Missing or invalid files produce an error. Model fallback warnings allow native startup to continue. Editing a message navigates the native session tree.
 

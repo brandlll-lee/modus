@@ -1,6 +1,6 @@
-import { resolve } from "node:path";
 import type { AgentSession, ResourceLoader } from "@earendil-works/pi-coding-agent";
-import { isExtensionCommandActive } from "./extension-ui";
+import { getModelRuntime, getModelSettings, refreshRemoteModelCatalog } from "./model-service";
+import type { AgentRuntime } from "./runtime";
 
 export type SessionResources = {
   id: string;
@@ -9,7 +9,7 @@ export type SessionResources = {
   loader: ResourceLoader;
 };
 
-const reloading = new WeakSet<AgentSession>();
+let reloading = false;
 const resources = new Map<string, SessionResources>();
 const listeners = new Set<(cwd: string) => void>();
 
@@ -35,40 +35,48 @@ export function releaseSessionResources(id: string): void {
   if (value) changed(value.cwd);
 }
 
-export function sessionResources(cwd?: string): SessionResources[] {
-  return [...resources.values()].filter(
-    (value) => cwd === undefined || resolve(value.cwd) === resolve(cwd),
-  );
+export function sessionResources(): SessionResources[] {
+  return [...resources.values()];
 }
 
-export function assertSessionResourcesIdle(cwd: string): void {
-  if (
-    sessionResources(cwd).some(
-      ({ session }) =>
-        session.isStreaming || isExtensionCommandActive(session) || reloading.has(session),
-    )
-  )
-    throw new Error("Wait for the agent to finish before refreshing its resources.");
+export function assertConfigurationReady(): void {
+  if (reloading) throw new Error("Wait for PI configuration reload to finish.");
 }
 
-export async function reloadSessionResources(cwd: string): Promise<void> {
-  assertSessionResourcesIdle(cwd);
-  const selected = sessionResources(cwd);
-  for (const { session } of selected) reloading.add(session);
+export async function reloadPiConfiguration(runtime: Pick<AgentRuntime, "assertIdle">) {
+  assertConfigurationReady();
+  runtime.assertIdle();
+  reloading = true;
+  const selected = sessionResources();
+  const errors: string[] = [];
   try {
-    const results = await Promise.allSettled(
-      selected.map(async ({ session }) => {
+    await refreshRemoteModelCatalog();
+    for (const { id, session } of selected) {
+      try {
         await session.reload();
-      }),
-    );
-    const errors = results.filter((result) => result.status === "rejected");
-    if (errors.length)
-      throw new AggregateError(
-        errors.map((result) => result.reason),
-        "Failed to refresh agent resources.",
-      );
-    changed(cwd);
+      } catch (error) {
+        errors.push(`${id}: ${String(error)}`);
+      }
+    }
+    const models = await getModelRuntime();
+    for (const { id, session } of selected) {
+      if (!session.model) continue;
+      const model = models.getModel(session.model.provider, session.model.id);
+      try {
+        if (!model) throw new Error("The selected model is no longer available. Select a model.");
+        if (model !== session.model) {
+          const thinkingLevel = session.thinkingLevel;
+          await session.setModel(model);
+          session.setThinkingLevel(thinkingLevel);
+        }
+      } catch (error) {
+        errors.push(`${id}: ${String(error)}`);
+      }
+    }
+    const state = getModelSettings();
+    return { ...state, errors: [...state.errors, ...errors] };
   } finally {
-    for (const { session } of selected) reloading.delete(session);
+    reloading = false;
+    for (const cwd of new Set(selected.map((value) => value.cwd))) changed(cwd);
   }
 }

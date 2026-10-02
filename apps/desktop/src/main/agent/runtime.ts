@@ -5,6 +5,7 @@ import type {
   AgentSessionInfo,
   ContextUsageInfo,
   ModelInfo,
+  ModelSettingsState,
   PromptDelivery,
   PromptImageAttachment,
   SkillSelection,
@@ -35,6 +36,8 @@ export type PromptAgentInput = {
 };
 
 export type AgentRuntime = {
+  assertIdle(): void;
+  reloadConfiguration(): Promise<ModelSettingsState>;
   create(window: BrowserWindowType, input: CreateAgentRuntimeInput): Promise<AgentSessionInfo>;
   ensure(
     window: BrowserWindowType,

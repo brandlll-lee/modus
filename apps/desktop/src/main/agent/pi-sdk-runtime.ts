@@ -69,7 +69,12 @@ import type {
   PromptAgentInput,
 } from "./runtime";
 import { sessionDirectory } from "./session-directory";
-import { registerSessionResources, releaseSessionResources } from "./session-resources";
+import {
+  assertConfigurationReady,
+  registerSessionResources,
+  releaseSessionResources,
+  reloadPiConfiguration,
+} from "./session-resources";
 
 type SdkRuntimeSession = {
   info: AgentSessionInfo;
@@ -130,7 +135,9 @@ export class PiSdkRuntime implements AgentRuntime {
     sessionId: string,
     modelOverride?: string,
   ): Promise<SdkRuntimeSession | undefined> {
+    assertConfigurationReady();
     await this.disposePromises.get(sessionId);
+    assertConfigurationReady();
     const existing = this.sessions.get(sessionId);
     if (existing) {
       return existing;
@@ -146,6 +153,27 @@ export class PiSdkRuntime implements AgentRuntime {
     });
     this.resumePromises.set(sessionId, next);
     return await next;
+  }
+
+  assertIdle(): void {
+    if (
+      this.resumePromises.size ||
+      this.disposePromises.size ||
+      this.runObservations.size ||
+      this.presentations.size ||
+      [...this.sessions.values()].some(
+        ({ session }) => !session.isIdle || isExtensionCommandActive(session),
+      )
+    )
+      throw new Error(
+        "Wait for the agent, compaction, or extension command to finish before reloading PI configuration.",
+      );
+  }
+
+  async reloadConfiguration() {
+    const state = await reloadPiConfiguration(this);
+    for (const session of this.sessions.values()) this.emitContextUsage(session);
+    return state;
   }
 
   async ensure(
@@ -381,6 +409,7 @@ export class PiSdkRuntime implements AgentRuntime {
     window: BrowserWindowType,
     input: CreateAgentRuntimeInput,
   ): Promise<AgentSessionInfo> {
+    assertConfigurationReady();
     const emit = this.emitToWindow(window);
     const emitVolatile = this.emitVolatileToWindow(window);
     const selectedModel = input.model ? findModel(input.model) : undefined;
@@ -486,6 +515,7 @@ export class PiSdkRuntime implements AgentRuntime {
   }
 
   async prompt(window: BrowserWindowType, input: PromptAgentInput): Promise<void> {
+    assertConfigurationReady();
     if (input.attachments?.length) {
       input = {
         ...input,
@@ -825,10 +855,12 @@ export class PiSdkRuntime implements AgentRuntime {
   }
 
   async dispose(sessionId: string): Promise<void> {
+    assertConfigurationReady();
     await this.disposeSessionOnly(sessionId);
   }
 
   async releaseRuntime(sessionId: string): Promise<void> {
+    assertConfigurationReady();
     await this.disposeSessionOnly(sessionId, true);
   }
 

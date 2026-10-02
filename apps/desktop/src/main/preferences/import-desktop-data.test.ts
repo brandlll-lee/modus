@@ -37,7 +37,7 @@ function fixture() {
   const file = manager.getSessionFile() as string;
   const db = new DatabaseSync(join(paths.root, "modus.sqlite"));
   db.exec(
-    "create table workspaces(id text,root_path text,display_name text,is_git_repository integer,last_opened_at text,pinned integer,pinned_at text);create table agent_sessions(id text,workspace_id text,cwd text,title text,pi_session_file text,pinned_at text,archived_at text);create table agent_events(id text,session_id text,payload_json text);",
+    "create table workspaces(id text,root_path text,display_name text,is_git_repository integer,last_opened_at text,pinned integer,pinned_at text);create table agent_sessions(id text,workspace_id text,cwd text,title text,pi_session_file text,pinned_at text);create table agent_events(id text,session_id text,payload_json text);",
   );
   db.prepare("insert into workspaces values(?,?,?,?,?,?,?)").run(
     "workspace",
@@ -48,14 +48,13 @@ function fixture() {
     0,
     null,
   );
-  db.prepare("insert into agent_sessions values(?,?,?,?,?,?,?)").run(
+  db.prepare("insert into agent_sessions values(?,?,?,?,?,?)").run(
     "desktop-id",
     "workspace",
     paths.root,
     "Title",
     file,
     "2026-10-01",
-    null,
   );
   db.prepare("insert into agent_events values(?,?,?)").run(
     "start",

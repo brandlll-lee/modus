@@ -23,10 +23,8 @@ import {
   discoverAgentSessions,
   getAgentSession,
   listAgentSessions,
-  listArchivedAgentSessions,
   releaseSessionManager,
   sessionManagerFor,
-  setAgentSessionArchived,
   setAgentSessionPinned,
   updateAgentSessionTitle,
 } from "./agent-store";
@@ -73,15 +71,10 @@ it("reads native files after runtime release and follows CLI title changes", () 
   updateAgentSessionTitle(id, "Desktop title");
   expect(SessionManager.open(manager.getSessionFile()!).getSessionName()).toBe("Desktop title");
 });
-it("keeps desktop pin and archive preferences separate from native history", () => {
+it("keeps desktop pin preferences separate from native history", () => {
   const { id, manager } = fixture();
   setAgentSessionPinned(id, true);
-  setAgentSessionArchived(id, true);
-  expect(listAgentSessions().some((item) => item.id === id)).toBe(false);
-  expect(listArchivedAgentSessions(id).map((item) => item.id)).toEqual([id]);
-  expect(
-    listAgentSessions({ includeSessionId: id }).find((item) => item.id === id)?.pinnedAt,
-  ).toBeDefined();
+  expect(listAgentSessions().find((item) => item.id === id)?.pinnedAt).toBeDefined();
   expect(manager.getEntries().filter((entry) => entry.type === "message")).toHaveLength(2);
 });
 it("discovers a CLI session in the configured native directory", async () => {

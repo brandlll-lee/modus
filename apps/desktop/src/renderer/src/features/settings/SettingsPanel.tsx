@@ -3,12 +3,14 @@ import {
   IconCube,
   IconPalette,
   IconPlugConnected,
+  IconRefresh,
   IconServerCog,
 } from "@tabler/icons-react";
 import { type ReactNode, useState } from "react";
-import type { ModelSettingsState, WorkspaceInfo } from "../../../../shared/contracts";
+import type { ModelSettingsState } from "../../../../shared/contracts";
 import { NavItem } from "../../components/layout/NavItem";
 import { SearchField } from "../../components/ui/SearchField";
+import { ToolbarButton } from "../../components/ui/ToolbarButton";
 import { AppearanceSettingsPanel } from "./AppearanceSettingsPanel";
 import { McpSettingsPanel } from "./McpSettingsPanel";
 import { ProviderSettingsPanel } from "./ProviderSettingsPanel";
@@ -18,9 +20,8 @@ type SettingsPanelProps = {
   sessionId?: string | undefined;
   state: ModelSettingsState | null;
   onClose(): void;
-  onRefreshCatalog(): Promise<void>;
+  onReloadConfiguration(): Promise<void>;
   workspaceCwd?: string | undefined;
-  workspaces?: WorkspaceInfo[] | undefined;
 };
 
 type SettingsSectionId = "model-provider" | "appearance" | "skills" | "mcp";
@@ -43,12 +44,26 @@ export function SettingsPanel({
   sessionId,
   state,
   onClose,
-  onRefreshCatalog,
+  onReloadConfiguration,
   workspaceCwd,
-  workspaces = [],
 }: SettingsPanelProps) {
   const [activeSection, setActiveSection] = useState<SettingsSectionId>("model-provider");
   const [settingsQuery, setSettingsQuery] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [feedback, setFeedback] = useState<{ message: string; error: boolean }>();
+  async function reload() {
+    if (busy) return;
+    setBusy(true);
+    setFeedback(undefined);
+    try {
+      await onReloadConfiguration();
+      setFeedback({ message: "PI configuration reloaded.", error: false });
+    } catch (cause) {
+      setFeedback({ message: String(cause), error: true });
+    } finally {
+      setBusy(false);
+    }
+  }
   return (
     <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
       <SettingsSidebar
@@ -57,13 +72,14 @@ export function SettingsPanel({
         onQueryChange={setSettingsQuery}
         onSectionChange={setActiveSection}
         query={settingsQuery}
+        busy={busy}
+        feedback={feedback}
+        onReload={() => void reload()}
       />
       <main className="scroll-thin min-w-0 flex-1 overflow-y-auto bg-canvas">
         <div className="settings-content">
           {activeSection === "appearance" ? <AppearanceSettingsPanel /> : null}
-          {activeSection === "model-provider" ? (
-            <ProviderSettingsPanel state={state} onRefresh={onRefreshCatalog} />
-          ) : null}
+          {activeSection === "model-provider" ? <ProviderSettingsPanel state={state} /> : null}
           {activeSection === "skills" ? (
             <SkillsSettingsPanel cwd={workspaceCwd} sessionId={sessionId} />
           ) : null}
@@ -82,8 +98,14 @@ function SettingsSidebar({
   onBack,
   onQueryChange,
   onSectionChange,
+  onReload,
+  busy,
+  feedback,
 }: {
   activeSection: SettingsSectionId;
+  busy: boolean;
+  feedback: { message: string; error: boolean } | undefined;
+  onReload(): void;
   query: string;
   onBack(): void;
   onQueryChange(query: string): void;
@@ -96,14 +118,31 @@ function SettingsSidebar({
 
   return (
     <aside className="context-sidebar flex shrink-0 flex-col px-3 py-4">
-      <button
-        className="mb-4 flex h-8 items-center gap-2 rounded-md px-2 text-sm text-fg-muted transition-colors hover:bg-hover hover:text-fg"
-        onClick={onBack}
-        type="button"
-      >
-        <IconArrowLeft size={16} stroke={1.7} />
-        Settings
-      </button>
+      <div className="mb-4 flex items-center justify-between gap-2">
+        <button
+          className="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-fg-muted transition-colors hover:bg-hover hover:text-fg"
+          onClick={onBack}
+          type="button"
+        >
+          <IconArrowLeft size={16} stroke={1.7} />
+          Settings
+        </button>
+        <ToolbarButton label="重新加载 PI 配置" disabled={busy} onClick={onReload}>
+          <IconRefresh
+            size={16}
+            stroke={1.7}
+            className={busy ? "animate-spin motion-reduce:animate-none" : undefined}
+          />
+        </ToolbarButton>
+      </div>
+      {busy || feedback ? (
+        <p
+          role={feedback?.error ? "alert" : "status"}
+          className={`mb-3 px-2 text-xs break-words ${feedback?.error ? "text-danger" : "text-fg-muted"}`}
+        >
+          {busy ? "Reloading PI configuration..." : feedback?.message}
+        </p>
+      ) : null}
 
       <SearchField
         ariaLabel="Search settings"

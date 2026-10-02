@@ -1,4 +1,4 @@
-import { IconFolder, IconRefresh } from "@tabler/icons-react";
+import { IconFolder } from "@tabler/icons-react";
 import { useEffect, useState } from "react";
 import type { SkillState } from "../../../../shared/contracts";
 import { ResourceRow } from "../../components/ui/ResourceRow";
@@ -15,10 +15,7 @@ export function SkillsSettingsPanel({
   const [state, setState] = useState<SkillState>({ skills: [], diagnostics: [] });
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string>();
-  const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(Boolean(sessionId));
-  const [revision, setRevision] = useState(0);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: Explicit retry invalidates the request.
   useEffect(() => {
     let active = true;
     let request = 0;
@@ -51,41 +48,13 @@ export function SkillsSettingsPanel({
       active = false;
       unsubscribe();
     };
-  }, [cwd, sessionId, revision]);
-  async function refresh() {
-    if (!cwd || busy) return;
-    setBusy(true);
-    setError(undefined);
-    try {
-      if (sessionId) await window.modus.agent.ensure(sessionId);
-      await window.modus.skills.refresh(cwd);
-      setRevision((current) => current + 1);
-    } catch (cause) {
-      setError(String(cause));
-    } finally {
-      setBusy(false);
-    }
-  }
+  }, [cwd, sessionId]);
   const filtered = state.skills.filter((skill) =>
     `${skill.name} ${skill.description}`.toLowerCase().includes(query.toLowerCase()),
   );
   return (
     <section className="min-w-0 space-y-5">
-      <SettingsPageHeader
-        actions={
-          <button
-            type="button"
-            title="Refresh resources"
-            aria-label="Refresh resources"
-            disabled={!sessionId || busy}
-            onClick={() => void refresh()}
-            className="toolbar-icon-button flex items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-hover hover:text-fg disabled:opacity-40"
-          >
-            <IconRefresh aria-hidden size={16} stroke={1.8} />
-          </button>
-        }
-        title="Skills"
-      />
+      <SettingsPageHeader title="Skills" />
       <SearchField
         ariaLabel="Search skills"
         onChange={setQuery}

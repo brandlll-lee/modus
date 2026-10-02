@@ -23,6 +23,8 @@ vi.mock("electron", () => ({
 }));
 vi.mock("./model-service", () => ({
   getModelRuntime: () => Promise.resolve(models),
+  refreshRemoteModelCatalog: () => models.refresh({ allowNetwork: false }),
+  getModelSettings: () => ({ models: [], providers: [], errors: [] }),
   findModel: (id: string) =>
     id === `${faux.getModel().provider}/${faux.getModel().id}` ? faux.getModel() : undefined,
   modelToId: (model: { provider: string; id: string }) => `${model.provider}/${model.id}`,
@@ -43,6 +45,7 @@ import {
   releaseSessionManager,
 } from "./agent-store";
 import { PiSdkRuntime } from "./pi-sdk-runtime";
+import { sessionResources } from "./session-resources";
 
 const runtime = new PiSdkRuntime();
 const events: AgentEvent[] = [];
@@ -234,4 +237,40 @@ it("invokes a selected skill through PI and carries additional file paths as use
   expect(messages).toContain("Inspect");
   expect(messages).toContain(paths[1]?.path.replaceAll("\\", "\\\\"));
   expect(messages).not.toContain("[skill:");
+}, 30000);
+
+it("reloads native resources, keeps the selected model, and publishes current usage", async () => {
+  const initial = readFileSync(join(root, "agent", "settings.json"), "utf8");
+  const { id, cwd } = workspace();
+  const session = await runtime.create(window, {
+    workspaceId: id,
+    cwd,
+    title: "Reload fixture",
+    model: `${faux.getModel().provider}/${faux.getModel().id}`,
+  });
+  try {
+    await runtime.ensure(window, session.id);
+    answer("Saved before reload");
+    await runtime.prompt(window, { sessionId: session.id, message: "Before reload" });
+    const sdk = sessionResources().find(({ id }) => id === session.id)?.session;
+    expect(sdk).toBeDefined();
+    writeFileSync(
+      join(root, "agent", "settings.json"),
+      JSON.stringify({
+        ...JSON.parse(initial),
+        defaultTools: ["read", "write"],
+        retry: { enabled: true, maxRetries: 5 },
+      }),
+    );
+    events.length = 0;
+    expect((await runtime.reloadConfiguration()).errors).toEqual([]);
+    expect(sdk?.settingsManager.getRetrySettings().maxRetries).toBe(5);
+    expect(sdk?.getActiveToolNames()).toContain("write");
+    expect(sdk?.model?.id).toBe(faux.getModel().id);
+    expect(events.some((event) => event.type === "context.updated")).toBe(true);
+    expect(JSON.stringify(sdk?.state.messages)).toContain("Saved before reload");
+  } finally {
+    writeFileSync(join(root, "agent", "settings.json"), initial);
+    await runtime.dispose(session.id);
+  }
 }, 30000);

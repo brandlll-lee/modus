@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { AgentSessionInfo, WorkspaceInfo } from "../../../shared/contracts";
+import type {
+  AgentSessionInfo,
+  SessionDeletionResult,
+  WorkspaceInfo,
+} from "../../../shared/contracts";
 import { deriveSessionTitle } from "../../../shared/session-title";
 
 export function useWorkspaceSessions(setSettingsOpen: (open: boolean) => void) {
@@ -27,9 +31,7 @@ export function useWorkspaceSessions(setSettingsOpen: (open: boolean) => void) {
       let version: number;
       do {
         version = refreshVersionRef.current;
-        const sessions = await window.modus.agent.list({
-          includeSessionId: activeSessionIdRef.current,
-        });
+        const sessions = await window.modus.agent.list();
         if (version === refreshVersionRef.current) setAgentSessions(sessions);
       } while (version !== refreshVersionRef.current);
     };
@@ -57,10 +59,6 @@ export function useWorkspaceSessions(setSettingsOpen: (open: boolean) => void) {
   const activeSession = useMemo(
     () => agentSessions.find((session) => session.id === activeSessionId),
     [activeSessionId, agentSessions],
-  );
-  const rootSessions = useMemo(
-    () => agentSessions.filter((session) => !session.archivedAt),
-    [agentSessions],
   );
 
   async function openWorkspace(): Promise<void> {
@@ -149,37 +147,11 @@ export function useWorkspaceSessions(setSettingsOpen: (open: boolean) => void) {
     await refreshSessions();
   }
 
-  async function archiveSession(session: AgentSessionInfo): Promise<void> {
-    try {
-      await window.modus.agent.archive(session.id);
-    } catch (error) {
-      setSessionCreateError(error instanceof Error ? error.message : String(error));
-      return;
-    }
+  async function deleteSession(session: AgentSessionInfo): Promise<SessionDeletionResult> {
+    const result = await window.modus.agent.delete(session.id);
+    if (activeSessionIdRef.current === session.id) setActiveSessionId(undefined);
     await refreshSessions();
-  }
-
-  async function restoreSession(session: AgentSessionInfo): Promise<void> {
-    try {
-      await window.modus.agent.restore(session.id);
-    } catch (error) {
-      setSessionCreateError(error instanceof Error ? error.message : String(error));
-      return;
-    }
-    await refreshSessions();
-  }
-
-  async function deleteSession(session: AgentSessionInfo): Promise<void> {
-    try {
-      await window.modus.agent.delete(session.id);
-    } catch (error) {
-      setSessionCreateError(error instanceof Error ? error.message : String(error));
-      return;
-    }
-    if (activeSessionIdRef.current === session.id) {
-      setActiveSessionId(undefined);
-    }
-    await refreshSessions();
+    return result;
   }
 
   /* ── Project (workspace) actions — sidebar "..." menu ──────────────────── */
@@ -195,17 +167,12 @@ export function useWorkspaceSessions(setSettingsOpen: (open: boolean) => void) {
     );
   }
 
-  async function archiveProjectChats(id: string): Promise<void> {
-    await window.modus.workspace.archiveChats(id);
-    await refreshSessions();
-  }
-
-  async function deleteProjectChats(id: string): Promise<void> {
-    await window.modus.workspace.deleteChats(id);
-    if (activeWorkspaceRef.current?.id === id) {
-      setActiveSessionId(undefined);
+  async function deleteProjectChats(id: string): Promise<SessionDeletionResult[]> {
+    try {
+      return await window.modus.workspace.deleteChats(id);
+    } finally {
+      await refreshSessions();
     }
-    await refreshSessions();
   }
 
   async function removeProject(id: string): Promise<void> {
@@ -234,7 +201,6 @@ export function useWorkspaceSessions(setSettingsOpen: (open: boolean) => void) {
     setActiveSessionId,
     activeSessionIdRef,
     activeSession,
-    rootSessions,
     refreshSessions,
     updateSessionTitle,
     sessionCreateError,
@@ -244,12 +210,9 @@ export function useWorkspaceSessions(setSettingsOpen: (open: boolean) => void) {
     selectSession,
     openNewChat,
     pinSession,
-    archiveSession,
-    restoreSession,
     deleteSession,
     pinProject,
     renameProject,
-    archiveProjectChats,
     deleteProjectChats,
     removeProject,
     revealProject,

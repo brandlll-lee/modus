@@ -29,6 +29,7 @@ import type {
   PromptImageAttachment,
   QuestionAnswer,
   QuestionResponse,
+  SessionDeletionResult,
   SkillSelection,
   SkillState,
   TerminalEvent,
@@ -51,6 +52,7 @@ export type ModusApi = {
     version(): Promise<string>;
     securityState(): Promise<SecurityState>;
     startupMetric(input: StartupMetricInput): Promise<void>;
+    reloadConfiguration(): Promise<ModelSettingsState>;
   };
   workspace: {
     open(): Promise<WorkspaceInfo | undefined>;
@@ -59,10 +61,7 @@ export type ModusApi = {
     pin(input: { id: string; pinned: boolean }): Promise<WorkspaceInfo[]>;
     /** Rename a project's sidebar label; returns the updated recents. */
     rename(input: { id: string; displayName: string }): Promise<WorkspaceInfo[]>;
-    /** Soft-archive all of a project's visible chats; returns the number archived. */
-    archiveChats(id: string): Promise<number>;
-    /** Permanently delete all of a project's chats; returns the number deleted. */
-    deleteChats(id: string): Promise<number>;
+    deleteChats(id: string): Promise<SessionDeletionResult[]>;
     /** Remove a project from Modus (files kept); returns the updated recents. */
     remove(id: string): Promise<WorkspaceInfo[]>;
     /** Reveal a project's root folder in the OS file manager. */
@@ -81,8 +80,7 @@ export type ModusApi = {
       title: string;
       model?: string;
     }): Promise<AgentSessionInfo>;
-    list(input?: { includeSessionId?: string | undefined }): Promise<AgentSessionInfo[]>;
-    listArchived(workspaceId: string): Promise<AgentSessionInfo[]>;
+    list(): Promise<AgentSessionInfo[]>;
     commands(sessionId: string): Promise<Array<{ name: string; description: string }>>;
     listEvents(
       sessionId: string,
@@ -111,9 +109,7 @@ export type ModusApi = {
 
     navigate(input: { sessionId: string; userMessageId: string }): Promise<void>;
     pin(input: { id: string; pinned: boolean }): Promise<AgentSessionInfo | undefined>;
-    archive(sessionId: string): Promise<void>;
-    restore(sessionId: string): Promise<void>;
-    delete(sessionId: string): Promise<void>;
+    delete(sessionId: string): Promise<SessionDeletionResult>;
     setModel(input: {
       sessionId: string;
       model: string;
@@ -242,7 +238,6 @@ export type ModusApi = {
     list(): Promise<ModelInfo[]>;
     setDefault(model: string): Promise<void>;
     settings(): Promise<ModelSettingsState>;
-    refreshCatalog(): Promise<ModelSettingsState>;
     onCatalogChanged(callback: () => void): () => void;
     providerDetail(provider: string): Promise<ModelProviderDetail | undefined>;
     openConfig(provider: string): Promise<void>;
@@ -253,12 +248,10 @@ export type ModusApi = {
     runCommand(input: { sessionId: string; name: string; args: string }): Promise<string>;
     locations(sessionId: string): Promise<string[]>;
     status(sessionId: string): Promise<Array<{ sessionId: string; report: string }>>;
-    sync(cwd: string): Promise<void>;
     openConfig(input: { sessionId: string; path: string }): Promise<void>;
   };
   skills: {
     list(sessionId: string): Promise<SkillState>;
-    refresh(cwd: string): Promise<void>;
     onChanged(callback: (cwd: string) => void): () => void;
     openDir(input: { sessionId: string; path: string }): Promise<void>;
   };

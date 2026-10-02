@@ -60,7 +60,6 @@ export class PendingRequestRegistry<Result, Context = undefined> {
     this.cancelWhere(() => true, makeResult);
   }
 
-  /** Resolve every pending request belonging to one session (e.g. session archived/aborted). */
   cancelForSession(sessionId: string, makeResult: (context: Context) => Result): void {
     this.cancelWhere((entry) => entry.sessionId === sessionId, makeResult);
   }

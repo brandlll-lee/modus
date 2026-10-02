@@ -20,12 +20,13 @@ export type AgentSessionInfo = {
   piSessionId?: string;
   piSessionFile?: string;
   pinnedAt?: string;
-  archivedAt?: string;
   createdAt: string;
   updatedAt: string;
 };
 
 export type AgentRunStatus = "running" | "completed" | "failed" | "cancelled";
+
+export type SessionDeletionResult = { method: "trash" | "unlink" };
 
 export type PromptDelivery = "normal" | "steer" | "follow-up";
 
