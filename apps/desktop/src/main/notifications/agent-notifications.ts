@@ -3,12 +3,6 @@ import type { AgentEvent } from "../../shared/contracts";
 import { getAgentSession } from "../agent/agent-store";
 import { IPC_CHANNELS } from "../ipc/channels";
 
-/**
- * Background-completion notifications for agent sessions. Notify when a task
- * finishes or needs approval while the app is in the background. Clicking a
- * notification focuses the window and asks the renderer to show that session.
- */
-
 function notify(window: BrowserWindowType, sessionId: string, title: string, body: string): void {
   if (!Notification.isSupported()) {
     return;
@@ -33,11 +27,7 @@ function notify(window: BrowserWindowType, sessionId: string, title: string, bod
  * while Modus is not the focused window. Cheap no-op for every other event.
  */
 export function maybeNotifyAgentEvent(window: BrowserWindowType, event: AgentEvent): void {
-  if (
-    event.type !== "run.completed" &&
-    event.type !== "run.failed" &&
-    event.type !== "permission.requested"
-  ) {
+  if (event.type !== "run.completed" && event.type !== "run.failed") {
     return;
   }
   if (window.isDestroyed() || window.isFocused()) {
@@ -53,12 +43,6 @@ export function maybeNotifyAgentEvent(window: BrowserWindowType, event: AgentEve
     notify(window, event.sessionId, title, `Agent run failed: ${truncate(event.message, 120)}`);
     return;
   }
-  notify(
-    window,
-    event.sessionId,
-    title,
-    `Agent needs permission: ${truncate(event.request.reason || event.request.target, 120)}`,
-  );
 }
 
 function truncate(value: string, max: number): string {

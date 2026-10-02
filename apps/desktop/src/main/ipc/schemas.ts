@@ -1,24 +1,13 @@
 import { z } from "zod";
-import type { ContextItem } from "../../shared/contracts";
 import { STARTUP_RENDERER_MILESTONES } from "../../shared/startup";
 
 const nonEmptyString = z.string().trim().min(1);
 const optionalNonEmptyString = nonEmptyString.optional();
 const thinkingLevelSchema = z.enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
-const _jsonObjectSchema = z.record(z.string(), z.unknown());
-const _optionalHeadersSchema = z.record(z.string(), z.string()).optional();
 export const startupMetricSchema = z.object({
   milestone: z.enum(STARTUP_RENDERER_MILESTONES),
   rendererElapsedMs: z.number().finite().nonnegative(),
 });
-const _modelCostSchema = z
-  .object({
-    input: z.number().min(0).optional(),
-    output: z.number().min(0).optional(),
-    cacheRead: z.number().min(0).optional(),
-    cacheWrite: z.number().min(0).optional(),
-  })
-  .optional();
 
 export const agentCreateSchema = z.object({
   workspaceId: nonEmptyString,
@@ -63,23 +52,23 @@ export const agentPromptSchema = z
   .object({
     sessionId: nonEmptyString,
     message: z.string().trim(),
-    context: z
-      .array(z.unknown())
-      .transform((items) => items as ContextItem[])
-      .optional(),
+    paths: z.array(nonEmptyString).optional(),
     delivery: z.enum(["normal", "steer", "follow-up"]).optional(),
     userMessageId: optionalNonEmptyString,
     attachments: z.array(promptImageAttachmentSchema).optional(),
     skills: z.array(skillSelectionSchema).max(1).optional(),
-    mode: z.enum(["build", "plan"]).optional(),
     model: optionalNonEmptyString,
     thinkingLevel: thinkingLevelSchema.optional(),
     thinkingVariant: optionalNonEmptyString,
-    planId: optionalNonEmptyString,
   })
-  .refine((input) => input.message.length > 0 || Boolean(input.attachments?.length), {
-    message: "A prompt needs text or an image.",
-  });
+  .refine(
+    (input) =>
+      input.message.length > 0 ||
+      Boolean(input.attachments?.length || input.paths?.length || input.skills?.length),
+    {
+      message: "A prompt needs text, a file, an image, or a skill.",
+    },
+  );
 
 export const sessionIdSchema = nonEmptyString;
 
@@ -89,7 +78,7 @@ export const agentListSchema = z
   })
   .optional();
 
-export const agentRollbackSchema = z.object({
+export const agentNavigateSchema = z.object({
   sessionId: nonEmptyString,
   userMessageId: nonEmptyString,
 });
@@ -122,16 +111,6 @@ export const terminalResizeSchema = z.object({
   terminalId: nonEmptyString,
   cols: z.number().int().min(20).max(500),
   rows: z.number().int().min(5).max(200),
-});
-
-export const processListSchema = z.object({
-  workspaceId: optionalNonEmptyString,
-  sessionId: optionalNonEmptyString,
-  origin: z.enum(["user", "agent"]).optional(),
-});
-
-export const processKillSchema = z.object({
-  id: nonEmptyString,
 });
 
 export const cwdSchema = nonEmptyString;
@@ -204,26 +183,6 @@ export const browserRecentSchema = z.object({
   id: nonEmptyString,
 });
 
-const hexColor = z.string().trim().min(1).max(64);
-
-export const browserDesignModeSchema = z.object({
-  tabId: nonEmptyString,
-  enabled: z.boolean(),
-  theme: z
-    .object({
-      accent: hexColor,
-      accentContrast: hexColor,
-      surface: hexColor,
-      elevated: hexColor,
-      fg: hexColor,
-      fgSubtle: hexColor,
-      fontFamily: z.string().trim().min(1).max(512),
-      border: hexColor,
-      shadow: hexColor,
-    })
-    .optional(),
-});
-
 export const resourceLocationSchema = z.object({
   sessionId: nonEmptyString,
   path: nonEmptyString,
@@ -251,17 +210,11 @@ export const diffTargetSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("staged") }),
   z.object({ type: z.literal("commit"), commit: nonEmptyString }),
   z.object({ type: z.literal("branch"), base: optionalNonEmptyString }),
-  z.object({ type: z.literal("last-turn"), sessionId: nonEmptyString }),
 ]);
 
 export const diffReviewSchema = z.object({
   cwd: nonEmptyString,
   target: diffTargetSchema,
-});
-
-export const diffStatsSinceSchema = z.object({
-  cwd: nonEmptyString,
-  base: nonEmptyString,
 });
 
 /**
@@ -309,36 +262,6 @@ export const gitCheckoutSchema = z.object({
   remote: z.boolean().optional(),
 });
 
-export const permissionDecideSchema = z.object({
-  requestId: optionalNonEmptyString,
-  sessionId: optionalNonEmptyString,
-  action: z.enum([
-    "shell.execute",
-    "file.write",
-    "file.delete",
-    "git.write",
-    "tool.execute",
-    "external.open",
-    "browser.control",
-  ]),
-  target: nonEmptyString,
-  decision: z.enum(["allow-once", "allow-workspace", "deny"]),
-});
-
-export const approvalModeSchema = z.object({
-  mode: z.enum(["request-approval", "auto", "full-access"]),
-  /** When set, writes a project override for this cwd instead of the global default. */
-  cwd: z.string().min(1).optional(),
-});
-
-export const approvalModeGetSchema = z.object({
-  cwd: z.string().min(1).optional(),
-});
-
-export const approvalModeClearProjectSchema = z.object({
-  cwd: z.string().min(1),
-});
-
 export const questionRespondSchema = z.object({
   requestId: nonEmptyString,
   skipped: z.boolean(),
@@ -351,54 +274,6 @@ export const questionRespondSchema = z.object({
       }),
     )
     .default([]),
-});
-
-export const contextSearchSchema = z.object({
-  workspaceId: nonEmptyString,
-  cwd: nonEmptyString,
-  query: z.string(),
-  kind: z
-    .enum([
-      "file",
-      "folder",
-      "doc",
-      "terminal",
-      "browser",
-      "git-diff",
-      "past-chat",
-      "project-summary",
-      "recent-changes",
-      "search",
-    ])
-    .optional(),
-});
-
-export const contextResolveSchema = z.object({
-  cwd: nonEmptyString,
-  items: z.array(z.unknown()).transform((items) => items as ContextItem[]),
-});
-
-export const docsAddSchema = z.object({
-  workspaceId: nonEmptyString,
-  title: nonEmptyString,
-  path: optionalNonEmptyString,
-  url: optionalNonEmptyString,
-});
-
-export const docsSearchSchema = z.object({
-  workspaceId: nonEmptyString,
-  query: z.string(),
-});
-
-export const checkpointRestoreSchema = z.object({
-  checkpointId: nonEmptyString,
-});
-
-export const reviewStartSchema = z.object({
-  cwd: nonEmptyString,
-  sessionId: optionalNonEmptyString,
-  workspaceId: optionalNonEmptyString,
-  depth: z.enum(["fast", "standard", "deep"]).optional(),
 });
 
 export const setModelThinkingSchema = z.object({

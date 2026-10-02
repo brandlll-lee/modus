@@ -6,25 +6,12 @@ import {
 } from "../../../../shared/agent-events";
 import type { AgentEvent } from "../../../../shared/contracts";
 
-/**
- * Multi-session event plumbing.
- *
- * The app keeps ONE `agent.onEvent` IPC listener; every event is pushed
- * through this hub, which (a) fans the full stream out to the ChatPane for the
- * active session and (b) folds a tiny per-session activity
- * summary (running / needs-input / unread / failed) that powers the sidebar
- * status indicators.
- *
- * Delta accumulation lives in `shared/agent-events` (re-exported here) so the
- * renderer and the main-process event store fold identically.
- */
-
 export { type AgentEventItem, appendAgentEvents, foldAgentEvents, optimisticUserPromptEvents };
 
 export type SessionActivity = {
   /** A run is currently executing. */
   running: boolean;
-  /** A permission request is waiting for the user. */
+
   needsInput: boolean;
   /** A run finished while the session had no open pane. */
   unread: boolean;
@@ -58,10 +45,7 @@ export function reduceActivity(
       return { running: true, needsInput: false, unread: false, failed: false };
     case "agent.ended":
       return { ...activity, running: false, needsInput: false };
-    case "permission.requested":
-      return { ...activity, needsInput: true, unread: watched ? activity.unread : true };
-    case "permission.resolved":
-      return activity.needsInput ? { ...activity, needsInput: false } : activity;
+
     case "run.completed":
       return {
         running: false,
@@ -77,8 +61,11 @@ export function reduceActivity(
         failed: true,
       };
     case "run.cancelled":
-    case "run.blocked":
       return { ...activity, running: false, needsInput: false };
+    case "question.requested":
+      return { ...activity, needsInput: true };
+    case "question.resolved":
+      return { ...activity, needsInput: false };
     default:
       return activity;
   }
@@ -93,9 +80,8 @@ export function affectsActivity(event: AgentEvent): boolean {
     case "run.completed":
     case "run.failed":
     case "run.cancelled":
-    case "run.blocked":
-    case "permission.requested":
-    case "permission.resolved":
+    case "question.requested":
+    case "question.resolved":
       return true;
     default:
       return false;

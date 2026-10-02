@@ -1,10 +1,8 @@
 import type { BrowserWindow as BrowserWindowType } from "electron";
 import type {
   AgentEvent,
-  AgentMode,
   AgentRunInfo,
   AgentSessionInfo,
-  ContextItem,
   ContextUsageInfo,
   ModelInfo,
   PromptDelivery,
@@ -24,26 +22,16 @@ export type CreateAgentRuntimeInput = {
 export type PromptAgentInput = {
   sessionId: string;
   message: string;
-  context: ContextItem[];
+  paths?: string[];
   delivery?: PromptDelivery;
   userMessageId?: string;
   attachments?: PromptImageAttachment[];
   /** Skills explicitly selected with `/name` in the composer for this prompt. */
   skills?: SkillSelection[];
-  /** Execution mode for this turn. Defaults to `build`. */
-  mode?: AgentMode;
-  /**
-   * Model + thinking for THIS turn. The composer's current selection travels with
-   * every prompt and is applied authoritatively at turn start, so a turn is
-   * self-describing and never runs with stale model/thinking — surviving
-   * mid-session switches, rollback/edit-resend, and session resume without
-   * relying on session-state plumbing. Omitted ⇒ keep the session's current model.
-   */
+
   model?: string;
   thinkingLevel?: ThinkingLevel;
   thinkingVariant?: string;
-  /** Set when this prompt is a "Build this plan" action; binds the turn to the plan. */
-  planId?: string;
 };
 
 export type AgentRuntime = {
@@ -53,6 +41,7 @@ export type AgentRuntime = {
     sessionId: string,
   ): Promise<AgentSessionInfo & { contextUsage?: ContextUsageInfo }>;
   prompt(window: BrowserWindowType, input: PromptAgentInput): Promise<void>;
+  navigate(window: BrowserWindowType, sessionId: string, messageId: string): Promise<void>;
   compact(window: BrowserWindowType, sessionId: string): Promise<void>;
   abort(sessionId: string): Promise<string[]>;
   listRuns(sessionId: string): Promise<AgentRunInfo[]>;

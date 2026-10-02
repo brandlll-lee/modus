@@ -4,7 +4,7 @@ import type { PreviewEngineProps } from "../registry";
 
 type SheetView = {
   name: string;
-  rows: string[][];
+  rows: { number: number; cells: { address: string; text: string }[] }[];
 };
 
 /** Spreadsheet (.xlsx) preview via ExcelJS → HTML tables (read-only). */
@@ -23,17 +23,27 @@ export default function XlsxEngine({ bytes }: PreviewEngineProps) {
         if (cancelled) return;
         const next: SheetView[] = [];
         workbook.eachSheet((sheet) => {
-          const rows: string[][] = [];
+          const rows: SheetView["rows"] = [];
           sheet.eachRow({ includeEmpty: false }, (row) => {
             const values = row.values;
-            const cells: string[] = [];
+            const cells: { address: string; text: string }[] = [];
             if (Array.isArray(values)) {
               for (let i = 1; i < values.length; i += 1) {
                 const cell = values[i];
-                cells.push(cell == null ? "" : String(typeof cell === "object" && cell !== null && "text" in cell ? (cell as { text: string }).text : cell));
+                cells.push({
+                  address: row.getCell(i).address,
+                  text:
+                    cell == null
+                      ? ""
+                      : String(
+                          typeof cell === "object" && cell !== null && "text" in cell
+                            ? (cell as { text: string }).text
+                            : cell,
+                        ),
+                });
               }
             }
-            rows.push(cells);
+            rows.push({ number: row.number, cells });
           });
           next.push({ name: sheet.name, rows });
         });
@@ -80,7 +90,7 @@ export default function XlsxEngine({ bytes }: PreviewEngineProps) {
                 ? "rounded-md bg-hover px-2.5 py-1 text-2xs text-fg"
                 : "rounded-md px-2.5 py-1 text-2xs text-fg-subtle hover:bg-hover"
             }
-            key={`${s.name}-${i}`}
+            key={s.name}
             onClick={() => setActive(i)}
             type="button"
           >
@@ -91,15 +101,15 @@ export default function XlsxEngine({ bytes }: PreviewEngineProps) {
       <div className="scroll-thin min-h-0 flex-1 overflow-auto p-2">
         <table className="border-collapse text-2xs text-fg">
           <tbody>
-            {sheet.rows.map((row, ri) => (
-              <tr key={ri}>
-                {row.map((cell, ci) => (
+            {sheet.rows.map((row) => (
+              <tr key={row.number}>
+                {row.cells.map((cell) => (
                   <td
                     className="max-w-60 truncate border border-hairline px-2 py-1 align-top"
-                    key={ci}
-                    title={cell}
+                    key={cell.address}
+                    title={cell.text}
                   >
-                    {cell}
+                    {cell.text}
                   </td>
                 ))}
               </tr>

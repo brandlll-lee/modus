@@ -1,7 +1,6 @@
 import { resolve } from "node:path";
 import type { AgentSession, ResourceLoader } from "@earendil-works/pi-coding-agent";
 import { isExtensionCommandActive } from "./extension-ui";
-import { resolveProjectTrust } from "./project-trust";
 
 export type SessionResources = {
   id: string;
@@ -57,10 +56,8 @@ export async function reloadSessionResources(cwd: string): Promise<void> {
   const selected = sessionResources(cwd);
   for (const { session } of selected) reloading.add(session);
   try {
-    const trusted = selected.length > 0 ? await resolveProjectTrust(cwd) : false;
     const results = await Promise.allSettled(
       selected.map(async ({ session }) => {
-        session.settingsManager.setProjectTrusted(trusted);
         await session.reload();
       }),
     );

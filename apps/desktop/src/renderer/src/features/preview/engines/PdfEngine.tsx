@@ -1,7 +1,4 @@
 import { memo, useEffect, useRef, useState } from "react";
-import { IconCrop } from "@tabler/icons-react";
-import { pageLocatorFromAnchor } from "../domExcerptChrome";
-import { attachPdfRectExcerpt } from "../pdfRectExcerpt";
 import type { PreviewEngineProps } from "../registry";
 import { shouldSkipPdfRefit } from "./pdfFit";
 
@@ -37,24 +34,17 @@ function waitForLayoutWidth(el: HTMLElement, signal: { cancelled: boolean }): Pr
  * `setState` (or parent re-render) would reconcile the empty scroller div and
  * wipe imperative children, which with ResizeObserver became a flicker loop.
  */
-function PdfEngine({ bytes, path, onAddToChat }: PreviewEngineProps) {
+function PdfEngine({ bytes }: PreviewEngineProps) {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const chromeRef = useRef<HTMLDivElement | null>(null);
   const labelRef = useRef<HTMLSpanElement | null>(null);
-  const toolRef = useRef<HTMLButtonElement | null>(null);
-  const onAddRef = useRef(onAddToChat);
-  const pathRef = useRef(path);
   const [error, setError] = useState<string | undefined>();
-
-  onAddRef.current = onAddToChat;
-  pathRef.current = path;
 
   useEffect(() => {
     const host = scrollerRef.current;
     const chrome = chromeRef.current;
     const label = labelRef.current;
-    const tool = toolRef.current;
-    if (!host || !chrome || !label || !tool) return;
+    if (!host || !chrome || !label) return;
     const signal = { cancelled: false };
     let intersection: IntersectionObserver | undefined;
     let lastFitWidth = 0;
@@ -71,12 +61,6 @@ function PdfEngine({ bytes, path, onAddToChat }: PreviewEngineProps) {
       label.textContent = text;
       chrome.style.display = "";
     };
-
-    const detachRect = attachPdfRectExcerpt(host, tool, {
-      getPath: () => pathRef.current,
-      getOnAdd: () => onAddRef.current,
-      locatorFromAnchor: pageLocatorFromAnchor,
-    });
 
     const watchVisiblePage = (pageCount: number): void => {
       intersection?.disconnect();
@@ -114,10 +98,7 @@ function PdfEngine({ bytes, path, onAddToChat }: PreviewEngineProps) {
         // Skip before bumping renderGen (aborted mid-paint + early return = stub).
         // Only skip when pages are still in the DOM. React re-renders of this
         // component wipe imperative children; skipping then leaves a blank pane.
-        if (
-          shouldSkipPdfRefit(lastFitWidth, fitWidth) &&
-          host.querySelector(".pdf-page")
-        ) {
+        if (shouldSkipPdfRefit(lastFitWidth, fitWidth) && host.querySelector(".pdf-page")) {
           return;
         }
 
@@ -223,11 +204,10 @@ function PdfEngine({ bytes, path, onAddToChat }: PreviewEngineProps) {
       clearTimeout(resizeTimer);
       resizeObserver.disconnect();
       intersection?.disconnect();
-      detachRect();
       host.replaceChildren();
       setIndicator(undefined);
     };
-  }, [bytes, path]);
+  }, [bytes]);
 
   if (error) {
     return (
@@ -239,17 +219,11 @@ function PdfEngine({ bytes, path, onAddToChat }: PreviewEngineProps) {
 
   return (
     <div className="relative h-full min-h-0">
-      <div className="scroll-thin pdf-scroller h-full overflow-auto bg-canvas p-3" ref={scrollerRef} />
+      <div
+        className="scroll-thin pdf-scroller h-full overflow-auto bg-canvas p-3"
+        ref={scrollerRef}
+      />
       <div className="pdf-page-chrome" ref={chromeRef} style={{ display: "none" }}>
-        <button
-          aria-label="Frame select for Add to Chat"
-          aria-pressed="false"
-          className="pdf-rect-tool"
-          ref={toolRef}
-          type="button"
-        >
-          <IconCrop size={14} stroke={1.5} />
-        </button>
         <span aria-live="polite" className="pdf-page-chrome__label" ref={labelRef} />
       </div>
     </div>

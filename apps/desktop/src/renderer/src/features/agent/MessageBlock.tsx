@@ -1,15 +1,4 @@
-import {
-  IconBook2,
-  IconFile,
-  IconFolder,
-  IconGitBranch,
-  IconLayoutList,
-  IconMessage2,
-  IconPencil,
-  IconSearch,
-  IconTerminal2,
-  IconWorld,
-} from "@tabler/icons-react";
+import { IconFile, IconFolder, IconPencil } from "@tabler/icons-react";
 import { m, useReducedMotion } from "motion/react";
 import { memo, useState } from "react";
 import type {
@@ -19,29 +8,24 @@ import type {
   PromptImageAttachment,
   SkillSelection,
 } from "../../../../shared/contracts";
-import { CopyButton } from "../../components/ui/CopyButton";
 import { ImageThumb } from "../../components/ui/ImageViewer";
 import { cn } from "../../lib/cn";
 import { useClipFade } from "../../lib/useClipFade";
 import { Composer } from "../composer/Composer";
 import { type ComposerDraft, createEmptyComposerDraft } from "../composer/composerDraft";
-import { InspectGlyph, SkillTokenContent } from "../composer/composerTokens";
+import { SkillTokenContent } from "../composer/composerTokens";
 import type { ComposerImage } from "../composer/useComposerImages";
 import { materialIconForFile } from "../files/fileIcons";
-import { CheckpointRestoreButton } from "./CheckpointRestoreButton";
 import { MarkdownMessage } from "./MarkdownMessage";
 
 type MessageBlockProps = {
   sessionId?: string | undefined;
   messageRole: "assistant" | "user";
-  /** Timeline id of this message — the rollback anchor for edit & resend. */
+
   messageId: string;
   content: string;
   streaming?: boolean;
-  /** User only: pre-run snapshot this message can roll the files back to. */
-  checkpointId?: string;
-  onRestoreCheckpoint?(checkpointId: string): Promise<void> | void;
-  /** User only: this message anchors a rollback point and can be edited. */
+
   editable?: boolean;
   /** Rolls the session back to this message, then resends the edited text. */
   onEditResend?(
@@ -76,8 +60,6 @@ export const MessageBlock = memo(function MessageBlock({
   messageId,
   content,
   streaming = false,
-  checkpointId,
-  onRestoreCheckpoint,
   editable = false,
   onEditResend,
   model = "",
@@ -152,10 +134,8 @@ export const MessageBlock = memo(function MessageBlock({
             messageId={messageId}
             model={model}
             models={models}
-            checkpointId={checkpointId}
             onCancel={() => setEditing(false)}
             onEditResend={onEditResend}
-            onRestoreCheckpoint={onRestoreCheckpoint}
             {...(skills ? { skills } : {})}
             workspaceId={workspaceId}
           />
@@ -241,10 +221,8 @@ function InlineEditComposer({
   models,
   cwd,
   workspaceId,
-  checkpointId,
   onCancel,
   onEditResend,
-  onRestoreCheckpoint,
 }: {
   sessionId?: string | undefined;
   messageId: string;
@@ -257,7 +235,7 @@ function InlineEditComposer({
   models: ModelInfo[];
   cwd: string | undefined;
   workspaceId: string | undefined;
-  checkpointId: string | undefined;
+
   onCancel(): void;
   onEditResend(
     messageId: string,
@@ -266,7 +244,6 @@ function InlineEditComposer({
     contextItems?: ContextItem[],
     skills?: SkillSelection[],
   ): Promise<void>;
-  onRestoreCheckpoint: ((checkpointId: string) => Promise<void> | void) | undefined;
 }) {
   const [draft, setDraft] = useState<ComposerDraft>(() => ({
     ...createEmptyComposerDraft(),
@@ -275,20 +252,12 @@ function InlineEditComposer({
     selectedSkills: skills ?? [],
   }));
   const [editContextItems, setEditContextItems] = useState<ContextItem[]>(
-    () => contextItems ?? contextItemsFromChips(contextChips ?? [], workspaceId),
+    () => contextItems ?? contextItemsFromChips(contextChips ?? []),
   );
 
   return (
     <Composer
       sessionId={sessionId}
-      trailingActions={
-        <>
-          <CopyButton label="Copy message" text={draft.value} />
-          {checkpointId && onRestoreCheckpoint ? (
-            <CheckpointRestoreButton checkpointId={checkpointId} onRestore={onRestoreCheckpoint} />
-          ) : null}
-        </>
-      }
       canSubmit={Boolean(model)}
       contextItems={editContextItems}
       cwd={cwd}
@@ -348,48 +317,19 @@ function PromptAttachmentRow({
   );
 }
 
-function contextItemsFromChips(
-  chips: MessageContextChip[],
-  workspaceId: string | undefined,
-): ContextItem[] {
-  return chips.flatMap((chip): ContextItem[] => {
-    if (chip == null || typeof chip.kind !== "string") {
-      return [];
-    }
-    if (chip.kind === "git-diff") {
-      return [{ type: "git-diff", mode: chip.label === "Branch" ? "branch" : "working-state" }];
-    }
-    if (chip.kind === "browser") {
-      return [{ type: "browser", ...(workspaceId ? { workspaceId } : {}) }];
-    }
-    if (chip.kind === "project-summary") {
-      return [{ type: "project-summary" }];
-    }
-    if (chip.kind === "recent-changes") {
-      return [{ type: "recent-changes" }];
-    }
-    if (chip.kind === "search" && chip.label.startsWith("search:")) {
-      return [{ type: "search", query: chip.label.slice("search:".length) }];
-    }
-    return [];
-  });
-}
-
 function InlineContextToken({ chip }: { chip: MessageContextChip }) {
-  const fileIcon =
-    chip.kind === "file" || chip.kind === "excerpt" ? materialIconForFile(chip.label) : undefined;
+  const fileIcon = chip.kind === "file" ? materialIconForFile(chip.label) : undefined;
   return (
     <span
       className="mr-1 inline-flex max-w-[260px] items-center gap-1 align-[-0.15em] font-medium text-link text-sm"
-      style={chip.color ? { color: chip.color } : undefined}
       title={chip.detail ? `${chip.label} — ${chip.detail}` : chip.label}
     >
-      {chip.kind === "design-element" ? (
-        <InspectGlyph size={12} />
-      ) : fileIcon ? (
-        <img alt="" className="size-3 shrink-0" draggable={false} src={fileIcon} />
+      {fileIcon ? (
+        <img alt="" className="size-3" src={fileIcon} />
+      ) : chip.kind === "folder" ? (
+        <IconFolder size={12} />
       ) : (
-        <ContextKindIcon kind={chip.kind} />
+        <IconFile size={12} />
       )}
       <span className="truncate">{chip.label}</span>
       {chip.detail ? (
@@ -407,30 +347,6 @@ function InlineSkillToken({ name }: { name: string }) {
   );
 }
 
-/** Muted leading icon for non-design context kinds. */
-function ContextKindIcon({ kind }: { kind: MessageContextChip["kind"] }) {
-  const props = { className: "size-3 shrink-0", stroke: 1.8 } as const;
-  switch (kind) {
-    case "folder":
-      return <IconFolder {...props} />;
-    case "doc":
-      return <IconBook2 {...props} />;
-    case "terminal":
-      return <IconTerminal2 {...props} />;
-    case "browser":
-      return <IconWorld {...props} />;
-    case "past-chat":
-      return <IconMessage2 {...props} />;
-    case "git-diff":
-    case "recent-changes":
-      return <IconGitBranch {...props} />;
-    case "project-summary":
-      return <IconLayoutList {...props} />;
-    case "search":
-      return <IconSearch {...props} />;
-    case "design-annotation":
-      return <IconPencil {...props} />;
-    default:
-      return <IconFile {...props} />;
-  }
+function contextItemsFromChips(chips: MessageContextChip[]): ContextItem[] {
+  return chips.flatMap((chip) => (chip.detail ? [{ type: chip.kind, path: chip.detail }] : []));
 }

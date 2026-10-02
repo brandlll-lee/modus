@@ -1,6 +1,6 @@
 import type { FileChange } from "../../../../shared/contracts";
 
-export type ChangeScope = "unstaged" | "staged" | "commit" | "branch" | "last-turn" | "all-commits";
+export type ChangeScope = "unstaged" | "staged" | "commit" | "branch" | "all-commits";
 
 /** Coarse change class for the row badge, derived from git's status code. */
 export type ChangeBadge = "new" | "deleted" | "renamed" | "copied" | "modified";
@@ -16,7 +16,6 @@ export const CHANGE_SCOPES: readonly ChangeScope[] = [
   "staged",
   "commit",
   "branch",
-  "last-turn",
   "all-commits",
 ] as const;
 
@@ -25,7 +24,6 @@ export const SCOPE_META: Record<ChangeScope, ScopeMeta> = {
   staged: { label: "Staged", noun: "Staged" },
   commit: { label: "Commit", noun: "Commit" },
   branch: { label: "Branch", noun: "Branch" },
-  "last-turn": { label: "Last Turn", noun: "Last Turn" },
   "all-commits": { label: "All commits", noun: "Commit" },
 };
 

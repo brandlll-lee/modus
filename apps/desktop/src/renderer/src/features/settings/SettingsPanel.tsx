@@ -4,14 +4,12 @@ import {
   IconPalette,
   IconPlugConnected,
   IconServerCog,
-  IconSettings,
 } from "@tabler/icons-react";
 import { type ReactNode, useState } from "react";
 import type { ModelSettingsState, WorkspaceInfo } from "../../../../shared/contracts";
 import { NavItem } from "../../components/layout/NavItem";
 import { SearchField } from "../../components/ui/SearchField";
 import { AppearanceSettingsPanel } from "./AppearanceSettingsPanel";
-import { GeneralSettingsPanel } from "./GeneralSettingsPanel";
 import { McpSettingsPanel } from "./McpSettingsPanel";
 import { ProviderSettingsPanel } from "./ProviderSettingsPanel";
 import { SkillsSettingsPanel } from "./SkillsSettingsPanel";
@@ -25,13 +23,12 @@ type SettingsPanelProps = {
   workspaces?: WorkspaceInfo[] | undefined;
 };
 
-type SettingsSectionId = "general" | "model-provider" | "appearance" | "skills" | "mcp";
+type SettingsSectionId = "model-provider" | "appearance" | "skills" | "mcp";
 const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   id: SettingsSectionId;
   label: string;
   icon: ReactNode;
 }> = [
-  { id: "general", label: "General", icon: <IconSettings size={16} stroke={1.7} /> },
   {
     id: "model-provider",
     label: "Model & Provider",
@@ -63,9 +60,6 @@ export function SettingsPanel({
       />
       <main className="scroll-thin min-w-0 flex-1 overflow-y-auto bg-canvas">
         <div className="settings-content">
-          {activeSection === "general" ? (
-            <GeneralSettingsPanel cwd={workspaceCwd} workspaces={workspaces} />
-          ) : null}
           {activeSection === "appearance" ? <AppearanceSettingsPanel /> : null}
           {activeSection === "model-provider" ? (
             <ProviderSettingsPanel state={state} onRefresh={onRefreshCatalog} />

@@ -34,6 +34,7 @@ const api: ModusApi = {
     create: (input) => ipcRenderer.invoke("agent:create", input),
     list: (input) => ipcRenderer.invoke("agent:list", input),
     listArchived: (workspaceId) => ipcRenderer.invoke("agent:list-archived", workspaceId),
+    commands: (sessionId) => ipcRenderer.invoke("agent:commands", sessionId),
     listEvents: (sessionId) => ipcRenderer.invoke("agent:list-events", sessionId),
     listRuns: (sessionId) => ipcRenderer.invoke("agent:list-runs", sessionId),
     ensure: (sessionId) => ipcRenderer.invoke("agent:ensure", sessionId),
@@ -41,7 +42,7 @@ const api: ModusApi = {
     prompt: (input) => ipcRenderer.invoke("agent:prompt", input),
     compact: (sessionId) => ipcRenderer.invoke("agent:compact", sessionId),
     abort: (sessionId) => ipcRenderer.invoke("agent:abort", sessionId),
-    rollback: (input) => ipcRenderer.invoke("agent:rollback", input),
+    navigate: (input) => ipcRenderer.invoke("agent:navigate", input),
     pin: (input) => ipcRenderer.invoke("agent:pin", input),
     archive: (sessionId) => ipcRenderer.invoke("agent:archive", sessionId),
     restore: (sessionId) => ipcRenderer.invoke("agent:restore", sessionId),
@@ -74,15 +75,6 @@ const api: ModusApi = {
       return () => ipcRenderer.removeListener("terminal:event", listener);
     },
   },
-  process: {
-    list: (input) => ipcRenderer.invoke("process:list", input),
-    kill: (id) => ipcRenderer.invoke("process:kill", { id }),
-    onChanged: (callback) => {
-      const listener = () => callback();
-      ipcRenderer.on("process:changed", listener);
-      return () => ipcRenderer.removeListener("process:changed", listener);
-    },
-  },
   browser: {
     listTabs: (input) => ipcRenderer.invoke("browser:list-tabs", input),
     createTab: (input) => ipcRenderer.invoke("browser:create-tab", input),
@@ -97,7 +89,6 @@ const api: ModusApi = {
     hide: (input) => ipcRenderer.invoke("browser:hide", input),
     toggleDevtools: (input) => ipcRenderer.invoke("browser:toggle-devtools", input),
     openExternal: (input) => ipcRenderer.invoke("browser:open-external", input),
-    setDesignMode: (input) => ipcRenderer.invoke("browser:design-mode", input),
     find: (input) => ipcRenderer.invoke("browser:find", input),
     findStop: (input) => ipcRenderer.invoke("browser:find-stop", input),
     listRecents: (input) => ipcRenderer.invoke("browser:list-recents", input),
@@ -118,8 +109,6 @@ const api: ModusApi = {
     discardUnstaged: (input) => ipcRenderer.invoke("diff:discard-unstaged", input),
     status: (cwd) => ipcRenderer.invoke("diff:status", cwd),
     stats: (cwd) => ipcRenderer.invoke("diff:stats", cwd),
-    statsSince: (input) => ipcRenderer.invoke("diff:stats-since", input),
-    sessionStats: (sessionId) => ipcRenderer.invoke("diff:session-stats", sessionId),
     commitOrPush: (input) => ipcRenderer.invoke("diff:commit-or-push", input),
   },
   files: {
@@ -153,24 +142,8 @@ const api: ModusApi = {
       return () => ipcRenderer.removeListener("git:event", listener);
     },
   },
-  permission: {
-    decide: (input) => ipcRenderer.invoke("permission:decide", input),
-    list: () => ipcRenderer.invoke("permission:list"),
-    getMode: (input) => ipcRenderer.invoke("permission:get-mode", input ?? {}),
-    setMode: (input) => ipcRenderer.invoke("permission:set-mode", input),
-    clearProjectMode: (input) => ipcRenderer.invoke("permission:clear-project-mode", input),
-  },
   questions: {
     respond: (input) => ipcRenderer.invoke("questions:respond", input),
-  },
-  context: {
-    search: (input) => ipcRenderer.invoke("context:search", input),
-    resolve: (input) => ipcRenderer.invoke("context:resolve", input),
-  },
-  docs: {
-    list: (workspaceId) => ipcRenderer.invoke("docs:list", workspaceId),
-    add: (input) => ipcRenderer.invoke("docs:add", input),
-    search: (input) => ipcRenderer.invoke("docs:search", input),
   },
   model: {
     list: () => ipcRenderer.invoke("model:list"),
@@ -185,14 +158,6 @@ const api: ModusApi = {
     providerDetail: (provider) => ipcRenderer.invoke("model:provider-detail", provider),
     openConfig: (provider) => ipcRenderer.invoke("model:open-config", provider),
     setThinking: (input) => ipcRenderer.invoke("model:set-thinking", input),
-  },
-  review: {
-    start: (input) => ipcRenderer.invoke("review:start", input),
-    list: (cwd) => ipcRenderer.invoke("review:list", cwd),
-  },
-  checkpoint: {
-    list: (sessionId) => ipcRenderer.invoke("checkpoint:list", sessionId),
-    restore: (input) => ipcRenderer.invoke("checkpoint:restore", input),
   },
   mcp: {
     commands: (sessionId) => ipcRenderer.invoke("mcp:commands", sessionId),

@@ -1,4 +1,4 @@
-import { IconAlertCircle, IconCircleDashed, IconListCheck } from "@tabler/icons-react";
+import { IconAlertCircle } from "@tabler/icons-react";
 import { useMemo } from "react";
 import type { AgentEventItem } from "../../../../shared/agent-events";
 import type {
@@ -7,12 +7,8 @@ import type {
   ImageContent,
   MessageContextChip,
   ModelInfo,
-  PlanRef,
   PromptImageAttachment,
-  QuestionAnswer,
-  QuestionRequest,
   SkillSelection,
-  TodoItem,
 } from "../../../../shared/contracts";
 import { toolRenderKind } from "../../../../shared/tools";
 import { CopyButton } from "../../components/ui/CopyButton";
@@ -33,7 +29,7 @@ type TimelineProps = {
   /** Active pane model — needed so inline edit can mount the shared Composer. */
   model?: string | undefined;
   models?: ModelInfo[];
-  onRestoreCheckpoint?(checkpointId: string): Promise<void> | void;
+
   /**
    * Cursor-style edit & resend: rolls the session back to just before the
    * message, then re-prompts with the edited text. Rejections surface inline
@@ -46,7 +42,7 @@ type TimelineProps = {
     contextItems?: ContextItem[],
     skills?: SkillSelection[],
   ): Promise<void>;
-  onOpenPlan?(plan: PlanRef): void;
+
   /** Open a workspace file path in the Files inspector. */
   onOpenFile?(path: string): void;
   workspaceId?: string | undefined;
@@ -60,8 +56,7 @@ export type MessageBlockItem = {
   streaming?: boolean;
   /** Epoch ms — user send time, or assistant completion time. */
   createdAt?: number;
-  /** User only: pre-run snapshot this message can roll the files back to. */
-  checkpointId?: string;
+
   /** User only: images attached to the prompt. */
   attachments?: PromptImageAttachment[];
   /** User only: context chips attached to the prompt (shown in the bubble). */
@@ -70,17 +65,7 @@ export type MessageBlockItem = {
   contextItems?: ContextItem[];
   /** User only: selected skills attached to the prompt. */
   skills?: SkillSelection[];
-  /**
-   * User only: present when this message is a "Build this plan" action — the
-   * timeline renders a compact Build card (title + N To-dos) instead of the raw
-   * build instruction text.
-   */
-  planBuild?: { planId: string; title: string; todoCount: number };
-  /**
-   * User only: this message anchored a normal-delivery run, so it can be
-   * edited & resent (rolling the session back to this point). Steered and
-   * queued follow-up messages have no stable rollback anchor.
-   */
+
   editable?: boolean;
 };
 
@@ -95,10 +80,6 @@ export type ToolBlockItem = {
   images?: ImageContent[];
   isComplete?: boolean;
   isError?: boolean;
-  questionRequest?: QuestionRequest;
-  questionAnswers?: QuestionAnswer[];
-  questionSkipped?: boolean;
-  plan?: PlanRef;
 };
 
 export type ThoughtBlockItem = {
@@ -113,7 +94,7 @@ export type RunBlockItem = {
   id: string;
   type: "run";
   runId: string;
-  status: "running" | "completed" | "failed" | "blocked" | "cancelled";
+  status: "running" | "completed" | "failed" | "cancelled";
   delivery?: string;
   body?: string;
   startedAt: number;
@@ -140,18 +121,10 @@ type NoticeBlockItem = {
 export type CompactionBlockItem = {
   id: string;
   type: "compaction";
-  reason: CompactionReason;
+  reason: CompactionReason | undefined;
   status: "running" | "done" | "aborted" | "error";
   /** Trailing status text (reason while running; ended/aborted/error detail when settled). */
   detail?: string;
-};
-
-type TodosBlockItem = {
-  id: string;
-  type: "todos";
-  todos: TodoItem[];
-  /** A todo_write call is in flight — the card shows "Updating to-dos…". */
-  updating: boolean;
 };
 
 export type RequestStatusBlockItem = {
@@ -165,11 +138,7 @@ export type RequestStatusBlockItem = {
   recovered?: boolean;
 };
 
-export type WorkActivityItem =
-  | ThoughtBlockItem
-  | ToolBlockItem
-  | TodosBlockItem
-  | CompactionBlockItem;
+export type WorkActivityItem = ThoughtBlockItem | ToolBlockItem | CompactionBlockItem;
 
 export type WorkActivityGroupItem = {
   id: string;
@@ -209,24 +178,13 @@ export type TimelineBlock =
   | NoticeBlockItem
   | CompactionBlockItem
   | WorkFoldBlockItem
-  | RequestStatusBlockItem
-  | TodosBlockItem;
+  | RequestStatusBlockItem;
 
 export function buildBlocks(agentEvents: AgentEventItem[]): TimelineBlock[] {
   const blocks: TimelineBlock[] = [];
   const blockById = new Map<string, TimelineBlock>();
-  /** todo_write tool calls render through the TodosCard, not as tool rows. */
-  const todoToolCallIds = new Set<string>();
   /** Open compaction row id so started/ended upsert into one tool-like line. */
   let openCompactionId: string | undefined;
-  const questionToolByRequest = new Map<string, string>();
-  const planToolByHash = new Map<string, ToolBlockItem>();
-  let activeQuestionToolId: string | undefined;
-  let activePlanToolId: string | undefined;
-  let latestTodosBlock: TodosBlockItem | undefined;
-  let todoLifecycleOpen = false;
-  let hasRenderedAnyTodoBlock = false;
-  let todoUpdatesInFlight = 0;
   let order = 0;
   let activeAssistantMessageId: string | undefined;
   let activeRunId: string | undefined;
@@ -333,8 +291,6 @@ export function buildBlocks(agentEvents: AgentEventItem[]): TimelineBlock[] {
       blocks.push(block);
       blockById.set(event.runId, block);
       activeRunId = event.runId;
-      // Mark the user message this run answers as editable (edit & resend
-      // rolls back to it). Only normal-delivery runs have a rollback anchor.
       const anchorBlock = event.userMessageId
         ? blockById.get(event.userMessageId)
         : lastUserMessageBlock;
@@ -445,31 +401,6 @@ export function buildBlocks(agentEvents: AgentEventItem[]): TimelineBlock[] {
       continue;
     }
 
-    if (event.type === "run.blocked") {
-      const block = blockById.get(event.runId);
-      if (block?.type === "run") {
-        block.status = "blocked";
-        block.body = event.reason;
-        block.completedAt = eventAt;
-        order++;
-      } else {
-        blocks.push({
-          id: event.runId,
-          type: "run",
-          runId: event.runId,
-          status: "blocked",
-          body: event.reason,
-          startedAt: eventAt,
-          completedAt: eventAt,
-        });
-        order++;
-      }
-      if (activeRunId === event.runId) {
-        activeRunId = undefined;
-      }
-      continue;
-    }
-
     if (event.type === "run.cancelled") {
       if (requestStatus) requestStatus.status = "cancelled";
       const block = blockById.get(event.runId);
@@ -516,7 +447,6 @@ export function buildBlocks(agentEvents: AgentEventItem[]): TimelineBlock[] {
           ? { contextItems: event.contextItems }
           : {}),
         ...(event.skills && event.skills.length > 0 ? { skills: event.skills } : {}),
-        ...(event.planBuild ? { planBuild: event.planBuild } : {}),
       };
       appendMessageBlock(block);
       continue;
@@ -587,19 +517,7 @@ export function buildBlocks(agentEvents: AgentEventItem[]): TimelineBlock[] {
 
     if (event.type === "tool.delta") {
       const deltaKind = toolRenderKind(event.toolName);
-      if (deltaKind === "todo") {
-        if (!todoToolCallIds.has(event.toolCallId)) {
-          todoToolCallIds.add(event.toolCallId);
-          todoUpdatesInFlight += 1;
-        }
-        continue;
-      }
-      if (deltaKind === "question") {
-        activeQuestionToolId = event.toolCallId;
-      }
-      if (deltaKind === "plan") {
-        activePlanToolId = event.toolCallId;
-      }
+
       // Diff tools bind live partial args; title-facing tools wait for tool.started.
       if (deltaKind === "diff") {
         upsertToolBlock(event.toolCallId, event.toolName, event.args);
@@ -608,20 +526,6 @@ export function buildBlocks(agentEvents: AgentEventItem[]): TimelineBlock[] {
     }
 
     if (event.type === "tool.started") {
-      // todo_write surfaces through TodosCard snapshots instead of a tool row.
-      if (toolRenderKind(event.toolName) === "todo") {
-        if (!todoToolCallIds.has(event.toolCallId)) {
-          todoToolCallIds.add(event.toolCallId);
-          todoUpdatesInFlight += 1;
-        }
-        continue;
-      }
-      if (toolRenderKind(event.toolName) === "question") {
-        activeQuestionToolId = event.toolCallId;
-      }
-      if (toolRenderKind(event.toolName) === "plan") {
-        activePlanToolId = event.toolCallId;
-      }
       // Idempotent: a live `tool.delta` may have already created the block.
       // Refresh its args with the authoritative ones rather than forking a
       // duplicate card.
@@ -632,9 +536,6 @@ export function buildBlocks(agentEvents: AgentEventItem[]): TimelineBlock[] {
     }
 
     if (event.type === "tool.output") {
-      if (todoToolCallIds.has(event.toolCallId)) {
-        continue;
-      }
       const block = blockById.get(event.toolCallId);
       if (block?.type === "tool") {
         // Pi's tool_execution_update carries the full partialResult each time —
@@ -647,14 +548,6 @@ export function buildBlocks(agentEvents: AgentEventItem[]): TimelineBlock[] {
     }
 
     if (event.type === "tool.ended") {
-      if (todoToolCallIds.has(event.toolCallId)) {
-        todoToolCallIds.delete(event.toolCallId);
-        todoUpdatesInFlight = Math.max(0, todoUpdatesInFlight - 1);
-        if (latestTodosBlock) {
-          latestTodosBlock.updating = todoUpdatesInFlight > 0;
-        }
-        continue;
-      }
       const block = blockById.get(event.toolCallId);
       if (block?.type === "tool") {
         block.isComplete = true;
@@ -663,69 +556,9 @@ export function buildBlocks(agentEvents: AgentEventItem[]): TimelineBlock[] {
         if (event.images) block.images = event.images;
         else if (event.output !== undefined) delete block.images;
       }
-      if (activeQuestionToolId === event.toolCallId) {
-        activeQuestionToolId = undefined;
-      }
-      if (activePlanToolId === event.toolCallId) {
-        activePlanToolId = undefined;
-      }
+
       continue;
     }
-
-    if (event.type === "plan.updated") {
-      const source = blockById.get(event.toolCallId ?? activePlanToolId ?? "");
-      const block =
-        source?.type === "tool" && toolRenderKind(source.name) === "plan"
-          ? source
-          : planToolByHash.get(event.plan.hash);
-      if (block) {
-        block.plan = event.plan;
-        planToolByHash.set(event.plan.hash, block);
-      }
-      continue;
-    }
-
-    if (event.type === "question.requested") {
-      const block = activeQuestionToolId ? blockById.get(activeQuestionToolId) : undefined;
-      if (block?.type === "tool" && toolRenderKind(block.name) === "question") {
-        block.questionRequest = event.request;
-        questionToolByRequest.set(event.request.id, block.id);
-      }
-      continue;
-    }
-
-    if (event.type === "question.resolved") {
-      const toolId = questionToolByRequest.get(event.requestId);
-      const block = toolId ? blockById.get(toolId) : undefined;
-      if (block?.type === "tool") {
-        block.questionAnswers = event.answers;
-        block.questionSkipped = event.skipped;
-      }
-      continue;
-    }
-
-    if (event.type === "todos.updated") {
-      const allComplete =
-        event.todos.length > 0 && event.todos.every((todo) => todo.status === "completed");
-      const shouldRenderTodos = todoLifecycleOpen
-        ? allComplete
-        : !allComplete || !hasRenderedAnyTodoBlock;
-
-      if (shouldRenderTodos) {
-        latestTodosBlock = {
-          id: `todos:${id}`,
-          type: "todos",
-          todos: event.todos,
-          updating: todoUpdatesInFlight > 0,
-        };
-        blocks.push(latestTodosBlock);
-        hasRenderedAnyTodoBlock = true;
-        todoLifecycleOpen = !allComplete;
-      }
-      continue;
-    }
-
-    if (event.type === "permission.requested" || event.type === "permission.resolved") continue;
 
     if (event.type === "extension.notice") {
       continue;
@@ -735,61 +568,6 @@ export function buildBlocks(agentEvents: AgentEventItem[]): TimelineBlock[] {
       const row = statusRow(`failure:${id}`);
       row.status = "failed";
       row.detail = event.message;
-      continue;
-    }
-
-    if (event.type === "review.started") {
-      blocks.push({
-        body: "Reviewing local changes…",
-        id,
-        title: "review started",
-        type: "notice",
-      });
-      continue;
-    }
-
-    if (event.type === "review.completed") {
-      blocks.push({
-        body: event.review.summary,
-        id,
-        title: event.review.status === "failed" ? "review failed" : "review completed",
-        type: "notice",
-        isError: event.review.status === "failed",
-      });
-      continue;
-    }
-
-    if (event.type === "review.failed") {
-      blocks.push({
-        body: event.message,
-        id,
-        isError: true,
-        title: "review failed",
-        type: "notice",
-      });
-      continue;
-    }
-
-    if (event.type === "checkpoint.created") {
-      // Auto checkpoints anchor a restore action on the user message they
-      // precede; restore backups never surface in the timeline.
-      const anchorId = event.checkpoint.userMessageId;
-      if (event.checkpoint.kind === "auto" && anchorId) {
-        const block = blockById.get(anchorId);
-        if (block?.type === "message" && block.role === "user") {
-          block.checkpointId = event.checkpoint.id;
-        }
-      }
-      continue;
-    }
-
-    if (event.type === "checkpoint.restored") {
-      blocks.push({
-        body: "Files rolled back to the snapshot taken before this point.",
-        id,
-        title: "checkpoint restored",
-        type: "notice",
-      });
       continue;
     }
 
@@ -939,7 +717,6 @@ function isWorkAnchor(block: TimelineBlock): boolean {
   return (
     block.type === "tool" ||
     block.type === "thought" ||
-    block.type === "todos" ||
     (block.type === "compaction" && block.reason !== "manual") ||
     block.type === "request-status" ||
     block.type === "notice"
@@ -947,12 +724,7 @@ function isWorkAnchor(block: TimelineBlock): boolean {
 }
 
 function isWorkActivity(block: TimelineBlock): block is WorkActivityItem {
-  return (
-    block.type === "tool" ||
-    block.type === "thought" ||
-    block.type === "todos" ||
-    block.type === "compaction"
-  );
+  return block.type === "tool" || block.type === "thought" || block.type === "compaction";
 }
 
 /** Messages and notices bound local activity folds. */
@@ -1010,19 +782,14 @@ export function groupTurnWork(blocks: TimelineBlock[]): TimelineBlock[] {
       const next = blocks[index];
       if (!next) break;
       if (next.type === "run") break;
-      if (
-        next.type === "message" &&
-        next.role === "user" &&
-        run.status !== "running" &&
-        run.status !== "blocked"
-      ) {
+      if (next.type === "message" && next.role === "user" && run.status !== "running") {
         break;
       }
       turnContent.push(next);
       index += 1;
     }
 
-    const active = run.status === "running" || run.status === "blocked";
+    const active = run.status === "running";
     let lastWork = -1;
     for (let j = 0; j < turnContent.length; j += 1) {
       const candidate = turnContent[j];
@@ -1102,27 +869,6 @@ export function buildVisibleTimelineBlocks(agentEvents: AgentEventItem[]): Timel
   return visibleTimelineBlocks(groupTurnWork(attachTurnActions(buildBlocks(agentEvents))));
 }
 
-/**
- * Compact "Build this plan" card: the user message for a build action renders
- * as a single line — list glyph, "Build {title}", and to-do count — instead of
- * the raw build instruction text.
- */
-function PlanBuildCard({ planBuild }: { planBuild: NonNullable<MessageBlockItem["planBuild"]> }) {
-  return (
-    <div className="timeline-wire overflow-hidden">
-      <div className="flex items-center gap-2 px-3 py-2.5">
-        <IconListCheck className="shrink-0 text-fg-subtle" size={15} stroke={1.7} />
-        <span className="shrink-0 font-medium text-build text-sm">Build</span>
-        <span className="min-w-0 truncate text-fg text-sm">{planBuild.title}</span>
-      </div>
-      <div className="flex items-center gap-2 border-hairline border-t px-3 py-2 text-fg-subtle text-xs">
-        <IconCircleDashed className="shrink-0 text-fg-faint" size={14} stroke={1.6} />
-        {planBuild.todoCount} To-dos
-      </div>
-    </div>
-  );
-}
-
 function Notice({ body, isError = false, title }: NoticeBlockItem) {
   return (
     <div className="flex min-w-0 items-start gap-2 text-sm text-fg-subtle">
@@ -1170,9 +916,7 @@ export function Timeline({
   model,
   models,
   workspaceId,
-  onRestoreCheckpoint,
   onEditResend,
-  onOpenPlan,
   onOpenFile,
 }: TimelineProps) {
   const renderKeys = useMemo(() => blockRenderKeys(blocks), [blocks]);
@@ -1195,9 +939,6 @@ export function Timeline({
           >
             {turn.blocks.map(({ block, key }) => {
               if (block.type === "message" && block.role === "user") {
-                if (block.planBuild) {
-                  return <PlanBuildCard key={key} planBuild={block.planBuild} />;
-                }
                 return (
                   <MessageBlock
                     animateEntry={block.id === enteringMessageId}
@@ -1210,10 +951,6 @@ export function Timeline({
                     {...(block.contextChips ? { contextChips: block.contextChips } : {})}
                     {...(block.contextItems ? { contextItems: block.contextItems } : {})}
                     {...(block.skills ? { skills: block.skills } : {})}
-                    {...(block.checkpointId !== undefined
-                      ? { checkpointId: block.checkpointId }
-                      : {})}
-                    {...(onRestoreCheckpoint ? { onRestoreCheckpoint } : {})}
                     content={block.content}
                     cwd={cwd}
                     {...(onOpenFile ? { onOpenFile } : {})}
@@ -1238,7 +975,6 @@ export function Timeline({
                       items={block.items}
                       run={block.run}
                       {...(onOpenFile ? { onOpenFile } : {})}
-                      {...(onOpenPlan ? { onOpenPlan } : {})}
                     />
                   ) : null}
                   {block.type === "message" ? (
@@ -1248,10 +984,6 @@ export function Timeline({
                       {...(block.contextChips ? { contextChips: block.contextChips } : {})}
                       {...(block.contextItems ? { contextItems: block.contextItems } : {})}
                       {...(block.skills ? { skills: block.skills } : {})}
-                      {...(block.checkpointId !== undefined
-                        ? { checkpointId: block.checkpointId }
-                        : {})}
-                      {...(onRestoreCheckpoint ? { onRestoreCheckpoint } : {})}
                       content={block.content}
                       cwd={cwd}
                       {...(onOpenFile ? { onOpenFile } : {})}
@@ -1266,11 +998,7 @@ export function Timeline({
                   {block.type === "notice" ? <Notice {...block} /> : null}
                   {block.type === "request-status" ? <RequestStatusRow item={block} /> : null}
                   {isWorkActivity(block) ? (
-                    <WorkActivityRow
-                      item={block}
-                      {...(onOpenFile ? { onOpenFile } : {})}
-                      {...(onOpenPlan ? { onOpenPlan } : {})}
-                    />
+                    <WorkActivityRow item={block} {...(onOpenFile ? { onOpenFile } : {})} />
                   ) : null}
                 </div>
               );

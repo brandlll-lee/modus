@@ -8,15 +8,8 @@ function change(over: Partial<FileChange> & { path: string; status: string }): F
 }
 
 describe("changeScopes", () => {
-  it("registers exactly the six review scopes in menu order", () => {
-    expect(CHANGE_SCOPES).toEqual([
-      "unstaged",
-      "staged",
-      "commit",
-      "branch",
-      "last-turn",
-      "all-commits",
-    ]);
+  it("registers exactly the five review scopes in menu order", () => {
+    expect(CHANGE_SCOPES).toEqual(["unstaged", "staged", "commit", "branch", "all-commits"]);
     expect(isChangeScope("uncommitted")).toBe(false);
     expect(isChangeScope("unstaged")).toBe(true);
   });

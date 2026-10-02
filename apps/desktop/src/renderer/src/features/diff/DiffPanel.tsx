@@ -17,7 +17,6 @@ import {
   IconMinus,
   IconPlus,
   IconRefresh,
-  IconReportSearch,
   IconRotateClockwise,
 } from "@tabler/icons-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -69,7 +68,6 @@ import { buildChangeTree, type FlatChangeTreeRow, flattenChangeTree } from "./fi
 
 type DiffPanelProps = {
   cwd?: string | undefined;
-  sessionId?: string | undefined;
   workspaceId?: string | undefined;
 };
 
@@ -103,18 +101,17 @@ const EMPTY_REVIEW: DiffReviewReady = {
 
 function targetForScope(
   scope: ChangeScope,
-  sessionId: string | undefined,
   commit: string | undefined,
   base: string | undefined,
 ): DiffTarget | undefined {
   if (scope === "unstaged" || scope === "staged") return { type: scope };
   if (scope === "commit") return commit ? { type: "commit", commit } : undefined;
   if (scope === "branch") return { type: "branch", ...(base ? { base } : {}) };
-  if (scope === "last-turn") return sessionId ? { type: "last-turn", sessionId } : undefined;
+
   return undefined;
 }
 
-export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
+export function DiffPanel({ cwd, workspaceId }: DiffPanelProps) {
   const [storedScope, setScope] = usePersistentState<string>("modus.changes.scope", "unstaged");
   const scope: ChangeScope = isChangeScope(storedScope) ? storedScope : "unstaged";
   const [layout, setLayout] = usePersistentState<"split" | "unified">(
@@ -129,7 +126,6 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
   const sideBySide = layout === "split";
 
   const [review, setReview] = useState<DiffReviewReady>(EMPTY_REVIEW);
-  const [reviewUnavailable, setReviewUnavailable] = useState<string | undefined>();
   const [reviewLoading, setReviewLoading] = useState(false);
   const [reviewTarget, setReviewTarget] = useState<DiffTarget>({ type: "unstaged" });
   const [status, setStatus] = useState<GitStatusSummary | undefined>();
@@ -163,7 +159,6 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
     commitsRef.current = [];
     branchesCwd.current = undefined;
     setReview(EMPTY_REVIEW);
-    setReviewUnavailable(undefined);
     setReviewTarget({ type: "unstaged" });
     setStatus(undefined);
     setCommits([]);
@@ -214,7 +209,6 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
     async (targetCwd: string): Promise<void> => {
       if (scope === "all-commits") {
         setReview(EMPTY_REVIEW);
-        setReviewUnavailable(undefined);
         return;
       }
       let commit = selectedCommit;
@@ -223,10 +217,9 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
           commitsCwd.current === targetCwd ? commitsRef.current : await loadCommits(targetCwd);
         commit = log[0]?.hash;
       }
-      const target = targetForScope(scope, sessionId, commit, selectedBase);
+      const target = targetForScope(scope, commit, selectedBase);
       if (!target) {
         setReview(EMPTY_REVIEW);
-        setReviewUnavailable(undefined);
         return;
       }
 
@@ -236,16 +229,8 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
       try {
         const next: DiffReview = await window.modus.diff.review({ cwd: targetCwd, target });
         if (generation !== reviewGeneration.current || next.state === "superseded") return;
-        if (next.state === "unavailable") {
-          setReview(EMPTY_REVIEW);
-          setReviewUnavailable(next.message);
-          setReviewTarget(target);
-          setExpanded(new Set());
-          return;
-        }
         clearDiffPreviewCache();
         setReview(next);
-        setReviewUnavailable(undefined);
         setExpanded(new Set());
         setReviewTarget(
           target.type === "branch" && next.resolvedBase
@@ -260,7 +245,7 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
         if (generation === reviewGeneration.current) setReviewLoading(false);
       }
     },
-    [loadCommits, scope, selectedBase, selectedCommit, sessionId],
+    [loadCommits, scope, selectedBase, selectedCommit],
   );
 
   const refresh = useCallback(
@@ -471,7 +456,6 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
             );
           }}
           removed={totals.removed}
-          reviewTurn={review.turn}
           loading={reviewLoading}
           scope={scope}
           selectedBase={selectedBase ?? review.resolvedBase}
@@ -488,7 +472,6 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
               setExpandedCommits(new Set());
             }}
             onRefresh={() => void refresh(activeCwd)}
-            onReview={() => void startReview(activeCwd, sessionId, workspaceId)}
             onSetLayout={setLayout}
             onToggleWhitespace={() => setIgnoreWhitespace(!ignoreWhitespace)}
           />
@@ -543,7 +526,7 @@ export function DiffPanel({ cwd, sessionId, workspaceId }: DiffPanelProps) {
               activeCwd
                 ? history
                   ? `No commits in ${cwdLabel}`
-                  : (reviewUnavailable ?? `No ${SCOPE_META[scope].noun} changes in ${cwdLabel}`)
+                  : `No ${SCOPE_META[scope].noun} changes in ${cwdLabel}`
                 : "Open a workspace to review changes."
             }
             icon={<IconFileDiff size={22} stroke={1.4} />}
@@ -778,15 +761,6 @@ function VirtualTreeList({
   );
 }
 
-async function startReview(
-  cwd: string | undefined,
-  sessionId: string | undefined,
-  workspaceId: string | undefined,
-): Promise<void> {
-  if (!cwd) return;
-  await window.modus.review.start({ cwd, sessionId, workspaceId });
-}
-
 export function toggleKey(set: Set<string>, key: string): Set<string> {
   const next = new Set(set);
   if (next.has(key)) next.delete(key);
@@ -816,7 +790,6 @@ function ReviewToolbar({
   branches,
   selectedCommit,
   selectedBase,
-  reviewTurn,
   loading,
   count,
   added,
@@ -844,7 +817,7 @@ function ReviewToolbar({
   branches: GitBranchSummary;
   selectedCommit: string | undefined;
   selectedBase: string | undefined;
-  reviewTurn: DiffReviewReady["turn"] | undefined;
+
   loading: boolean;
   count: number;
   added: number;
@@ -932,9 +905,7 @@ function ReviewToolbar({
                   <MenuEmpty>No other branches</MenuEmpty>
                 )}
               </ScopeSubmenu>
-              <MenuChoice checked={scope === "last-turn"} onClick={() => onScope("last-turn")}>
-                Last Turn
-              </MenuChoice>
+
               <div className="my-1 h-px bg-hairline" />
               <MenuChoice checked={scope === "all-commits"} onClick={() => onScope("all-commits")}>
                 All commits
@@ -949,9 +920,7 @@ function ReviewToolbar({
           <span className="text-danger">-{removed}</span>
         </span>
       ) : null}
-      {scope === "last-turn" && reviewTurn ? (
-        <span className="text-2xs text-fg-faint capitalize">{reviewTurn.status}</span>
-      ) : null}
+
       <BranchSwitcher
         cwd={cwd}
         onAfterSwitch={onRefresh}
@@ -1052,7 +1021,6 @@ function OverflowMenu({
   onToggleWhitespace,
   onCollapseAll,
   onRefresh,
-  onReview,
 }: {
   layout: "split" | "unified";
   ignoreWhitespace: boolean;
@@ -1060,7 +1028,6 @@ function OverflowMenu({
   onToggleWhitespace(): void;
   onCollapseAll(): void;
   onRefresh(): void;
-  onReview(): void;
 }) {
   return (
     <Menu.Root>
@@ -1127,10 +1094,6 @@ function OverflowMenu({
             </MenuAction>
 
             <div className="my-1 h-px bg-hairline" />
-
-            <MenuAction icon={<IconReportSearch size={15} stroke={1.7} />} onClick={onReview}>
-              Review with Agent
-            </MenuAction>
           </Menu.Popup>
         </Menu.Positioner>
       </Menu.Portal>

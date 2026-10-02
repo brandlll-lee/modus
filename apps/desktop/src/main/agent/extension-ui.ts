@@ -23,6 +23,10 @@ export function createExtensionUI(
   initTheme(session.settingsManager.getTheme());
   const runner = session.extensionRunner;
   if (!runner) throw new Error("Session extensions are not initialized.");
+  return { ...runner.getUIContext(), ...createDialogUI(sessionId, emit) };
+}
+
+export function createDialogUI(sessionId: string, emit: (event: AgentEvent) => void) {
   const ask = async (
     title: string,
     options: string[],
@@ -35,12 +39,10 @@ export function createExtensionUI(
       emit,
       signal: opts?.signal,
       timeoutMs: opts?.timeout,
-      presentation: "dialog",
       questions: [
         {
           id: "extension",
           header: title,
-          multiSelect: false,
           options: options.map((label) => ({ label })),
           ...(placeholder ? { detail: placeholder } : {}),
           ...(prefill !== undefined ? { prefill } : {}),
@@ -52,13 +54,14 @@ export function createExtensionUI(
     return answer?.selected[0] ?? answer?.custom;
   };
   return {
-    ...runner.getUIContext(),
-    select: (title, options, opts) => ask(title, options, undefined, opts),
-    input: (title, placeholder, opts) => ask(title, [], placeholder, opts),
-    editor: (title, prefill) => ask(title, [], undefined, undefined, prefill),
-    confirm: async (title, message, opts) =>
+    select: (title: string, options: string[], opts?: ExtensionUIDialogOptions) =>
+      ask(title, options, undefined, opts),
+    input: (title: string, placeholder?: string, opts?: ExtensionUIDialogOptions) =>
+      ask(title, [], placeholder, opts),
+    editor: (title: string, prefill?: string) => ask(title, [], undefined, undefined, prefill),
+    confirm: async (title: string, message: string, opts?: ExtensionUIDialogOptions) =>
       (await ask(title, ["Confirm", "Cancel"], message, opts)) === "Confirm",
-    notify(message, level = "info") {
+    notify(message: string, level: "info" | "warning" | "error" = "info") {
       const output = commandOutput.getStore();
       if (output) output.push(message);
       else emit({ type: "extension.notice", sessionId, message, level });

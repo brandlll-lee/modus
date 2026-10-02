@@ -1,126 +1,185 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { fauxAssistantMessage } from "@earendil-works/pi-ai";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { afterAll, beforeAll, expect, it, vi } from "vitest";
+import { desktopPreferences } from "../preferences/desktop-preferences";
 
-let userData: string;
+let root: string;
+vi.mock("electron", () => ({ app: { getPath: () => root } }));
+vi.mock("./session-directory", () => ({ sessionDirectory: () => join(root, "sessions") }));
 
-vi.mock("electron", () => ({
-  app: {
-    getPath: () => userData,
-  },
-}));
-
-const { getDatabase } = await import("../db/database");
-const {
+import {
+  appendAgentView,
+  listAgentEvents,
+  readAgentHistory,
+  releaseAgentView,
+  seedAgentView,
+} from "./agent-history";
+import {
+  bindSessionManager,
+  createAgentSessionRecord,
+  discoverAgentSessions,
   getAgentSession,
   listAgentSessions,
   listArchivedAgentSessions,
+  releaseSessionManager,
+  sessionManagerFor,
   setAgentSessionArchived,
   setAgentSessionPinned,
-  touchAgentSession,
-  updateAgentSessionMetadata,
-  updateAgentSessionStatus,
   updateAgentSessionTitle,
-} = await import("./agent-store");
+} from "./agent-store";
 
-function insertWorkspace(workspaceId: string): void {
-  const now = new Date().toISOString();
-  getDatabase()
-    .prepare(
-      `insert into workspaces (id, root_path, display_name, is_git_repository, last_opened_at, created_at)
-       values (?, ?, ?, ?, ?, ?)`,
-    )
-    .run(workspaceId, `root-${workspaceId}`, "repo", 1, now, now);
+beforeAll(() => {
+  root = mkdtempSync(join(tmpdir(), "modus-native-history-"));
+});
+afterAll(() => {
+  rmSync(root, { recursive: true, force: true });
+});
+function fixture() {
+  const id = crypto.randomUUID(),
+    cwd = join(root, id);
+  mkdirSync(cwd);
+  desktopPreferences().workspaces.push({
+    id,
+    rootPath: cwd,
+    displayName: "Fixture",
+    isGitRepository: false,
+    pinned: false,
+    lastOpenedAt: new Date().toISOString(),
+  });
+  const manager = SessionManager.create(cwd, join(root, "sessions"));
+  const user = manager.appendMessage({
+    role: "user",
+    content: "First question",
+    timestamp: Date.now(),
+  });
+  manager.appendMessage(fauxAssistantMessage([{ type: "text", text: "First answer" }]));
+  createAgentSessionRecord({ id, workspaceId: id, cwd, title: "First question" });
+  bindSessionManager(id, manager);
+  return { id, cwd, manager, user };
 }
-
-function insertSession(
-  workspaceId: string,
-  sessionId: string,
-  title: string,
-  updatedAt = new Date().toISOString(),
-): void {
-  getDatabase()
-    .prepare(
-      `insert into agent_sessions (id, workspace_id, title, cwd, status, created_at, updated_at)
-       values (?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(sessionId, workspaceId, title, `root-${workspaceId}`, "idle", updatedAt, updatedAt);
-}
-
-beforeAll(async () => {
-  userData = await mkdtemp(join(tmpdir(), "modus-agent-store-test-"));
+it("reads native files after runtime release and follows CLI title changes", () => {
+  const { id, manager } = fixture();
+  releaseSessionManager(id);
+  SessionManager.open(manager.getSessionFile()!).appendSessionInfo("CLI title");
+  expect(getAgentSession(id)?.title).toBe("CLI title");
+  expect(
+    readAgentHistory(id).events.some(
+      ({ event }) => event.type === "message.delta" && event.delta === "First answer",
+    ),
+  ).toBe(true);
+  updateAgentSessionTitle(id, "Desktop title");
+  expect(SessionManager.open(manager.getSessionFile()!).getSessionName()).toBe("Desktop title");
+});
+it("keeps desktop pin and archive preferences separate from native history", () => {
+  const { id, manager } = fixture();
+  setAgentSessionPinned(id, true);
+  setAgentSessionArchived(id, true);
+  expect(listAgentSessions().some((item) => item.id === id)).toBe(false);
+  expect(listArchivedAgentSessions(id).map((item) => item.id)).toEqual([id]);
+  expect(
+    listAgentSessions({ includeSessionId: id }).find((item) => item.id === id)?.pinnedAt,
+  ).toBeDefined();
+  expect(manager.getEntries().filter((entry) => entry.type === "message")).toHaveLength(2);
+});
+it("discovers a CLI session in the configured native directory", async () => {
+  const { id, cwd } = fixture();
+  const external = SessionManager.create(cwd, join(root, "sessions"));
+  external.appendMessage({ role: "user", content: "From CLI", timestamp: Date.now() });
+  external.appendMessage(fauxAssistantMessage([{ type: "text", text: "CLI answer" }]));
+  await discoverAgentSessions();
+  expect(
+    listAgentSessions().some(
+      (item) => item.workspaceId === id && item.piSessionId === external.getSessionId(),
+    ),
+  ).toBe(true);
+});
+it.each([
+  "missing",
+  "empty",
+  "invalid",
+])("reports a %s native session without replacing it", (kind) => {
+  const { id, manager } = fixture(),
+    file = manager.getSessionFile()!;
+  releaseSessionManager(id);
+  if (kind === "missing") unlinkSync(file);
+  else writeFileSync(file, kind === "empty" ? "" : "not a PI session");
+  expect(() => sessionManagerFor(id)).toThrow();
+  expect(getAgentSession(id)?.status).toBe("error");
+  expect(listAgentSessions().some((item) => item.id === id)).toBe(true);
+});
+it("restores tool images, errors, and native branch selection", () => {
+  const { id, manager, user } = fixture();
+  manager.appendMessage(
+    fauxAssistantMessage(
+      [{ type: "toolCall", id: "image-tool", name: "read", arguments: { path: "image.png" } }],
+      { stopReason: "toolUse" },
+    ),
+  );
+  manager.appendMessage({
+    role: "toolResult",
+    toolCallId: "image-tool",
+    toolName: "read",
+    content: [
+      { type: "text", text: "Image" },
+      { type: "image", data: "pixels", mimeType: "image/png" },
+    ],
+    isError: false,
+    timestamp: Date.now(),
+  });
+  manager.appendMessage(
+    fauxAssistantMessage([], { stopReason: "error", errorMessage: "Quota exhausted" }),
+  );
+  const history = readAgentHistory(id);
+  expect(history.runs.at(-1)).toMatchObject({ status: "failed", error: "Quota exhausted" });
+  expect(history.events.find(({ event }) => event.type === "tool.ended")?.event).toMatchObject({
+    images: [{ type: "image", data: "pixels", mimeType: "image/png" }],
+  });
+  manager.branch(user);
+  expect(readAgentHistory(id).events.some(({ event }) => event.type === "tool.ended")).toBe(false);
+  expect(
+    manager
+      .getEntries()
+      .some((entry) => entry.type === "message" && entry.message.role === "toolResult"),
+  ).toBe(true);
+});
+it("preserves immediate GUI feedback through initialization and releases its cache", () => {
+  const { id } = fixture();
+  appendAgentView({ type: "message.started", sessionId: id, messageId: "pending", role: "user" });
+  seedAgentView(id);
+  expect(
+    listAgentEvents(id).some(
+      ({ event }) => event.type === "message.started" && event.messageId === "pending",
+    ),
+  ).toBe(true);
+  releaseAgentView(id);
+  expect(
+    listAgentEvents(id).some(
+      ({ event }) => event.type === "message.started" && event.messageId === "pending",
+    ),
+  ).toBe(false);
 });
 
-afterAll(async () => {
-  await rm(userData, { recursive: true, force: true }).catch(() => undefined);
-});
-
-describe("agent-store", () => {
-  it("hides archived sessions from the default list", () => {
-    const workspaceId = `workspace-${crypto.randomUUID()}`;
-    const visibleId = `session-${crypto.randomUUID()}`;
-    const archivedId = `session-${crypto.randomUUID()}`;
-    insertWorkspace(workspaceId);
-    insertSession(workspaceId, visibleId, "Visible");
-    insertSession(workspaceId, archivedId, "Archived");
-
-    setAgentSessionArchived(archivedId, true);
-
-    expect(listAgentSessions().map((session) => session.id)).toContain(visibleId);
-    expect(listAgentSessions().map((session) => session.id)).not.toContain(archivedId);
-    expect(
-      listAgentSessions({ includeSessionId: archivedId }).map((session) => session.id),
-    ).toEqual(expect.arrayContaining([visibleId, archivedId]));
-    expect(listArchivedAgentSessions(workspaceId).map((session) => session.id)).toEqual([
-      archivedId,
-    ]);
+it("keeps an unfinished native branch visible without inventing a completed run", () => {
+  const { id, manager } = fixture();
+  const user = manager.appendMessage({
+    role: "user",
+    content: "Pending question",
+    timestamp: Date.now(),
   });
-
-  it("sorts pinned sessions before regular sessions", () => {
-    const workspaceId = `workspace-${crypto.randomUUID()}`;
-    const regularId = `session-${crypto.randomUUID()}`;
-    const pinnedId = `session-${crypto.randomUUID()}`;
-    insertWorkspace(workspaceId);
-    insertSession(workspaceId, regularId, "Regular");
-    insertSession(workspaceId, pinnedId, "Pinned");
-
-    setAgentSessionPinned(pinnedId, true);
-
-    const orderedIds = listAgentSessions()
-      .filter((session) => session.workspaceId === workspaceId)
-      .map((session) => session.id);
-    expect(orderedIds).toEqual([pinnedId, regularId]);
-  });
-
-  it("keeps updated_at stable across open-side writes; only touch advances sort key", async () => {
-    const workspaceId = `workspace-${crypto.randomUUID()}`;
-    const olderId = `session-${crypto.randomUUID()}`;
-    const newerId = `session-${crypto.randomUUID()}`;
-    insertWorkspace(workspaceId);
-    insertSession(workspaceId, olderId, "Older", "2026-01-01T00:00:00.000Z");
-    insertSession(workspaceId, newerId, "Newer", "2026-01-02T00:00:00.000Z");
-
-    updateAgentSessionStatus(olderId, "running");
-    updateAgentSessionMetadata(olderId, { model: "test/model" });
-    updateAgentSessionTitle(olderId, "Renamed without activity");
-    setAgentSessionPinned(olderId, true);
-    setAgentSessionPinned(olderId, false);
-
-    expect(getAgentSession(olderId)?.updatedAt).toBe("2026-01-01T00:00:00.000Z");
-
-    const beforeTouch = listAgentSessions()
-      .filter((session) => session.workspaceId === workspaceId)
-      .map((session) => session.id);
-    expect(beforeTouch).toEqual([newerId, olderId]);
-
-    await new Promise((resolve) => setTimeout(resolve, 5));
-    touchAgentSession(olderId);
-
-    const afterTouch = listAgentSessions()
-      .filter((session) => session.workspaceId === workspaceId)
-      .map((session) => session.id);
-    expect(afterTouch).toEqual([olderId, newerId]);
-    expect(getAgentSession(olderId)?.updatedAt).not.toBe("2026-01-01T00:00:00.000Z");
-  });
+  manager.appendMessage(
+    fauxAssistantMessage(
+      [{ type: "toolCall", id: "pending-tool", name: "read", arguments: { path: "file.ts" } }],
+      { stopReason: "toolUse" },
+    ),
+  );
+  const history = readAgentHistory(id);
+  expect(
+    history.events.some(
+      ({ event }) => event.type === "message.delta" && event.delta === "Pending question",
+    ),
+  ).toBe(true);
+  expect(history.runs.some((run) => run.userMessageId === user)).toBe(false);
 });

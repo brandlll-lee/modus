@@ -1,12 +1,5 @@
 import "@xterm/xterm/css/xterm.css";
-import {
-  IconEraser,
-  IconLock,
-  IconPlus,
-  IconTerminal2,
-  IconTrash,
-  IconX,
-} from "@tabler/icons-react";
+import { IconEraser, IconPlus, IconTerminal2, IconTrash, IconX } from "@tabler/icons-react";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { type ITheme, Terminal } from "@xterm/xterm";
@@ -25,11 +18,7 @@ function shellLabel(shell: string): string {
 
 type TerminalTab = TerminalInfo;
 
-/** Agent terminals show their command; user shells show the shell name. */
 function tabLabel(tab: TerminalTab): string {
-  if (tab.origin === "agent") {
-    return tab.title ?? tab.command ?? "agent";
-  }
   return shellLabel(tab.shell);
 }
 
@@ -55,25 +44,11 @@ type TerminalPanelProps = {
   workspaceId?: string | undefined;
   cwd?: string | undefined;
   /** Active agent session; agent terminals are scoped to it for isolation. */
-  sessionId?: string | undefined;
+
   /** True when the inspector's Terminal tab is the active one. */
   active?: boolean;
   /** Select this terminal id once (composer background-terminal rail → here). */
-  revealTerminalId?: string | undefined;
-  onRevealTerminalConsumed?(): void;
 };
-
-/**
- * Per-session isolation, mirrored from the composer bar's scope rule: agent
- * terminals belong to the session that started them and only show there; user
- * shells are workspace-level and shared across that workspace's sessions.
- */
-function isTabInScope(tab: TerminalTab, sessionId: string | undefined): boolean {
-  if (tab.origin === "agent") {
-    return sessionId !== undefined && tab.sessionId === sessionId;
-  }
-  return true;
-}
 
 function token(styles: CSSStyleDeclaration, name: string, fallback: string): string {
   return styles.getPropertyValue(name).trim() || fallback;
@@ -142,12 +117,10 @@ function TerminalView({
   tab,
   active,
   registry,
-  readOnly = false,
 }: {
   tab: TerminalTab;
   active: boolean;
   registry: Registry;
-  readOnly?: boolean;
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -206,11 +179,6 @@ function TerminalView({
     });
 
     const dataSub = term.onData((data) => {
-      // Agent terminals are read-only in the viewer: the agent owns the PTY, so
-      // user keystrokes are swallowed (matching the read-only banner).
-      if (readOnly) {
-        return;
-      }
       void window.modus.terminal.write({ terminalId: id, data });
     });
 
@@ -273,7 +241,7 @@ function TerminalView({
       termRef.current = null;
       fitRef.current = null;
     };
-  }, [tab.id, registry, readOnly]);
+  }, [tab.id, registry]);
 
   // Becoming visible (tab switch or panel reveal): re-fit, push size, focus.
   useEffect(() => {
@@ -304,14 +272,7 @@ function TerminalView({
   );
 }
 
-export function TerminalPanel({
-  workspaceId,
-  cwd,
-  sessionId,
-  active = true,
-  revealTerminalId,
-  onRevealTerminalConsumed,
-}: TerminalPanelProps) {
+export function TerminalPanel({ workspaceId, cwd, active = true }: TerminalPanelProps) {
   const registryRef = useRef<Registry>(new Map());
   const tabsRef = useRef<TerminalTab[]>([]);
   const spawning = useRef(false);
@@ -329,24 +290,6 @@ export function TerminalPanel({
   }, [tabs]);
 
   // Composer rail / external open: ensure the target exists in tabs, select it, consume.
-  useEffect(() => {
-    if (!revealTerminalId) return;
-    let cancelled = false;
-    void (async () => {
-      if (!tabsRef.current.some((tab) => tab.id === revealTerminalId)) {
-        const all = await window.modus.terminal.list();
-        if (cancelled) return;
-        const info = all.find((item: TerminalInfo) => item.id === revealTerminalId);
-        if (info) addTab(info);
-      }
-      if (cancelled) return;
-      setActiveId(revealTerminalId);
-      onRevealTerminalConsumed?.();
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [revealTerminalId, addTab, onRevealTerminalConsumed]);
 
   useEffect(() => {
     const controls = animate(
@@ -452,7 +395,7 @@ export function TerminalPanel({
         : all;
       setTabs(mine);
       setActiveId((current) => current ?? mine[0]?.id ?? null);
-      if (!mine.some((item: TerminalInfo) => item.origin === "user") && cwd) {
+      if (mine.length === 0 && cwd) {
         await spawnDefaultTerminals();
       }
     })();
@@ -477,10 +420,7 @@ export function TerminalPanel({
     if (activeId) registryRef.current.get(activeId)?.clear?.();
   }, [activeId]);
 
-  const visibleTabs = useMemo(
-    () => tabs.filter((tab) => isTabInScope(tab, sessionId)),
-    [tabs, sessionId],
-  );
+  const visibleTabs = useMemo(() => tabs, [tabs]);
   const visibleKey = visibleTabs.map((tab) => tab.id).join(",");
 
   // Keep the selection inside the visible set: switching session/project can
@@ -496,7 +436,6 @@ export function TerminalPanel({
 
   const activeTab = visibleTabs.find((item) => item.id === activeId) ?? null;
   const hasWorkspace = Boolean(workspaceId && cwd);
-  const agentOwnsActive = activeTab?.origin === "agent" && activeTab.status !== "exited";
 
   return (
     <section className="flex h-full min-h-0 flex-col">
@@ -571,18 +510,11 @@ export function TerminalPanel({
           </m.div>
 
           <div className="relative flex min-h-0 flex-1 flex-col bg-canvas">
-            {agentOwnsActive ? (
-              <div className="flex shrink-0 items-center gap-1.5 border-hairline-soft border-b bg-accent-soft/40 px-3 py-1 text-2xs text-fg-muted">
-                <IconLock className="shrink-0 text-accent" size={12} stroke={1.8} />
-                Agent is using this terminal — read-only
-              </div>
-            ) : null}
             <div className="relative min-h-0 flex-1">
               {tabs.map((tab) => (
                 <TerminalView
                   active={tab.id === activeId}
                   key={tab.id}
-                  readOnly={tab.origin === "agent"}
                   registry={registryRef.current}
                   tab={tab}
                 />
@@ -628,16 +560,11 @@ function TerminalTabRow({
       <button
         className="flex h-full min-w-0 flex-1 items-center gap-2 rounded-l-md px-2 text-left text-sm"
         onClick={onSelect}
-        title={tab.command ?? tabLabel(tab)}
+        title={tabLabel(tab)}
         type="button"
       >
         <IconTerminal2 className="toolbar-icon shrink-0" size={18} stroke={1.7} />
         <span className="min-w-0 flex-1 truncate">{tabLabel(tab)}</span>
-        {tab.origin === "agent" ? (
-          <span className="shrink-0 rounded bg-accent-soft px-1 py-px font-medium text-2xs text-accent">
-            Agent
-          </span>
-        ) : null}
       </button>
       <button
         aria-label="Close terminal"

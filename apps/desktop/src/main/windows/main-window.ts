@@ -1,6 +1,12 @@
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { app, BrowserWindow, screen, type BrowserWindow as BrowserWindowType, shell } from "electron";
+import {
+  app,
+  BrowserWindow,
+  type BrowserWindow as BrowserWindowType,
+  screen,
+  shell,
+} from "electron";
 import { IPC_CHANNELS } from "../ipc/channels";
 import type { StartupTimeline } from "../startup/startup-timeline";
 

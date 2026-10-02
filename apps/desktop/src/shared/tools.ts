@@ -1,16 +1,3 @@
-import type { PermissionAction } from "./contracts";
-
-/**
- * Single source of truth for the agent tool system (shared by the Electron main
- * process and the renderer). This file holds only serializable data + pure
- * helpers; runtime behavior that depends on the PI SDK (custom-tool execution,
- * dynamic permission classification) lives in `main/agent/tools/registry.ts`.
- */
-
-/** Named tool sets. A session is created with one profile's active tools. */
-export type ToolProfileName = "chat" | "review" | "plan";
-
-/** Semantic action glyphs declared by tool owners. */
 export type ToolIconName =
   | "globe"
   | "favicon"
@@ -21,40 +8,8 @@ export type ToolIconName =
   | "folder"
   | "tool";
 
-/**
- * How a tool's permission requirement is determined.
- * - `safe`: never prompts (read-only tools).
- * - `dangerous`: always prompts, using the declared `action`.
- * - `dynamic`: a main-side classifier inspects declared operation arguments.
- */
-export type ToolDangerLevel = "safe" | "dangerous" | "dynamic";
+export type ToolRenderKind = "flat" | "diff" | "terminal";
 
-export type ToolPermissionDecl = {
-  danger: ToolDangerLevel;
-  /** Permission action used when a prompt is required. Omitted for `safe` tools. */
-  action?: PermissionAction;
-};
-
-export type ToolCapability = "read" | "write" | "shell" | "network" | "process";
-
-/**
- * Which renderer card a tool's calls use. Declared here (data) so the renderer
- * routes by capability, never by tool name — adding a tool is a catalog entry,
- * not edits scattered across the timeline/diff/terminal consumers.
- * - `flat`: a one-line collapsible row (the default for any tool).
- * - `diff`: a Cursor-style diff card (see `diffSource`).
- * - `terminal`: a terminal card with a live output preview (see `terminalFramed`).
- * - `live`: a standalone live-output card.
- * - `todo`: rendered as the live to-do list, not as a tool row.
- * - `question`: a collapsible "Asked N questions" card listing each question + the chosen answer.
- */
-export type ToolRenderKind = "flat" | "diff" | "terminal" | "live" | "todo" | "plan" | "question";
-
-/**
- * How a `render: "diff"` tool's diff is derived from its call arguments.
- * - `edits`: args carry `edits: {oldText,newText}[]` (in-place edit).
- * - `newFile`: args carry `content` for a brand-new file (all-green diff).
- */
 export type DiffSource = "edits" | "newFile";
 
 export type ToolSummaryMeta = {
@@ -64,66 +19,30 @@ export type ToolSummaryMeta = {
 };
 
 export type ToolUiMeta = {
-  /** Leading action glyph; undeclared tools use the generic tool glyph. */
   iconName?: ToolIconName;
   verb: string;
-  /** Argument key used to derive the default target label shown after the verb. */
-  primaryArgKey?: string;
-  /** Present-tense label while a call is in flight. */
-  activeVerb?: string;
-  /** Image result caption when the tool owner declares its operation. */
-  imageVerb?: string;
-  /** Which renderer card this tool's calls use. Absent ⇒ `flat`. */
-  render?: ToolRenderKind;
-  /** Declarative completed-call digest; counting semantics come from the tool owner. */
-  summary?: ToolSummaryMeta;
-  /** Profiles where the tool is an intermediate artifact and should not create a timeline row. */
-  hiddenFromTimelineInProfiles?: ToolProfileName[];
-  /** For `render: "diff"` — how to build the diff from the call's arguments. */
-  diffSource?: DiffSource;
-  /**
-   * For `render: "terminal"` — whether the tool's output is Modus-framed
-   * (a `$ cmd` header + `[terminal …]` status line, as terminal_run/_read emit)
-   * or raw (like the PI `bash` tool, whose output is the body verbatim).
-   */
-  terminalFramed?: boolean;
-};
 
-export type ToolKind = "builtin" | "custom";
+  primaryArgKey?: string;
+
+  activeVerb?: string;
+
+  imageVerb?: string;
+
+  render?: ToolRenderKind;
+
+  summary?: ToolSummaryMeta;
+
+  diffSource?: DiffSource;
+};
 
 export type ToolCatalogEntry = {
   name: string;
-  kind: ToolKind;
-  /** Profiles this tool belongs to. Custom tools self-declare their membership. */
-  profiles: ToolProfileName[];
-  permission: ToolPermissionDecl;
-  capabilities?: ToolCapability[];
-  /** Omit to derive from permission.danger === "safe"; false marks safe-but-mutating tools. */
-  readOnly?: boolean;
   ui: ToolUiMeta;
 };
 
-export const BUILTIN_TOOL_NAMES = [
-  "read",
-  "bash",
-  "powershell",
-  "edit",
-  "write",
-  "grep",
-  "find",
-  "ls",
-] as const;
-
-export type BuiltinToolName = (typeof BUILTIN_TOOL_NAMES)[number];
-
-/** Presentation and permission declarations for PI's built-in tools. */
 export const BUILTIN_TOOL_CATALOG: ToolCatalogEntry[] = [
   {
     name: "read",
-    kind: "builtin",
-    profiles: ["chat", "review", "plan"],
-    permission: { danger: "safe" },
-    capabilities: ["read"],
     ui: {
       verb: "Read",
       imageVerb: "Viewed",
@@ -135,40 +54,26 @@ export const BUILTIN_TOOL_CATALOG: ToolCatalogEntry[] = [
   },
   {
     name: "bash",
-    kind: "builtin",
-    profiles: ["chat"],
-    permission: { danger: "dangerous", action: "shell.execute" },
-    capabilities: ["shell", "process"],
     ui: {
       verb: "Ran",
       activeVerb: "Running",
       primaryArgKey: "command",
       render: "terminal",
-      terminalFramed: false,
       summary: { verb: "ran", noun: { one: "command", other: "commands" }, countBy: "call" },
     },
   },
   {
     name: "powershell",
-    kind: "builtin",
-    profiles: ["chat"],
-    permission: { danger: "dangerous", action: "shell.execute" },
-    capabilities: ["shell", "process"],
     ui: {
       verb: "Ran",
       activeVerb: "Running",
       primaryArgKey: "command",
       render: "terminal",
-      terminalFramed: false,
       summary: { verb: "ran", noun: { one: "command", other: "commands" }, countBy: "call" },
     },
   },
   {
     name: "edit",
-    kind: "builtin",
-    profiles: ["chat"],
-    permission: { danger: "dangerous", action: "file.write" },
-    capabilities: ["write"],
     ui: {
       verb: "Edited",
       activeVerb: "Editing",
@@ -180,10 +85,6 @@ export const BUILTIN_TOOL_CATALOG: ToolCatalogEntry[] = [
   },
   {
     name: "write",
-    kind: "builtin",
-    profiles: ["chat"],
-    permission: { danger: "dangerous", action: "file.write" },
-    capabilities: ["write"],
     ui: {
       verb: "Created",
       activeVerb: "Creating",
@@ -195,213 +96,26 @@ export const BUILTIN_TOOL_CATALOG: ToolCatalogEntry[] = [
   },
   {
     name: "grep",
-    kind: "builtin",
-    profiles: ["chat", "review", "plan"],
-    permission: { danger: "safe" },
-    capabilities: ["read"],
     ui: { verb: "Grepped", activeVerb: "Searching", primaryArgKey: "pattern", iconName: "search" },
   },
   {
     name: "find",
-    kind: "builtin",
-    profiles: ["chat", "review", "plan"],
-    permission: { danger: "safe" },
-    capabilities: ["read"],
     ui: { verb: "Searched", activeVerb: "Searching", primaryArgKey: "pattern", iconName: "search" },
   },
   {
     name: "ls",
-    kind: "builtin",
-    profiles: ["chat", "review", "plan"],
-    permission: { danger: "safe" },
-    capabilities: ["read"],
     ui: { verb: "Listed", activeVerb: "Listing", primaryArgKey: "path", iconName: "folder" },
   },
 ];
 
-/** Agent-facing terminal tool names (custom tools registered at runtime). */
-export const TERMINAL_TOOL_NAMES = [
-  "terminal_run",
-  "terminal_read",
-  "terminal_list",
-  "terminal_write",
-  "terminal_kill",
-] as const;
-
-export type TerminalToolName = (typeof TERMINAL_TOOL_NAMES)[number];
-
-/**
- * UI metadata for the custom terminal tools. Lives in the shared catalog so the
- * renderer's ToolCard can render them with first-class verbs even though
- * their executable definitions live in the main process.
- */
-export const TERMINAL_TOOL_UI: Record<TerminalToolName, ToolUiMeta> = {
-  terminal_run: {
-    verb: "Terminal",
-    activeVerb: "Running",
-    primaryArgKey: "command",
-    render: "terminal",
-    terminalFramed: true,
-    summary: { verb: "ran", noun: { one: "command", other: "commands" }, countBy: "call" },
-  },
-  terminal_read: {
-    verb: "Read terminal",
-    activeVerb: "Reading terminal",
-    primaryArgKey: "terminal_id",
-    render: "terminal",
-    terminalFramed: true,
-  },
-  terminal_list: {
-    verb: "Listed terminals",
-  },
-  terminal_write: {
-    verb: "Sent input",
-    primaryArgKey: "input",
-  },
-  terminal_kill: {
-    verb: "Killed terminal",
-    primaryArgKey: "terminal_id",
-  },
-};
-
-/** Agent-facing GUI app launch tool (custom tool registered at runtime). */
-export const APP_TOOL_NAMES = ["launch_app"] as const;
-
-export type AppToolName = (typeof APP_TOOL_NAMES)[number];
-
-/** UI metadata for the GUI app launch tool. */
-export const APP_TOOL_UI: Record<AppToolName, ToolUiMeta> = {
-  launch_app: { verb: "Launched app", primaryArgKey: "path" },
-};
-
-/** Agent-facing local codebase index tool. */
-export const FAST_CODEBASE_TOOL_NAME = "fast_codebase";
-
-/** UI metadata for Fast Codebase. */
-export const FAST_CODEBASE_TOOL_UI: ToolUiMeta = {
-  verb: "Fast Codebase",
-  primaryArgKey: "query",
-  render: "live",
-};
-
-/** Agent-facing to-do tool (custom tool registered at runtime). */
-export const TODO_TOOL_NAME = "todo_write";
-/** UI metadata for the to-do tool (its calls render as the live TodosCard). */
-export const TODO_TOOL_UI: ToolUiMeta = {
-  verb: "Updated to-dos",
-  render: "todo",
-};
-
-/** Agent-facing Plan Mode tool — writes the single plan.md artifact. */
-export const PLAN_TOOL_NAME = "plan_write";
-/** UI metadata for the first-class plan artifact rendered in the conversation. */
-export const PLAN_TOOL_UI: ToolUiMeta = {
-  verb: "Plan",
-  primaryArgKey: "title",
-  render: "plan",
-};
-
-/** Agent-facing interactive question tool — asks the user, blocks on the answer. */
-export const ASK_USER_TOOL_NAME = "ask_user";
-/**
- * UI metadata for the ask_user tool. Its call renders as a minimal flat row
- * ("Asking …"); the real interaction is the QuestionsCard shown above the
- * composer (the same interaction region used by the plan decision card).
- */
-export const ASK_USER_TOOL_UI: ToolUiMeta = {
-  verb: "Asking",
-  render: "question",
-};
-
-/** Agent-facing web tool names (custom tools registered at runtime). */
-export const WEB_TOOL_NAMES = ["web_search", "web_fetch"] as const;
-
-export type WebToolName = (typeof WEB_TOOL_NAMES)[number];
-
-/**
- * UI metadata for the built-in web tools — the only tools that keep a leading
- * row icon: a globe for search, and the fetched site's favicon (derived from
- * the `url` argument) for fetch. Both fold into the explore activity group.
- */
-export const WEB_TOOL_UI: Record<WebToolName, ToolUiMeta> = {
-  web_search: {
-    iconName: "globe",
-    verb: "Searched the web",
-    primaryArgKey: "query",
-    summary: { verb: "ran", noun: { one: "web search", other: "web searches" }, countBy: "call" },
-  },
-  web_fetch: {
-    iconName: "favicon",
-    verb: "Fetched",
-    primaryArgKey: "url",
-    summary: { verb: "fetched", noun: { one: "page", other: "pages" }, countBy: "target" },
-  },
-};
-
-/** In-app browser primitives: tab ownership, raw CDP, recent events, snapshots, screenshots. */
-export const BROWSER_TOOL_NAMES = [
-  "browser_tabs",
-  "browser_cdp",
-  "browser_events",
-  "browser_snapshot",
-  "browser_screenshot",
-] as const;
-
-export type BrowserToolName = (typeof BROWSER_TOOL_NAMES)[number];
-
-export const BROWSER_TOOL_UI: Record<BrowserToolName, ToolUiMeta> = {
-  browser_tabs: {
-    verb: "Browser tabs",
-    primaryArgKey: "action",
-  },
-  browser_cdp: {
-    verb: "Sent CDP",
-    primaryArgKey: "method",
-  },
-  browser_events: { verb: "Read browser events" },
-  browser_snapshot: { verb: "Captured snapshot" },
-  browser_screenshot: { verb: "Captured page", imageVerb: "Captured" },
-};
-
-/** Tool names belonging to a profile, derived from a catalog. */
-export function toolNamesForProfile(
-  catalog: ToolCatalogEntry[],
-  profile: ToolProfileName,
-): string[] {
-  return catalog.filter((entry) => entry.profiles.includes(profile)).map((entry) => entry.name);
-}
-
-/** UI metadata for a builtin tool, or undefined for unknown/custom tools. */
 export function getBuiltinToolUiMeta(name: string): ToolUiMeta | undefined {
   return BUILTIN_TOOL_CATALOG.find((entry) => entry.name === name)?.ui;
 }
 
-/** UI metadata for Modus-owned and builtin tools. Extension labels come from PI. */
 export function getToolUiMeta(name: string): ToolUiMeta | undefined {
-  if (name === TODO_TOOL_NAME) {
-    return TODO_TOOL_UI;
-  }
-  if (name === PLAN_TOOL_NAME) {
-    return PLAN_TOOL_UI;
-  }
-  if (name === ASK_USER_TOOL_NAME) {
-    return ASK_USER_TOOL_UI;
-  }
-  return (
-    getBuiltinToolUiMeta(name) ??
-    TERMINAL_TOOL_UI[name as TerminalToolName] ??
-    APP_TOOL_UI[name as AppToolName] ??
-    (name === FAST_CODEBASE_TOOL_NAME ? FAST_CODEBASE_TOOL_UI : undefined) ??
-    WEB_TOOL_UI[name as WebToolName] ??
-    BROWSER_TOOL_UI[name as BrowserToolName]
-  );
+  return getBuiltinToolUiMeta(name);
 }
 
-/**
- * Render kind for a tool's calls, defaulting to "flat" for plain, unknown, or
- * MCP-bridged tools. Renderer consumers route on this capability instead of
- * matching tool names, so a new tool only declares its `render` in the catalog.
- */
 export function toolRenderKind(name: string): ToolRenderKind {
   return getToolUiMeta(name)?.render ?? "flat";
 }

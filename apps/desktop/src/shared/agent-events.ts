@@ -1,4 +1,3 @@
-import { buildContextChips } from "./context-chips";
 import type { AgentEvent, ContextItem, MessageContextChip } from "./contracts";
 
 export type AgentEventItem = {
@@ -116,7 +115,11 @@ export function optimisticUserPromptEvents(input: {
   const contextChips =
     input.contextChips ??
     (input.contextItems && input.contextItems.length > 0
-      ? buildContextChips(input.contextItems)
+      ? input.contextItems.map((item) => ({
+          kind: item.type,
+          label: item.path.split(/[\\/]/).pop() ?? item.path,
+          detail: item.path,
+        }))
       : undefined);
   const started: Extract<AgentEvent, { type: "message.started" }> = {
     type: "message.started",

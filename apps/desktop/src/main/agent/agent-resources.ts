@@ -1,3 +1,4 @@
+import type { ProjectTrustContext } from "@earendil-works/pi-coding-agent";
 import {
   createCodemodeExtension,
   createToolSearchExtension,
@@ -7,12 +8,13 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { createModusMcpExtension } from "../mcp/mcp-service";
 import { getPiCliAgentDir } from "./agent-paths";
-import { withRuntimeToolPolicy } from "./runtime-tools";
+import { resolveProjectTrust } from "./project-trust";
 
 export async function createAgentResourceLoader(
   cwd: string,
   settingsManager: SettingsManager,
   extensionFactories: InlineExtension[],
+  projectTrustContext: ProjectTrustContext,
 ): Promise<DefaultResourceLoader> {
   const loader = new DefaultResourceLoader({
     cwd,
@@ -23,18 +25,21 @@ export async function createAgentResourceLoader(
         name: "codemode",
         builtin: true,
         replaceable: true,
-        factory: withRuntimeToolPolicy(createCodemodeExtension()),
+        factory: createCodemodeExtension(),
       },
       {
         name: "tool-search",
         builtin: true,
         replaceable: true,
-        factory: withRuntimeToolPolicy(createToolSearchExtension()),
+        factory: createToolSearchExtension(),
       },
       { name: "mcp", builtin: true, replaceable: true, factory: createModusMcpExtension() },
       ...extensionFactories,
     ],
   });
-  await loader.reload();
+  await loader.reload({
+    resolveProjectTrust: ({ extensionsResult }) =>
+      resolveProjectTrust(cwd, settingsManager, extensionsResult, projectTrustContext),
+  });
   return loader;
 }

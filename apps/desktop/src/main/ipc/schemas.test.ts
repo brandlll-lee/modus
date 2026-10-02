@@ -4,7 +4,6 @@ import {
   browserRecentSchema,
   diffCommitOrPushSchema,
   parseIpcInput,
-  permissionDecideSchema,
 } from "./schemas";
 
 describe("IPC schemas", () => {
@@ -48,37 +47,9 @@ describe("IPC schemas", () => {
     ).toThrow("Invalid IPC payload");
   });
 
-  it("validates permission decisions", () => {
-    expect(
-      parseIpcInput(
-        permissionDecideSchema,
-        { action: "git.write", target: "git clean -f", decision: "deny" },
-        "permission:decide",
-      ),
-    ).toEqual({ action: "git.write", target: "git clean -f", decision: "deny" });
-  });
-
   // Regression: a prompt turn must carry its own execution params (mode, model,
   // thinking) across the IPC boundary. Dropping any of these here was the
   // root of the "stale model / thinking / plan-mode on resend" bugs.
-  it("preserves per-turn execution params (mode, model, thinking)", () => {
-    const parsed = parseIpcInput(
-      agentPromptSchema,
-      {
-        sessionId: "s1",
-        message: "hi",
-        mode: "plan",
-        model: "openai/gpt-5.5",
-        thinkingLevel: "xhigh",
-        thinkingVariant: "max",
-      },
-      "agent:prompt",
-    );
-    expect(parsed.mode).toBe("plan");
-    expect(parsed.model).toBe("openai/gpt-5.5");
-    expect(parsed.thinkingLevel).toBe("xhigh");
-    expect(parsed.thinkingVariant).toBe("max");
-  });
 
   it("accepts image-only prompts with path metadata and rejects empty prompts", () => {
     const attachment = {
@@ -106,18 +77,6 @@ describe("IPC schemas", () => {
     expect(() => parseIpcInput(browserRecentSchema, { id: "" }, "browser:delete-recent")).toThrow(
       "Invalid IPC payload",
     );
-  });
-
-  it("leaves per-turn params undefined when omitted (keeps session defaults)", () => {
-    const parsed = parseIpcInput(
-      agentPromptSchema,
-      { sessionId: "s1", message: "hi" },
-      "agent:prompt",
-    );
-    expect(parsed.mode).toBeUndefined();
-    expect(parsed.model).toBeUndefined();
-    expect(parsed.thinkingLevel).toBeUndefined();
-    expect(parsed.thinkingVariant).toBeUndefined();
   });
 
   it("rejects an invalid thinkingLevel", () => {

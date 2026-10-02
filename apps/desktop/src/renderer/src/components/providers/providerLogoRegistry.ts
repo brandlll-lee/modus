@@ -92,7 +92,7 @@ export function hexLuminance(color: string): number | undefined {
   if (!hex && short?.[1]) {
     hex = [...short[1]].map((c) => `${c}${c}`).join("");
   }
-  if (!hex || hex.length !== 6) {
+  if (hex?.length !== 6) {
     return undefined;
   }
   const channels = [0, 2, 4].map((offset) => {

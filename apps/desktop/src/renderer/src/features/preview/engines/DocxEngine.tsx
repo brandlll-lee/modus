@@ -1,29 +1,16 @@
 import { renderAsync } from "docx-preview";
 import { useEffect, useRef, useState } from "react";
-import { attachDomExcerptChrome, pageLocatorFromAnchor } from "../domExcerptChrome";
 import type { PreviewEngineProps } from "../registry";
 
-/** Word (.docx) preview via docx-preview → HTML + shared excerpt Add-to-Chat. */
-export default function DocxEngine({ bytes, path, onAddToChat }: PreviewEngineProps) {
+export default function DocxEngine({ bytes }: PreviewEngineProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
-  const onAddRef = useRef(onAddToChat);
-  const pathRef = useRef(path);
   const [error, setError] = useState<string | undefined>();
-
-  onAddRef.current = onAddToChat;
-  pathRef.current = path;
 
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
     let cancelled = false;
     host.replaceChildren();
-
-    const detachChrome = attachDomExcerptChrome(host, {
-      getPath: () => pathRef.current,
-      getOnAdd: () => onAddRef.current,
-      locatorFromAnchor: pageLocatorFromAnchor,
-    });
 
     void renderAsync(bytes, host, undefined, {
       className: "modus-docx-preview",
@@ -51,10 +38,9 @@ export default function DocxEngine({ bytes, path, onAddToChat }: PreviewEnginePr
 
     return () => {
       cancelled = true;
-      detachChrome();
       host.replaceChildren();
     };
-  }, [bytes, path]);
+  }, [bytes]);
 
   if (error) {
     return (

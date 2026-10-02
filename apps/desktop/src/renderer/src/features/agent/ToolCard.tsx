@@ -1,14 +1,7 @@
-import { IconChevronRight } from "@tabler/icons-react";
-import { memo, type ReactNode, useEffect, useRef, useState } from "react";
-import type { PlanRef, QuestionAnswer, QuestionRequest } from "../../../../shared/contracts";
+import { memo, type ReactNode } from "react";
 import { getToolUiMeta, type ToolUiMeta, toolRenderKind } from "../../../../shared/tools";
-import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
-import { ShinyText } from "../../components/ui/ShinyText";
-import { cn } from "../../lib/cn";
-import { PlanTimelineCard } from "../plan/PlanTimelineCard";
 import { ActionRow } from "./ActionRow";
 import { DiffToolCard } from "./diff/DiffToolCard";
-import { QuestionToolCard } from "./QuestionToolCard";
 import { TerminalToolCard } from "./terminal/TerminalToolCard";
 import { toolActionIcon } from "./toolIcons";
 
@@ -20,11 +13,6 @@ type ToolCardProps = {
   isError?: boolean;
   isComplete?: boolean;
   onOpenFile?: ((path: string) => void) | undefined;
-  questionRequest?: QuestionRequest;
-  questionAnswers?: QuestionAnswer[];
-  questionSkipped?: boolean;
-  plan?: PlanRef;
-  onOpenPlan?: (plan: PlanRef) => void;
 };
 
 /** Cap how much tool output we drop into the DOM at once. */
@@ -46,16 +34,7 @@ export const ToolCard = memo(
     isComplete = false,
     isError = false,
     onOpenFile,
-    questionRequest,
-    questionAnswers,
-    questionSkipped,
-    plan,
-    onOpenPlan,
   }: ToolCardProps) {
-    // The catalog declares how each tool renders; route on that capability
-    // instead of matching names, so a new tool is a catalog entry, not an edit
-    // here. (todo tools are intercepted upstream in the Timeline and never reach
-    // ToolCard, so they fall through to a flat row defensively.)
     const render = toolRenderKind(name);
     if (render === "diff") {
       return (
@@ -81,42 +60,6 @@ export const ToolCard = memo(
       );
     }
 
-    if (render === "live") {
-      return (
-        <LiveToolCard
-          args={args}
-          isComplete={isComplete}
-          isError={isError}
-          name={name}
-          output={output}
-        />
-      );
-    }
-
-    if (render === "question") {
-      return (
-        <QuestionToolCard
-          args={args}
-          isComplete={isComplete}
-          {...(questionAnswers ? { answers: questionAnswers } : {})}
-          {...(questionRequest ? { request: questionRequest } : {})}
-          {...(questionSkipped !== undefined ? { skipped: questionSkipped } : {})}
-        />
-      );
-    }
-
-    if (render === "plan") {
-      return (
-        <PlanTimelineCard
-          args={args}
-          isComplete={isComplete}
-          isError={isError}
-          {...(onOpenPlan ? { onOpen: onOpenPlan } : {})}
-          {...(plan ? { plan } : {})}
-        />
-      );
-    }
-
     return (
       <FlatToolRow
         label={label}
@@ -135,116 +78,10 @@ export const ToolCard = memo(
     prev.isComplete === next.isComplete &&
     prev.isError === next.isError &&
     prev.onOpenFile === next.onOpenFile &&
-    prev.questionRequest === next.questionRequest &&
-    prev.questionAnswers === next.questionAnswers &&
-    prev.questionSkipped === next.questionSkipped &&
-    prev.plan === next.plan &&
-    prev.onOpenPlan === next.onOpenPlan &&
     argsEqual(prev.args, next.args),
 );
 
 type FlatToolRowProps = ToolCardProps;
-
-const LIVE_AUTO_COLLAPSE_MS = 800;
-
-function LiveToolCard({
-  name,
-  args,
-  output,
-  isComplete = false,
-  isError = false,
-}: FlatToolRowProps) {
-  const running = !isComplete && !isError;
-  const [open, setOpen] = useState(() => running || isError);
-  const sawRunningRef = useRef(false);
-  const scrollRef = useRef<HTMLPreElement>(null);
-  const view = describeTool(name, args, running);
-  const status = running ? liveStatus(output) || "Starting" : isError ? "Failed" : "Complete";
-  const rawDetail = clampTailDetail(output.trimEnd());
-  const fallbackDetail = running || isError ? status : "";
-  const detail = rawDetail || fallbackDetail;
-  const bodyOpen = open && Boolean(detail.trim());
-
-  useEffect(() => {
-    if (running) {
-      sawRunningRef.current = true;
-      setOpen(true);
-      return;
-    }
-    if (isError) {
-      setOpen(true);
-      return;
-    }
-    if (sawRunningRef.current && isComplete) {
-      const timeout = globalThis.setTimeout(() => setOpen(false), LIVE_AUTO_COLLAPSE_MS);
-      return () => globalThis.clearTimeout(timeout);
-    }
-    return undefined;
-  }, [running, isComplete, isError]);
-
-  useEffect(() => {
-    if (!bodyOpen || !detail || !scrollRef.current) return undefined;
-    scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    return undefined;
-  }, [bodyOpen, detail]);
-
-  return (
-    <div className="timeline-wire min-w-0 overflow-hidden text-sm">
-      <button
-        aria-expanded={bodyOpen}
-        className="flex w-full min-w-0 items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-hover"
-        onClick={() => setOpen((value) => !value)}
-        type="button"
-      >
-        <span className="action-icon">{view.icon}</span>
-        {running ? (
-          <ShinyText className="min-w-0 flex-1 truncate">
-            {`${view.verb}${view.target ? ` ${view.target}` : ""}`}
-          </ShinyText>
-        ) : (
-          <>
-            <span className={cn("shrink-0", isError ? "text-danger" : "text-fg-subtle")}>
-              {view.verb}
-            </span>
-            <span className="min-w-0 flex-1 truncate text-fg-subtle" title={view.target}>
-              {view.target}
-            </span>
-          </>
-        )}
-        <span
-          className={cn(
-            "min-w-0 max-w-[35%] truncate text-xs",
-            isError ? "text-danger" : "text-fg-faint",
-          )}
-          title={status}
-        >
-          {status}
-        </span>
-        <IconChevronRight
-          className={cn(
-            "shrink-0 text-fg-faint transition-transform duration-150",
-            bodyOpen && "rotate-90",
-          )}
-          size={13}
-          stroke={1.7}
-        />
-      </button>
-
-      <CollapsibleMotion open={bodyOpen} preset="timeline">
-        <pre
-          className={cn(
-            "scroll-thin max-h-80 overflow-auto border-hairline border-t px-3 py-2",
-            "whitespace-pre-wrap wrap-break-word text-[12px] text-fg-faint leading-relaxed",
-            isError && "text-danger/90",
-          )}
-          ref={scrollRef}
-        >
-          {detail}
-        </pre>
-      </CollapsibleMotion>
-    </div>
-  );
-}
 
 function FlatToolRow({
   name,
@@ -262,7 +99,7 @@ function FlatToolRow({
     <ActionRow
       icon={view.icon}
       label={running ? `${view.verb}${view.target ? ` ${view.target}` : ""}` : view.verb}
-      target={running ? liveStatus(output) : view.target}
+      target={view.target}
       detail={clampDetail(detail)}
       active={running}
       danger={isError}
@@ -333,18 +170,6 @@ function clampDetail(detail: string): string {
   return trimmed.length > MAX_DETAIL_CHARS
     ? `${trimmed.slice(0, MAX_DETAIL_CHARS)}\n…(truncated)`
     : trimmed;
-}
-
-function clampTailDetail(detail: string): string {
-  return detail.length > MAX_DETAIL_CHARS ? detail.slice(-MAX_DETAIL_CHARS) : detail;
-}
-
-function liveStatus(output: string): string {
-  const lines = output
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  return lines.at(-1) ?? "";
 }
 
 function str(value: unknown): string {

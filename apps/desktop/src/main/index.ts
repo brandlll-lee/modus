@@ -1,9 +1,8 @@
 import { app, BrowserWindow, type BrowserWindow as BrowserWindowType } from "electron";
-import { migrateAgentConfiguration } from "./agent/configuration-migration";
 import { getModelRuntime } from "./agent/model-service";
 import { shutdownAgentRuntime } from "./agent/runtime-registry";
-import { getDatabase } from "./db/database";
 import { registerAppIpc } from "./ipc/register-app-ipc";
+import { importDesktopData } from "./preferences/import-desktop-data";
 import { createStartupTimeline } from "./startup/startup-timeline";
 import { shutdownTerminals } from "./terminal/terminal-service";
 import { createMainWindow } from "./windows/main-window";
@@ -42,7 +41,7 @@ if (!app.requestSingleInstanceLock()) {
     .whenReady()
     .then(async () => {
       startupTimeline.mark("main.electron-ready");
-      migrateAgentConfiguration(getDatabase());
+      importDesktopData();
       await getModelRuntime().catch((error: unknown) =>
         console.error("Model configuration could not be loaded.", error),
       );

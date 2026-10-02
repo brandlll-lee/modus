@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { AgentEvent, PlanRef } from "../../../../shared/contracts";
-import { PLAN_TOOL_NAME } from "../../../../shared/tools";
+import type { AgentEvent } from "../../../../shared/contracts";
 import { formatElapsed, workActivityPresentation } from "./ActivityGroup";
 import { foldAgentEvents, optimisticUserPromptEvents } from "./agentEventHub";
 import {
@@ -9,7 +8,6 @@ import {
   buildBlocks,
   buildVisibleTimelineBlocks,
   groupTurnWork,
-  groupWorkItems,
   segmentTurns,
   type TimelineBlock,
 } from "./Timeline";
@@ -245,59 +243,6 @@ describe("buildBlocks", () => {
     ]);
   });
 
-  it("binds persisted plans to current and legacy plan tool events", () => {
-    const plan: PlanRef = {
-      id: "s",
-      title: "Feature plan",
-      overview: "Build the feature safely.",
-      path: "C:/plans/feature/plan.md",
-      hash: "hash",
-      workspaceId: "workspace",
-      sessionId: "s",
-      blocks: [{ type: "markdown", content: "# Feature plan" }],
-      content: "# Feature plan",
-      todos: [{ id: "todo-1", content: "Implement it", status: "pending" }],
-      buildStatus: "not_built",
-      createdAt: "2026-07-18T00:00:00.000Z",
-      updatedAt: "2026-07-18T00:00:00.000Z",
-    };
-    const blocks = buildBlocks([
-      item("1", {
-        type: "tool.delta",
-        sessionId: "s",
-        toolCallId: "plan-call",
-        toolName: PLAN_TOOL_NAME,
-        args: { title: "Feature plan" },
-      }),
-      item("2", {
-        type: "tool.started",
-        sessionId: "s",
-        toolCallId: "plan-call",
-        toolName: PLAN_TOOL_NAME,
-        args: { title: "Feature plan", content: "# Feature plan" },
-      }),
-      // Historical plan.updated events did not carry toolCallId; the active
-      // plan tool lifecycle remains an unambiguous association.
-      item("3", { type: "plan.updated", sessionId: "s", plan }),
-      item("4", {
-        type: "tool.ended",
-        sessionId: "s",
-        toolCallId: "plan-call",
-        isError: false,
-      }),
-    ]);
-
-    expect(blocks).toEqual([
-      expect.objectContaining({
-        type: "tool",
-        name: PLAN_TOOL_NAME,
-        isComplete: true,
-        isError: false,
-        plan,
-      }),
-    ]);
-  });
-
   it("ignores title-tool partial deltas until tool.started", () => {
     const delta = {
       type: "tool.delta" as const,
@@ -319,67 +264,6 @@ describe("buildBlocks", () => {
         }),
       ])[0],
     ).toEqual(expect.objectContaining({ args: { command: "ls -la" } }));
-  });
-
-  it("attaches resolved ask_user answers to the question tool block", () => {
-    const request = {
-      id: "question-request",
-      sessionId: "s",
-      questions: [
-        {
-          id: "q1",
-          header: "Pick a direction",
-          multiSelect: false,
-          options: [{ label: "Fast" }, { label: "Careful", recommended: true }],
-        },
-      ],
-    };
-    const blocks = buildBlocks([
-      item("1", {
-        type: "tool.started",
-        sessionId: "s",
-        toolCallId: "t",
-        toolName: "ask_user",
-        args: { questions: [{ header: "Pick a direction" }] },
-      }),
-      item("2", { type: "question.requested", sessionId: "s", request }),
-      item("3", {
-        type: "question.resolved",
-        sessionId: "s",
-        requestId: request.id,
-        skipped: false,
-        answers: [{ questionId: "q1", selected: ["Careful"], custom: "plus tests" }],
-      }),
-      item("4", { type: "tool.ended", sessionId: "s", toolCallId: "t", isError: false }),
-    ]);
-
-    expect(blocks[0]).toEqual(
-      expect.objectContaining({
-        type: "tool",
-        questionRequest: request,
-        questionAnswers: [{ questionId: "q1", selected: ["Careful"], custom: "plus tests" }],
-        questionSkipped: false,
-      }),
-    );
-  });
-
-  it("keeps approval prompts out of the timeline", () => {
-    const blocks = buildBlocks([
-      item("1", {
-        type: "permission.requested",
-        sessionId: "s",
-        request: {
-          id: "p",
-          sessionId: "s",
-          action: "git.write",
-          target: "git clean -f",
-          reason: "dangerous",
-        },
-      }),
-      item("2", { type: "permission.resolved", sessionId: "s", requestId: "p", decision: "deny" }),
-    ]);
-
-    expect(blocks).toEqual([]);
   });
 
   it("marks the active assistant message streaming with no thought when nothing is thought yet", () => {
@@ -655,134 +539,12 @@ describe("buildBlocks", () => {
     );
   });
 
-  it("does not append a turn-end changes card (Review lives above the composer)", () => {
-    const stats = {
-      files: [{ path: "src/a.ts", added: 3, removed: 1, untracked: false, binary: false }],
-      added: 3,
-      removed: 1,
-      fileCount: 1,
-      truncated: false,
-    };
-    const blocks = buildBlocks([
-      item("1", { type: "run.started", sessionId: "s", runId: "r", delivery: "normal" }),
-      item("2", {
-        type: "checkpoint.created",
-        sessionId: "s",
-        checkpoint: {
-          id: "cp-1",
-          sessionId: "s",
-          runId: "r",
-          userMessageId: "u1",
-          cwd: "/repo",
-          commitHash: "abc",
-          kind: "auto",
-          createdAt: "2026-06-11T00:00:00.000Z",
-        },
-      }),
-      item("3", { type: "run.completed", sessionId: "s", runId: "r", changes: stats }),
-    ]);
-
-    expect(blocks.some((block) => (block as { type: string }).type === "changes")).toBe(false);
-    expect(blocks.at(-1)).toEqual(
-      expect.objectContaining({ type: "run", runId: "r", status: "completed" }),
-    );
-  });
-
   it("omits the changes card for turns without file changes", () => {
     const blocks = buildBlocks([
       item("1", { type: "run.started", sessionId: "s", runId: "r", delivery: "normal" }),
       item("2", { type: "run.completed", sessionId: "s", runId: "r" }),
     ]);
     expect(blocks.some((block) => (block as { type: string }).type === "changes")).toBe(false);
-  });
-
-  it("renders todo_write through a todos card instead of tool rows", () => {
-    const blocks = buildBlocks([
-      item("1", {
-        type: "tool.started",
-        sessionId: "s",
-        toolCallId: "todo-1",
-        toolName: "todo_write",
-      }),
-      item("2", {
-        type: "todos.updated",
-        sessionId: "s",
-        todos: [{ id: "todo-1", content: "Plan", status: "in_progress" }],
-      }),
-      item("3", { type: "tool.ended", sessionId: "s", toolCallId: "todo-1", isError: false }),
-    ]);
-
-    expect(blocks.some((block) => block.type === "tool")).toBe(false);
-    expect(blocks).toEqual([
-      expect.objectContaining({
-        type: "todos",
-        todos: [{ id: "todo-1", content: "Plan", status: "in_progress" }],
-        updating: false,
-      }),
-    ]);
-  });
-
-  it("renders todo snapshots only at creation and all-completed update", () => {
-    const initialTodos = [
-      { id: "todo-1", content: "Plan", status: "in_progress" as const },
-      { id: "todo-2", content: "Build", status: "pending" as const },
-      { id: "todo-3", content: "Verify", status: "pending" as const },
-    ];
-    const intermediateTodos = [
-      { id: "todo-1", content: "Plan", status: "completed" as const },
-      { id: "todo-2", content: "Build", status: "in_progress" as const },
-      { id: "todo-3", content: "Verify", status: "pending" as const },
-    ];
-    const completedTodos = [
-      { id: "todo-1", content: "Plan", status: "completed" as const },
-      { id: "todo-2", content: "Build", status: "completed" as const },
-      { id: "todo-3", content: "Verify", status: "completed" as const },
-    ];
-
-    const blocks = buildBlocks([
-      item("1", {
-        type: "tool.started",
-        sessionId: "s",
-        toolCallId: "todo-1",
-        toolName: "todo_write",
-      }),
-      item("initial-update", { type: "todos.updated", sessionId: "s", todos: initialTodos }),
-      item("3", { type: "tool.ended", sessionId: "s", toolCallId: "todo-1", isError: false }),
-      item("4", {
-        type: "tool.started",
-        sessionId: "s",
-        toolCallId: "todo-2",
-        toolName: "todo_write",
-      }),
-      item("intermediate-update", {
-        type: "todos.updated",
-        sessionId: "s",
-        todos: intermediateTodos,
-      }),
-      item("6", { type: "tool.ended", sessionId: "s", toolCallId: "todo-2", isError: false }),
-      item("7", {
-        type: "tool.started",
-        sessionId: "s",
-        toolCallId: "todo-3",
-        toolName: "todo_write",
-      }),
-      item("completed-update", { type: "todos.updated", sessionId: "s", todos: completedTodos }),
-      item("9", { type: "tool.ended", sessionId: "s", toolCallId: "todo-3", isError: false }),
-    ]);
-
-    const todoBlocks = blocks.filter(
-      (block): block is Extract<ReturnType<typeof buildBlocks>[number], { type: "todos" }> =>
-        block.type === "todos",
-    );
-
-    expect(todoBlocks).toEqual([
-      expect.objectContaining({ id: "todos:initial-update", todos: initialTodos, updating: false }),
-      expect.objectContaining({
-        id: "todos:completed-update",
-        todos: completedTodos,
-        updating: false,
-      }),
-    ]);
   });
 
   it("creates a fallback assistant message when text deltas arrive without a message start", () => {
@@ -834,12 +596,6 @@ const thought = (id: string, text = "thinking…", streaming = false) => ({
   type: "thought" as const,
   text,
   ...(streaming ? { streaming: true } : {}),
-});
-const todos = (id: string) => ({
-  id,
-  type: "todos" as const,
-  todos: [{ id: "t1", content: "do thing", status: "pending" as const }],
-  updating: false,
 });
 
 type Blocks = TimelineBlock[];
@@ -904,21 +660,6 @@ describe("groupTurnWork", () => {
     expect(result.at(-1)).toEqual(
       expect.objectContaining({ type: "message", id: "final", content: "found it" }),
     );
-  });
-
-  it("keeps todos inside the fold", () => {
-    const result = groupTurnWork([
-      completedRun("r"),
-      tool("1", "write"),
-      todos("todo"),
-      msg("final", "shipped"),
-    ] as Blocks);
-
-    expect(result.map((block) => block.type)).toEqual(["work-fold", "message"]);
-    const fold = result[0];
-    if (fold?.type === "work-fold") {
-      expect(fold.items[0]).toEqual(expect.objectContaining({ type: "work-activity-group" }));
-    }
   });
 
   it("emits a live work-fold while the run is active even before tools arrive", () => {
@@ -1021,22 +762,6 @@ describe("groupTurnWork", () => {
 });
 
 describe("local work activity groups", () => {
-  it("uses messages as hard boundaries between consecutive activity", () => {
-    const result = groupWorkItems([
-      tool("a", "read"),
-      tool("b", "edit"),
-      msg("boundary"),
-      thought("reasoning"),
-      todos("todo"),
-      tool("question", "ask_user"),
-      tool("plan", PLAN_TOOL_NAME),
-      tool("c", "bash"),
-    ]);
-    expect(result.map((entry) => entry.type).join(",")).toBe(
-      "work-activity-group,message,work-activity-group",
-    );
-  });
-
   it("summarizes declared target and call counting semantics", () => {
     const activities = [
       { ...tool("e1", "edit"), args: { path: "a.ts" } },
@@ -1044,12 +769,12 @@ describe("local work activity groups", () => {
       { ...tool("e3", "edit"), args: { path: "b.ts" } },
       { ...tool("cmd", "bash"), args: { command: "arbitrary command" } },
       { ...tool("read", "read"), args: { path: "a.ts" } },
-      { ...tool("search-1", "web_search"), args: { query: "first" } },
-      { ...tool("search-2", "web_search"), args: { query: "second" } },
-      { ...tool("fetch", "web_fetch"), args: { url: "https://example.com" } },
+      { ...tool("search-1", "extension_search"), args: { query: "first" } },
+      { ...tool("search-2", "extension_search"), args: { query: "second" } },
+      { ...tool("fetch", "extension_fetch"), args: { url: "https://example.com" } },
     ];
     expect(workActivityPresentation(activities).label).toBe(
-      "Edited 2 files, ran 1 command, read 1 file, ran 2 web searches, fetched 1 page",
+      "Edited 2 files, ran 1 command, read 1 file, used 3 tools",
     );
   });
 

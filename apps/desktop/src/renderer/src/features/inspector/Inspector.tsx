@@ -2,7 +2,6 @@ import { Tabs } from "@base-ui/react/tabs";
 import {
   IconFileText,
   IconGitBranch,
-  IconLayoutList,
   IconLayoutSidebarRight,
   IconShieldCheck,
   IconShieldX,
@@ -12,7 +11,7 @@ import {
 import { animate, m, useMotionValue } from "motion/react";
 import { lazy, type PointerEvent, Suspense, useEffect, useRef, useState } from "react";
 import type { SecurityState } from "../../../../preload/types";
-import type { ContextItem, PlanRef, WorkspaceInfo } from "../../../../shared/contracts";
+import type { ContextItem, WorkspaceInfo } from "../../../../shared/contracts";
 import { INSPECTOR_MIN_WIDTH } from "../../components/layout/usePanelLayout";
 import { ChromeMoreMenu } from "../../components/ui/ChromeMoreMenu";
 import { ModusLoadingFallback } from "../../components/ui/ModusLoadingMark";
@@ -22,12 +21,11 @@ import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
 import { DiffPanel } from "../diff/DiffPanel";
 import { FilesPanel } from "../files/FilesPanel";
-import { PlanPanel } from "../plan/PlanPanel";
 
 type InspectorProps = {
   activeWorkspace: WorkspaceInfo | null;
   cwd?: string | undefined;
-  sessionId?: string | undefined;
+
   securityState: SecurityState | null;
   open: boolean;
   width: number;
@@ -36,8 +34,7 @@ type InspectorProps = {
   /** Controlled active tab (App drives it so events can switch to Files). */
   tab?: string | undefined;
   onTabChange?(tab: string): void;
-  /** The session's active plan, shown in the Plan tab (not the file tree). */
-  plan?: PlanRef | undefined;
+
   onOpenSettings(): void;
   onOpenChange(open: boolean): void;
   onWidthChange(width: number): void;
@@ -45,8 +42,6 @@ type InspectorProps = {
   revealPath?: string | undefined;
   onRevealConsumed?(): void;
   /** Select this terminal when the Terminal tab opens (composer rail click). */
-  revealTerminalId?: string | undefined;
-  onRevealTerminalConsumed?(): void;
 };
 
 const INSPECTOR_MAX_WIDTH = 1040;
@@ -69,11 +64,6 @@ const TABS = [
     value: "changes",
     label: "Changes",
     icon: <IconGitBranch size={TOOLBAR_ICON.size} stroke={TOOLBAR_ICON.stroke} />,
-  },
-  {
-    value: "plan",
-    label: "Plan",
-    icon: <IconLayoutList size={TOOLBAR_ICON.size} stroke={TOOLBAR_ICON.stroke} />,
   },
   {
     value: "files",
@@ -100,22 +90,18 @@ const TABS = [
 export function Inspector({
   activeWorkspace,
   cwd,
-  sessionId,
   securityState,
   open,
   width,
   maxWidth,
   tab: controlledTab,
   onTabChange,
-  plan,
   onOpenSettings,
   onOpenChange,
   onWidthChange,
   onAddToChat,
   revealPath,
   onRevealConsumed,
-  revealTerminalId,
-  onRevealTerminalConsumed,
 }: InspectorProps) {
   const dragStartRef = useRef<{ x: number; width: number } | null>(null);
   const latestWidthRef = useRef(width);
@@ -287,11 +273,9 @@ export function Inspector({
                 </div>
 
                 <Tabs.Panel className="min-h-0 flex-1 outline-none" value="changes">
-                  <DiffPanel cwd={cwd} sessionId={sessionId} workspaceId={activeWorkspace?.id} />
+                  <DiffPanel cwd={cwd} workspaceId={activeWorkspace?.id} />
                 </Tabs.Panel>
-                <Tabs.Panel className="min-h-0 flex-1 outline-none" value="plan">
-                  <PlanPanel plan={plan} />
-                </Tabs.Panel>
+
                 <Tabs.Panel className="min-h-0 flex-1 outline-none" value="files">
                   <FilesPanel
                     cwd={cwd}
@@ -315,9 +299,6 @@ export function Inspector({
                         active={tab === "terminal"}
                         key={activeWorkspace?.id ?? "none"}
                         {...(cwd ? { cwd } : {})}
-                        {...(onRevealTerminalConsumed ? { onRevealTerminalConsumed } : {})}
-                        {...(revealTerminalId ? { revealTerminalId } : {})}
-                        {...(sessionId ? { sessionId } : {})}
                         {...(activeWorkspace?.id ? { workspaceId: activeWorkspace.id } : {})}
                       />
                     </Suspense>

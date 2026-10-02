@@ -49,12 +49,13 @@ export async function deleteProjectChats(id: string): Promise<number> {
   return deleteWorkspaceSessions(id);
 }
 
-/**
- * Remove a project from Modus: tear down its sessions first (no orphaned
- * runtimes/checkpoints), then drop the workspace row. Files on disk are kept.
- */
 export async function removeProject(id: string): Promise<WorkspaceInfo[]> {
-  await deleteWorkspaceSessions(id);
+  const { getAgentRuntime } = await import("../agent/runtime-registry");
+  const { listAgentSessions, listArchivedAgentSessions } = await import("../agent/agent-store");
+  for (const session of [...listAgentSessions(), ...listArchivedAgentSessions(id)].filter(
+    (item) => item.workspaceId === id,
+  ))
+    await getAgentRuntime().dispose(session.id);
   removeWorkspace(id);
   return listWorkspaces();
 }

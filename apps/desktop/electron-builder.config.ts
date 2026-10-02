@@ -1,8 +1,4 @@
-import { existsSync } from "node:fs";
-import { join } from "node:path";
 import type { Configuration } from "electron-builder";
-
-const fastCodebaseResource = join("resources", "bin", "codegraph");
 
 const config: Configuration = {
   appId: "dev.modus.desktop",
@@ -26,14 +22,6 @@ const config: Configuration = {
       from: "../../target/release/modus-pty-host.exe",
       to: "bin/modus-pty-host.exe",
     },
-    ...(existsSync(fastCodebaseResource)
-      ? [
-          {
-            from: fastCodebaseResource,
-            to: "bin/codegraph",
-          },
-        ]
-      : []),
   ],
   asar: true,
   icon: "resources/icon.png",

@@ -1,28 +1,29 @@
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import {
-  hasTrustRequiringProjectResources,
+  getPackageDir,
+  type LoadExtensionsResult,
+  type ProjectTrustContext,
   ProjectTrustStore,
+  type SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { dialog } from "electron";
 import { getPiCliAgentDir } from "./agent-paths";
-import { createAgentSettings } from "./agent-settings";
 
-export async function resolveProjectTrust(cwd: string): Promise<boolean> {
-  const store = new ProjectTrustStore(getPiCliAgentDir());
-  const decision = store.get(cwd);
-  if (decision !== null) return decision;
-  const defaults = createAgentSettings().getDefaultProjectTrust();
-  if (defaults === "always") return true;
-  if (defaults === "never") return false;
-  if (!hasTrustRequiringProjectResources(cwd)) return false;
-  const result = await dialog.showMessageBox({
-    type: "question",
-    message: "Trust this project's agent resources?",
-    detail: `${cwd}\n\nProject settings, extensions, skills, and MCP servers can run code on your computer.`,
-    buttons: ["Trust project", "Continue without project resources"],
-    defaultId: 1,
-    cancelId: 1,
+export async function resolveProjectTrust(
+  cwd: string,
+  settings: SettingsManager,
+  extensionsResult: LoadExtensionsResult,
+  context: ProjectTrustContext,
+): Promise<boolean> {
+  const native = await import(
+    pathToFileURL(join(getPackageDir(), "dist/core/project-trust.js")).href
+  );
+  return native.resolveProjectTrusted({
+    cwd,
+    trustStore: new ProjectTrustStore(getPiCliAgentDir()),
+    defaultProjectTrust: settings.getDefaultProjectTrust(),
+    extensionsResult,
+    projectTrustContext: context,
+    onExtensionError: (message: string) => context.ui.notify(message, "warning"),
   });
-  const trusted = result.response === 0;
-  store.set(cwd, trusted);
-  return trusted;
 }

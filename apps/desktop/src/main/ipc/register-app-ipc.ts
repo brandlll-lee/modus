@@ -11,21 +11,16 @@ import {
   nativeImage,
   shell,
 } from "electron";
-import type { DiffReview, DiffReviewReady, DiffTarget } from "../../shared/contracts";
-import { listAgentEvents, recordAgentEvent } from "../agent/agent-event-store";
+import type { DiffReview, DiffTarget } from "../../shared/contracts";
+import { listAgentEvents } from "../agent/agent-history";
 import { listAgentRuns } from "../agent/agent-run-store";
 import {
+  discoverAgentSessions,
   listAgentSessions,
   listArchivedAgentSessions,
   setAgentSessionArchived,
   setAgentSessionPinned,
 } from "../agent/agent-store";
-import {
-  getLastTurnComparison,
-  getSessionBaseCheckpoint,
-  listCheckpoints,
-  restoreCheckpoint,
-} from "../agent/checkpoint-service";
 import {
   getModelSettings,
   getProviderDetail,
@@ -35,8 +30,6 @@ import {
   setDefaultModel,
   setModelThinking,
 } from "../agent/model-service";
-import { listAgentReviews, startAgentReview } from "../agent/review-service";
-import { rollbackToUserMessage } from "../agent/rollback-service";
 import { getAgentRuntime } from "../agent/runtime-registry";
 import { removeAgentSession } from "../agent/session-lifecycle";
 import {
@@ -58,13 +51,10 @@ import {
   reloadBrowser,
   selectBrowserTab,
   setBrowserBounds,
-  setBrowserDesignMode,
   showBrowserTab,
   stopFindInBrowserPage,
   toggleBrowserDevtools,
 } from "../browser/browser-service";
-import { resolveContext, searchContext } from "../context/context-service";
-import { addDocSource, listDocSources, searchDocs } from "../docs/docs-service";
 import { listDirectory, readWorkspaceFile, writeWorkspaceFile } from "../files/files-service";
 import { emitFilesEvent, unwatchWorkspace, watchWorkspace } from "../files/files-watcher";
 import { readWorkspacePreview } from "../files/preview-kind";
@@ -74,7 +64,6 @@ import {
   commitOrPush,
   discardUnstagedFile,
   type GitDiffTarget,
-  getChangeStatsSince,
   getStatusSummary,
   getWorkingChangeStats,
   initRepository,
@@ -100,20 +89,6 @@ import {
   runMcpCommand,
   syncWorkspaceMcp,
 } from "../mcp/mcp-service";
-import {
-  denyPendingPermissionRequests,
-  resolvePermissionRequest,
-} from "../permissions/permission-broker";
-import {
-  clearProjectApprovalMode,
-  getApprovalModeState,
-  listPermissionDecisions,
-  recordPermissionDecision,
-  setGlobalApprovalMode,
-  setProjectApprovalMode,
-} from "../permissions/permission-store";
-import { onManagedProcessChange } from "../process/managed-process-bus";
-import { killManagedProcess, listManagedProcesses } from "../process/managed-process-facade";
 import { listSkills, revealSkill } from "../skills/skills-service";
 import type { StartupTimeline } from "../startup/startup-timeline";
 import {
@@ -140,25 +115,18 @@ import {
   agentCreateSchema,
   agentCycleModelSchema,
   agentListSchema,
+  agentNavigateSchema,
   agentPromptSchema,
-  agentRollbackSchema,
   agentSetModelSchema,
-  approvalModeClearProjectSchema,
-  approvalModeGetSchema,
-  approvalModeSchema,
   browserBoundsSchema,
   browserCreateTabSchema,
-  browserDesignModeSchema,
   browserFindSchema,
   browserFindStopSchema,
   browserNavigateSchema,
   browserRecentSchema,
   browserTabSchema,
   browserWorkspaceSchema,
-  checkpointRestoreSchema,
   clipboardWriteImageSchema,
-  contextResolveSchema,
-  contextSearchSchema,
   cwdSchema,
   dialogSaveImageSchema,
   diffCommitOrPushSchema,
@@ -166,9 +134,6 @@ import {
   diffPathSchema,
   diffReadSchema,
   diffReviewSchema,
-  diffStatsSinceSchema,
-  docsAddSchema,
-  docsSearchSchema,
   fileOpenSchema,
   filesListSchema,
   filesReadSchema,
@@ -177,14 +142,10 @@ import {
   gitLogSchema,
   mcpCommandSchema,
   parseIpcInput,
-  permissionDecideSchema,
   previewReadSchema,
-  processKillSchema,
-  processListSchema,
   promptImageAttachmentSchema,
   questionRespondSchema,
   resourceLocationSchema,
-  reviewStartSchema,
   sessionIdSchema,
   sessionPinSchema,
   setModelThinkingSchema,
@@ -196,37 +157,6 @@ import {
   workspacePinSchema,
   workspaceRenameSchema,
 } from "./schemas";
-
-function resolveReviewTarget(
-  cwd: string,
-  target: Exclude<DiffTarget, { type: "branch" }> | { type: "branch"; base?: string | undefined },
-):
-  | { state: "ready"; target: GitDiffTarget; turn?: DiffReviewReady["turn"] }
-  | Extract<DiffReview, { state: "unavailable" }> {
-  if (target.type === "branch") {
-    return {
-      state: "ready",
-      target: target.base ? { type: "branch", base: target.base } : { type: "branch" },
-    };
-  }
-  if (target.type !== "last-turn") return { state: "ready", target };
-  const resolution = getLastTurnComparison(target.sessionId, cwd);
-  if (resolution.state === "unavailable") return resolution;
-  const { comparison } = resolution;
-  return {
-    state: "ready",
-    target: {
-      type: "snapshot",
-      from: comparison.from,
-      ...(comparison.to ? { to: comparison.to } : {}),
-    },
-    turn: {
-      runId: comparison.runId,
-      status: comparison.status,
-      live: comparison.live,
-    },
-  };
-}
 
 const reviewControllers = new Map<number, AbortController>();
 
@@ -369,13 +299,13 @@ export function registerAppIpc({
       workspaceId: parsed.workspaceId,
       cwd: parsed.cwd,
       title: parsed.title,
-      ...(parsed.model !== undefined ? { model: parsed.model } : {}),
     });
   });
 
-  ipcMain.handle(IPC_CHANNELS.agentList, (event, input) => {
+  ipcMain.handle(IPC_CHANNELS.agentList, async (event, input) => {
     assertTrustedSender(event);
     const parsed = parseIpcInput(agentListSchema, input, IPC_CHANNELS.agentList);
+    await discoverAgentSessions();
     return listAgentSessions(
       parsed?.includeSessionId ? { includeSessionId: parsed.includeSessionId } : {},
     ).map((info) => {
@@ -396,6 +326,24 @@ export function registerAppIpc({
     return listArchivedAgentSessions(id);
   });
 
+  ipcMain.handle(IPC_CHANNELS.agentCommands, async (event, input) => {
+    assertTrustedSender(event);
+    const sessionId = parseIpcInput(sessionIdSchema, input, IPC_CHANNELS.agentCommands);
+    const runtime = getAgentRuntime();
+    await runtime.ensure(getSenderWindow(event), sessionId);
+    const resource = sessionResources().find((item) => item.id === sessionId);
+    if (!resource) throw new Error("Session resources are not loaded.");
+    return [
+      ...(resource.session.extensionRunner?.getRegisteredCommands() ?? []).map((command) => ({
+        name: command.name,
+        description: command.description ?? "",
+      })),
+      ...resource.session.promptTemplates.map((template) => ({
+        name: template.name,
+        description: template.description,
+      })),
+    ];
+  });
   ipcMain.handle(IPC_CHANNELS.agentListEvents, (event, sessionId: string) => {
     assertTrustedSender(event);
     return listAgentEvents(parseIpcInput(sessionIdSchema, sessionId, IPC_CHANNELS.agentListEvents));
@@ -427,16 +375,14 @@ export function registerAppIpc({
     await getAgentRuntime().prompt(getSenderWindow(event), {
       sessionId: parsed.sessionId,
       message: parsed.message,
-      context: parsed.context ?? [],
+      paths: parsed.paths ?? [],
       ...(parsed.delivery !== undefined ? { delivery: parsed.delivery } : {}),
       ...(parsed.userMessageId !== undefined ? { userMessageId: parsed.userMessageId } : {}),
       ...(parsed.attachments !== undefined ? { attachments: parsed.attachments } : {}),
       ...(parsed.skills !== undefined ? { skills: parsed.skills } : {}),
-      ...(parsed.mode !== undefined ? { mode: parsed.mode } : {}),
-      ...(parsed.model !== undefined ? { model: parsed.model } : {}),
+
       ...(parsed.thinkingLevel !== undefined ? { thinkingLevel: parsed.thinkingLevel } : {}),
       ...(parsed.thinkingVariant !== undefined ? { thinkingVariant: parsed.thinkingVariant } : {}),
-      ...(parsed.planId !== undefined ? { planId: parsed.planId } : {}),
     });
   });
 
@@ -458,10 +404,14 @@ export function registerAppIpc({
   // Cursor-style "edit & resend": rewind conversation + workspace files to
   // just before a user message. The renderer refetches events afterwards and
   // re-prompts with the edited text, so no event is emitted here.
-  ipcMain.handle(IPC_CHANNELS.agentRollback, async (event, input) => {
+  ipcMain.handle(IPC_CHANNELS.agentNavigate, async (event, input) => {
     assertTrustedSender(event);
-    const parsed = parseIpcInput(agentRollbackSchema, input, IPC_CHANNELS.agentRollback);
-    return await rollbackToUserMessage(getAgentRuntime(), parsed);
+    const parsed = parseIpcInput(agentNavigateSchema, input, IPC_CHANNELS.agentNavigate);
+    return await getAgentRuntime().navigate(
+      getSenderWindow(event),
+      parsed.sessionId,
+      parsed.userMessageId,
+    );
   });
 
   ipcMain.handle(IPC_CHANNELS.agentPin, (event, input) => {
@@ -547,33 +497,10 @@ export function registerAppIpc({
     return listTerminals();
   });
 
-  ipcMain.handle(IPC_CHANNELS.processList, (event, input) => {
-    assertTrustedSender(event);
-    const parsed = parseIpcInput(processListSchema, input, IPC_CHANNELS.processList);
-    return listManagedProcesses({
-      ...(parsed.workspaceId !== undefined ? { workspaceId: parsed.workspaceId } : {}),
-      ...(parsed.sessionId !== undefined ? { sessionId: parsed.sessionId } : {}),
-      ...(parsed.origin !== undefined ? { origin: parsed.origin } : {}),
-    });
-  });
-
-  ipcMain.handle(IPC_CHANNELS.processKill, async (event, input) => {
-    assertTrustedSender(event);
-    const parsed = parseIpcInput(processKillSchema, input, IPC_CHANNELS.processKill);
-    return killManagedProcess(parsed.id);
-  });
-
   // Observer fan-out: when any registry reports a process created/exited/killed,
   // push a coarse no-payload signal to every window. The renderer re-reads the
   // session-scoped snapshot, so a single signal drives both the composer bar and
   // the terminal panel without per-window bookkeeping here.
-  onManagedProcessChange(() => {
-    for (const window of BrowserWindow.getAllWindows()) {
-      if (!window.isDestroyed()) {
-        window.webContents.send(IPC_CHANNELS.processChanged);
-      }
-    }
-  });
 
   onSessionResourcesChanged((cwd) => {
     for (const window of BrowserWindow.getAllWindows()) {
@@ -689,16 +616,6 @@ export function registerAppIpc({
     await openBrowserExternal(parsed.tabId);
   });
 
-  ipcMain.handle(IPC_CHANNELS.browserDesignMode, async (event, input) => {
-    assertTrustedSender(event);
-    const parsed = parseIpcInput(browserDesignModeSchema, input, IPC_CHANNELS.browserDesignMode);
-    return await setBrowserDesignMode(
-      parsed.tabId,
-      parsed.enabled,
-      parsed.theme ? parsed.theme : undefined,
-    );
-  });
-
   ipcMain.handle(IPC_CHANNELS.browserFind, (event, input) => {
     assertTrustedSender(event);
     const parsed = parseIpcInput(browserFindSchema, input, IPC_CHANNELS.browserFind);
@@ -730,17 +647,15 @@ export function registerAppIpc({
   ipcMain.handle(IPC_CHANNELS.diffReview, async (event, input) => {
     assertTrustedSender(event);
     const parsed = parseIpcInput(diffReviewSchema, input, IPC_CHANNELS.diffReview);
-    const resolved = resolveReviewTarget(parsed.cwd, parsed.target);
-    if (resolved.state === "unavailable") return resolved;
 
     const senderId = event.sender.id;
     reviewControllers.get(senderId)?.abort();
     const controller = new AbortController();
     reviewControllers.set(senderId, controller);
     try {
-      const review = await reviewChanges(parsed.cwd, resolved.target, controller.signal);
+      const review = await reviewChanges(parsed.cwd, parsed.target, controller.signal);
       if (controller.signal.aborted) return { state: "superseded" } satisfies DiffReview;
-      return resolved.turn ? { ...review, turn: resolved.turn } : review;
+      return review;
     } catch (cause) {
       if (controller.signal.aborted) return { state: "superseded" } satisfies DiffReview;
       throw cause;
@@ -758,9 +673,8 @@ export function registerAppIpc({
   ipcMain.handle(IPC_CHANNELS.diffFilePatch, async (event, input) => {
     assertTrustedSender(event);
     const parsed = parseIpcInput(diffFilePatchSchema, input, IPC_CHANNELS.diffFilePatch);
-    const resolved = resolveReviewTarget(parsed.cwd, parsed.target);
-    if (resolved.state === "unavailable") throw new Error(resolved.message);
-    return await readFilePatch(parsed.cwd, parsed.path, resolved.target, {
+
+    return await readFilePatch(parsed.cwd, parsed.path, parsed.target, {
       originalPath: parsed.originalPath,
       untracked: parsed.untracked,
       ignoreWhitespace: parsed.ignoreWhitespace,
@@ -794,25 +708,6 @@ export function registerAppIpc({
   ipcMain.handle(IPC_CHANNELS.diffStats, async (event, cwd: string) => {
     assertTrustedSender(event);
     return await getWorkingChangeStats(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.diffStats));
-  });
-
-  ipcMain.handle(IPC_CHANNELS.diffStatsSince, async (event, input) => {
-    assertTrustedSender(event);
-    const parsed = parseIpcInput(diffStatsSinceSchema, input, IPC_CHANNELS.diffStatsSince);
-    return await getChangeStatsSince(parsed.cwd, parsed.base);
-  });
-
-  // Session-scoped change summary for the composer strip: changes made since
-  // THIS session's baseline (its first checkpoint), not the whole repo's
-  // uncommitted state. No baseline yet → empty (the session changed nothing).
-  ipcMain.handle(IPC_CHANNELS.diffSessionStats, async (event, sessionId: string) => {
-    assertTrustedSender(event);
-    const id = parseIpcInput(sessionIdSchema, sessionId, IPC_CHANNELS.diffSessionStats);
-    const base = getSessionBaseCheckpoint(id);
-    if (!base) {
-      return { files: [], added: 0, removed: 0, fileCount: 0, truncated: false };
-    }
-    return await getChangeStatsSince(base.cwd, base.commitHash);
   });
 
   ipcMain.handle(IPC_CHANNELS.diffCommitOrPush, async (event, input) => {
@@ -903,55 +798,6 @@ export function registerAppIpc({
     unwatchRepo(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.gitUnwatch));
   });
 
-  ipcMain.handle(IPC_CHANNELS.permissionDecide, (event, input) => {
-    assertTrustedSender(event);
-    const parsed = parseIpcInput(permissionDecideSchema, input, IPC_CHANNELS.permissionDecide);
-    if (parsed.requestId) {
-      const resolved = resolvePermissionRequest(parsed.requestId, parsed.decision);
-      if (resolved) {
-        return resolved;
-      }
-    }
-    return recordPermissionDecision(parsed.action, parsed.target, parsed.decision);
-  });
-
-  ipcMain.handle(IPC_CHANNELS.permissionList, (event) => {
-    assertTrustedSender(event);
-    return listPermissionDecisions();
-  });
-
-  ipcMain.handle(IPC_CHANNELS.permissionGetMode, (event, input) => {
-    assertTrustedSender(event);
-    const parsed = parseIpcInput(
-      approvalModeGetSchema,
-      input ?? {},
-      IPC_CHANNELS.permissionGetMode,
-    );
-    return getApprovalModeState(parsed.cwd);
-  });
-
-  ipcMain.handle(IPC_CHANNELS.permissionSetMode, (event, input) => {
-    assertTrustedSender(event);
-    const parsed = parseIpcInput(approvalModeSchema, input, IPC_CHANNELS.permissionSetMode);
-    if (parsed.cwd) {
-      setProjectApprovalMode(parsed.cwd, parsed.mode);
-    } else {
-      setGlobalApprovalMode(parsed.mode);
-    }
-    return getApprovalModeState(parsed.cwd);
-  });
-
-  ipcMain.handle(IPC_CHANNELS.permissionClearProjectMode, (event, input) => {
-    assertTrustedSender(event);
-    const parsed = parseIpcInput(
-      approvalModeClearProjectSchema,
-      input,
-      IPC_CHANNELS.permissionClearProjectMode,
-    );
-    clearProjectApprovalMode(parsed.cwd);
-    return getApprovalModeState(parsed.cwd);
-  });
-
   ipcMain.handle(IPC_CHANNELS.questionsRespond, (event, input) => {
     assertTrustedSender(event);
     const parsed = parseIpcInput(questionRespondSchema, input, IPC_CHANNELS.questionsRespond);
@@ -966,113 +812,6 @@ export function registerAppIpc({
         parsed.skipped,
       ) ?? null
     );
-  });
-
-  ipcMain.handle(IPC_CHANNELS.contextSearch, async (event, input) => {
-    assertTrustedSender(event);
-    const parsed = parseIpcInput(contextSearchSchema, input, IPC_CHANNELS.contextSearch);
-    return await searchContext({
-      workspaceId: parsed.workspaceId,
-      cwd: parsed.cwd,
-      query: parsed.query,
-      ...(parsed.kind !== undefined ? { kind: parsed.kind } : {}),
-    });
-  });
-
-  ipcMain.handle(IPC_CHANNELS.contextResolve, async (event, input) => {
-    assertTrustedSender(event);
-    const parsed = parseIpcInput(contextResolveSchema, input, IPC_CHANNELS.contextResolve);
-    return await resolveContext(parsed.cwd, parsed.items);
-  });
-
-  ipcMain.handle(IPC_CHANNELS.docsList, (event, workspaceId: string) => {
-    assertTrustedSender(event);
-    return listDocSources(parseIpcInput(sessionIdSchema, workspaceId, IPC_CHANNELS.docsList));
-  });
-
-  ipcMain.handle(IPC_CHANNELS.docsAdd, (event, input) => {
-    assertTrustedSender(event);
-    const parsed = parseIpcInput(docsAddSchema, input, IPC_CHANNELS.docsAdd);
-    return addDocSource({
-      workspaceId: parsed.workspaceId,
-      title: parsed.title,
-      ...(parsed.path !== undefined ? { path: parsed.path } : {}),
-      ...(parsed.url !== undefined ? { url: parsed.url } : {}),
-    });
-  });
-
-  ipcMain.handle(IPC_CHANNELS.docsSearch, (event, input) => {
-    assertTrustedSender(event);
-    const parsed = parseIpcInput(docsSearchSchema, input, IPC_CHANNELS.docsSearch);
-    return searchDocs(parsed.workspaceId, parsed.query);
-  });
-
-  ipcMain.handle(IPC_CHANNELS.reviewStart, async (event, input) => {
-    assertTrustedSender(event);
-    const parsed = parseIpcInput(reviewStartSchema, input, IPC_CHANNELS.reviewStart);
-    if (parsed.sessionId) {
-      const startedEvent = {
-        type: "review.started",
-        sessionId: parsed.sessionId,
-        reviewId: "pending",
-      } as const;
-      recordAgentEvent(startedEvent);
-      getSenderWindow(event).webContents.send(IPC_CHANNELS.agentEvent, startedEvent);
-    }
-    try {
-      const review = await startAgentReview({
-        cwd: parsed.cwd,
-        ...(parsed.sessionId !== undefined ? { sessionId: parsed.sessionId } : {}),
-        ...(parsed.workspaceId !== undefined ? { workspaceId: parsed.workspaceId } : {}),
-        ...(parsed.depth !== undefined ? { depth: parsed.depth } : {}),
-      });
-      if (parsed.sessionId) {
-        const completedEvent = {
-          type: "review.completed",
-          sessionId: parsed.sessionId,
-          review,
-        } as const;
-        recordAgentEvent(completedEvent);
-        getSenderWindow(event).webContents.send(IPC_CHANNELS.agentEvent, completedEvent);
-      }
-      return review;
-    } catch (error) {
-      if (parsed.sessionId) {
-        const failedEvent = {
-          type: "review.failed",
-          sessionId: parsed.sessionId,
-          reviewId: "pending",
-          message: error instanceof Error ? error.message : String(error),
-        } as const;
-        recordAgentEvent(failedEvent);
-        getSenderWindow(event).webContents.send(IPC_CHANNELS.agentEvent, failedEvent);
-      }
-      throw error;
-    }
-  });
-
-  ipcMain.handle(IPC_CHANNELS.reviewList, (event, cwd: string) => {
-    assertTrustedSender(event);
-    return listAgentReviews(parseIpcInput(cwdSchema, cwd, IPC_CHANNELS.reviewList));
-  });
-
-  ipcMain.handle(IPC_CHANNELS.checkpointList, (event, sessionId: string) => {
-    assertTrustedSender(event);
-    return listCheckpoints(parseIpcInput(sessionIdSchema, sessionId, IPC_CHANNELS.checkpointList));
-  });
-
-  ipcMain.handle(IPC_CHANNELS.checkpointRestore, async (event, input) => {
-    assertTrustedSender(event);
-    const parsed = parseIpcInput(checkpointRestoreSchema, input, IPC_CHANNELS.checkpointRestore);
-    const checkpoint = await restoreCheckpoint(parsed.checkpointId);
-    const restoredEvent = {
-      type: "checkpoint.restored",
-      sessionId: checkpoint.sessionId,
-      checkpointId: checkpoint.id,
-    } as const;
-    recordAgentEvent(restoredEvent);
-    getSenderWindow(event).webContents.send(IPC_CHANNELS.agentEvent, restoredEvent);
-    return checkpoint;
   });
 
   ipcMain.handle(IPC_CHANNELS.mcpLocations, (event, sessionId: string) => {
@@ -1193,7 +932,6 @@ export function registerAppIpc({
 
   ipcMain.handle(IPC_CHANNELS.windowClose, (event) => {
     assertTrustedSender(event);
-    denyPendingPermissionRequests("Window closed");
     denyPendingQuestionRequests();
     getSenderWindow(event).close();
   });

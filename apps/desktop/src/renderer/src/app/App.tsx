@@ -3,10 +3,7 @@ import { AnimatePresence, domMax, LazyMotion, m, useReducedMotion } from "motion
 import { Activity, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SecurityState } from "../../../preload/types";
 import type {
-  AgentMode,
-  BrowserEvent,
   ContextItem,
-  PlanRef,
   PromptDelivery,
   PromptImageAttachment,
   SkillSelection,
@@ -32,7 +29,6 @@ import type {
 import { addContextItemToDraft } from "../features/composer/chatComposerDraft";
 import { createEmptyComposerDraft } from "../features/composer/composerDraft";
 import { contextItemKey } from "../features/composer/composerTokens";
-import { normalizePlan } from "../features/plan/planState";
 import { useGitBranch } from "../lib/useGitBranch";
 import { RuntimeNotice } from "./RuntimeNotice";
 import { useAgentEvents } from "./useAgentEvents";
@@ -67,7 +63,7 @@ export function App() {
   >({});
   const [heroContextItems, setHeroContextItems] = useState<ContextItem[]>([]);
   const [heroDraft, setHeroDraft] = useState(createEmptyComposerDraft);
-  const [heroMode, setHeroMode] = useState<AgentMode>("build");
+
   const [settingsOpen, setSettingsOpen] = useState(false);
   const {
     workspaces,
@@ -147,11 +143,7 @@ export function App() {
   } = usePanelLayout(Boolean(activeWorkspace));
   const [inspectorTab, setInspectorTab] = useState("changes");
   const [filesRevealPath, setFilesRevealPath] = useState<string | undefined>();
-  const [terminalRevealId, setTerminalRevealId] = useState<string | undefined>();
   const [reviewCwd, setReviewCwd] = useState<string | undefined>();
-  // Plans are scoped per session (the authoritative key), so switching sessions
-  // shows that session's own plan — never the last one any session emitted.
-  const [activePlanBySession, setActivePlanBySession] = useState<Record<string, PlanRef>>({});
 
   const reviewScopeRef = useRef<{
     sessionId: string | undefined;
@@ -165,43 +157,11 @@ export function App() {
     applyModelSettings,
   });
 
-  useEffect(() => {
-    if (!window.modus) {
-      return;
-    }
-    return window.modus.browser.onEvent((event: BrowserEvent) => {
-      if (event.type === "browser.agent-activity" && event.workspaceId === activeWorkspace?.id) {
-        setInspectorTab("browser");
-        setInspectorOpen(true);
-      }
-    });
-  }, [activeWorkspace?.id, setInspectorOpen]);
-
   function openReview(cwd?: string): void {
     setReviewCwd(cwd);
     setInspectorTab("changes");
     setInspectorOpen(true);
   }
-
-  const rememberActivePlan = useCallback(
-    (plan: PlanRef) => {
-      const normalized = normalizePlan(plan);
-      const key = normalized.sessionId ?? activeSessionId ?? normalized.id;
-      setActivePlanBySession((current) =>
-        current[key] === normalized ? current : { ...current, [key]: normalized },
-      );
-    },
-    [activeSessionId],
-  );
-
-  const openPlan = useCallback(
-    (plan: PlanRef) => {
-      rememberActivePlan(plan);
-      setInspectorTab("plan");
-      setInspectorOpen(true);
-    },
-    [rememberActivePlan, setInspectorOpen],
-  );
 
   async function submitHeroPrompt(
     message: string,
@@ -209,7 +169,6 @@ export function App() {
     _delivery?: PromptDelivery,
     attachments?: PromptImageAttachment[],
     skills?: SkillSelection[],
-    mode?: AgentMode,
   ): Promise<void> {
     if (!message.trim() && !attachments?.length) {
       return;
@@ -242,14 +201,13 @@ export function App() {
     setHeroContextItems([]);
     void window.modus.agent
       .prompt({
-        context,
+        paths: context.map((item) => item.path),
         delivery: "normal",
         sessionId: session.id,
         message,
         userMessageId,
         ...(attachments && attachments.length > 0 ? { attachments } : {}),
         ...(skills && skills.length > 0 ? { skills } : {}),
-        ...(mode ? { mode } : {}),
       })
       .then(() => refreshSessions())
       .catch((error: unknown) => {
@@ -314,7 +272,6 @@ export function App() {
         const draft = current[sessionId] ?? {
           ...createEmptyComposerDraft(),
           contextItems: [],
-          mode: "build" as const,
         };
         const next = typeof update === "function" ? update(draft) : update;
         return { ...current, [sessionId]: next };
@@ -345,15 +302,6 @@ export function App() {
       setInspectorOpen(true);
       setInspectorTab("files");
       setFilesRevealPath(path);
-    },
-    [setInspectorOpen],
-  );
-
-  const openTerminal = useCallback(
-    (terminalId: string) => {
-      setInspectorOpen(true);
-      setInspectorTab("terminal");
-      setTerminalRevealId(terminalId);
     },
     [setInspectorOpen],
   );
@@ -513,7 +461,6 @@ export function App() {
                                       reportModelFailure,
                                     )
                                   }
-                                  onOpenReview={openReview}
                                   onComposerDraftChange={(update) =>
                                     updateSessionComposerDraft(activeSession.id, update)
                                   }
@@ -527,10 +474,7 @@ export function App() {
                                       return next;
                                     });
                                   }}
-                                  onOpenPlan={openPlan}
                                   onOpenFile={openWorkspaceFile}
-                                  onOpenTerminal={openTerminal}
-                                  onPlanUpdated={rememberActivePlan}
                                   onSessionsChanged={() => void refreshSessions()}
                                   session={activeSession}
                                   workspace={
@@ -569,11 +513,9 @@ export function App() {
                                       workspaces={workspaces}
                                     />
                                   }
-                                  mode={heroMode}
                                   model={model}
                                   models={models}
                                   onContextChange={setHeroContextItems}
-                                  onModeChange={setHeroMode}
                                   onModelChange={(next) =>
                                     void changeDefaultModel(next).catch(reportModelFailure)
                                   }
@@ -582,21 +524,13 @@ export function App() {
                                       reportModelFailure,
                                     )
                                   }
-                                  onSubmit={(
-                                    message,
-                                    context,
-                                    delivery,
-                                    attachments,
-                                    skills,
-                                    mode,
-                                  ) =>
+                                  onSubmit={(message, context, delivery, attachments, skills) =>
                                     submitHeroPrompt(
                                       message,
                                       context,
                                       delivery,
                                       attachments,
                                       skills,
-                                      mode,
                                     )
                                   }
                                   workspaceId={activeWorkspace?.id}
@@ -606,7 +540,6 @@ export function App() {
                           )}
                         </AnimatePresence>
                       </m.main>
-
                       {responsiveInspectorOpen ? (
                         <Suspense
                           fallback={
@@ -621,7 +554,6 @@ export function App() {
                           <Inspector
                             activeWorkspace={activeWorkspace}
                             cwd={reviewCwd ?? activeCwd}
-                            sessionId={activeSession?.id}
                             maxWidth={inspectorMaxWidth}
                             onOpenChange={setInspectorOpen}
                             onOpenSettings={() => setSettingsOpen(true)}
@@ -629,13 +561,8 @@ export function App() {
                             onWidthChange={setInspectorWidth}
                             onAddToChat={addContextToChat}
                             onRevealConsumed={() => setFilesRevealPath(undefined)}
-                            onRevealTerminalConsumed={() => setTerminalRevealId(undefined)}
                             revealPath={filesRevealPath}
-                            revealTerminalId={terminalRevealId}
                             open={inspectorOpen}
-                            {...(activeSession && activePlanBySession[activeSession.id]
-                              ? { plan: activePlanBySession[activeSession.id] }
-                              : {})}
                             securityState={securityState}
                             tab={inspectorTab}
                             width={inspectorWidth}

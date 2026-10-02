@@ -46,7 +46,7 @@ export function useAgentEvents(
         setNotice(event);
         return;
       }
-      if (event.type === "question.requested" && event.request.presentation === "dialog") {
+      if (event.type === "question.requested") {
         setExtensionQuestions((current) => [...current, event.request]);
       } else if (event.type === "question.resolved") {
         setExtensionQuestions((current) =>
@@ -89,7 +89,6 @@ export function useAgentEvents(
         event.type === "run.completed" ||
         event.type === "run.failed" ||
         event.type === "run.cancelled" ||
-        event.type === "run.blocked" ||
         event.type === "session.updated"
       ) {
         if (event.type === "session.updated") updateSessionTitle(event.sessionId, event.title);

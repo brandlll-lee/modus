@@ -14,7 +14,7 @@ export type AgentSessionInfo = {
   title: string;
   cwd: string;
   status: "starting" | AgentRunStatus | "idle" | "exited" | "error";
-  runtime?: "pi-sdk" | "pi-rpc";
+  runtime?: "pi-sdk";
   model?: string;
   thinkingLevel?: ThinkingLevel;
   piSessionId?: string;
@@ -25,7 +25,7 @@ export type AgentSessionInfo = {
   updatedAt: string;
 };
 
-export type AgentRunStatus = "running" | "completed" | "failed" | "blocked" | "cancelled";
+export type AgentRunStatus = "running" | "completed" | "failed" | "cancelled";
 
 export type PromptDelivery = "normal" | "steer" | "follow-up";
 
@@ -70,92 +70,21 @@ export type AgentRunInfo = {
   error?: string;
 };
 
-/**
- * A point-in-time snapshot of the session's working tree, taken before each
- * run so any agent change can be rolled back from the timeline.
- */
-export type CheckpointInfo = {
-  id: string;
-  sessionId: string;
-  /** Run this checkpoint was taken for (absent for restore backups). */
-  runId?: string;
-  /** User message the checkpoint precedes — anchors the timeline UI. */
-  userMessageId?: string;
-  cwd: string;
-  commitHash: string;
-  /** Run boundary or restore safety snapshot. */
-  kind: "auto" | "turn-end" | "restore-backup";
-  createdAt: string;
-};
-
-/**
- * Result of `agent:rollback` — rewinding a session to just before one of its
- * user messages (Cursor-style "edit & resend"). Conversation history from that
- * message onward is removed and, when a pre-run snapshot exists, the working
- * tree is restored to the state captured before that message ran.
- */
-export type AgentRollbackResult = {
-  sessionId: string;
-  /** The user message the session was rolled back to. */
-  userMessageId: string;
-  /** True when a pre-run snapshot existed and workspace files were restored. */
-  filesRestored: boolean;
-  /** The checkpoint used to restore files, when one existed. */
-  checkpointId?: string;
-  /** Number of runs removed from the session history. */
-  removedRuns: number;
-};
-
-/* ── Agent to-dos (live task list, Cursor-style) ───────────────────────── */
-
-export type TodoStatus = "pending" | "in_progress" | "completed" | "cancelled";
-
-export type TodoItem = {
-  /** Stable id within the session (assigned by the todo tool when omitted). */
-  id: string;
-  content: string;
-  status: TodoStatus;
-};
-
-export type PermissionRequest = {
-  id: string;
-  sessionId?: string;
-  runId?: string;
-  action: PermissionAction;
-  target: string;
-  reason: string;
-  severity?: "medium" | "high" | "danger";
-};
-
-/* ── Interactive questions (ask_user, Cursor-style) ────────────────────── */
-
-export type QuestionOption = {
-  /** Choice text shown on the option row and returned when selected. */
-  label: string;
-  /** Optional one-line clarifier under the label. */
-  description?: string;
-  /** Marks the planner's suggested default (rendered "— recommended"). */
-  recommended?: boolean;
-};
+export type QuestionOption = { label: string };
 
 export type QuestionPrompt = {
-  /** Stable id within the request (assigned by the ask_user tool). */
   id: string;
   /** The question itself, e.g. "Which rendering view?". */
   header: string;
   /** Optional context shown under the header. */
   detail?: string;
   prefill?: string;
-  /** true → multiple options may be chosen; false → single choice. */
-  multiSelect: boolean;
   options: QuestionOption[];
 };
 
 export type QuestionRequest = {
   id: string;
   sessionId?: string;
-  runId?: string;
-  presentation?: "dialog";
   questions: QuestionPrompt[];
 };
 
@@ -167,7 +96,6 @@ export type QuestionAnswer = {
   custom?: string;
 };
 
-/** Resolution of an ask_user round-trip — answers, or `skipped` when dismissed. */
 export type QuestionResponse = {
   requestId: string;
   answers: QuestionAnswer[];
@@ -203,11 +131,8 @@ export type AgentEvent =
       sessionId: string;
       runId: string;
       summary?: string;
-      /** What this turn changed on disk (vs the pre-run snapshot). */
-      changes?: WorkingChangeStats;
     }
   | { type: "run.failed"; sessionId: string; runId: string; message: string }
-  | { type: "run.blocked"; sessionId: string; runId: string; requestId: string; reason: string }
   | { type: "run.cancelled"; sessionId: string; runId: string }
   | {
       type: "retry.ended";
@@ -233,12 +158,6 @@ export type AgentEvent =
       contextItems?: ContextItem[];
       /** User only: skills explicitly selected for this prompt. */
       skills?: SkillSelection[];
-      /**
-       * User only: present when this message is a "Build this plan" action. The
-       * timeline renders it as a compact Build card (title + N To-dos) instead
-       * of the raw build instruction text.
-       */
-      planBuild?: { planId: string; title: string; todoCount: number };
     }
   | { type: "message.delta"; sessionId: string; messageId: string; delta: string }
   | { type: "message.completed"; sessionId: string; messageId: string }
@@ -285,13 +204,6 @@ export type AgentEvent =
       images?: ImageContent[];
       isError: boolean;
     }
-  | { type: "permission.requested"; sessionId: string; request: PermissionRequest }
-  | {
-      type: "permission.resolved";
-      sessionId: string;
-      requestId: string;
-      decision: PermissionDecision["decision"];
-    }
   | { type: "question.requested"; sessionId: string; request: QuestionRequest }
   | {
       type: "question.resolved";
@@ -305,7 +217,7 @@ export type AgentEvent =
   | {
       type: "compaction.ended";
       sessionId: string;
-      reason: CompactionReason;
+      reason: CompactionReason | undefined;
       aborted: boolean;
       /** PI may continue the same prompt after automatic compaction. */
       willRetry: boolean;
@@ -315,13 +227,6 @@ export type AgentEvent =
       summary?: string;
     }
   | { type: "context.updated"; sessionId: string; usage: ContextUsageInfo }
-  | { type: "review.started"; sessionId: string; reviewId: string }
-  | { type: "review.completed"; sessionId: string; review: AgentReviewResult }
-  | { type: "review.failed"; sessionId: string; reviewId: string; message: string }
-  | { type: "plan.updated"; sessionId: string; plan: PlanRef; toolCallId?: string }
-  | { type: "checkpoint.created"; sessionId: string; checkpoint: CheckpointInfo }
-  | { type: "checkpoint.restored"; sessionId: string; checkpointId: string }
-  | { type: "todos.updated"; sessionId: string; todos: TodoItem[] }
   | { type: "session.status"; sessionId: string; status: SessionRunStatus }
   | { type: "session.updated"; sessionId: string; title: string }
   | {
@@ -334,9 +239,6 @@ export type AgentEvent =
 
 export type TerminalStatus = "running" | "exited";
 
-/** Who opened the terminal: an interactive user shell, or an agent-run command. */
-export type TerminalOrigin = "user" | "agent";
-
 export type TerminalInfo = {
   id: string;
   workspaceId: string;
@@ -346,14 +248,6 @@ export type TerminalInfo = {
   rows: number;
   /** "running" while the PTY is live; "exited" once the process ends. */
   status: TerminalStatus;
-  /** Distinguishes user-opened shells from agent-run command terminals. */
-  origin: TerminalOrigin;
-  /** The command line an agent ran here (absent for interactive shells). */
-  command?: string;
-  /** Short label shown in the panel tab / tool cards. */
-  title?: string;
-  /** Modus agent session that spawned it, when origin === "agent". */
-  sessionId?: string;
   /** OS process id, once spawned. */
   pid?: number;
   /** Exit code, once status === "exited". */
@@ -373,36 +267,6 @@ export type TerminalEvent =
       exitCode: number;
       signal?: number;
     };
-
-/**
- * Unified "managed process" — the single source of truth that backs both the
- * composer running-process bar and the right-panel terminal grouping. A managed
- * process is either a PTY-backed terminal or a detached GUI app, opened by a
- * user or an agent. Both UIs render the same shape and filter it by scope, so a
- * new process kind only needs a mapper to appear everywhere.
- */
-export type ManagedProcessKind = "terminal" | "app";
-export type ManagedProcessOrigin = TerminalOrigin;
-export type ManagedProcessStatus = TerminalStatus;
-
-export type ManagedProcessInfo = {
-  id: string;
-  kind: ManagedProcessKind;
-  origin: ManagedProcessOrigin;
-  /** Workspace that owns the process (always set for user terminals). */
-  workspaceId?: string;
-  /** Agent session that started it; the isolation key for agent processes. */
-  sessionId?: string;
-  /** Human-readable label: the agent command, app name, or shell name. */
-  label: string;
-  status: ManagedProcessStatus;
-  /** ISO timestamp when the process started; drives the elapsed timer. */
-  startedAt: string;
-  pid?: number;
-  /** Window title for GUI apps. */
-  windowTitle?: string;
-  exitCode?: number;
-};
 
 export type FileChange = {
   path: string;
@@ -426,8 +290,7 @@ export type DiffTarget =
   | { type: "unstaged" }
   | { type: "staged" }
   | { type: "commit"; commit: string }
-  | { type: "branch"; base?: string }
-  | { type: "last-turn"; sessionId: string };
+  | { type: "branch"; base?: string | undefined };
 
 /** Per-file line counters for change summaries (turn cards / composer strip). */
 export type FileChangeStat = {
@@ -469,22 +332,9 @@ export type DiffReviewReady = {
   totals: DiffTotals;
   /** Branch ref chosen by Git when the caller omitted an explicit base. */
   resolvedBase?: string;
-  /** Present for Last Turn so the UI can distinguish live and frozen comparisons. */
-  turn?: {
-    runId: string;
-    status: AgentRunStatus;
-    live: boolean;
-  };
 };
 
-export type DiffReview =
-  | DiffReviewReady
-  | {
-      state: "unavailable";
-      reason: "no-turn" | "missing-start" | "missing-end" | "worktree-mismatch";
-      message: string;
-    }
-  | { state: "superseded" };
+export type DiffReview = DiffReviewReady | { state: "superseded" };
 
 export type FileDiff = {
   path: string;
@@ -500,46 +350,6 @@ export type DiffFilePatch = {
   bytes: number;
   maxLineLength: number;
 };
-
-export type PermissionAction =
-  | "shell.execute"
-  | "file.write"
-  | "file.delete"
-  | "git.write"
-  | "tool.execute"
-  | "external.open"
-  | "browser.control";
-
-export type PermissionDecision = {
-  id: string;
-  action: PermissionAction;
-  target: string;
-  decision: "allow-once" | "allow-workspace" | "deny";
-  createdAt: string;
-};
-
-/**
- * Approval mode chosen in Settings (global default, optional per-project
- * override). Collapses Codex's approval×sandbox preset into a single "when to
- * prompt" axis (Modus has no OS sandbox): the decision logic + per-mode
- * metadata live in `shared/approval.ts`.
- */
-export type ApprovalMode = "request-approval" | "auto" | "full-access";
-
-/** Settings / IPC snapshot of resolved approval mode layers. */
-export type ApprovalModeState = {
-  effective: ApprovalMode;
-  global: ApprovalMode;
-  /** `null` = project follows global (no override). Omitted cwd → always null. */
-  project: ApprovalMode | null;
-};
-
-/**
- * Composer execution mode. `build` is the normal coding agent. `plan` runs the
- * read-only planning harness (research + write a single plan.md via plan_write;
- * no edit/write/bash). Carried per-prompt so the user can toggle it freely.
- */
-export type AgentMode = "build" | "plan";
 
 /** Branch / remote / sync state for the git review panel header + commit dialog. */
 export type GitStatusSummary = {
@@ -644,149 +454,9 @@ export type GitCommit = {
   refs: string[];
 };
 
-export type ContextKind =
-  | "file"
-  | "folder"
-  | "doc"
-  | "terminal"
-  | "browser"
-  | "git-diff"
-  | "past-chat"
-  | "project-summary"
-  | "recent-changes"
-  | "search"
-  | "design-element"
-  | "design-annotation"
-  /**
-   * Capture-time text selection from a preview surface (PDF TextLayer, etc.).
-   * Self-contained like design-element — `resolveContext` uses `text`, never
-   * re-reads the binary file.
-   */
-  | "excerpt";
+export type ContextKind = "file" | "folder";
 
-export type ContextItem =
-  | { type: "file"; path: string; range?: { fromLine?: number; toLine?: number } }
-  | { type: "folder"; path: string }
-  | { type: "doc"; docId: string; title: string; query?: string }
-  | { type: "terminal"; terminalId: string; range?: { fromLine?: number; toLine?: number } }
-  | { type: "browser"; workspaceId?: string; viewId?: string }
-  | { type: "git-diff"; mode: "working-state" | "branch"; base?: string }
-  | { type: "past-chat"; sessionId: string; title: string }
-  | { type: "project-summary" }
-  | { type: "recent-changes"; limit?: number }
-  | { type: "search"; query: string }
-  /**
-   * A page element captured from the in-app browser's Design Mode (point-and-
-   * select). Self-contained: the payload is a point-in-time snapshot of the
-   * element (the live page may have changed by the time the agent reads it), so
-   * unlike file/doc refs it is NOT re-resolved from an id — `resolveContext`
-   * just formats `element` into model-readable text.
-   */
-  | { type: "design-element"; element: DesignElementPayload }
-  | { type: "design-annotation"; annotation: DesignAnnotationPayload }
-  /**
-   * Selected text captured from an in-app preview (PDF TextLayer today;
-   * other engines later). `text` is the authority; `locator` is display-only
-   * (e.g. `p.3` from `data-page`).
-   */
-  | { type: "excerpt"; path: string; text: string; locator?: string };
-
-/** Design Mode theme accent — always the first mark / first multi-select slot. */
-export const DESIGN_ACCENT_COLOR = "#1D9BFF";
-
-/**
- * A point-in-time capture of a DOM element selected via the browser's Design
- * Mode. Built in the page (identity/source via React fiber `_debugSource`,
- * with a DOM-path fallback) + main process (element-clipped screenshot), then
- * carried verbatim into the chat composer as a removable chip + thumbnail.
- */
-export type DesignElementPart = {
-  /** Chip label, e.g. `MDXContent · span "Kimi K2.7 Co…"`. */
-  label: string;
-  /** Lowercased tag name, e.g. "span". */
-  tagName: string;
-  /** React component display name (fiber `_debugOwner`), when resolvable. */
-  componentName?: string;
-  /** Source location from React fiber `_debugSource` (dev builds only). */
-  source?: { file: string; line: number; column?: number };
-  /** Stable CSS selector — the universal fallback when there's no source map. */
-  domPath: string;
-  /** Truncated visible text. */
-  text?: string;
-  /** A few salient computed styles (color/font/spacing/layout…) for the model. */
-  styleSummary?: Record<string, string>;
-  /**
-   * Salient HTML attributes (id, class, href, role, aria-*, type, name, alt,
-   * title, placeholder, value, data-*…) — Cursor parity for element identity.
-   */
-  attributes?: Record<string, string>;
-  /**
-   * Ancestor chain (nearest first, ~4 levels), giving the element's position in
-   * the page structure: tag + id + classes + role + short text per level.
-   */
-  ancestors?: Array<{
-    tag: string;
-    id?: string;
-    classes?: string;
-    role?: string;
-    text?: string;
-  }>;
-  /** Serializable React props from the element's host fiber (primitives only). */
-  props?: Record<string, string>;
-  /** Element bounding box in CSS pixels (root viewport). */
-  rect: { x: number; y: number; width: number; height: number };
-  /**
-   * Mark color as `#RRGGBB` — authority for highlight, ink, and composer chips.
-   * First mark in a session is always {@link DESIGN_ACCENT_COLOR}; later marks
-   * are random bright hues assigned at capture time.
-   */
-  color?: string;
-};
-
-export type DesignElementContentPart =
-  | { type: "text"; text: string }
-  | { type: "element"; index: number };
-
-export type DesignElementPayload = DesignElementPart & {
-  /** Stable id for de-dup / removal in the composer. */
-  id: string;
-  /** Browser tab the element was captured from. */
-  tabId: string;
-  /** Page URL at capture time. */
-  url: string;
-  /** Multi-select members, when the user Shift-clicked multiple elements. */
-  elements?: DesignElementPart[];
-  /** Inline order from the Design Mode prompt: text and selected element chips. */
-  contentParts?: DesignElementContentPart[];
-  /** Element-clipped screenshot as a data URL (PNG). Shown as a thumbnail. */
-  screenshotDataUrl?: string;
-};
-
-export type DesignAnnotationPayload = {
-  /** Stable id for de-dup / removal in the composer. */
-  id: string;
-  /** Browser tab the annotation was captured from. */
-  tabId: string;
-  /** Page URL at capture time. */
-  url: string;
-  /** Human-readable chip label. */
-  label: string;
-  /** Visual annotation mode used in Design Mode. */
-  kind: "freehand" | "box";
-  /** Annotated region in CSS pixels (root viewport). */
-  rect: { x: number; y: number; width: number; height: number };
-  /** User note typed in the Design Mode popover, when present. */
-  seedText?: string;
-  /** Minimal geometry for the drawn mark, in viewport CSS pixels. */
-  points?: Array<{ x: number; y: number }>;
-  /**
-   * Mark color as `#RRGGBB` — same authority as {@link DesignElementPart.color}.
-   * First annotation is accent blue; each new gesture picks a random bright hue.
-   */
-  color?: string;
-  /** Annotated region screenshot (PNG data URL): page + drawn mark + pad. */
-  screenshotDataUrl?: string;
-};
+export type ContextItem = { type: "file" | "folder"; path: string };
 
 export type ContextSuggestion = {
   id: string;
@@ -807,14 +477,6 @@ export type MessageContextChip = {
   label: string;
   /** Secondary hover detail, e.g. `src/app.tsx:42` for a design element. */
   detail?: string;
-  /** Design Mode mark color (`#RRGGBB`), when the chip came from a colored mark. */
-  color?: string;
-};
-
-export type ResolvedContext = {
-  item: ContextItem;
-  title: string;
-  content: string;
 };
 
 /* ── Browser (Cursor-compatible in-app browser) ───────────────────────── */
@@ -828,7 +490,6 @@ export type BrowserTabInfo = {
   canGoBack: boolean;
   canGoForward: boolean;
   devtoolsOpen: boolean;
-  locked: boolean;
   createdAt: string;
   updatedAt: string;
   favicon?: string;
@@ -849,12 +510,7 @@ export type BrowserEvent =
   | { type: "browser.updated"; tab: BrowserTabInfo }
   | { type: "browser.closed"; workspaceId: string; tabId: string }
   | { type: "browser.selected"; workspaceId: string; tabId: string }
-  | {
-      /** An agent-initiated navigation — the renderer auto-reveals the browser panel. */
-      type: "browser.agent-activity";
-      workspaceId: string;
-      tabId: string;
-    }
+  | never
   | {
       type: "browser.find-result";
       workspaceId: string;
@@ -868,32 +524,11 @@ export type BrowserEvent =
       type: "browser.shortcut";
       workspaceId: string;
       tabId: string;
-      shortcut: "focus-address" | "toggle-design";
+      shortcut: "focus-address";
     }
-  | {
-      /** Design Mode toggled (from the toolbar, a shortcut, or page-side). */
-      type: "browser.design-mode-changed";
-      workspaceId: string;
-      tabId: string;
-      enabled: boolean;
-    }
-  | {
-      /** User selected an element in Design Mode. */
-      type: "browser.design-select";
-      workspaceId: string;
-      tabId: string;
-      intent?: "add" | "submit";
-      element: DesignElementPayload;
-      seedText?: string;
-    }
-  | {
-      /** User marked a visual region in Design Mode. */
-      type: "browser.design-annotate";
-      workspaceId: string;
-      tabId: string;
-      intent?: "add" | "submit";
-      annotation: DesignAnnotationPayload;
-    };
+  | never
+  | never
+  | never;
 
 export type BrowserBounds = {
   x: number;
@@ -925,33 +560,6 @@ export type BrowserNetworkRequest = {
   errorText?: string;
   startedAt: string;
   completedAt?: string;
-};
-
-export type DocSource = {
-  id: string;
-  workspaceId: string;
-  title: string;
-  path?: string;
-  url?: string;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type DocHit = {
-  sourceId: string;
-  chunkId: string;
-  title: string;
-  heading?: string;
-  path?: string;
-  snippet: string;
-  score: number;
-};
-
-export type AddDocInput = {
-  workspaceId: string;
-  title: string;
-  path?: string;
-  url?: string;
 };
 
 export type ModelInfo = {
@@ -994,29 +602,6 @@ export type ModelSettingsState = {
   providers: ModelProviderInfo[];
   models: ModelInfo[];
   defaultModel?: string;
-};
-
-export type AgentReviewDepth = "fast" | "standard" | "deep";
-
-export type AgentReviewIssue = {
-  id: string;
-  severity: "low" | "medium" | "high";
-  title: string;
-  file?: string;
-  line?: number;
-  detail: string;
-};
-
-export type AgentReviewResult = {
-  id: string;
-  sessionId?: string;
-  workspaceId?: string;
-  cwd: string;
-  depth: AgentReviewDepth;
-  status: "completed" | "failed";
-  summary: string;
-  issues: AgentReviewIssue[];
-  createdAt: string;
 };
 
 /* ── Workspace files (file panel) ──────────────────────────────────────── */
@@ -1076,54 +661,6 @@ export type FileWriteResult = {
 export type FilesChangeEvent = {
   cwd: string;
   paths: string[];
-};
-
-/* ── Plan Mode ─────────────────────────────────────────────────────────── */
-
-/**
- * A Plan Mode review artifact. It is scoped to one session, survives an app
- * restart, and is deleted with that session.
- */
-/**
- * A single plan task. Authored by the planner via `plan_write` (structured, not
- * parsed from markdown), so it is the authoritative source for execution's
- * ordered steps. `status` is `pending` until the
- * v2 runtime binds live `todo_write` progress; v1 never fakes completion.
- */
-export type PlanTodo = { id: string; content: string; status: "pending" | "completed" };
-
-/**
- * Build lifecycle of a plan, driven authoritatively by the build turn's run
- * lifecycle (run.started → building, run.completed → built, failure/cancel/
- * disconnect → not_built). The Review card shows only while `not_built`.
- */
-export type PlanBuildStatus = "not_built" | "building" | "built";
-
-/** Markdown segment of a plan body. New writes store a single markdown block. */
-export type PlanBlock = { type: "markdown"; content: string };
-
-export type PlanRef = {
-  /** Stable id of the owning session. */
-  id: string;
-  title: string;
-  /** One-paragraph summary (Review card subtitle). */
-  overview: string;
-  /** Absolute path to the active `plan.md`. */
-  path: string;
-  /** Content fingerprint. */
-  hash: string;
-  workspaceId: string;
-  sessionId: string;
-  /** Markdown presentation blocks. */
-  blocks: PlanBlock[];
-  /** Markdown plan body — executor source of truth (`plan.md`). */
-  content: string;
-  /** Structured task list used by the approval/build flow. */
-  todos: PlanTodo[];
-  /** Build lifecycle state (see PlanBuildStatus). */
-  buildStatus: PlanBuildStatus;
-  createdAt: string;
-  updatedAt: string;
 };
 
 /* ── Skills (Agent Skills, 2026 SKILL.md standard) ─────────────────────── */

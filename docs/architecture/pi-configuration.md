@@ -1,39 +1,33 @@
 # PI Desktop Integration
 
-Modus embeds PI 0.99.1 and uses `PI_CODING_AGENT_DIR`, or `~/.pi/agent` when unset.
-PI's SettingsManager, ModelRuntime and DefaultResourceLoader own settings,
-credentials, models, instruction files, skills, packages and extensions.
-Project resources follow PI's trust decisions. Model preferences selected in
-the desktop are saved through PI's settings API and are shared with the CLI.
-Desktop appearance and layout preferences remain in the application profile.
+Modus embeds PI 1.0.0. PI owns settings, credentials, models, instruction files, skills, packages, extensions, tools, and Agent execution. The GUI displays PI events and adapts extension dialogs.
 
-## Runtime
+## Configuration
 
-Opening a conversation restores its SessionManager and SDK runtime. The initial
-context and cumulative usage snapshot comes from `getSessionStats()`; subsequent
-SDK events refresh it. Switching between chat and settings keeps that runtime.
-Leaving a session releases an idle runtime; active work continues until it settles.
-Session files remain in the desktop profile, preserving existing conversation IDs.
+PI_CODING_AGENT_DIR selects the global directory. Its default is ~/.pi/agent. PI resolves project trust, including extension decisions and temporary trust. Desktop appearance, layout, pins, and archive preferences stay in the application profile.
 
-PI's built-in MCP, codemode and tool-search extensions retain their native
-replacement semantics. An installed extension that replaces MCP owns its
-connections and authentication. The GUI displays its `/mcp` report and exposes
-commands registered by that same extension. It does not infer connection states
-from message text. Extension notifications are transient desktop status messages.
+## Sessions
 
-Desktop tools use deferred exposure and PI's tool-search implementation for
-discovery. PI's selected tools remain authoritative across turns. Plan-mode
-permissions apply to both direct and nested tool execution.
+SessionManager files are the persistent conversation source. Session paths follow PI_CODING_AGENT_SESSION_DIR and native sessionDir settings. A desktop JSON file stores project shortcuts, pins, and archive preferences. It contains no conversation messages. Startup discovers native sessions for registered workspaces.
+
+Opening a conversation restores the native session and reads getSessionStats(). SDK events update context, cost, cache, retry, and running state. Missing or invalid files produce an error. Model fallback warnings allow native startup to continue. Editing a message navigates the native session tree.
+
+Image thumbnails, selected file paths, and display message IDs use native custom entries. These entries hold GUI metadata. PI excludes them from model context. A memory cache holds live GUI events while a runtime is attached.
+
+A one-time importer archives the application database before moving existing PI files to their native directory. It preserves desktop preferences and image metadata. The application then removes the active database. Native session IDs identify conversations.
+
+## Extensions
+
+Builtin MCP, codemode, and tool-search extensions use PI replacement and activation rules. An installed extension owns its tools, connections, and authentication. The GUI displays the MCP command report and invokes commands registered by the active extension.
 
 ## Upgrade Checks
 
-Keep PI dependencies pinned together. For an upgrade, review official release
-notes and exported API declarations, then run typecheck, tests and the desktop
-build. Integration checks cover native settings and trust, extension replacement,
-deferred tools, persisted context/cost/cache statistics and skill discovery.
-Desktop checks cover cold session opening, streaming, model changes, compaction,
-resource refresh, MCP commands and provider dialog keyboard/focus behavior.
+Pin PI dependencies together. Check official release notes and installed API declarations before upgrading. Verify settings, trust, extension replacement, native history, image results, statistics, retries, cancellation, compaction, and model changes.
+
+The trust adapter calls the resolver shipped in the pinned PI package. Check that resolver entry point during upgrades.
 
 Official references:
+
 - https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/sdk.md
-- https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/mcp.md
+- https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/session-format.md
+- https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/extensions.md

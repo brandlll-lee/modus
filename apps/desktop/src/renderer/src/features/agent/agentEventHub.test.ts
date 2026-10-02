@@ -20,10 +20,10 @@ const runStarted: AgentEvent = {
 const runCompleted: AgentEvent = { type: "run.completed", sessionId: "s", runId: "r" };
 const agentStarted: AgentEvent = { type: "agent.started", sessionId: "s" };
 const runFailed: AgentEvent = { type: "run.failed", sessionId: "s", runId: "r", message: "boom" };
-const permissionRequested: AgentEvent = {
-  type: "permission.requested",
+const questionRequested: AgentEvent = {
+  type: "question.requested",
   sessionId: "s",
-  request: { id: "p", action: "shell.execute", target: "rm", reason: "dangerous" },
+  request: { id: "p", questions: [] },
 };
 
 function item(event: AgentEvent, id = crypto.randomUUID()): AgentEventItem {
@@ -55,14 +55,14 @@ describe("reduceActivity", () => {
     });
   });
 
-  it("raises and clears the needs-input flag around permission requests", () => {
+  it("raises and clears the needs-input flag around extension dialogs", () => {
     const running = reduceActivity(undefined, agentStarted, true);
-    const blocked = reduceActivity(running, permissionRequested, true);
+    const blocked = reduceActivity(running, questionRequested, true);
     expect(blocked.needsInput).toBe(true);
 
     const resolved = reduceActivity(
       blocked,
-      { type: "permission.resolved", sessionId: "s", requestId: "p", decision: "allow-once" },
+      { type: "question.resolved", sessionId: "s", requestId: "p", answers: [], skipped: false },
       true,
     );
     expect(resolved.needsInput).toBe(false);

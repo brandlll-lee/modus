@@ -39,5 +39,10 @@
       "!MODUS_V0.1.0_EXECUTION_PLAN.md",
       "!reference"
     ]
+  },
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true
   }
 }

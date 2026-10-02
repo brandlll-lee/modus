@@ -7,7 +7,7 @@ import {
 } from "./question-broker";
 
 const QUESTIONS: QuestionPrompt[] = [
-  { id: "q1", header: "Which view?", multiSelect: false, options: [{ label: "Side" }] },
+  { id: "q1", header: "Which view?", options: [{ label: "Side" }] },
 ];
 
 afterEach(() => {

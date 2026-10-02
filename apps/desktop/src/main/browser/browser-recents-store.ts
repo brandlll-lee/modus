@@ -1,30 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { BrowserRecentInfo } from "../../shared/contracts";
-import { getDatabase } from "../db/database";
+
+import { desktopPreferences, saveDesktopPreferences } from "../preferences/desktop-preferences";
 
 const MAX_RECENTS_PER_WORKSPACE = 100;
-
-type BrowserRecentRow = {
-  id: string;
-  workspace_id: string;
-  url: string;
-  title: string;
-  favicon: string | null;
-  last_opened_at: string;
-  created_at: string;
-};
-
-function toRecent(row: BrowserRecentRow): BrowserRecentInfo {
-  return {
-    id: row.id,
-    workspaceId: row.workspace_id,
-    url: row.url,
-    title: row.title,
-    lastOpenedAt: row.last_opened_at,
-    createdAt: row.created_at,
-    ...(row.favicon !== null ? { favicon: row.favicon } : {}),
-  };
-}
 
 export function browserRecentKey(url: string): string | undefined {
   let parsed: URL;
@@ -48,17 +27,7 @@ function fallbackTitle(url: string): string {
 }
 
 export function listBrowserRecents(workspaceId: string): BrowserRecentInfo[] {
-  const rows = getDatabase()
-    .prepare(
-      `select id, workspace_id, url, title, favicon, last_opened_at, created_at
-       from browser_recents
-       where workspace_id = ?
-       order by last_opened_at desc, rowid desc
-       limit ?`,
-    )
-    .all(workspaceId, MAX_RECENTS_PER_WORKSPACE) as BrowserRecentRow[];
-
-  return rows.map(toRecent);
+  return desktopPreferences().browserRecents.filter((recent) => recent.workspaceId === workspaceId);
 }
 
 export function upsertBrowserRecent(input: {
@@ -68,43 +37,41 @@ export function upsertBrowserRecent(input: {
   favicon?: string;
   touch?: boolean;
 }): void {
-  const urlKey = browserRecentKey(input.url);
-  if (!urlKey) {
-    return;
+  const key = browserRecentKey(input.url);
+  if (!key) return;
+  const preferences = desktopPreferences(),
+    index = preferences.browserRecents.findIndex(
+      (recent) => recent.workspaceId === input.workspaceId && browserRecentKey(recent.url) === key,
+    ),
+    existing = preferences.browserRecents[index],
+    now = new Date().toISOString();
+  const recent: BrowserRecentInfo = {
+    id: existing?.id ?? randomUUID(),
+    workspaceId: input.workspaceId,
+    url: input.url,
+    title: input.title?.trim() || fallbackTitle(input.url),
+    lastOpenedAt: input.touch === false && existing ? existing.lastOpenedAt : now,
+    createdAt: existing?.createdAt ?? now,
+    ...(input.favicon?.trim()
+      ? { favicon: input.favicon.trim() }
+      : existing?.favicon
+        ? { favicon: existing.favicon }
+        : {}),
+  };
+  if (existing && input.touch === false) preferences.browserRecents[index] = recent;
+  else {
+    if (index !== -1) preferences.browserRecents.splice(index, 1);
+    preferences.browserRecents.unshift(recent);
   }
-
-  const now = new Date().toISOString();
-  const title = input.title?.trim() || fallbackTitle(input.url);
-  const favicon = input.favicon?.trim() || null;
-  const touch = input.touch !== false ? 1 : 0;
-  const db = getDatabase();
-
-  db.prepare(
-    `insert into browser_recents (
-       id, workspace_id, url_key, url, title, favicon, last_opened_at, created_at
-     ) values (?, ?, ?, ?, ?, ?, ?, ?)
-     on conflict(workspace_id, url_key) do update set
-       url = excluded.url,
-       title = excluded.title,
-       favicon = coalesce(excluded.favicon, browser_recents.favicon),
-       last_opened_at = case when ? = 1
-         then excluded.last_opened_at
-         else browser_recents.last_opened_at
-       end`,
-  ).run(randomUUID(), input.workspaceId, urlKey, input.url, title, favicon, now, now, touch);
-
-  db.prepare(
-    `delete from browser_recents
-     where workspace_id = ?
-       and id not in (
-         select id from browser_recents
-         where workspace_id = ?
-         order by last_opened_at desc, rowid desc
-         limit ?
-       )`,
-  ).run(input.workspaceId, input.workspaceId, MAX_RECENTS_PER_WORKSPACE);
+  let count = 0;
+  preferences.browserRecents = preferences.browserRecents.filter(
+    (item) => item.workspaceId !== input.workspaceId || ++count <= MAX_RECENTS_PER_WORKSPACE,
+  );
+  saveDesktopPreferences();
 }
 
 export function deleteBrowserRecent(id: string): void {
-  getDatabase().prepare("delete from browser_recents where id = ?").run(id);
+  const preferences = desktopPreferences();
+  preferences.browserRecents = preferences.browserRecents.filter((recent) => recent.id !== id);
+  saveDesktopPreferences();
 }

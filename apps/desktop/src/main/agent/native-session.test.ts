@@ -25,19 +25,7 @@ import { resolveQuestionRequest } from "../interaction/question-broker";
 import { createModusMcpExtension } from "../mcp/mcp-service";
 import { createExtensionUI, invokeExtensionCommand } from "./extension-ui";
 import { createPiEventNormalizer } from "./pi-event-normalizer";
-import { createModusPermissionExtension } from "./pi-permission-extension";
-import { isRuntimeTool, withRuntimeToolPolicy } from "./runtime-tools";
 
-const approvals = vi.hoisted(() =>
-  vi.fn(async (input: { target: string }) => ({
-    decision: input.target.includes("novel_change") ? "deny" : "allow-once",
-  })),
-);
-vi.mock("../permissions/permission-broker", () => ({ requestPermission: approvals }));
-vi.mock("../permissions/permission-store", () => ({
-  getApprovalMode: () => "auto",
-  findWorkspaceAllowDecision: () => undefined,
-}));
 vi.mock("./agent-run-store", () => ({ getActiveAgentRun: () => undefined }));
 vi.mock("electron", () => ({ shell: { openExternal: vi.fn() } }));
 vi.mock("./agent-paths", () => ({ getPiCliAgentDir: () => join(root, "cli") }));
@@ -97,15 +85,10 @@ beforeAll(async () => {
     extensionFactories: [
       {
         name: "codemode",
-        factory: withRuntimeToolPolicy(createCodemodeExtension({ models: false })),
+        factory: createCodemodeExtension({ models: false }),
       },
-      { name: "tool_search", factory: withRuntimeToolPolicy(createToolSearchExtension()) },
+      { name: "tool_search", factory: createToolSearchExtension() },
       { name: "mcp", factory: createModusMcpExtension() },
-      createModusPermissionExtension("native", (event) => events.push(event), root, {
-        definition: (name) => session.getToolDefinition(name),
-        source: (name) => session.getAllTools().find((tool) => tool.name === name)?.sourceInfo,
-        allows: () => true,
-      }),
       (pi) => {
         pi.registerTool({
           name: "novel_change",
@@ -163,7 +146,7 @@ afterAll(async () => {
     session?.dispose();
     if (env === undefined) delete process.env.PI_CODING_AGENT_DIR;
     else process.env.PI_CODING_AGENT_DIR = env;
-    if (root) rmSync(root, { recursive: true, force: true });
+    if (root) rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -171,14 +154,12 @@ it("registers native orchestration by definition identity and returns MCP report
   const report = await invokeExtensionCommand(session, "mcp");
   expect(report).toContain("fixture");
   expect(session.getAllTools().some((tool) => tool.namespace?.name === "mcp__fixture")).toBe(true);
-  expect(isRuntimeTool(session.getToolDefinition("codemode"))).toBe(true);
-  expect(isRuntimeTool({ name: "codemode" } as never)).toBe(false);
   expect(await invokeExtensionCommand(session, "mcp", "reconnect fixture")).toContain(
     "Reconnected",
   );
 }, 30_000);
 
-it("runs nested MCP calls, retains parentage, and blocks nested mutations before execution", async () => {
+it("runs nested MCP calls, retains parentage, and uses extension-defined tools", async () => {
   faux.setResponses([
     fauxAssistantMessage(
       fauxToolCall(
@@ -193,14 +174,7 @@ it("runs nested MCP calls, retains parentage, and blocks nested mutations before
     fauxAssistantMessage("Finished"),
   ]);
   await session.prompt("Execute the fixture");
-  expect(executions).toBe(0);
-  expect(approvals).toHaveBeenCalledTimes(2);
-  expect(approvals).toHaveBeenCalledWith(
-    expect.objectContaining({
-      action: "tool.execute",
-      target: expect.stringContaining("novel_change"),
-    }),
-  );
+  expect(executions).toBe(1);
   expect(events).toContainEqual(
     expect.objectContaining({
       type: "tool.started",

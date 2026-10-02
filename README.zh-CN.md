@@ -24,7 +24,7 @@
 
 Modus 是一个开源桌面应用，用来让 AI 编码 Agent 在真实的本地项目里工作。
 
-打开 workspace，连接你自己的模型 provider，规划或构建，审查改动，审批高风险动作，把完整工作流放在一个窗口里。
+打开项目，复用 PI 的模型配置，在桌面界面中进行对话和查看项目。
 
 Modus 还很早期，目前推荐从源码运行。
 
@@ -32,14 +32,10 @@ Modus 还很早期，目前推荐从源码运行。
 
 - **Workspace 和 Session** - 打开本地项目，切换最近 workspace，置顶项目，并按仓库保留独立 Agent 会话。
 - **自带模型接入** - 配置内置或自定义 PI 兼容 provider、默认模型、reasoning、thinking variant 和模型限制。
-- **Git 工作流** - 查看工作区改动、文件 diff、分支、提交历史、commit、push 和会话改动统计。
+- **Git 工作流** - 查看工作区改动、文件 diff、分支、提交历史、commit、push 和改动统计。
 - **Terminal、Browser 和 Files** - 使用真实 PTY 终端、带 tab 和 DevTools 的内置浏览器，以及 workspace 文件浏览器。
-- **Fast Codebase** - Agent 先构建紧凑的本地代码地图，再读取文件，减少大范围 grep/read 探索。
-- **Plan 和 Build 模式** - 先生成可审查计划、回答结构化问题，再进入实现。
-- **Context 和图片** - 挂载文件、文件夹、docs、Git diff、终端输出、浏览器状态、选中的页面元素、rules 和图片。
-- **MCP、Skills 和 Rules** - 加载 Modus MCP server，用 `/` 调用本地 skills，并读取 AGENTS/Claude/Cursor 风格规则文件。
-- **权限执行** - Shell、Git、Browser、MCP、文件和外部动作都走同一套审批流。
-- **Checkpoint 和回滚** - Agent 运行前自动快照，需要时从 timeline 恢复工作区状态。
+- **文件和图片** - 选择本地路径，在发送给 PI 前预览图片。
+- **MCP、Skills 和扩展** - 复用 PI 的资源发现、项目信任和扩展命令。
 
 ## 快速开始
 

@@ -9,8 +9,6 @@ import {
   reloadSessionResources,
 } from "./session-resources";
 
-const trust = vi.hoisted(() => vi.fn(async () => true));
-vi.mock("./project-trust", () => ({ resolveProjectTrust: trust }));
 const ids: string[] = [];
 function register(cwd: string, reload: () => Promise<void>, streaming = false) {
   const id = crypto.randomUUID();
@@ -26,11 +24,10 @@ function register(cwd: string, reload: () => Promise<void>, streaming = false) {
 }
 afterEach(() => {
   for (const id of ids.splice(0)) releaseSessionResources(id);
-  trust.mockClear();
 });
-it("applies the current project trust decision before native reload and publishes afterward", async () => {
+it("delegates resource reload to PI and publishes afterward", async () => {
   const reload = vi.fn(async () => {
-    expect(settings.isProjectTrusted()).toBe(true);
+    expect(settings.isProjectTrusted()).toBe(false);
   });
   const settings = register("workspace", reload);
   const changed = vi.fn();

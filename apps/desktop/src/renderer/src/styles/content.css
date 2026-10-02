@@ -526,7 +526,7 @@
   width: 100%;
   height: auto;
   flex: none;
-  transform: none !important;
+  transform: none;
   will-change: auto;
   cursor: default;
 }
@@ -581,10 +581,10 @@ body
   > div.fixed.inset-0:has([data-streamdown="mermaid"])
   [data-streamdown="mermaid"]
   [class*="absolute"][class*="rounded-md"] {
-  top: 1rem !important;
-  right: 3.35rem !important;
-  bottom: auto !important;
-  left: auto !important;
+  top: 1rem;
+  right: 3.35rem;
+  bottom: auto;
+  left: auto;
   flex-direction: row;
   border-radius: var(--radius-sm) 0 0 var(--radius-sm);
   border-right: none;

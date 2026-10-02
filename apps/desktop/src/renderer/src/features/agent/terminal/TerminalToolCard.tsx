@@ -41,16 +41,9 @@ export const TerminalToolCard = memo(
         parsed.body.length > MAX_BODY_CHARS ? `${parsed.body.slice(-MAX_BODY_CHARS)}` : parsed.body,
       [parsed.body],
     );
-    const exitCode = parsed.status?.match(/^exited\s+(.+)$/i)?.[1];
     const command = parsed.command ?? "command";
-    const success = !running && !isError && (!exitCode || exitCode === "0");
-    const panelStatus = isError
-      ? "Failed"
-      : exitCode && exitCode !== "0"
-        ? `Exit code ${exitCode}`
-        : success
-          ? "Success"
-          : parsed.status;
+    const success = !running && !isError;
+    const panelStatus = isError ? "Failed" : success ? "Success" : undefined;
 
     const summary = running
       ? `Running ${command}`
@@ -94,9 +87,8 @@ export const TerminalToolCard = memo(
               <pre className="overflow-x-auto whitespace-pre-wrap font-mono text-[12px] text-fg leading-relaxed">
                 $ {command}
               </pre>
-              {hasBody || parsed.truncated ? (
+              {hasBody ? (
                 <pre className="scroll-thin mt-2 max-h-96 overflow-auto font-mono text-[12px] text-fg-faint leading-relaxed whitespace-pre-wrap wrap-break-word">
-                  {parsed.truncated ? "[earlier output truncated]\n" : ""}
                   {cappedBody}
                 </pre>
               ) : null}
@@ -104,7 +96,7 @@ export const TerminalToolCard = memo(
                 <div
                   className={cn(
                     "mt-2 flex items-center justify-end gap-1 text-2xs",
-                    isError || (exitCode && exitCode !== "0") ? "text-danger" : "text-fg-faint",
+                    isError ? "text-danger" : "text-fg-faint",
                   )}
                 >
                   {success ? <IconCheck size={12} stroke={1.8} /> : null}

@@ -77,9 +77,7 @@ function StreamdownMermaidFullscreenSuppress() {
     let release: (() => void) | null = null;
     const isOpen = (): boolean =>
       Boolean(
-        document.body.querySelector(
-          ':scope > div.fixed.inset-0:has([data-streamdown="mermaid"])',
-        ),
+        document.body.querySelector(':scope > div.fixed.inset-0:has([data-streamdown="mermaid"])'),
       );
     const sync = (): void => {
       const open = isOpen();

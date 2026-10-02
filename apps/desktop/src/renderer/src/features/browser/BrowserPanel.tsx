@@ -20,19 +20,17 @@ import {
   useRef,
   useState,
 } from "react";
-import {
-  DESIGN_ACCENT_COLOR,
-  type BrowserBounds,
-  type BrowserEvent,
-  type BrowserRecentInfo,
-  type BrowserTabInfo,
+import type {
+  BrowserBounds,
+  BrowserEvent,
+  BrowserRecentInfo,
+  BrowserTabInfo,
 } from "../../../../shared/contracts";
 import { useNativeSurfaceSuppressed } from "../../components/ui/nativeSurface";
 import { EmptyState } from "../../components/ui/Panel";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
 import { computeBrowserViewBounds, sameBrowserBounds } from "./browserBounds";
-import { DesignModeToggle } from "./DesignModeToggle";
 
 type BrowserPanelProps = {
   active: boolean;
@@ -46,7 +44,7 @@ export function BrowserPanel({ active, workspaceId }: BrowserPanelProps) {
   const [activeTabId, setActiveTabId] = useState<string | undefined>();
   const [address, setAddress] = useState("");
   const [pendingNavigation, setPendingNavigation] = useState(false);
-  const [designTabs, setDesignTabs] = useState<Set<string>>(() => new Set());
+
   const [recentsOpen, setRecentsOpen] = useState(false);
   const [recents, setRecents] = useState<BrowserRecentInfo[]>([]);
   const [recentQuery, setRecentQuery] = useState("");
@@ -65,33 +63,10 @@ export function BrowserPanel({ active, workspaceId }: BrowserPanelProps) {
   const activePageTabId =
     activeTab && activeUrl && activeUrl !== "about:blank" ? activeTab.id : undefined;
   const isLoading = pendingNavigation || Boolean(activeTab?.loading);
-  const designOn = Boolean(activeId && designTabs.has(activeId));
-
-  const designOnRef = useRef(false);
-  designOnRef.current = designOn;
 
   useEffect(() => {
     activeTabIdRef.current = activeId;
   }, [activeId]);
-
-  const toggleDesign = useCallback(() => {
-    const tabId = activeTabIdRef.current;
-    if (!tabId) {
-      return;
-    }
-    const next = !designOnRef.current;
-    // Optimistic; the browser.design-mode-changed event reconciles the truth.
-    setDesignTabs((prev) => {
-      const set = new Set(prev);
-      if (next) {
-        set.add(tabId);
-      } else {
-        set.delete(tabId);
-      }
-      return set;
-    });
-    void window.modus.browser.setDesignMode({ tabId, enabled: next, theme: resolveDesignTheme() });
-  }, []);
 
   const refreshRecents = useCallback(async (): Promise<void> => {
     if (!workspaceId) {
@@ -182,24 +157,10 @@ export function BrowserPanel({ active, workspaceId }: BrowserPanelProps) {
       if (event.type === "browser.shortcut" && event.workspaceId === workspaceId) {
         if (event.shortcut === "focus-address") {
           focusAddress();
-        } else if (event.shortcut === "toggle-design") {
-          toggleDesign();
         }
       }
-
-      if (event.type === "browser.design-mode-changed" && event.workspaceId === workspaceId) {
-        setDesignTabs((prev) => {
-          const set = new Set(prev);
-          if (event.enabled) {
-            set.add(event.tabId);
-          } else {
-            set.delete(event.tabId);
-          }
-          return set;
-        });
-      }
     });
-  }, [workspaceId, focusAddress, recentsOpen, refreshRecents, toggleDesign]);
+  }, [workspaceId, focusAddress, recentsOpen, refreshRecents]);
 
   useEffect(() => {
     if (active && recentsOpen) {
@@ -339,17 +300,12 @@ export function BrowserPanel({ active, workspaceId }: BrowserPanelProps) {
         void closeTab(tab.id);
       } else if (chord && key === "l") {
         focusAddress();
-      } else if (chord && event.shiftKey && key === "d") {
-        toggleDesign();
-      } else {
-        return;
-      }
-      event.preventDefault();
+      } else event.preventDefault();
       event.stopPropagation();
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [active, tabs, createTab, closeTab, focusAddress, recentsOpen, toggleDesign]);
+  }, [active, tabs, createTab, closeTab, focusAddress, recentsOpen]);
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-canvas" ref={rootRef}>
@@ -402,7 +358,7 @@ export function BrowserPanel({ active, workspaceId }: BrowserPanelProps) {
             value={address}
           />
         </form>
-        <DesignModeToggle active={designOn} disabled={!activePageTabId} onToggle={toggleDesign} />
+
         <BrowserIconButton
           active={Boolean(activeTab?.devtoolsOpen)}
           disabled={!activePageTabId}
@@ -724,7 +680,9 @@ function RecentItem({
           <IconWorld className="toolbar-icon shrink-0" size={16} stroke={1.7} />
         )}
         <span className="min-w-0 flex-1 truncate text-sm">{recent.title || recent.url}</span>
-        <span className="shrink-0 text-fg-faint text-xs">{formatRecentTime(recent.lastOpenedAt)}</span>
+        <span className="shrink-0 text-fg-faint text-xs">
+          {formatRecentTime(recent.lastOpenedAt)}
+        </span>
       </button>
       <button
         aria-label="Remove recent page"
@@ -780,28 +738,6 @@ function BrowserIconButton({
       </button>
     </Tooltip>
   );
-}
-
-/**
- * Resolve Modus's current theme tokens (light or dark) into the value set the
- * in-page Design Mode overlay needs, so the overlay always matches the app's
- * own look regardless of the page it's drawn over.
- */
-function resolveDesignTheme() {
-  const styles = getComputedStyle(document.documentElement);
-  const token = (name: string, fallback: string): string =>
-    styles.getPropertyValue(name).trim() || fallback;
-  return {
-    accent: DESIGN_ACCENT_COLOR,
-    accentContrast: "#ffffff",
-    surface: token("--color-surface", "#1c1c1d"),
-    elevated: token("--color-elevated", "#232325"),
-    fg: token("--color-fg", "#e4e4e3"),
-    fgSubtle: token("--color-fg-subtle", "#8a8a87"),
-    fontFamily: token("--font-sans", '"Inter Variable", "Inter", "Noto Sans SC Variable", "Noto Sans SC", system-ui, sans-serif'),
-    border: token("--color-hairline-strong", "rgba(255,255,255,0.08)"),
-    shadow: "rgba(0,0,0,0.5)",
-  };
 }
 
 function upsertTab(tabs: BrowserTabInfo[], tab: BrowserTabInfo): BrowserTabInfo[] {

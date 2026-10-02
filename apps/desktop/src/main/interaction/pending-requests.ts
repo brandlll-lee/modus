@@ -1,22 +1,9 @@
-/**
- * Generic registry for interactive, blocking agent requests — a tool calls in,
- * the run parks on an unresolved Promise, and the UI (via IPC) resolves it
- * later. This is the one authoritative mechanism behind every "agent asks the
- * human and waits" interaction (permission approvals, ask_user questions, …),
- * so a new interactive tool reuses this lifecycle instead of re-inventing the
- * pending-Promise + timeout + bulk-cancel bookkeeping.
- *
- * The registry is domain-agnostic: callers carry their own `Context` (request +
- * emit closures) and build their own `Result` on settle/cancel/timeout. All
- * event emission and side effects live in the domain broker, not here.
- */
-
 type PendingEntry<Result, Context> = {
   readonly id: string;
   readonly sessionId: string | undefined;
   readonly context: Context;
   resolve(result: Result): void;
-  timeout: NodeJS.Timeout;
+  timeout: NodeJS.Timeout | undefined;
 };
 
 export class PendingRequestRegistry<Result, Context = undefined> {
@@ -32,16 +19,19 @@ export class PendingRequestRegistry<Result, Context = undefined> {
     id: string;
     sessionId?: string | undefined;
     context: Context;
-    timeoutMs: number;
+    timeoutMs?: number | undefined;
     onTimeout: (context: Context) => Result;
   }): Promise<Result> {
     return new Promise<Result>((resolve) => {
-      const timeout = setTimeout(() => {
-        const entry = this.pending.get(input.id);
-        this.pending.delete(input.id);
-        resolve(input.onTimeout(entry?.context ?? input.context));
-      }, input.timeoutMs);
-      timeout.unref?.();
+      const timeout =
+        input.timeoutMs === undefined
+          ? undefined
+          : setTimeout(() => {
+              const entry = this.pending.get(input.id);
+              this.pending.delete(input.id);
+              resolve(input.onTimeout(entry?.context ?? input.context));
+            }, input.timeoutMs);
+      timeout?.unref?.();
       this.pending.set(input.id, {
         id: input.id,
         sessionId: input.sessionId,

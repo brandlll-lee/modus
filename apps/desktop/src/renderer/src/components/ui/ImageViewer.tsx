@@ -42,7 +42,7 @@ const getViewportSize = (): Size => ({
 
 /**
  * App-level image lightbox. Any thumbnail in the app (composer attachments, the
- * Design Mode element token, sent-message images) calls `useImageViewer().open`
+ * sent-message images) calls `useImageViewer().open`
  * to pop the full image to the center of the window over a dark backdrop, with
  * a centered lightbox. Click the backdrop or press Esc to close. One viewer
  * instance keeps the behavior identical everywhere.

@@ -1,6 +1,5 @@
-import { IconBrain, IconListCheck, IconRefresh } from "@tabler/icons-react";
+import { IconBrain, IconRefresh } from "@tabler/icons-react";
 import { memo, type ReactNode, useEffect, useId, useState } from "react";
-import type { PlanRef } from "../../../../shared/contracts";
 import { getToolUiMeta, type ToolSummaryMeta } from "../../../../shared/tools";
 import { CollapsibleMotion } from "../../components/ui/CollapsibleMotion";
 import { ShinyText } from "../../components/ui/ShinyText";
@@ -15,7 +14,6 @@ import type {
   WorkActivityItem,
   WorkFoldItem,
 } from "./Timeline";
-import { TodosCard } from "./TodosCard";
 import { ToolCard } from "./ToolCard";
 import { ToolImageGroup } from "./ToolImageGroup";
 import { toolActionIcon } from "./toolIcons";
@@ -66,14 +64,12 @@ function toolTarget(item: Extract<WorkActivityItem, { type: "tool" }>): string |
 const thoughtText = (text: string) => text.trim().replace(/\s+/g, " ");
 
 function isActivityActive(item: WorkActivityItem): boolean {
-  if (item.type === "todos") return item.updating;
   if (item.type === "thought") return item.streaming === true;
   if (item.type === "tool") return item.isComplete !== true && item.isError !== true;
   return item.status === "running";
 }
 
 function activeActivityLabel(item: WorkActivityItem): string {
-  if (item.type === "todos") return "Updating to-dos";
   if (item.type === "thought") {
     const preview = thoughtText(item.text);
     return preview ? `Thinking · ${preview}` : "Thinking";
@@ -106,7 +102,7 @@ function settledActivityLabel(items: WorkActivityItem[]): string {
   if (unspecifiedTools > 0) {
     parts.push(`used ${unspecifiedTools} ${unspecifiedTools === 1 ? "tool" : "tools"}`);
   }
-  if (items.some((item) => item.type === "todos")) parts.push("updated to-dos");
+
   const thought = items.findLast((item) => item.type === "thought" && item.text.trim());
   const label =
     parts.join(", ") ||
@@ -137,7 +133,7 @@ export function workActivityPresentation(items: WorkActivityItem[]) {
 
 function activityIcon(item: WorkActivityItem | undefined): ReactNode {
   if (item?.type === "tool") return toolActionIcon(item.name);
-  if (item?.type === "todos") return <IconListCheck />;
+
   if (item?.type === "compaction") return <IconRefresh />;
   return <IconBrain />;
 }
@@ -172,11 +168,9 @@ function WorkActivityGroup({
 export function WorkActivityRow({
   item,
   onOpenFile,
-  onOpenPlan,
 }: {
   item: WorkActivityItem;
   onOpenFile?(path: string): void;
-  onOpenPlan?(plan: PlanRef): void;
 }) {
   if (item.type === "thought") {
     if (!item.streaming && !item.text.trim()) return null;
@@ -189,7 +183,7 @@ export function WorkActivityRow({
       </div>
     );
   }
-  if (item.type === "todos") return <TodosCard {...item} />;
+
   if (item.type === "compaction") return <CompactionRow {...item} />;
   if (item.images?.length) return <ToolImageGroup items={[item]} />;
   return (
@@ -197,11 +191,7 @@ export function WorkActivityRow({
       className={item.parentToolCallId ? "ml-4 border-hairline-soft border-l pl-3" : undefined}
       data-parent-tool-call-id={item.parentToolCallId}
     >
-      <ToolCard
-        {...item}
-        {...(onOpenFile ? { onOpenFile } : {})}
-        {...(item.plan && onOpenPlan ? { onOpenPlan, plan: item.plan } : {})}
-      />
+      <ToolCard {...item} {...(onOpenFile ? { onOpenFile } : {})} />
     </div>
   );
 }
@@ -210,7 +200,6 @@ export const WorkFold = memo(function WorkFold({
   run,
   items,
   onOpenFile,
-  onOpenPlan,
   enteringMessageId,
   onMessageEntered,
 }: {
@@ -219,9 +208,8 @@ export const WorkFold = memo(function WorkFold({
   enteringMessageId?: string | undefined;
   onMessageEntered?(messageId: string): void;
   onOpenFile?(path: string): void;
-  onOpenPlan?(plan: PlanRef): void;
 }) {
-  const active = run.status === "running" || run.status === "blocked";
+  const active = run.status === "running";
   const [open, setOpen] = useState(true);
   const contentId = useId();
   const [, setTick] = useState(0);
@@ -273,7 +261,6 @@ export const WorkFold = memo(function WorkFold({
                         item={activity}
                         key={activity.id}
                         {...(onOpenFile ? { onOpenFile } : {})}
-                        {...(onOpenPlan ? { onOpenPlan } : {})}
                       />
                     ))}
                   </WorkActivityGroup>

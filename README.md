@@ -24,7 +24,7 @@
 
 Modus is an open-source desktop app for running AI coding agents inside real local projects.
 
-Open a workspace, connect your own model provider, plan or build, inspect changes, approve risky actions, and keep the full workflow in one window.
+Open a workspace, connect your PI model provider, chat with PI, and inspect your project in one window.
 
 Modus is early and currently runs best from source.
 
@@ -32,14 +32,10 @@ Modus is early and currently runs best from source.
 
 - **Workspaces and sessions** - Open local projects, switch recent workspaces, pin projects, and keep separate agent sessions per repo.
 - **Bring your own models** - Configure built-in or custom PI-compatible providers, defaults, reasoning effort, thinking variants, and model limits.
-- **Git workflow** - Review working tree changes, file diffs, branches, commit history, commits, pushes, and session change stats.
+- **Git workflow** - Review working tree changes, file diffs, branches, commit history, commits, pushes, and change statistics.
 - **Terminal, browser, and files** - Use a real PTY terminal, an in-app browser with tabs and DevTools, and a workspace file explorer.
-- **Fast Codebase** - Let the agent build a compact local code map before reading files, reducing broad grep/read exploration.
-- **Plan and build modes** - Start with a reviewable plan, answer structured questions, then move into implementation.
-- **Context and images** - Attach files, folders, docs, Git diffs, terminal output, browser state, selected page elements, rules, and images.
-- **MCP, skills, and rules** - Load Modus MCP servers, invoke local skills with `/`, and apply project rules from AGENTS/Claude/Cursor-style files.
-- **Permissioned execution** - Route shell, Git, browser, MCP, file, and external actions through one approval flow.
-- **Checkpoints and rollback** - Snapshot the workspace before agent runs and restore from the timeline when needed.
+- **Files and images** - Select local paths and preview images before sending them to PI.
+- **MCP, skills, and extensions** - Use PI resource discovery, project trust, and extension commands.
 
 ## Getting Started
 
@@ -92,7 +88,7 @@ PI's trust rules. Installed MCP extensions own their configuration discovery and
 
 ## Tech Stack
 
-Electron, React, TypeScript, Tailwind CSS, Base UI, Motion, Monaco, xterm.js, Streamdown, Node SQLite, Rust `portable-pty`, `@earendil-works/pi-coding-agent`, and the MCP SDK.
+Electron, React, TypeScript, Tailwind CSS, Base UI, Motion, Monaco, xterm.js, Streamdown, Rust `portable-pty`, `@earendil-works/pi-coding-agent`.
 
 ## Contributing
 

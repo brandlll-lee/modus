@@ -63,7 +63,10 @@ export function detectPreviewKind(buffer: Buffer): PreviewKind {
     return "unsupported";
   }
   // OOXML packages are ZIPs; part names appear as plain strings in local headers.
-  if (startsWith(buffer, [0x50, 0x4b, 0x03, 0x04]) || startsWith(buffer, [0x50, 0x4b, 0x05, 0x06])) {
+  if (
+    startsWith(buffer, [0x50, 0x4b, 0x03, 0x04]) ||
+    startsWith(buffer, [0x50, 0x4b, 0x05, 0x06])
+  ) {
     if (asciiIncludes(buffer, "word/")) return "docx";
     if (asciiIncludes(buffer, "xl/")) return "xlsx";
     if (asciiIncludes(buffer, "ppt/")) return "pptx";

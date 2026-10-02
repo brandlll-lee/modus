@@ -5,15 +5,8 @@ import {
   WebContentsView,
   type WebContentsView as WebContentsViewType,
 } from "electron";
-import type { BrowserConsoleMessage, BrowserEvent, BrowserTabInfo } from "../../shared/contracts";
+import type { BrowserEvent, BrowserTabInfo } from "../../shared/contracts";
 import { IPC_CHANNELS } from "../ipc/channels";
-import { AgentVisualizer } from "./agent-visualizer";
-import { DialogController } from "./cdp/lifecycle";
-import { NetworkRecorder } from "./cdp/network";
-import { captureViewRect, clampViewportRect, growViewportRect } from "./view-capture";
-import { CdpSession } from "./cdp/session";
-import { SnapshotStore } from "./cdp/snapshot";
-import { DesignModeController } from "./design-mode";
 import { upsertBrowserRecent } from "./browser-recents-store";
 import {
   applySessionSecurity,
@@ -24,32 +17,12 @@ import {
 } from "./security";
 import { detachView } from "./view-host";
 
-/**
- * Tab lifecycle + state. Each tab owns its WebContentsView and the CDP-backed
- * subsystems (session, network recorder, dialog controller, snapshot refs).
- *
- * Events broadcast to every live window: the previous design pinned events to
- * a single `ownerWindow`, which is why `browser.closed` was lost whenever the
- * view had been detached first.
- */
-
-const MAX_BROWSER_LOGS = 300;
-
 export type BrowserTab = {
   info: BrowserTabInfo;
   view: WebContentsViewType;
   workspaceId: string;
   ownerWindow?: BrowserWindowType;
   attached: boolean;
-  cdp: CdpSession;
-  network: NetworkRecorder;
-  dialogs: DialogController;
-  snapshots: SnapshotStore;
-  visual: AgentVisualizer;
-  /** User-driven "Design Mode" overlay (point-and-select → chat context). */
-  design: DesignModeController;
-  consoleMessages: BrowserConsoleMessage[];
-  profiling: boolean;
 };
 
 const tabs = new Map<string, BrowserTab>();
@@ -65,13 +38,6 @@ export function emitBrowserEvent(event: BrowserEvent): void {
     if (!window.isDestroyed()) {
       window.webContents.send(IPC_CHANNELS.browserEvent, event);
     }
-  }
-}
-
-function pushCapped<T>(items: T[], item: T, limit = MAX_BROWSER_LOGS): void {
-  items.push(item);
-  if (items.length > limit) {
-    items.splice(0, items.length - limit);
   }
 }
 
@@ -91,7 +57,6 @@ function toTabInfo(tab: BrowserTab): BrowserTabInfo {
     canGoBack: webContents.navigationHistory.canGoBack(),
     canGoForward: webContents.navigationHistory.canGoForward(),
     devtoolsOpen: webContents.isDevToolsOpened(),
-    locked: tab.info.locked,
     createdAt: tab.info.createdAt,
     updatedAt: now(),
     ...(tab.info.favicon ? { favicon: tab.info.favicon } : {}),
@@ -113,12 +78,6 @@ export type TabTarget = {
   workspaceId?: string;
 };
 
-/**
- * Resolve the tab a command targets. Explicit tabId wins; otherwise the
- * workspace's active tab. The bare cross-workspace "most recently active
- * anywhere" fallback only applies when no workspace is known at all, so one
- * workspace's agent can no longer silently drive another workspace's browser.
- */
 export function resolveTab(target: TabTarget = {}): BrowserTab {
   if (target.tabId) {
     const tab = tabs.get(target.tabId);
@@ -131,9 +90,7 @@ export function resolveTab(target: TabTarget = {}): BrowserTab {
     const activeId = activeTabByWorkspace.get(target.workspaceId);
     const tab = activeId ? tabs.get(activeId) : undefined;
     if (!tab) {
-      throw new Error(
-        "No active browser tab in this workspace. Use browser_tabs({action:'new'}) first.",
-      );
+      throw new Error("No active browser tab in this workspace.");
     }
     return tab;
   }
@@ -181,26 +138,9 @@ function wireTabEvents(tab: BrowserTab): void {
     });
   };
 
-  webContents.on("console-message", (event) => {
-    pushCapped(tab.consoleMessages, {
-      id: randomUUID(),
-      tabId: tab.info.id,
-      level: event.level,
-      text: event.message,
-      ...(event.sourceId ? { url: event.sourceId } : {}),
-      ...(event.lineNumber > 0 ? { line: event.lineNumber } : {}),
-      createdAt: now(),
-    });
-  });
-
   webContents.on("did-start-loading", () => updateTabInfo(tab));
   webContents.on("did-stop-loading", () => updateTabInfo(tab));
-  webContents.on("did-navigate", () => {
-    // New document: every outstanding snapshot ref now points at dead nodes.
-    tab.snapshots.invalidate();
-    updateTabInfo(tab);
-    saveRecent();
-  });
+
   webContents.on("did-navigate-in-page", () => {
     updateTabInfo(tab);
     saveRecent();
@@ -250,18 +190,7 @@ function wireTabEvents(tab: BrowserTab): void {
       webContents.reload();
       return;
     }
-    // Ctrl/Cmd+Shift+D toggles Design Mode — captured here so it works while
-    // focus is inside the page (the renderer's React handlers can't see it).
-    if (chord && input.shift && key === "d") {
-      event.preventDefault();
-      emitBrowserEvent({
-        type: "browser.shortcut",
-        workspaceId: tab.workspaceId,
-        tabId: tab.info.id,
-        shortcut: "toggle-design",
-      });
-      return;
-    }
+
     if (!chord) {
       return;
     }
@@ -272,12 +201,6 @@ function wireTabEvents(tab: BrowserTab): void {
       event.preventDefault();
       closeTab(tab.info.id);
     } else if (key === "l") {
-      // While Design Mode is on, Ctrl+L means "add the selected element to
-      // chat" — let it reach the page overlay instead of hijacking it for the
-      // address bar (otherwise the overlay's own Ctrl+L handler never fires).
-      if (tab.design.isEnabled) {
-        return;
-      }
       event.preventDefault();
       emitBrowserEvent({
         type: "browser.shortcut",
@@ -328,56 +251,13 @@ export function createTab(
       canGoBack: false,
       canGoForward: false,
       devtoolsOpen: false,
-      locked: false,
       createdAt: timestamp,
       updatedAt: timestamp,
     },
     view,
     workspaceId: input.workspaceId,
     attached: false,
-    cdp: new CdpSession(view.webContents),
-    network: new NetworkRecorder(id),
-    dialogs: new DialogController(),
-    snapshots: new SnapshotStore(),
-    visual: new AgentVisualizer(view.webContents),
-    // Self-referential init: the capture/onSelect closures need `tab`, which is
-    // fully constructed by the time a selection fires. Assigned right below.
-    design: undefined as unknown as DesignModeController,
-    consoleMessages: [],
-    profiling: false,
   };
-
-  tab.design = new DesignModeController(view.webContents, {
-    tabId: id,
-    getUrl: () => tab.view.webContents.getURL(),
-    // Electron capturePage — not CDP clip (avoids Chromium region-screenshot flash).
-    capture: async (rect, options) => {
-      const bounds = tab.view.getBounds();
-      const viewport = { x: 0, y: 0, width: bounds.width, height: bounds.height };
-      const clip = options?.exact
-        ? clampViewportRect(rect, viewport)
-        : growViewportRect(rect, viewport);
-      const shot = await captureViewRect(tab.view.webContents, clip);
-      return `data:image/png;base64,${shot.base64}`;
-    },
-    onSelect: (element, intent, seedText) =>
-      emitBrowserEvent({
-        type: "browser.design-select",
-        workspaceId: input.workspaceId,
-        tabId: id,
-        intent,
-        element,
-        ...(seedText ? { seedText } : {}),
-      }),
-    onAnnotate: (annotation, intent) =>
-      emitBrowserEvent({
-        type: "browser.design-annotate",
-        workspaceId: input.workspaceId,
-        tabId: id,
-        intent,
-        annotation,
-      }),
-  });
 
   tabs.set(id, tab);
   const workspaceTabs = tabIdsForWorkspace(input.workspaceId);
@@ -385,11 +265,6 @@ export function createTab(
   tabsByWorkspace.set(input.workspaceId, workspaceTabs);
 
   wireTabEvents(tab);
-  tab.network.bind(tab.cdp);
-  tab.dialogs.bind(tab.cdp);
-  void tab.cdp.attach().catch((error) => {
-    console.warn(`[browser] CDP attach failed for tab ${id}:`, error);
-  });
 
   if (window) {
     tab.ownerWindow = window;
@@ -438,11 +313,6 @@ export function closeTab(tabId: string): void {
     }
   }
 
-  tab.network.dispose();
-  tab.dialogs.dispose();
-  tab.visual.dispose();
-  tab.design.dispose();
-  tab.cdp.detach();
   try {
     tab.view.webContents.close();
   } catch {
@@ -457,8 +327,4 @@ export function closeTab(tabId: string): void {
       tabId: nextActiveId,
     });
   }
-}
-
-export function tabConsoleMessages(tab: BrowserTab): BrowserConsoleMessage[] {
-  return tab.consoleMessages.slice(-MAX_BROWSER_LOGS);
 }

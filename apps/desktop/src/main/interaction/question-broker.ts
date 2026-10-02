@@ -8,21 +8,9 @@ import type {
 } from "../../shared/contracts";
 import { PendingRequestRegistry } from "./pending-requests";
 
-/**
- * Broker for the interactive `ask_user` tool. Same lifecycle as the permission
- * broker (it shares the generic PendingRequestRegistry): the tool emits a
- * `question.requested` event, the run parks on the returned Promise, and the UI
- * resolves it via IPC. An unanswered request (timeout, window close, session
- * abort) resolves as `skipped` — the authoritative "no decision" signal the
- * planner treats as "proceed with defaults and record them as assumptions".
- */
-
 type QuestionContext = { request: QuestionRequest; emit(event: AgentEvent): void };
 
 const registry = new PendingRequestRegistry<QuestionResponse, QuestionContext>();
-
-/** Generous window: a human may take minutes to decide; then fall back to skipped. */
-const QUESTION_TIMEOUT_MS = 30 * 60_000;
 
 function makeResponse(
   context: QuestionContext,
@@ -46,9 +34,7 @@ const skip = (context: QuestionContext): QuestionResponse => makeResponse(contex
 
 export async function requestQuestions(input: {
   sessionId: string;
-  runId?: string | undefined;
   questions: QuestionPrompt[];
-  presentation?: "dialog";
   emit(event: AgentEvent): void;
   /** When the run is aborted mid-question, unblock as skipped so the turn ends cleanly. */
   signal?: AbortSignal | undefined;
@@ -58,9 +44,7 @@ export async function requestQuestions(input: {
     id: randomUUID(),
     sessionId: input.sessionId,
     questions: input.questions,
-    ...(input.presentation ? { presentation: input.presentation } : {}),
   };
-  if (input.runId !== undefined) request.runId = input.runId;
 
   input.emit({ type: "question.requested", sessionId: input.sessionId, request });
 
@@ -68,7 +52,7 @@ export async function requestQuestions(input: {
     id: request.id,
     sessionId: input.sessionId,
     context: { request, emit: input.emit },
-    timeoutMs: input.timeoutMs ?? QUESTION_TIMEOUT_MS,
+    timeoutMs: input.timeoutMs,
     onTimeout: (context) => skip(context),
   });
 

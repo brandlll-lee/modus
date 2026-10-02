@@ -1,6 +1,6 @@
 import { IconExternalLink } from "@tabler/icons-react";
 import { type ComponentType, useEffect, useState } from "react";
-import type { ContextItem, PreviewKind, PreviewReadResult } from "../../../../shared/contracts";
+import type { PreviewKind, PreviewReadResult } from "../../../../shared/contracts";
 import { cn } from "../../lib/cn";
 import { loadPreviewEngine, type PreviewEngineProps } from "./registry";
 
@@ -8,19 +8,22 @@ type PreviewHostProps = {
   cwd: string;
   path: string;
   className?: string | undefined;
-  onAddToChat?: ((item: ContextItem) => void) | undefined;
 };
 
 type LoadState =
   | { status: "loading" }
   | { status: "error"; message: string }
-  | { status: "ready"; preview: PreviewReadResult; Engine: ComponentType<PreviewEngineProps> | null };
+  | {
+      status: "ready";
+      preview: PreviewReadResult;
+      Engine: ComponentType<PreviewEngineProps> | null;
+    };
 
 /**
  * Single in-app document/image preview surface. Routes on `previewKind` from
  * main-process byte inspection — never on filename extensions.
  */
-export function PreviewHost({ cwd, path, className, onAddToChat }: PreviewHostProps) {
+export function PreviewHost({ cwd, path, className }: PreviewHostProps) {
   const [state, setState] = useState<LoadState>({ status: "loading" });
 
   useEffect(() => {
@@ -56,36 +59,17 @@ export function PreviewHost({ cwd, path, className, onAddToChat }: PreviewHostPr
     return <Centered className={className}>Loading preview…</Centered>;
   }
   if (state.status === "error") {
-    return (
-      <Unsupported
-        className={className}
-        cwd={cwd}
-        message={state.message}
-        path={path}
-      />
-    );
+    return <Unsupported className={className} cwd={cwd} message={state.message} path={path} />;
   }
 
   const { preview, Engine } = state;
   if (!Engine || preview.previewKind === "unsupported") {
-    return (
-      <Unsupported
-        className={className}
-        cwd={cwd}
-        kind={preview.previewKind}
-        path={path}
-      />
-    );
+    return <Unsupported className={className} cwd={cwd} kind={preview.previewKind} path={path} />;
   }
 
   return (
     <div className={cn("flex h-full min-h-0 flex-col", className)}>
-      <Engine
-        bytes={preview.bytes}
-        mime={preview.mime}
-        path={preview.path}
-        {...(onAddToChat ? { onAddToChat } : {})}
-      />
+      <Engine bytes={preview.bytes} mime={preview.mime} path={preview.path} />
     </div>
   );
 }
@@ -131,13 +115,7 @@ function Unsupported({
   );
 }
 
-function Centered({
-  children,
-  className,
-}: {
-  children: string;
-  className?: string | undefined;
-}) {
+function Centered({ children, className }: { children: string; className?: string | undefined }) {
   return (
     <div
       className={cn(

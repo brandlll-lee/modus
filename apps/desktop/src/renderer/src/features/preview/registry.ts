@@ -1,11 +1,10 @@
 import type { ComponentType } from "react";
-import type { ContextItem, PreviewKind } from "../../../../shared/contracts";
+import type { PreviewKind } from "../../../../shared/contracts";
 
 export type PreviewEngineProps = {
   bytes: Uint8Array;
   mime: string;
   path: string;
-  onAddToChat?: ((item: ContextItem) => void) | undefined;
 };
 
 type EngineLoader = () => Promise<{ default: ComponentType<PreviewEngineProps> }>;

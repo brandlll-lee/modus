@@ -1,54 +1,41 @@
 import { randomUUID } from "node:crypto";
+import { existsSync, statSync, unlinkSync } from "node:fs";
+import { basename } from "node:path";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import type { AgentSessionInfo } from "../../shared/contracts";
-import { getDatabase } from "../db/database";
+import { deriveSessionTitle } from "../../shared/session-title";
+import { desktopPreferences, saveDesktopPreferences } from "../preferences/desktop-preferences";
+import { listWorkspaces } from "../workspace/workspace-store";
+import { sessionDirectory } from "./session-directory";
 
-type AgentSessionRow = {
-  id: string;
-  workspace_id: string;
-  title: string;
-  cwd: string;
-  status: AgentSessionInfo["status"];
-  runtime: "pi-sdk" | "pi-rpc";
-  model: string | null;
-  pi_session_id: string | null;
-  pi_session_file: string | null;
-  pinned_at: string | null;
-  archived_at: string | null;
-  created_at: string;
-  updated_at: string;
-};
+const sessions = new Map<string, AgentSessionInfo>();
+const managers = new Map<string, SessionManager>();
 
-const SESSION_COLUMNS = `id, workspace_id, title, cwd, status, runtime, model, pi_session_id,
-  pi_session_file, pinned_at, archived_at, created_at, updated_at`;
+export function sessionManagerFor(id: string): SessionManager | undefined {
+  const current = managers.get(id);
+  if (current) return current;
+  const file = sessions.get(id)?.piSessionFile;
+  return file ? openSessionFile(file) : undefined;
+}
 
-function toSession(row: AgentSessionRow): AgentSessionInfo {
-  const session: AgentSessionInfo = {
-    id: row.id,
-    workspaceId: row.workspace_id,
-    title: row.title,
-    cwd: row.cwd,
-    status: row.status,
-    runtime: row.runtime,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
+export function openSessionFile(file: string): SessionManager {
+  if (!existsSync(file)) throw new Error(`Session file not found: ${file}`);
+  if (!statSync(file).size) throw new Error(`Session file is empty: ${file}`);
+  return SessionManager.open(file);
+}
 
-  if (row.model !== null) {
-    session.model = row.model;
+export function bindSessionManager(id: string, manager: SessionManager): void {
+  managers.set(id, manager);
+  const info = sessions.get(id);
+  if (info) {
+    info.piSessionId = manager.getSessionId();
+    const file = manager.getSessionFile();
+    if (file) info.piSessionFile = file;
   }
-  if (row.pi_session_id !== null) {
-    session.piSessionId = row.pi_session_id;
-  }
-  if (row.pi_session_file !== null) {
-    session.piSessionFile = row.pi_session_file;
-  }
-  if (row.pinned_at !== null) {
-    session.pinnedAt = row.pinned_at;
-  }
-  if (row.archived_at !== null) {
-    session.archivedAt = row.archived_at;
-  }
-  return session;
+}
+
+export function releaseSessionManager(id: string): void {
+  managers.delete(id);
 }
 
 export function createAgentSessionRecord(input: {
@@ -56,187 +43,208 @@ export function createAgentSessionRecord(input: {
   workspaceId: string;
   title: string;
   cwd: string;
-  runtime?: "pi-sdk" | "pi-rpc";
+  runtime?: "pi-sdk";
   model?: string;
   piSessionId?: string;
   piSessionFile?: string;
 }): AgentSessionInfo {
   const now = new Date().toISOString();
-  const runtime = input.runtime ?? "pi-sdk";
-  const session: AgentSessionInfo = {
+  const info: AgentSessionInfo = {
+    ...input,
     id: input.id ?? randomUUID(),
-    workspaceId: input.workspaceId,
-    title: input.title,
-    cwd: input.cwd,
+    runtime: "pi-sdk",
     status: "starting",
-    runtime,
     createdAt: now,
     updatedAt: now,
   };
-
-  if (input.model !== undefined) {
-    session.model = input.model;
-  }
-  if (input.piSessionId !== undefined) {
-    session.piSessionId = input.piSessionId;
-  }
-  if (input.piSessionFile !== undefined) {
-    session.piSessionFile = input.piSessionFile;
-  }
-  getDatabase()
-    .prepare(
-      `insert into agent_sessions (
-        id, workspace_id, title, cwd, status, runtime, model, pi_session_id, pi_session_file,
-        created_at, updated_at
-       )
-       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      session.id,
-      session.workspaceId,
-      session.title,
-      session.cwd,
-      session.status,
-      runtime,
-      session.model ?? null,
-      session.piSessionId ?? null,
-      session.piSessionFile ?? null,
-      session.createdAt,
-      session.updatedAt,
-    );
-
-  return session;
+  sessions.set(info.id, info);
+  return info;
 }
 
-/**
- * Conversation activity heartbeat — the ONLY writer of `updated_at` after create.
- * Open/resume/status/metadata/pin/archive must never bump the sort key.
- */
-export function touchAgentSession(sessionId: string): string {
-  const now = new Date().toISOString();
-  getDatabase()
-    .prepare("update agent_sessions set updated_at = ? where id = ?")
-    .run(now, sessionId);
-  return now;
+export function getAgentSession(id: string): AgentSessionInfo | undefined {
+  const memory = sessions.get(id);
+  if (!memory) return undefined;
+  const preference = desktopPreferences().sessions[memory.piSessionFile ?? ""] ?? {};
+  let manager: SessionManager | undefined;
+  try {
+    manager = sessionManagerFor(id);
+  } catch {
+    const time = memory?.createdAt ?? "1970-01-01T00:00:00.000Z";
+    return {
+      id,
+      workspaceId: memory.workspaceId,
+      cwd: memory.cwd,
+      title: memory?.title ?? basename(memory.piSessionFile ?? ""),
+      status: "error",
+      runtime: "pi-sdk",
+      piSessionFile: memory.piSessionFile ?? "",
+      createdAt: time,
+      updatedAt: memory?.updatedAt ?? time,
+      ...(preference.pinnedAt ? { pinnedAt: preference.pinnedAt } : {}),
+      ...(preference.archivedAt ? { archivedAt: preference.archivedAt } : {}),
+    };
+  }
+  if (!manager) return undefined;
+  const header = manager.getHeader();
+  const branch = manager.getBranch();
+  const first = branch.find((entry) => entry.type === "message" && entry.message.role === "user");
+  const text =
+    first?.type === "message" && first.message.role === "user"
+      ? typeof first.message.content === "string"
+        ? first.message.content
+        : first.message.content
+            .filter((part) => part.type === "text")
+            .map((part) => part.text)
+            .join("\n")
+      : "";
+  const context = manager.buildSessionContext();
+  const model = context.model
+    ? `${context.model.provider}/${context.model.modelId}`
+    : memory?.model;
+  const info: AgentSessionInfo = {
+    id,
+    workspaceId: memory.workspaceId,
+    cwd: manager.getCwd(),
+    title: manager.getSessionName() || memory?.title || deriveSessionTitle(text),
+    status: memory?.status ?? "idle",
+    runtime: "pi-sdk",
+    piSessionId: manager.getSessionId(),
+    piSessionFile: memory.piSessionFile ?? "",
+    createdAt:
+      header?.timestamp ??
+      memory?.createdAt ??
+      statSync(memory.piSessionFile ?? "").birthtime.toISOString(),
+    updatedAt:
+      branch.at(-1)?.timestamp ??
+      memory?.updatedAt ??
+      header?.timestamp ??
+      statSync(memory.piSessionFile ?? "").mtime.toISOString(),
+    ...(model ? { model } : {}),
+    ...(preference.pinnedAt ? { pinnedAt: preference.pinnedAt } : {}),
+    ...(preference.archivedAt ? { archivedAt: preference.archivedAt } : {}),
+  };
+  sessions.set(id, info);
+  return info;
 }
 
-export function updateAgentSessionStatus(
-  sessionId: string,
-  status: AgentSessionInfo["status"],
-): void {
-  getDatabase().prepare("update agent_sessions set status = ? where id = ?").run(status, sessionId);
+export async function discoverAgentSessions(): Promise<void> {
+  await Promise.all(
+    listWorkspaces().map(async (workspace) => {
+      const entries = await SessionManager.list(
+        workspace.rootPath,
+        sessionDirectory(workspace.rootPath),
+      );
+      for (const entry of entries) {
+        if ([...sessions.values()].some((info) => info.piSessionFile === entry.path)) continue;
+        sessions.set(entry.id, {
+          id: entry.id,
+          workspaceId: workspace.id,
+          cwd: entry.cwd,
+          title: entry.name || deriveSessionTitle(entry.firstMessage),
+          runtime: "pi-sdk",
+          status: "idle",
+          piSessionId: entry.id,
+          piSessionFile: entry.path,
+          createdAt: entry.created.toISOString(),
+          updatedAt: entry.modified.toISOString(),
+        });
+      }
+    }),
+  );
+}
+
+export function touchAgentSession(id: string): string {
+  const time = new Date().toISOString();
+  const info = getAgentSession(id);
+  if (info) sessions.set(id, { ...info, updatedAt: time });
+  return time;
+}
+
+export function updateAgentSessionStatus(id: string, status: AgentSessionInfo["status"]): void {
+  const info = sessions.get(id) ?? getAgentSession(id);
+  if (info) sessions.set(id, { ...info, status });
 }
 
 export function updateAgentSessionMetadata(
-  sessionId: string,
+  id: string,
   metadata: Partial<Pick<AgentSessionInfo, "model" | "piSessionId" | "piSessionFile">>,
 ): AgentSessionInfo | undefined {
-  const existing = getAgentSession(sessionId);
-  if (!existing) {
-    return undefined;
-  }
-
-  const next = { ...existing, ...metadata };
-  getDatabase()
-    .prepare(
-      `update agent_sessions
-       set model = ?, pi_session_id = ?, pi_session_file = ?
-       where id = ?`,
-    )
-    .run(next.model ?? null, next.piSessionId ?? null, next.piSessionFile ?? null, sessionId);
-
+  const info = getAgentSession(id);
+  if (!info) return undefined;
+  const next = { ...info, ...metadata };
+  sessions.set(id, next);
   return next;
 }
 
-export function updateAgentSessionTitle(
-  sessionId: string,
-  title: string,
-): AgentSessionInfo | undefined {
-  const existing = getAgentSession(sessionId);
-  if (!existing) {
-    return undefined;
-  }
-
-  const next = { ...existing, title };
-  getDatabase()
-    .prepare("update agent_sessions set title = ? where id = ?")
-    .run(next.title, sessionId);
-
+export function updateAgentSessionTitle(id: string, title: string): AgentSessionInfo | undefined {
+  const info = getAgentSession(id);
+  if (!info) return undefined;
+  sessionManagerFor(id)?.appendSessionInfo(title);
+  const next = { ...info, title };
+  sessions.set(id, next);
   return next;
-}
-
-export function getAgentSession(sessionId: string): AgentSessionInfo | undefined {
-  const row = getDatabase()
-    .prepare(
-      `select ${SESSION_COLUMNS}
-       from agent_sessions
-       where id = ?`,
-    )
-    .get(sessionId) as AgentSessionRow | undefined;
-
-  return row ? toSession(row) : undefined;
 }
 
 export function listAgentSessions(options: { includeSessionId?: string } = {}): AgentSessionInfo[] {
-  const rows = getDatabase()
-    .prepare(
-      `select ${SESSION_COLUMNS}
-       from agent_sessions
-       where archived_at is null
-       order by pinned_at is null, pinned_at desc, updated_at desc`,
+  const workspaceIds = new Set(listWorkspaces().map((item) => item.id));
+  return [...sessions.keys()]
+    .map(getAgentSession)
+    .filter(
+      (item): item is AgentSessionInfo =>
+        Boolean(item) &&
+        workspaceIds.has(item?.workspaceId ?? "") &&
+        (!item?.archivedAt || item.id === options.includeSessionId),
     )
-    .all() as AgentSessionRow[];
-
-  const sessions = rows.map(toSession);
-  if (
-    options.includeSessionId &&
-    !sessions.some((session) => session.id === options.includeSessionId)
-  ) {
-    const included = getAgentSession(options.includeSessionId);
-    if (included) {
-      sessions.push(included);
-    }
-  }
-  return sessions;
+    .sort(
+      (a, b) =>
+        (b.pinnedAt ?? "").localeCompare(a.pinnedAt ?? "") ||
+        b.updatedAt.localeCompare(a.updatedAt),
+    );
 }
 
 export function listArchivedAgentSessions(workspaceId: string): AgentSessionInfo[] {
-  const rows = getDatabase()
-    .prepare(
-      `select ${SESSION_COLUMNS}
-       from agent_sessions
-       where workspace_id = ? and archived_at is not null
-       order by archived_at desc`,
-    )
-    .all(workspaceId) as AgentSessionRow[];
-
-  return rows.map(toSession);
+  return [...sessions.keys()]
+    .map(getAgentSession)
+    .filter(
+      (item): item is AgentSessionInfo =>
+        Boolean(item) && item?.workspaceId === workspaceId && Boolean(item.archivedAt),
+    );
 }
 
-export function setAgentSessionPinned(
-  sessionId: string,
-  pinned: boolean,
-): AgentSessionInfo | undefined {
-  getDatabase()
-    .prepare("update agent_sessions set pinned_at = ? where id = ?")
-    .run(pinned ? new Date().toISOString() : null, sessionId);
-  return getAgentSession(sessionId);
+export function setAgentSessionPinned(id: string, pinned: boolean): AgentSessionInfo | undefined {
+  const file = getAgentSession(id)?.piSessionFile;
+  if (!file) return undefined;
+  const preferences = desktopPreferences();
+  const preference = preferences.sessions[file] ?? {};
+  if (pinned) preference.pinnedAt = new Date().toISOString();
+  else delete preference.pinnedAt;
+  preferences.sessions[file] = preference;
+  saveDesktopPreferences();
+  return getAgentSession(id);
 }
 
 export function setAgentSessionArchived(
-  sessionId: string,
+  id: string,
   archived: boolean,
 ): AgentSessionInfo | undefined {
-  getDatabase()
-    .prepare("update agent_sessions set archived_at = ? where id = ?")
-    .run(archived ? new Date().toISOString() : null, sessionId);
-  return getAgentSession(sessionId);
+  const file = getAgentSession(id)?.piSessionFile;
+  if (!file) return undefined;
+  const preferences = desktopPreferences();
+  const preference = preferences.sessions[file] ?? {};
+  if (archived) preference.archivedAt = new Date().toISOString();
+  else delete preference.archivedAt;
+  preferences.sessions[file] = preference;
+  saveDesktopPreferences();
+  return getAgentSession(id);
 }
 
-/**
- * Permanently removes a session and (via `on delete cascade`) its recorded
- * events and runs. Used by the explicit delete action.
- */
-export function deleteAgentSession(sessionId: string): void {
-  getDatabase().prepare("delete from agent_sessions where id = ?").run(sessionId);
+export function deleteAgentSession(id: string): void {
+  const info = getAgentSession(id);
+  if (info?.piSessionFile && existsSync(info.piSessionFile)) unlinkSync(info.piSessionFile);
+  if (info?.piSessionFile) {
+    delete desktopPreferences().sessions[info.piSessionFile];
+    saveDesktopPreferences();
+  }
+  managers.delete(id);
+  sessions.delete(id);
 }

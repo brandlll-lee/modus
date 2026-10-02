@@ -11,19 +11,8 @@ vi.mock("electron", () => ({
   },
 }));
 
-const { getDatabase } = await import("../db/database");
 const { browserRecentKey, listBrowserRecents, upsertBrowserRecent, deleteBrowserRecent } =
   await import("./browser-recents-store");
-
-function insertWorkspace(workspaceId: string): void {
-  const now = new Date().toISOString();
-  getDatabase()
-    .prepare(
-      `insert into workspaces (id, root_path, display_name, is_git_repository, last_opened_at, created_at)
-       values (?, ?, ?, ?, ?, ?)`,
-    )
-    .run(workspaceId, `root-${workspaceId}`, "repo", 1, now, now);
-}
 
 beforeAll(async () => {
   userData = await mkdtemp(join(tmpdir(), "modus-browser-recents-test-"));
@@ -42,7 +31,6 @@ describe("browser-recents-store", () => {
 
   it("upserts by workspace and URL key", () => {
     const workspaceId = `workspace-${crypto.randomUUID()}`;
-    insertWorkspace(workspaceId);
 
     upsertBrowserRecent({
       workspaceId,
@@ -68,7 +56,6 @@ describe("browser-recents-store", () => {
 
   it("updates title and favicon without touching recency when requested", () => {
     const workspaceId = `workspace-${crypto.randomUUID()}`;
-    insertWorkspace(workspaceId);
     upsertBrowserRecent({ workspaceId, url: "https://example.com/first", title: "First" });
     upsertBrowserRecent({ workspaceId, url: "https://example.com/second", title: "Second" });
     const before = listBrowserRecents(workspaceId);
@@ -93,7 +80,6 @@ describe("browser-recents-store", () => {
 
   it("keeps only the latest 100 recents per workspace", () => {
     const workspaceId = `workspace-${crypto.randomUUID()}`;
-    insertWorkspace(workspaceId);
 
     for (let index = 0; index < 105; index += 1) {
       upsertBrowserRecent({
@@ -110,7 +96,6 @@ describe("browser-recents-store", () => {
 
   it("deletes a recent without touching the workspace", () => {
     const workspaceId = `workspace-${crypto.randomUUID()}`;
-    insertWorkspace(workspaceId);
     upsertBrowserRecent({ workspaceId, url: "https://example.com", title: "Example" });
     const recent = listBrowserRecents(workspaceId)[0];
     expect(recent).toBeDefined();

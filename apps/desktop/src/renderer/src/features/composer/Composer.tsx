@@ -1,10 +1,4 @@
-import {
-  IconArrowUp,
-  IconListCheck,
-  IconPlayerStopFilled,
-  IconPlus,
-  IconX,
-} from "@tabler/icons-react";
+import { IconArrowUp, IconPlayerStopFilled, IconPlus, IconX } from "@tabler/icons-react";
 import { AnimatePresence, m } from "motion/react";
 import {
   type ClipboardEvent,
@@ -16,7 +10,6 @@ import {
   useState,
 } from "react";
 import type {
-  AgentMode,
   ContextItem,
   ContextUsageInfo,
   ModelInfo,
@@ -70,7 +63,6 @@ type ComposerProps = {
     delivery?: PromptDelivery,
     attachments?: PromptImageAttachment[],
     skills?: SkillSelection[],
-    mode?: AgentMode,
   ): void | Promise<void>;
   onCompact?(): Promise<void>;
   onAbort?(): void;
@@ -79,9 +71,7 @@ type ComposerProps = {
    * the dock). Esc / the X control cancel; dock-only mode/model chrome is omitted.
    */
   onCancel?(): void;
-  /** Controlled composer mode (build/plan); falls back to internal state. */
-  mode?: AgentMode;
-  onModeChange?(mode: AgentMode): void;
+
   /** Optional per-session draft, owned by the caller when the composer can unmount. */
   draft?: ComposerDraft;
   onDraftChange?(update: ComposerDraftUpdate): void;
@@ -107,8 +97,6 @@ export function Composer({
   onCompact,
   onSubmit,
   onCancel,
-  mode: controlledMode,
-  onModeChange,
   draft,
   onDraftChange,
 }: ComposerProps) {
@@ -120,8 +108,7 @@ export function Composer({
   const [isComposing, setIsComposing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | undefined>();
-  const [internalMode, setInternalMode] = useState<AgentMode>("build");
-  const mode = controlledMode ?? internalMode;
+
   const setDraft = useCallback(
     (update: ComposerDraftUpdate): void => {
       if (onDraftChange) {
@@ -153,12 +140,6 @@ export function Composer({
     },
     [setDraft],
   );
-  const setMode = (next: AgentMode): void => {
-    onModeChange?.(next);
-    if (controlledMode === undefined) {
-      setInternalMode(next);
-    }
-  };
   const editorRef = useRef<MentionEditorHandle>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { addFiles, clearImages, images, isPreparing, removeImage, toAttachments, updateImage } =
@@ -183,10 +164,6 @@ export function Composer({
     rows: mentionRows,
     setActiveIndex,
     moveActive,
-    openCategory,
-    backToRoot,
-    atCategoryRoot,
-    expandMore,
   } = useComposerMentions({
     cwd,
     value: textBeforeCaret,
@@ -221,13 +198,7 @@ export function Composer({
     ) {
       return;
     }
-    const message = hasText
-      ? messageFromParts(activeDraft.parts, value.trim())
-      : hasSelectedSkills
-        ? "Use the selected skill(s)."
-        : hasImages
-          ? ""
-          : "Use the selected context.";
+    const message = hasText ? messageFromParts(activeDraft.parts, value.trim()) : "";
     const attachments = toAttachments();
     const payload = {
       message,
@@ -235,7 +206,6 @@ export function Composer({
       delivery,
       attachments: attachments.length > 0 ? attachments : undefined,
       skills: selectedSkills.length > 0 ? selectedSkills : undefined,
-      mode,
     } as const;
 
     if (isInlineEdit) {
@@ -248,7 +218,6 @@ export function Composer({
           payload.delivery,
           payload.attachments,
           payload.skills,
-          payload.mode,
         ),
       )
         .then(() => {
@@ -271,7 +240,6 @@ export function Composer({
           payload.delivery,
           payload.attachments,
           payload.skills,
-          payload.mode,
         ),
       )
       .then(() => {
@@ -351,25 +319,11 @@ export function Composer({
     }
   }
 
-  /** Route an @-menu row: drill into a category, add an item, or expand "more". */
   function selectMentionRow(row: MentionRow): void {
-    if (row.row === "nav") {
-      openCategory(row.target);
-    } else if (row.row === "add") {
-      addContextItem(row.item);
-    } else if (row.row === "more") {
-      expandMore();
-    }
+    addContextItem(row.item);
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
-    // Shift+Tab rotates the composer mode (build ⇄ plan), mirroring Cursor.
-    if (event.key === "Tab" && event.shiftKey && !slash.isOpen && !isOpen) {
-      event.preventDefault();
-      setMode(mode === "plan" ? "build" : "plan");
-      return;
-    }
-
     if (slash.isOpen && event.key === "ArrowDown") {
       event.preventDefault();
       slash.setActiveIndex((index) => (index + 1) % slash.items.length);
@@ -411,7 +365,14 @@ export function Composer({
         return;
       }
     }
-
+    if (isOpen && (event.key === "Enter" || event.key === "Tab")) {
+      const row = mentionRows[activeIndex];
+      if (row) {
+        event.preventDefault();
+        selectMentionRow(row);
+        return;
+      }
+    }
     if (isOpen && event.key === "ArrowDown") {
       event.preventDefault();
       moveActive(1);
@@ -424,26 +385,10 @@ export function Composer({
       return;
     }
 
-    // Backspace at a category's empty query pops back to the root @ menu.
-    if (isOpen && atCategoryRoot && event.key === "Backspace") {
-      event.preventDefault();
-      backToRoot();
-      return;
-    }
-
     if (isOpen && event.key === "Escape") {
       event.preventDefault();
       editorRef.current?.deleteBeforeCaret(mention ? mention.query.length + 1 : 0);
       return;
-    }
-
-    if (isOpen && (event.key === "Enter" || event.key === "Tab")) {
-      const row = mentionRows[activeIndex];
-      if (row && row.row !== "header") {
-        event.preventDefault();
-        selectMentionRow(row);
-        return;
-      }
     }
 
     if (event.key === "Escape" && onCancel && !submitting) {
@@ -577,10 +522,6 @@ export function Composer({
             type="file"
           />
 
-          {!isInlineEdit && mode === "plan" ? (
-            <PlanModePill onExit={() => setMode("build")} />
-          ) : null}
-
           <div className="flex-1" />
 
           {!isInlineEdit ? (
@@ -660,27 +601,5 @@ export function Composer({
       </div>
       {footer ? <div className="px-2">{footer}</div> : null}
     </div>
-  );
-}
-
-function PlanModePill({ onExit }: { onExit: () => void }) {
-  // Cursor-style mode pill: a compact accent token that shows Plan Mode is
-  // active, with an inline dismiss. Shift+Tab also toggles it (see handleKeyDown).
-  return (
-    <span
-      className="app-no-drag inline-flex h-[26px] shrink-0 items-center gap-1 rounded-md border border-accent/30 bg-accent/10 pr-1 pl-1.5 text-accent"
-      title="Plan Mode — research read-only and draft a plan (Shift+Tab to toggle)"
-    >
-      <IconListCheck size={14} stroke={1.9} />
-      <span className="font-medium text-[12px]">Plan</span>
-      <button
-        aria-label="Exit Plan Mode"
-        className="flex size-4 items-center justify-center rounded-sm text-accent/70 transition-colors hover:bg-accent/15 hover:text-accent"
-        onClick={onExit}
-        type="button"
-      >
-        <IconX size={12} stroke={2} />
-      </button>
-    </span>
   );
 }

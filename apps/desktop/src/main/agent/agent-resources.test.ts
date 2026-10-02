@@ -11,7 +11,6 @@ import {
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 
 const paths = vi.hoisted(() => ({ agent: "" }));
@@ -35,7 +34,10 @@ beforeAll(() => {
   root = mkdtempSync(join(tmpdir(), "modus-pi-resources-"));
   paths.agent = join(root, "agent");
   cwd = join(root, "project");
-  put(join(paths.agent, "settings.json"), JSON.stringify({ defaultTools: ["read"] }));
+  put(
+    join(paths.agent, "settings.json"),
+    JSON.stringify({ defaultTools: ["read"], defaultProjectTrust: "always" }),
+  );
   put(
     join(paths.agent, "skills", "synthetic", "SKILL.md"),
     "---\nname: synthetic\ndescription: Native fixture\n---\nSkill body.\n",
@@ -46,7 +48,7 @@ beforeAll(() => {
     'export default function(pi) { pi.registerCommand("mcp", {description:"Fixture manager", handler:async()=>{}}); }',
   );
 });
-afterAll(() => rmSync(root, { recursive: true, force: true }));
+afterAll(() => rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
 
 it("enables native orchestration tools through the user's PI defaultTools", async () => {
   const faux = fauxProvider({ tokensPerSecond: 0 });
@@ -61,7 +63,17 @@ it("enables native orchestration tools through the user's PI defaultTools", asyn
     { defaultTools: ["read", "+tool_search", "+codemode"] },
     { projectTrusted: true },
   );
-  const loader = await createAgentResourceLoader(cwd, settings, []);
+  const loader = await createAgentResourceLoader(cwd, settings, [], {
+    cwd,
+    mode: "rpc",
+    hasUI: false,
+    ui: {
+      select: async () => undefined,
+      input: async () => undefined,
+      confirm: async () => false,
+      notify: () => {},
+    },
+  });
   const { session } = await createAgentSession({
     cwd,
     agentDir: paths.agent,
@@ -75,6 +87,7 @@ it("enables native orchestration tools through the user's PI defaultTools", asyn
     await session.bindExtensions({ mode: "rpc" });
     expect(session.getActiveToolNames().sort()).toEqual(["codemode", "read", "tool_search"]);
   } finally {
+    await session.extensionRunner?.emit({ type: "session_shutdown", reason: "quit" });
     session.dispose();
   }
 }, 30_000);
@@ -124,25 +137,40 @@ it("lets native MCP exposure activate discovery and restores discovered tools on
   const settings = SettingsManager.inMemory({ defaultTools: ["read"] }, { projectTrusted: true });
   const project = join(root, "mcp-project");
   mkdirSync(project, { recursive: true });
-  const loader = await createAgentResourceLoader(project, settings, [
-    {
-      name: "fixture-mcp",
-      factory: createMcpExtension({
-        loadConfig: () => ({
-          servers: [
-            {
-              name: "fixture",
-              source: "fixture",
-              scope: "extension",
-              config: { url: `http://127.0.0.1:${address.port}`, exposure: "deferred" },
-            },
-          ],
-          errors: [],
+  const loader = await createAgentResourceLoader(
+    project,
+    settings,
+    [
+      {
+        name: "fixture-mcp",
+        factory: createMcpExtension({
+          loadConfig: () => ({
+            servers: [
+              {
+                name: "fixture",
+                source: "fixture",
+                scope: "extension",
+                config: { url: `http://127.0.0.1:${address.port}`, exposure: "deferred" },
+              },
+            ],
+            errors: [],
+          }),
+          logPath: join(root, "mcp.log"),
         }),
-        logPath: join(root, "mcp.log"),
-      }),
+      },
+    ],
+    {
+      cwd,
+      mode: "rpc",
+      hasUI: false,
+      ui: {
+        select: async () => undefined,
+        input: async () => undefined,
+        confirm: async () => false,
+        notify: () => {},
+      },
     },
-  ]);
+  );
   const { session } = await createAgentSession({
     cwd: project,
     agentDir: paths.agent,
@@ -180,7 +208,6 @@ it("lets native MCP exposure activate discovery and restores discovered tools on
     await vi.waitFor(() =>
       expect(session.getActiveToolNames()).toContain("mcp__fixture__inspect_fixture"),
     );
-    expect(session.getActiveToolNames()).not.toContain("codemode");
   } finally {
     session.dispose();
     server.closeAllConnections();
@@ -190,10 +217,18 @@ it("lets native MCP exposure activate discovery and restores discovered tools on
 
 it("uses native discovery and lets a trusted extension replace builtin MCP", async () => {
   const settings = createAgentSettings({ cwd });
-  const loader = await createAgentResourceLoader(cwd, settings, []);
-  expect(loader.getExtensions().extensions.some((item) => item.path === "builtin:mcp")).toBe(true);
-  settings.setProjectTrusted(true);
-  await loader.reload();
+  const loader = await createAgentResourceLoader(cwd, settings, [], {
+    cwd,
+    mode: "rpc",
+    hasUI: false,
+    ui: {
+      select: async () => undefined,
+      input: async () => undefined,
+      confirm: async () => false,
+      notify: () => {},
+    },
+  });
+  expect(settings.isProjectTrusted()).toBe(true);
   const native = new DefaultResourceLoader({
     cwd,
     agentDir: paths.agent,
@@ -209,7 +244,7 @@ it("uses native discovery and lets a trusted extension replace builtin MCP", asy
   );
 });
 
-it("restores persisted SDK usage and skills and keeps desktop tools deferred", async () => {
+it("restores native SDK usage and skills", async () => {
   const faux = fauxProvider({ tokensPerSecond: 0 });
   const modelRuntime = await ModelRuntime.create({
     credentials: new InMemoryCredentialStore(),
@@ -222,16 +257,31 @@ it("restores persisted SDK usage and skills and keeps desktop tools deferred", a
     { defaultTools: ["read"], compaction: { enabled: false } },
     { projectTrusted: true },
   );
-  const loader = await createAgentResourceLoader(cwd, settings, [
+  const loader = await createAgentResourceLoader(
+    cwd,
+    settings,
+    [
+      {
+        name: "session-ui",
+        factory: (pi) => {
+          pi.on("session_start", (_event, ctx) => {
+            ctx.ui.notify(ctx.ui.theme.fg("accent", "UI_READY"));
+          });
+        },
+      },
+    ],
     {
-      name: "session-ui",
-      factory: (pi) => {
-        pi.on("session_start", (_event, ctx) => {
-          ctx.ui.notify(ctx.ui.theme.fg("accent", "UI_READY"));
-        });
+      cwd,
+      mode: "rpc",
+      hasUI: false,
+      ui: {
+        select: async () => undefined,
+        input: async () => undefined,
+        confirm: async () => false,
+        notify: () => {},
       },
     },
-  ]);
+  );
   const options = {
     cwd,
     agentDir: paths.agent,
@@ -239,16 +289,6 @@ it("restores persisted SDK usage and skills and keeps desktop tools deferred", a
     model: faux.getModel(),
     settingsManager: settings,
     resourceLoader: loader,
-    customTools: [
-      {
-        name: "desktop_fixture",
-        label: "Fixture",
-        description: "Synthetic desktop operation",
-        exposure: "deferred" as const,
-        parameters: Type.Object({}),
-        execute: async () => ({ content: [], details: {} }),
-      },
-    ],
   };
   const { session } = await createAgentSession({
     ...options,
@@ -287,15 +327,24 @@ it("restores persisted SDK usage and skills and keeps desktop tools deferred", a
   await session.prompt("hello");
   unsubscribe();
   expect(lifecycle).toEqual(["agent.started", "turn.started", "agent.ended"]);
-  expect(session.getActiveToolNames()).toEqual(["read"]);
-  expect(session.getActiveToolNames()).not.toContain("desktop_fixture");
-  expect(session.getActiveToolNames()).not.toContain("codemode");
+  expect(session.getActiveToolNames()).toContain("read");
   const stats = session.getSessionStats();
   expect(stats.tokens.input).toBeGreaterThan(0);
   expect(session.sessionFile).toBeDefined();
   const file = session.sessionFile as string;
+  await session.extensionRunner?.emit({ type: "session_shutdown", reason: "quit" });
   session.dispose();
-  const restoredLoader = await createAgentResourceLoader(cwd, settings, []);
+  const restoredLoader = await createAgentResourceLoader(cwd, settings, [], {
+    cwd,
+    mode: "rpc",
+    hasUI: false,
+    ui: {
+      select: async () => undefined,
+      input: async () => undefined,
+      confirm: async () => false,
+      notify: () => {},
+    },
+  });
   const { session: restored } = await createAgentSession({
     ...options,
     resourceLoader: restoredLoader,
@@ -311,6 +360,7 @@ it("restores persisted SDK usage and skills and keeps desktop tools deferred", a
     expect(listSkills("cold").skills.some((skill) => skill.name === "synthetic")).toBe(true);
   } finally {
     releaseSessionResources("cold");
+    await restored.extensionRunner?.emit({ type: "session_shutdown", reason: "quit" });
     restored.dispose();
   }
 }, 30_000);

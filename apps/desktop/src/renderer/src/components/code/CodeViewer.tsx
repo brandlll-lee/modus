@@ -26,9 +26,7 @@ export type CodeViewerProps = {
   /** Fires on Ctrl/Cmd+S with the current buffer value. */
   onSave?: ((value: string) => void) | undefined;
   /** Fires when the user adds the current selection to chat (button or Ctrl/Cmd+L). */
-  onAddToChat?:
-    | ((input: { path: string; range: CodeSelectionRange }) => void)
-    | undefined;
+  onAddToChat?: ((input: { path: string; range: CodeSelectionRange }) => void) | undefined;
   className?: string | undefined;
 };
 
@@ -268,11 +266,7 @@ export function CodeViewer({
     if (!model || model.getValue() === content) {
       return;
     }
-    model.pushEditOperations(
-      [],
-      [{ range: model.getFullModelRange(), text: content }],
-      () => null,
-    );
+    model.pushEditOperations([], [{ range: model.getFullModelRange(), text: content }], () => null);
   }, [content]);
 
   useEffect(() => {

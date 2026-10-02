@@ -16,42 +16,12 @@ export type SlashActionItem = Omit<SlashCommand, "prefix"> & {
   run(): Promise<void>;
 };
 
-/**
- * A built-in command applies a fixed instruction to the prompt without needing
- * a skill file on disk. Selecting one rewrites the composer with its prefix so
- * the user can keep typing the target of the command.
- */
 export type SlashCommand = {
   name: string;
   description: string;
   /** Text the composer is seeded with when the command is chosen. */
   prefix: string;
 };
-
-export const BUILTIN_COMMANDS: SlashCommand[] = [
-  {
-    name: "explain",
-    description: "Explain without changing code",
-    prefix: "Explain the following without changing any code:\n\n",
-  },
-  {
-    name: "code-review",
-    description: "Review code instead of editing it",
-    prefix:
-      "Review the code or diff below instead of editing it. Call out bugs, risks, and concrete improvements:\n\n",
-  },
-  {
-    name: "write-tests",
-    description: "Write or update tests for the target",
-    prefix: "Write or update tests for the following. Cover edge cases and failure paths:\n\n",
-  },
-  {
-    name: "find-bug",
-    description: "Hunt down the root cause of a bug",
-    prefix:
-      "Investigate and find the root cause of this bug. Read the relevant code before proposing a fix:\n\n",
-  },
-];
 
 export type SlashItem =
   | SlashActionItem
@@ -69,6 +39,7 @@ export function getSlashQuery(value: string): { start: number; query: string } |
 
 export function useComposerSlash({ value, cwd, sessionId, actions }: UseComposerSlashInput) {
   const slash = useMemo(() => getSlashQuery(value), [value]);
+  const [commands, setCommands] = useState<SlashCommand[]>([]);
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
   const menuRequested = Boolean(slash);
@@ -76,6 +47,7 @@ export function useComposerSlash({ value, cwd, sessionId, actions }: UseComposer
   useEffect(() => {
     if (!menuRequested || !cwd || !sessionId) {
       setSkills([]);
+      setCommands([]);
       return;
     }
     let active = true;
@@ -83,10 +55,21 @@ export function useComposerSlash({ value, cwd, sessionId, actions }: UseComposer
     async function refresh(): Promise<void> {
       const request = ++generation;
       try {
-        const items = await window.modus.skills.list(sessionId as string);
-        if (active && request === generation) setSkills(items.skills);
+        const [items, nativeCommands] = await Promise.all([
+          window.modus.skills.list(sessionId as string),
+          window.modus.agent.commands(sessionId as string),
+        ]);
+        if (active && request === generation) {
+          setSkills(items.skills);
+          setCommands(
+            nativeCommands.map((command) => ({ ...command, prefix: `/${command.name} ` })),
+          );
+        }
       } catch {
-        if (active && request === generation) setSkills([]);
+        if (active && request === generation) {
+          setSkills([]);
+          setCommands([]);
+        }
       }
     }
     void refresh();
@@ -113,14 +96,14 @@ export function useComposerSlash({ value, cwd, sessionId, actions }: UseComposer
 
   const filteredCommands = useMemo(() => {
     if (!query) {
-      return BUILTIN_COMMANDS;
+      return commands;
     }
-    return BUILTIN_COMMANDS.filter(
+    return commands.filter(
       (command) =>
         command.name.toLowerCase().includes(query) ||
         command.description.toLowerCase().includes(query),
     );
-  }, [query]);
+  }, [query, commands]);
 
   const items = useMemo<SlashItem[]>(
     () => [
@@ -152,9 +135,10 @@ export function useComposerSlash({ value, cwd, sessionId, actions }: UseComposer
     [actions, filteredSkills, filteredCommands, query],
   );
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: A new query resets the highlighted result.
   useEffect(() => {
     setActiveIndex(0);
-  }, []);
+  }, [query]);
 
   const isOpen = Boolean(slash && cwd) && items.length > 0;
 

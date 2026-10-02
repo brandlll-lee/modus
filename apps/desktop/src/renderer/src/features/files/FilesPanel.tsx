@@ -22,12 +22,17 @@ import {
   useRef,
   useState,
 } from "react";
-import type { FileEntry, FileReadResult, FilesChangeEvent, ContextItem } from "../../../../shared/contracts";
-import { CodeViewer, type CodeSelectionRange } from "../../components/code/CodeViewer";
+import type {
+  ContextItem,
+  FileEntry,
+  FileReadResult,
+  FilesChangeEvent,
+} from "../../../../shared/contracts";
+import { type CodeSelectionRange, CodeViewer } from "../../components/code/CodeViewer";
 import { EmptyState } from "../../components/ui/Panel";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
-import { MarkdownExcerptPreview } from "../preview/MarkdownExcerptPreview";
+import { MarkdownPreview } from "../preview/MarkdownPreview";
 import { PreviewHost } from "../preview/PreviewHost";
 import { materialIconForEntry } from "./fileIcons";
 import { hasLiveFilesWatch } from "./hasLiveFilesWatch";
@@ -583,6 +588,7 @@ function FileBreadcrumb({
             </span>
             {last && dirty ? (
               <span
+                role="img"
                 aria-label="Unsaved changes"
                 className="size-1.5 shrink-0 rounded-full bg-fg-muted/70"
               />
@@ -796,22 +802,10 @@ function FileViewer({
     if (!cwd) {
       return <Centered>Binary file — no preview.</Centered>;
     }
-    return (
-      <PreviewHost
-        cwd={cwd}
-        path={file.path}
-        {...(onAddToChat ? { onAddToChat } : {})}
-      />
-    );
+    return <PreviewHost cwd={cwd} path={file.path} />;
   }
   if (isMarkdown(file.path)) {
-    return (
-      <MarkdownExcerptPreview
-        content={file.content}
-        path={file.path}
-        {...(onAddToChat ? { onAddToChat } : {})}
-      />
-    );
+    return <MarkdownPreview content={file.content} />;
   }
   // Truncated reads must stay read-only — saving would clobber the unread tail.
   const readOnly = file.truncated;
@@ -822,8 +816,8 @@ function FileViewer({
       content={file.content}
       {...(onAddToChat
         ? {
-            onAddToChat: ({ path, range }: { path: string; range: CodeSelectionRange }) =>
-              onAddToChat({ type: "file", path, range }),
+            onAddToChat: ({ path }: { path: string; range: CodeSelectionRange }) =>
+              onAddToChat({ type: "file", path }),
           }
         : {})}
       onChange={readOnly ? undefined : onChange}

@@ -179,9 +179,7 @@ export async function readBranchDiff(cwd: string): Promise<{ base?: string; diff
   }
 }
 
-export type GitDiffTarget =
-  | Exclude<DiffTarget, { type: "last-turn" }>
-  | { type: "snapshot"; from: string; to?: string };
+export type GitDiffTarget = DiffTarget;
 
 type VersionSide = {
   text: string;
@@ -300,7 +298,7 @@ export async function readFilePatch(
     const { commit } = await branchMergeBase(cwd, target.base);
     args = ["diff", ...flags, commit, "--", ...paths];
   } else {
-    args = ["diff", ...flags, target.from, ...(target.to ? [target.to] : []), "--", ...paths];
+    throw new Error("Invalid diff target.");
   }
 
   try {
@@ -655,13 +653,6 @@ async function listUntrackedReviewFiles(cwd: string, signal?: AbortSignal): Prom
   return files;
 }
 
-/**
- * Change summary of the working tree relative to `base` (a commit-ish):
- * numstat for tracked paths plus +line counts for NEW untracked files (files
- * that were already untracked at `base` — i.e. present in its snapshot tree —
- * are not double-reported). Powers the composer changes strip (base = HEAD)
- * and per-turn cards (base = the run's pre-checkpoint snapshot).
- */
 export async function getChangeStatsSince(cwd: string, base: string): Promise<WorkingChangeStats> {
   const hasBase = Boolean(await gitSafe(cwd, ["rev-parse", "--verify", `${base}^{commit}`]));
   const tracked = hasBase
@@ -770,13 +761,7 @@ export async function reviewChanges(
     ]);
     return readyReview([...tracked, ...untracked], base);
   }
-  const args = ["diff", "-M", "--raw", "--numstat", "-z", target.from];
-  if (target.to) args.push(target.to);
-  args.push("--");
-  const tracked = await readTrackedReview(cwd, args, false, false, signal);
-  return readyReview(
-    target.to ? tracked : [...tracked, ...(await listUntrackedReviewFiles(cwd, signal))],
-  );
+  throw new Error("Invalid diff target.");
 }
 
 /**
@@ -1031,88 +1016,7 @@ export async function checkoutBranch(
   return { kind: "ok", output: await git(cwd, ["switch", "--track", target]) };
 }
 
-/* ── Agent checkpoints ───────────────────────────────────────────────────
- * A snapshot is a dangling commit of the ENTIRE working tree (tracked +
- * untracked, .gitignore respected) built through a TEMPORARY index file, so
- * HEAD, the user's real index, and checkout files are never touched. A ref under
- * refs/modus/ keeps the chain reachable so `git gc` cannot prune it.
- */
-
-export type CheckoutSnapshot = {
-  commit: string;
-  tree: string;
-};
-
 async function unmergedFiles(cwd: string): Promise<string[]> {
   const output = await git(cwd, ["diff", "--name-only", "--diff-filter=U", "-z"]);
   return output.split("\0").filter(Boolean);
-}
-
-export async function captureCheckoutSnapshot(
-  cwd: string,
-  options: { refName: string; message: string; parent?: string | undefined },
-): Promise<CheckoutSnapshot> {
-  const { mkdtemp, rm } = await import("node:fs/promises");
-  const { tmpdir } = await import("node:os");
-  const indexDir = await mkdtemp(join(tmpdir(), "modus-snapshot-"));
-  const indexFile = join(indexDir, "index");
-  const env = { GIT_INDEX_FILE: indexFile };
-
-  try {
-    await git(cwd, ["add", "-A", "--", "."], env);
-    const tree = (await git(cwd, ["write-tree"], env)).trim();
-    const commitArgs = ["commit-tree", tree, "-m", options.message];
-    if (options.parent) {
-      commitArgs.push("-p", options.parent);
-    }
-    const commit = (
-      await git(cwd, commitArgs, {
-        ...env,
-        // commit-tree requires an identity even when the user never set one.
-        GIT_AUTHOR_NAME: "Modus",
-        GIT_AUTHOR_EMAIL: "checkpoint@modus.local",
-        GIT_COMMITTER_NAME: "Modus",
-        GIT_COMMITTER_EMAIL: "checkpoint@modus.local",
-      })
-    ).trim();
-    await git(cwd, ["update-ref", options.refName, commit]);
-    return { commit, tree };
-  } finally {
-    await rm(indexDir, { recursive: true, force: true }).catch(() => {});
-  }
-}
-
-/**
- * Make the checkout match a snapshot exactly: restore every file recorded
- * in the snapshot (index + working tree) and delete files that were created since.
- * Ignored files are left alone.
- */
-export async function restoreCheckoutSnapshot(cwd: string, commit: string): Promise<void> {
-  const { rm } = await import("node:fs/promises");
-
-  const snapshotFiles = new Set(
-    (await git(cwd, ["ls-tree", "-r", "--name-only", "-z", commit])).split("\0").filter(Boolean),
-  );
-  const currentFiles = (
-    await git(cwd, ["ls-files", "--cached", "--others", "--exclude-standard", "-z"])
-  )
-    .split("\0")
-    .filter(Boolean);
-
-  for (const file of currentFiles) {
-    if (!snapshotFiles.has(file)) {
-      assertSafeRelativePath(file);
-      await rm(join(cwd, file), { force: true }).catch(() => {});
-      await git(cwd, ["rm", "--cached", "--ignore-unmatch", "--quiet", "--", file]).catch(() => {});
-    }
-  }
-
-  if (snapshotFiles.size > 0) {
-    await git(cwd, ["restore", "--source", commit, "--staged", "--worktree", "--", ":/"]);
-  }
-}
-
-/** Drop the ref that keeps a session's checkpoint chain alive (cleanup on delete). */
-export async function deleteSnapshotRef(cwd: string, refName: string): Promise<void> {
-  await gitSafe(cwd, ["update-ref", "-d", refName]);
 }

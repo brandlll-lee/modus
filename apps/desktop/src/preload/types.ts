@@ -1,28 +1,15 @@
 import type {
-  AddDocInput,
   AgentEvent,
-  AgentMode,
-  AgentReviewDepth,
-  AgentReviewResult,
-  AgentRollbackResult,
   AgentRunInfo,
   AgentSessionInfo,
-  ApprovalMode,
-  ApprovalModeState,
   BrowserBounds,
   BrowserEvent,
   BrowserRecentInfo,
   BrowserTabInfo,
-  CheckpointInfo,
-  ContextItem,
-  ContextKind,
-  ContextSuggestion,
   ContextUsageInfo,
   DiffFilePatch,
   DiffReview,
   DiffTarget,
-  DocHit,
-  DocSource,
   FileDiff,
   FileEntry,
   FileReadResult,
@@ -34,19 +21,14 @@ import type {
   GitCommit,
   GitCommitResult,
   GitStatusSummary,
-  ManagedProcessInfo,
-  ManagedProcessOrigin,
   ModelInfo,
   ModelProviderDetail,
   ModelSettingsState,
-  PermissionAction,
-  PermissionDecision,
   PreviewReadResult,
   PromptDelivery,
   PromptImageAttachment,
   QuestionAnswer,
   QuestionResponse,
-  ResolvedContext,
   SkillSelection,
   SkillState,
   TerminalEvent,
@@ -62,19 +44,6 @@ export type SecurityState = {
   nodeIntegration: boolean;
   sandbox: boolean;
   senderValidation: boolean;
-};
-
-/** Resolved Modus theme tokens forwarded to the in-page Design Mode overlay. */
-export type DesignModeTheme = {
-  accent: string;
-  accentContrast: string;
-  surface: string;
-  elevated: string;
-  fg: string;
-  fgSubtle: string;
-  fontFamily: string;
-  border: string;
-  shadow: string;
 };
 
 export type ModusApi = {
@@ -114,6 +83,7 @@ export type ModusApi = {
     }): Promise<AgentSessionInfo>;
     list(input?: { includeSessionId?: string | undefined }): Promise<AgentSessionInfo[]>;
     listArchived(workspaceId: string): Promise<AgentSessionInfo[]>;
+    commands(sessionId: string): Promise<Array<{ name: string; description: string }>>;
     listEvents(
       sessionId: string,
     ): Promise<Array<{ id: string; event: AgentEvent; createdAt?: string }>>;
@@ -127,26 +97,19 @@ export type ModusApi = {
     prompt(input: {
       sessionId: string;
       message: string;
-      context?: ContextItem[];
+      paths?: string[];
       delivery?: PromptDelivery;
       userMessageId?: string;
       attachments?: PromptImageAttachment[];
       skills?: SkillSelection[];
-      mode?: AgentMode;
       model?: string;
       thinkingLevel?: ThinkingLevel;
       thinkingVariant?: string;
-      /** Set when this prompt is a "Build this plan" action; binds the turn to the plan. */
-      planId?: string;
     }): Promise<void>;
     compact(sessionId: string): Promise<void>;
     abort(sessionId: string): Promise<string[]>;
-    /**
-     * Rewind the session to just before one of its user messages: restores
-     * workspace files from the pre-run snapshot and removes the conversation
-     * from that message onward. Used by the timeline's "edit & resend".
-     */
-    rollback(input: { sessionId: string; userMessageId: string }): Promise<AgentRollbackResult>;
+
+    navigate(input: { sessionId: string; userMessageId: string }): Promise<void>;
     pin(input: { id: string; pinned: boolean }): Promise<AgentSessionInfo | undefined>;
     archive(sessionId: string): Promise<void>;
     restore(sessionId: string): Promise<void>;
@@ -179,15 +142,7 @@ export type ModusApi = {
     list(): Promise<TerminalInfo[]>;
     onEvent(callback: (event: TerminalEvent) => void): () => void;
   };
-  process: {
-    list(input: {
-      workspaceId?: string;
-      sessionId?: string;
-      origin?: ManagedProcessOrigin;
-    }): Promise<ManagedProcessInfo[]>;
-    kill(id: string): Promise<boolean>;
-    onChanged(callback: () => void): () => void;
-  };
+
   browser: {
     listTabs(input: { workspaceId: string }): Promise<BrowserTabInfo[]>;
     createTab(input: { workspaceId: string; url?: string }): Promise<BrowserTabInfo>;
@@ -207,12 +162,7 @@ export type ModusApi = {
     hide(input: { tabId: string }): Promise<void>;
     toggleDevtools(input: { tabId: string }): Promise<BrowserTabInfo>;
     openExternal(input: { tabId: string }): Promise<void>;
-    /** Toggle Design Mode (point-and-select). `theme` carries Modus light/dark tokens. */
-    setDesignMode(input: {
-      tabId: string;
-      enabled: boolean;
-      theme?: DesignModeTheme;
-    }): Promise<BrowserTabInfo>;
+
     find(input: {
       tabId: string;
       query: string;
@@ -230,7 +180,7 @@ export type ModusApi = {
   };
   diff: {
     review(input: { cwd: string; target: DiffTarget }): Promise<DiffReview>;
-    read(input: { cwd: string; path?: string; mode?: FileDiff["mode"] }): Promise<FileDiff>;
+    read(input: { cwd: string; path?: string }): Promise<FileDiff>;
     filePatch(input: {
       cwd: string;
       path: string;
@@ -245,14 +195,6 @@ export type ModusApi = {
     status(cwd: string): Promise<GitStatusSummary>;
     /** File list + ± line counters for the changes strip / apply review. */
     stats(cwd: string): Promise<WorkingChangeStats>;
-    /** File list + ± line counters since a Git commit-ish. */
-    statsSince(input: { cwd: string; base: string }): Promise<WorkingChangeStats>;
-    /**
-     * Session-scoped change summary: changes since this session's baseline
-     * (its first checkpoint), for the composer strip. Empty when the session
-     * has no baseline yet (it has changed nothing).
-     */
-    sessionStats(sessionId: string): Promise<WorkingChangeStats>;
     commitOrPush(input: {
       cwd: string;
       message?: string;
@@ -289,40 +231,12 @@ export type ModusApi = {
     /** Subscribe to debounced repository-change events. Returns an unsubscribe fn. */
     onChanged(callback: (event: GitChangeEvent) => void): () => void;
   };
-  permission: {
-    decide(input: {
-      requestId?: string;
-      sessionId?: string | undefined;
-      action: PermissionAction;
-      target: string;
-      decision: PermissionDecision["decision"];
-    }): Promise<PermissionDecision>;
-    list(): Promise<PermissionDecision[]>;
-    getMode(input?: { cwd?: string }): Promise<ApprovalModeState>;
-    setMode(input: { mode: ApprovalMode; cwd?: string }): Promise<ApprovalModeState>;
-    clearProjectMode(input: { cwd: string }): Promise<ApprovalModeState>;
-  };
   questions: {
-    /** Resolve a pending ask_user request with the user's answers (or a skip). */
     respond(input: {
       requestId: string;
       answers: QuestionAnswer[];
       skipped: boolean;
     }): Promise<QuestionResponse | null>;
-  };
-  context: {
-    search(input: {
-      workspaceId: string;
-      cwd: string;
-      query: string;
-      kind?: ContextKind;
-    }): Promise<ContextSuggestion[]>;
-    resolve(input: { cwd: string; items: ContextItem[] }): Promise<ResolvedContext[]>;
-  };
-  docs: {
-    list(workspaceId: string): Promise<DocSource[]>;
-    add(input: AddDocInput): Promise<DocSource>;
-    search(input: { workspaceId: string; query: string }): Promise<DocHit[]>;
   };
   model: {
     list(): Promise<ModelInfo[]>;
@@ -333,19 +247,6 @@ export type ModusApi = {
     providerDetail(provider: string): Promise<ModelProviderDetail | undefined>;
     openConfig(provider: string): Promise<void>;
     setThinking(input: { model: string; thinkingVariant: string }): Promise<ModelInfo>;
-  };
-  review: {
-    start(input: {
-      cwd: string;
-      sessionId?: string | undefined;
-      workspaceId?: string | undefined;
-      depth?: AgentReviewDepth;
-    }): Promise<AgentReviewResult>;
-    list(cwd: string): Promise<AgentReviewResult[]>;
-  };
-  checkpoint: {
-    list(sessionId: string): Promise<CheckpointInfo[]>;
-    restore(input: { checkpointId: string }): Promise<CheckpointInfo>;
   };
   mcp: {
     commands(sessionId: string): Promise<Array<{ name: string; description?: string }>>;
