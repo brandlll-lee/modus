@@ -1,5 +1,5 @@
 import type { IpcRendererEvent } from "electron";
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type {
   AgentEvent,
   BrowserEvent,
@@ -27,6 +27,8 @@ const api: ModusApi = {
   },
   file: {
     open: (input) => ipcRenderer.invoke("file:open", input),
+    getPath: (file) => webUtils.getPathForFile(file),
+    prepareImage: (input) => ipcRenderer.invoke("file:prepare-image", input),
   },
   agent: {
     create: (input) => ipcRenderer.invoke("agent:create", input),

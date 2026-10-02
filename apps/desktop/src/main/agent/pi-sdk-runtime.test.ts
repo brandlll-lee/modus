@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -135,6 +135,7 @@ vi.mock("./model-service", () => ({
 
 const { getDatabase } = await import("../db/database");
 const { PiSdkRuntime } = await import("./pi-sdk-runtime");
+const { listAgentEvents } = await import("./agent-event-store");
 const { toolRegistry } = await import("./tools/registry");
 const { writePlan, readPlanById } = await import("../plan/plan-store");
 
@@ -524,6 +525,67 @@ describe("PiSdkRuntime", () => {
       sessionId,
       title: "介绍一下你自己",
     });
+  });
+
+  it.each([
+    "normal",
+    "steer",
+    "follow-up",
+  ] as const)("passes image paths to PI for a %s message while keeping GUI previews", async (delivery) => {
+    const sessionId = `session-${crypto.randomUUID()}`;
+    insertSession(sessionId, `workspace-${crypto.randomUUID()}`, join(userData, "missing.jsonl"));
+    const prompt = vi.fn(async (_text: string, _options: Record<string, unknown>) => undefined);
+    const backing = createMockPiSession({ isStreaming: delivery !== "normal", prompt });
+    mocks.createAgentSession.mockResolvedValueOnce({ session: backing });
+    const runtime = new PiSdkRuntime();
+    const uploaded = join(cwd, "original image.png");
+    await writeFile(uploaded, "original image bytes");
+    const bytes = Buffer.from("clipboard bytes");
+    await runtime.prompt(createWindowStub(), {
+      sessionId,
+      delivery,
+      context: [],
+      message: "",
+      attachments: [
+        {
+          type: "image",
+          data: bytes.toString("base64"),
+          mimeType: "image/png",
+          name: "pasted.png",
+        },
+        {
+          type: "image",
+          data: "preview",
+          mimeType: "image/png",
+          path: uploaded,
+          name: "original image.png",
+        },
+      ],
+    });
+    expect(prompt).toHaveBeenCalledOnce();
+    const [text, options] = prompt.mock.calls[0] as [string, Record<string, unknown>];
+    const paths = text.split("\n\n");
+    const pasted = paths[0] as string;
+    try {
+      expect(paths).toEqual([expect.any(String), uploaded]);
+      expect(await readFile(pasted)).toEqual(bytes);
+      expect(await readFile(uploaded, "utf8")).toBe("original image bytes");
+      expect(options).toEqual({
+        source: "rpc",
+        ...(delivery === "normal"
+          ? {}
+          : { streamingBehavior: delivery === "steer" ? "steer" : "followUp" }),
+      });
+      const start = listAgentEvents(sessionId).find(
+        ({ event }) => event.type === "message.started",
+      );
+      expect(start?.event).toMatchObject({
+        attachments: [{ path: pasted, data: bytes.toString("base64") }, { path: uploaded }],
+      });
+    } finally {
+      await unlink(pasted);
+      await runtime.releaseRuntime(sessionId);
+    }
   });
 
   it("publishes SDK context and cumulative usage when a session is restored", async () => {

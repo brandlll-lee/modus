@@ -46,14 +46,12 @@ export const sessionPinSchema = z.object({
   pinned: z.boolean(),
 });
 
-/** ~10 MB of raw image bytes once base64-decoded. */
-const MAX_ATTACHMENT_BASE64_CHARS = 14_000_000;
-
-const promptImageAttachmentSchema = z.object({
+export const promptImageAttachmentSchema = z.object({
   type: z.literal("image"),
-  data: z.string().min(1).max(MAX_ATTACHMENT_BASE64_CHARS),
+  data: z.string().min(1),
   mimeType: z.string().regex(/^image\/[\w.+-]+$/),
   name: z.string().max(256).optional(),
+  path: optionalNonEmptyString,
 });
 
 const skillSelectionSchema = z.object({
@@ -61,23 +59,27 @@ const skillSelectionSchema = z.object({
   path: nonEmptyString,
 });
 
-export const agentPromptSchema = z.object({
-  sessionId: nonEmptyString,
-  message: nonEmptyString,
-  context: z
-    .array(z.unknown())
-    .transform((items) => items as ContextItem[])
-    .optional(),
-  delivery: z.enum(["normal", "steer", "follow-up"]).optional(),
-  userMessageId: optionalNonEmptyString,
-  attachments: z.array(promptImageAttachmentSchema).max(6).optional(),
-  skills: z.array(skillSelectionSchema).max(1).optional(),
-  mode: z.enum(["build", "plan"]).optional(),
-  model: optionalNonEmptyString,
-  thinkingLevel: thinkingLevelSchema.optional(),
-  thinkingVariant: optionalNonEmptyString,
-  planId: optionalNonEmptyString,
-});
+export const agentPromptSchema = z
+  .object({
+    sessionId: nonEmptyString,
+    message: z.string().trim(),
+    context: z
+      .array(z.unknown())
+      .transform((items) => items as ContextItem[])
+      .optional(),
+    delivery: z.enum(["normal", "steer", "follow-up"]).optional(),
+    userMessageId: optionalNonEmptyString,
+    attachments: z.array(promptImageAttachmentSchema).optional(),
+    skills: z.array(skillSelectionSchema).max(1).optional(),
+    mode: z.enum(["build", "plan"]).optional(),
+    model: optionalNonEmptyString,
+    thinkingLevel: thinkingLevelSchema.optional(),
+    thinkingVariant: optionalNonEmptyString,
+    planId: optionalNonEmptyString,
+  })
+  .refine((input) => input.message.length > 0 || Boolean(input.attachments?.length), {
+    message: "A prompt needs text or an image.",
+  });
 
 export const sessionIdSchema = nonEmptyString;
 

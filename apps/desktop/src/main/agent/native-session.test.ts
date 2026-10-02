@@ -229,17 +229,21 @@ it("uses native skill invocation and GUI dialog callbacks after reload", async (
   expect(JSON.stringify(session.messages)).toContain("<skill name=");
 });
 
-it("carries a native read image through the SDK event adapter", async () => {
+it("reads an absolute image path through native PI and carries the result through the SDK adapter", async () => {
   const data =
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
-  writeFileSync(join(root, "fixture.png"), Buffer.from(data, "base64"));
+  const path = join(root, "fixture.png");
+  writeFileSync(path, Buffer.from(data, "base64"));
   faux.setResponses([
-    fauxAssistantMessage(fauxToolCall("read", { path: "fixture.png" }, { id: "native-image" }), {
+    fauxAssistantMessage(fauxToolCall("read", { path }, { id: "native-image" }), {
       stopReason: "toolUse",
     }),
     fauxAssistantMessage("Viewed"),
   ]);
-  await session.prompt("Inspect fixture.png");
+  await session.prompt(path);
+  expect(session.messages.findLast((message) => message.role === "user")).toMatchObject({
+    content: [{ type: "text", text: path }],
+  });
   const result = events.find(
     (event) => event.type === "tool.ended" && event.toolCallId === "native-image",
   );

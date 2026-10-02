@@ -161,10 +161,11 @@ export function Composer({
   };
   const editorRef = useRef<MentionEditorHandle>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const { addFiles, clearImages, images, removeImage, toAttachments, updateImage } =
+  const { addFiles, clearImages, images, isPreparing, removeImage, toAttachments, updateImage } =
     useComposerImages({
       images: activeDraft.images,
       onImagesChange: setImages,
+      onError: setSubmitError,
     });
   const value = activeDraft.value;
   const selectedSkills = activeDraft.selectedSkills;
@@ -210,16 +211,22 @@ export function Composer({
   const slash = useComposerSlash({ actions: slashActions, cwd, sessionId, value: textBeforeCaret });
 
   function send(delivery: PromptDelivery = isRunning ? "steer" : "normal"): void {
-    if (!hasContent || !canSubmit || submitting || stopping || !currentModel?.available) {
+    if (
+      !hasContent ||
+      !canSubmit ||
+      submitting ||
+      stopping ||
+      isPreparing ||
+      !currentModel?.available
+    ) {
       return;
     }
-    // Providers reject empty text blocks, so image-only sends get a stub line.
     const message = hasText
       ? messageFromParts(activeDraft.parts, value.trim())
       : hasSelectedSkills
         ? "Use the selected skill(s)."
         : hasImages
-          ? "See the attached image(s)."
+          ? ""
           : "Use the selected context.";
     const attachments = toAttachments();
     const payload = {
@@ -602,9 +609,9 @@ export function Composer({
           ) : null}
 
           {trailingActions}
-          {submitting && !isRunning ? (
+          {isPreparing || (submitting && !isRunning) ? (
             <span role="status" className="text-xs text-fg-subtle">
-              Preparing
+              {isPreparing ? "Preparing images" : "Preparing"}
             </span>
           ) : null}
 
@@ -636,7 +643,9 @@ export function Composer({
                 animate={{ opacity: 1 }}
                 aria-label="Send"
                 className="flex size-[26px] shrink-0 items-center justify-center rounded-full bg-fg text-canvas transition-colors hover:bg-fg-muted active:scale-[0.94] disabled:bg-chip-strong disabled:text-fg-faint"
-                disabled={!hasContent || !canSubmit || submitting || !currentModel?.available}
+                disabled={
+                  !hasContent || !canSubmit || submitting || isPreparing || !currentModel?.available
+                }
                 exit={{ opacity: 0 }}
                 initial={{ opacity: 0 }}
                 key="send"

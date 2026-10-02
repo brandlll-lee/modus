@@ -7,6 +7,7 @@ import {
   attachTurnActions,
   blockRenderKeys,
   buildBlocks,
+  buildVisibleTimelineBlocks,
   groupTurnWork,
   groupWorkItems,
   segmentTurns,
@@ -29,6 +30,21 @@ function tool(id: string, name: string, complete = true, isError = false) {
 }
 
 describe("buildBlocks", () => {
+  it("keeps an image-only user message visible after events are folded", () => {
+    const attachments = [
+      { type: "image" as const, data: "pixels", mimeType: "image/png", path: "C:/photo.png" },
+    ];
+    const events = optimisticUserPromptEvents({
+      sessionId: "s",
+      userMessageId: "image-user",
+      message: "",
+      attachments,
+    });
+    expect(buildVisibleTimelineBlocks(foldAgentEvents(events))).toEqual([
+      expect.objectContaining({ type: "message", role: "user", content: "", attachments }),
+    ]);
+  });
+
   it("groups consecutive image results separately from commands and intermediate text", () => {
     const image = { type: "image" as const, data: "pixels", mimeType: "image/png" };
     const entries = [

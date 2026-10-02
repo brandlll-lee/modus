@@ -19,6 +19,21 @@ function message(
 }
 
 describe("extractRailEntries", () => {
+  it("uses an image-only message as a turn boundary", () => {
+    const blocks: TimelineBlock[] = [
+      message("u1", "user", "First question"),
+      message("a1", "assistant", "First answer"),
+      message("u2", "user", "", {
+        attachments: [{ type: "image", mimeType: "image/png", data: "pixels", name: "photo.png" }],
+      }),
+      message("a2", "assistant", "Image answer"),
+    ];
+    expect(extractRailEntries(blocks)).toEqual([
+      { key: "u1", userPreview: "First question", assistantPreview: "First answer" },
+      { key: "u2", userPreview: "photo.png", assistantPreview: "Image answer" },
+    ]);
+  });
+
   it("extracts one entry per turn with the assistant reply folded into it", () => {
     const blocks: TimelineBlock[] = [
       message("u1", "user", "make it smaller", { createdAt: 1000 }),
@@ -67,9 +82,7 @@ describe("extractRailEntries", () => {
       { id: "notice", type: "notice", title: "runtime error", body: "x" },
     ];
 
-    expect(extractRailEntries(blocks)).toEqual([
-      { key: "u1", userPreview: "live turn" },
-    ]);
+    expect(extractRailEntries(blocks)).toEqual([{ key: "u1", userPreview: "live turn" }]);
   });
 
   it("keeps entry keys stable when timeline block ids repeat", () => {

@@ -1092,7 +1092,7 @@ export function visibleTimelineBlocks(blocks: TimelineBlock[]): TimelineBlock[] 
     if (block.type !== "message") {
       return true;
     }
-    return block.content.trim().length > 0;
+    return block.content.trim().length > 0 || Boolean(block.attachments?.length);
   });
 }
 

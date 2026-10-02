@@ -39,6 +39,7 @@ export type ImageContent = {
 export type PromptImageAttachment = ImageContent & {
   /** Original file name, shown in the timeline chip. */
   name?: string | undefined;
+  path?: string | undefined;
 };
 
 export type ContextUsageInfo = {

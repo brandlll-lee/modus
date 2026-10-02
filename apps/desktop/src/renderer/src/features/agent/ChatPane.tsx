@@ -391,7 +391,7 @@ export function ChatPane({
     mode?: AgentMode,
     planId?: string,
   ): void {
-    if (!message.trim()) {
+    if (!message.trim() && !attachments?.length) {
       return;
     }
     autoScroll.resume();

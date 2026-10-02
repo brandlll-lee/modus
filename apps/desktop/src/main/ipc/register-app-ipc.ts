@@ -68,6 +68,7 @@ import { addDocSource, listDocSources, searchDocs } from "../docs/docs-service";
 import { listDirectory, readWorkspaceFile, writeWorkspaceFile } from "../files/files-service";
 import { emitFilesEvent, unwatchWorkspace, watchWorkspace } from "../files/files-watcher";
 import { readWorkspacePreview } from "../files/preview-kind";
+import { preparePromptImage } from "../files/prompt-image";
 import {
   checkoutBranch,
   commitOrPush,
@@ -180,6 +181,7 @@ import {
   previewReadSchema,
   processKillSchema,
   processListSchema,
+  promptImageAttachmentSchema,
   questionRespondSchema,
   resourceLocationSchema,
   reviewStartSchema,
@@ -1200,6 +1202,16 @@ export function registerAppIpc({
     assertTrustedSender(event);
     const window = getSenderWindow(event);
     return { maximized: window.isMaximized() };
+  });
+
+  ipcMain.handle(IPC_CHANNELS.filePrepareImage, (event, input) => {
+    assertTrustedSender(event);
+    const image = parseIpcInput(
+      promptImageAttachmentSchema,
+      { ...input, type: "image" },
+      IPC_CHANNELS.filePrepareImage,
+    );
+    return preparePromptImage(image);
   });
 
   ipcMain.handle(IPC_CHANNELS.clipboardWriteImage, (event, input) => {

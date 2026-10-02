@@ -21,6 +21,7 @@ import type {
 import type { ToolProfileName } from "../../shared/tools";
 import { releaseAgentBrowserControl } from "../browser/browser-service";
 import { formatResolvedContext, resolveContext } from "../context/context-service";
+import { preparePromptImage } from "../files/prompt-image";
 import { getChangeStatsSince } from "../git/git-service";
 import { denyPendingQuestionRequestsForSession } from "../interaction/question-broker";
 import { IPC_CHANNELS } from "../ipc/channels";
@@ -569,6 +570,17 @@ export class PiSdkRuntime implements AgentRuntime {
   }
 
   async prompt(window: BrowserWindowType, input: PromptAgentInput): Promise<void> {
+    if (input.attachments?.length) {
+      input = {
+        ...input,
+        attachments: await Promise.all(
+          input.attachments.map(async (image) => ({
+            ...image,
+            path: await preparePromptImage(image),
+          })),
+        ),
+      };
+    }
     const delivery = input.delivery ?? "normal";
     const emit = this.emitToWindow(window);
     let earlyUserMessageId: string | undefined;
@@ -748,11 +760,9 @@ export class PiSdkRuntime implements AgentRuntime {
       console.info(
         `[modus-timing] composeTurnMessage done +${Date.now() - observation.startedAt}ms`,
       );
-      const images = buildTurnImages(input);
       await runWithAgentToolContext(toolContext, () =>
         runtimeSession.session.prompt(message, {
           source: "rpc",
-          ...(images.length > 0 ? { images } : {}),
           ...(delivery !== "normal"
             ? { streamingBehavior: delivery === "follow-up" ? "followUp" : "steer" }
             : {}),
@@ -931,7 +941,12 @@ export class PiSdkRuntime implements AgentRuntime {
   ): Promise<string> {
     const resolved = await resolveContext(runtimeSession.info.cwd, input.context);
     const contextText = formatResolvedContext(resolved);
-    const message = [planModePreamble(input.mode), contextText, input.message]
+    const message = [
+      planModePreamble(input.mode),
+      contextText,
+      input.message,
+      ...(input.attachments ?? []).map((image) => image.path),
+    ]
       .filter(Boolean)
       .join("\n\n");
     if ((input.skills?.length ?? 0) > 1) throw new Error("Choose one skill for this prompt.");
@@ -964,11 +979,9 @@ export class PiSdkRuntime implements AgentRuntime {
     this.emitUserMessage(runtimeSession.emit, input, userMessageId);
     try {
       const message = await this.composeTurnMessage(runtimeSession, input);
-      const images = buildTurnImages(input);
       await runWithAgentToolContext(toolContext, () =>
         runtimeSession.session.prompt(message, {
           source: "rpc",
-          ...(images.length > 0 ? { images } : {}),
           streamingBehavior: delivery === "follow-up" ? "followUp" : "steer",
         }),
       );
@@ -1163,20 +1176,6 @@ export class PiSdkRuntime implements AgentRuntime {
     if (!info) throw new Error(`Model is no longer available: ${id}`);
     return { ...info, thinkingLevel: selected.thinkingLevel };
   }
-}
-
-/**
- * Map the prompt's image attachments to pi's image content shape. Shared by
- * fresh and queued turns.
- */
-function buildTurnImages(
-  input: PromptAgentInput,
-): Array<{ type: "image"; data: string; mimeType: string }> {
-  return (input.attachments ?? []).map((attachment) => ({
-    type: "image" as const,
-    data: attachment.data,
-    mimeType: attachment.mimeType,
-  }));
 }
 
 function createContextUsageEvent(

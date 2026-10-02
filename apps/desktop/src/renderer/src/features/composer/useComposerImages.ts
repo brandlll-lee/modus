@@ -7,14 +7,10 @@ export type ComposerImage = {
   mimeType: string;
   /** Full data: URL — drives <img> previews directly. */
   dataUrl: string;
+  path?: string | undefined;
 };
 
 export type ComposerImageUpdate = ComposerImage[] | ((current: ComposerImage[]) => ComposerImage[]);
-
-/** Mirrors what vision models accept; anything else is silently ignored. */
-const ACCEPTED_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
-export const MAX_COMPOSER_IMAGES = 6;
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
 function readAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -37,31 +33,46 @@ function dataUrlPayload(dataUrl: string): string {
 export function useComposerImages(options?: {
   images?: ComposerImage[];
   onImagesChange?: (update: ComposerImageUpdate) => void;
+  onError?(message: string): void;
 }) {
   const [uncontrolledImages, setUncontrolledImages] = useState<ComposerImage[]>([]);
+  const [pending, setPending] = useState(0);
   const images = options?.images ?? uncontrolledImages;
   const setImages = options?.onImagesChange ?? setUncontrolledImages;
+  const onError = options?.onError;
 
   const addFiles = useCallback(
     async (files: Iterable<File>) => {
-      const accepted: ComposerImage[] = [];
-      for (const file of files) {
-        if (!ACCEPTED_MIME_TYPES.has(file.type) || file.size > MAX_IMAGE_BYTES) {
-          continue;
-        }
-        accepted.push({
-          id: crypto.randomUUID(),
-          name: file.name || "image",
-          mimeType: file.type,
-          dataUrl: await readAsDataUrl(file),
-        });
+      const selected = [...files].filter((file) => file.type.startsWith("image/"));
+      setPending((count) => count + 1);
+      try {
+        const accepted = await Promise.all(
+          selected.map(async (file): Promise<ComposerImage> => {
+            const dataUrl = await readAsDataUrl(file);
+            const path = await window.modus.file.prepareImage({
+              path: window.modus.file.getPath(file) || undefined,
+              data: dataUrlPayload(dataUrl),
+              mimeType: file.type,
+            });
+            return {
+              id: crypto.randomUUID(),
+              name: file.name || "image",
+              mimeType: file.type,
+              dataUrl,
+              path,
+            };
+          }),
+        );
+        if (accepted.length) setImages((current) => [...current, ...accepted]);
+        return accepted.length;
+      } catch (error) {
+        onError?.(error instanceof Error ? error.message : String(error));
+        return 0;
+      } finally {
+        setPending((count) => count - 1);
       }
-      if (accepted.length > 0) {
-        setImages((current) => [...current, ...accepted].slice(0, MAX_COMPOSER_IMAGES));
-      }
-      return accepted.length;
     },
-    [setImages],
+    [setImages, onError],
   );
 
   const removeImage = useCallback(
@@ -72,23 +83,35 @@ export function useComposerImages(options?: {
   );
 
   const updateImage = useCallback(
-    (id: string, dataUrl: string, mimeType = "image/png") => {
-      setImages((current) =>
-        current.map((image) =>
-          image.id === id
-            ? {
-                ...image,
-                dataUrl,
-                mimeType,
-                name: /\.[a-z0-9]+$/i.test(image.name)
-                  ? image.name.replace(/\.[a-z0-9]+$/i, ".png")
-                  : `${image.name}.png`,
-              }
-            : image,
-        ),
-      );
+    async (id: string, dataUrl: string, mimeType = "image/png") => {
+      setPending((count) => count + 1);
+      try {
+        const path = await window.modus.file.prepareImage({
+          data: dataUrlPayload(dataUrl),
+          mimeType,
+        });
+        setImages((current) =>
+          current.map((image) =>
+            image.id === id
+              ? {
+                  ...image,
+                  dataUrl,
+                  mimeType,
+                  path,
+                  name: /\.[a-z0-9]+$/i.test(image.name)
+                    ? image.name.replace(/\.[a-z0-9]+$/i, ".png")
+                    : `${image.name}.png`,
+                }
+              : image,
+          ),
+        );
+      } catch (error) {
+        onError?.(error instanceof Error ? error.message : String(error));
+      } finally {
+        setPending((count) => count - 1);
+      }
     },
-    [setImages],
+    [setImages, onError],
   );
 
   const clearImages = useCallback(() => setImages([]), [setImages]);
@@ -100,9 +123,18 @@ export function useComposerImages(options?: {
         data: dataUrlPayload(image.dataUrl),
         mimeType: image.mimeType,
         name: image.name,
+        path: image.path,
       })),
     [images],
   );
 
-  return { addFiles, clearImages, images, removeImage, toAttachments, updateImage };
+  return {
+    addFiles,
+    clearImages,
+    images,
+    isPreparing: pending > 0,
+    removeImage,
+    toAttachments,
+    updateImage,
+  };
 }

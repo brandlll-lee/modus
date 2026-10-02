@@ -117,7 +117,7 @@ function backfillUserPromptEvents(
 
   for (const run of runs) {
     const messageId = run.user_message_id ?? `user:${run.id}`;
-    if ((userMessageTextById.get(messageId) ?? "").trim()) {
+    if (!run.prompt.trim() || (userMessageTextById.get(messageId) ?? "").trim()) {
       continue;
     }
     const createdAt = run.started_at;

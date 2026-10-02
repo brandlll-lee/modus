@@ -214,7 +214,7 @@ export function App() {
     skills?: SkillSelection[],
     mode?: AgentMode,
   ): Promise<void> {
-    if (!message.trim()) {
+    if (!message.trim() && !attachments?.length) {
       return;
     }
     const session = await createSession(activeWorkspace, model);

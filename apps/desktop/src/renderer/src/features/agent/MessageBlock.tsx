@@ -290,6 +290,7 @@ function attachmentsToComposerImages(
     id: `edit-att-${index}-${attachment.name ?? "image"}`,
     name: attachment.name ?? `image-${index + 1}`,
     mimeType: attachment.mimeType,
+    path: attachment.path,
     dataUrl: `data:${attachment.mimeType};base64,${attachment.data}`,
   }));
 }

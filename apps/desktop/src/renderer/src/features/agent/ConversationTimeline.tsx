@@ -71,14 +71,18 @@ export function extractRailEntries(blocks: TimelineBlock[]): RailEntry[] {
   let currentEntry: RailEntry | undefined;
 
   blocks.forEach((block, blockIndex) => {
-    if (block.type !== "message" || !block.content.trim()) {
+    if (block.type !== "message" || (!block.content.trim() && !block.attachments?.length)) {
       return;
     }
 
     if (block.role === "user") {
       const entry: RailEntry = {
         key: keys[blockIndex] ?? `${block.id}:${blockIndex}`,
-        userPreview: messagePreview(block.content),
+        userPreview: messagePreview(
+          block.content ||
+            block.attachments?.map((image) => image.name ?? "Image").join(", ") ||
+            "",
+        ),
       };
       if (block.createdAt !== undefined) {
         entry.userCreatedAt = block.createdAt;

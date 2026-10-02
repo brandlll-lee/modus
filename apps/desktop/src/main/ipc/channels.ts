@@ -126,6 +126,7 @@ export const IPC_CHANNELS = {
   windowState: "window:state",
   windowStateEvent: "window:state-event",
   clipboardWriteImage: "clipboard:write-image",
+  filePrepareImage: "file:prepare-image",
   dialogSaveImage: "dialog:save-image",
 } as const;
 

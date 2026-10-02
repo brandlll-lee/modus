@@ -102,6 +102,8 @@ export type ModusApi = {
   file: {
     /** Open a workspace file in the OS default app. Path may be relative to cwd or absolute. */
     open(input: { cwd: string; path: string }): Promise<void>;
+    getPath(file: File): string;
+    prepareImage(input: Pick<PromptImageAttachment, "data" | "mimeType" | "path">): Promise<string>;
   };
   agent: {
     create(input: {
