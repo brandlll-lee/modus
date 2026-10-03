@@ -1,15 +1,16 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
-import { basename } from "node:path";
+import { basename, resolve } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import type { AgentSessionInfo } from "../../shared/contracts";
 import { deriveSessionTitle } from "../../shared/session-title";
 import { desktopPreferences, saveDesktopPreferences } from "../preferences/desktop-preferences";
-import { listWorkspaces } from "../workspace/workspace-store";
+import { listWorkspaces, syncSessionWorkspaces } from "../workspace/workspace-store";
 import { sessionDirectory } from "./session-directory";
 
 const sessions = new Map<string, AgentSessionInfo>();
 const managers = new Map<string, SessionManager>();
+let discovery: Promise<void> | undefined;
 
 export function sessionManagerFor(id: string): SessionManager | undefined {
   const current = managers.get(id);
@@ -125,30 +126,51 @@ export function getAgentSession(id: string): AgentSessionInfo | undefined {
   return info;
 }
 
-export async function discoverAgentSessions(): Promise<void> {
-  await Promise.all(
-    listWorkspaces().map(async (workspace) => {
-      const entries = await SessionManager.list(
-        workspace.rootPath,
-        sessionDirectory(workspace.rootPath),
-      );
-      for (const entry of entries) {
-        if ([...sessions.values()].some((info) => info.piSessionFile === entry.path)) continue;
-        sessions.set(entry.id, {
-          id: entry.id,
-          workspaceId: workspace.id,
-          cwd: entry.cwd,
-          title: entry.name || deriveSessionTitle(entry.firstMessage),
-          runtime: "pi-sdk",
-          status: "idle",
-          piSessionId: entry.id,
-          piSessionFile: entry.path,
-          createdAt: entry.created.toISOString(),
-          updatedAt: entry.modified.toISOString(),
-        });
-      }
-    }),
+export function discoverAgentSessions(): Promise<void> {
+  discovery ??= discoverSessions().finally(() => {
+    discovery = undefined;
+  });
+  return discovery;
+}
+
+async function discoverSessions(): Promise<void> {
+  const directories = new Set([
+    sessionDirectory(process.cwd()),
+    ...listWorkspaces().map((workspace) => sessionDirectory(workspace.rootPath)),
+  ]);
+  const lists = await Promise.all(
+    [...directories].map((directory) => SessionManager.listAll(directory)),
   );
+  const entries = [...new Map(lists.flat().map((entry) => [entry.path, entry])).values()];
+  await syncSessionWorkspaces(entries);
+  const workspaces = new Map(
+    listWorkspaces().map((workspace) => [resolve(workspace.rootPath), workspace]),
+  );
+  const byFile = new Map([...sessions.values()].map((info) => [info.piSessionFile, info]));
+  const files = new Set(entries.map((entry) => entry.path));
+  for (const [id, info] of sessions) {
+    if (info.piSessionFile && !files.has(info.piSessionFile) && !managers.has(id))
+      sessions.delete(id);
+  }
+  for (const entry of entries) {
+    const current = byFile.get(entry.path);
+    const workspace = workspaces.get(resolve(entry.cwd));
+    if (!workspace) throw new Error(`Session workspace is not available: ${entry.cwd}`);
+    const id = current?.id ?? entry.id;
+    sessions.set(id, {
+      ...current,
+      id,
+      workspaceId: workspace.id,
+      cwd: entry.cwd,
+      title: entry.name || deriveSessionTitle(entry.firstMessage),
+      runtime: "pi-sdk",
+      status: current?.status ?? "idle",
+      piSessionId: entry.id,
+      piSessionFile: entry.path,
+      createdAt: entry.created.toISOString(),
+      updatedAt: entry.modified.toISOString(),
+    });
+  }
 }
 
 export function touchAgentSession(id: string): string {
@@ -184,13 +206,12 @@ export function updateAgentSessionTitle(id: string, title: string): AgentSession
 }
 
 export function listAgentSessions(): AgentSessionInfo[] {
-  const workspaceIds = new Set(listWorkspaces().map((item) => item.id));
-  return [...sessions.keys()]
-    .map(getAgentSession)
-    .filter(
-      (item): item is AgentSessionInfo =>
-        Boolean(item) && workspaceIds.has(item?.workspaceId ?? ""),
-    )
+  return [...sessions.values()]
+    .map((info) => {
+      const pinnedAt = desktopPreferences().sessions[info.piSessionFile ?? ""]?.pinnedAt;
+      const { pinnedAt: _pin, ...session } = info;
+      return { ...session, ...(pinnedAt ? { pinnedAt } : {}) };
+    })
     .sort(
       (a, b) =>
         (b.pinnedAt ?? "").localeCompare(a.pinnedAt ?? "") ||

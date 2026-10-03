@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { detectPreviewKind, readWorkspacePreview } from "./preview-kind";
+import { detectPreviewKind, readImagePreview, readWorkspacePreview } from "./preview-kind";
 
 /** Synthetic ZIP-like buffer whose local headers contain OOXML part names as plain strings. */
 function zipWithParts(...parts: string[]): Buffer {
@@ -75,4 +75,21 @@ describe("readWorkspacePreview", () => {
     writeFileSync(path, Buffer.from("%PDF-1.4\noversize\n"));
     expect(() => readWorkspacePreview(root, path, { maxBytes: 4 })).toThrow(/too large|limit/i);
   });
+});
+
+it("reads an image outside cwd and resolves relative image paths by cwd", () => {
+  const cwd = join(root, "project");
+  mkdirSync(cwd);
+  const file = join(root, "result.asset");
+  const bytes = Buffer.from("GIF89a......");
+  writeFileSync(file, bytes);
+  const absolute = readImagePreview(cwd, file);
+  const relative = readImagePreview(cwd, "../result.asset");
+  expect(absolute.mime).toBe("image/gif");
+  expect(Buffer.from(absolute.bytes)).toEqual(bytes);
+  expect(relative).toEqual(absolute);
+  const document = join(root, "document");
+  writeFileSync(document, "%PDF-1.7");
+  expect(() => readImagePreview(cwd, document)).toThrow("supported image");
+  expect(() => readImagePreview(cwd, join(root, "missing"))).toThrow();
 });

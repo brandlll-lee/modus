@@ -62,12 +62,13 @@ export type ModusApi = {
     /** Rename a project's sidebar label; returns the updated recents. */
     rename(input: { id: string; displayName: string }): Promise<WorkspaceInfo[]>;
     deleteChats(id: string): Promise<SessionDeletionResult[]>;
-    /** Remove a project from Modus (files kept); returns the updated recents. */
+    /** Clear a workspace's desktop preferences; returns the updated workspace list. */
     remove(id: string): Promise<WorkspaceInfo[]>;
     /** Reveal a project's root folder in the OS file manager. */
     reveal(id: string): Promise<void>;
   };
   file: {
+    readImage(input: { cwd: string; path: string }): Promise<PreviewReadResult>;
     /** Open a workspace file in the OS default app. Path may be relative to cwd or absolute. */
     open(input: { cwd: string; path: string }): Promise<void>;
     getPath(file: File): string;

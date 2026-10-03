@@ -5,6 +5,7 @@ import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { desktopPreferences } from "../preferences/desktop-preferences";
+import { getWorkspace, listWorkspaces, removeWorkspace } from "../workspace/workspace-store";
 
 let root: string;
 vi.mock("electron", () => ({ app: { getPath: () => root } }));
@@ -88,6 +89,45 @@ it("discovers a CLI session in the configured native directory", async () => {
       (item) => item.workspaceId === id && item.piSessionId === external.getSessionId(),
     ),
   ).toBe(true);
+});
+
+it("discovers unregistered PI directories and updates their native titles without opening every session", async () => {
+  const cwd = join(root, crypto.randomUUID());
+  const external = SessionManager.create(cwd, join(root, "sessions"));
+  external.appendMessage({ role: "user", content: "Unregistered project", timestamp: Date.now() });
+  external.appendMessage(fauxAssistantMessage("Answer"));
+  const expected = await SessionManager.listAll(join(root, "sessions"));
+  const open = vi.spyOn(SessionManager, "open");
+  try {
+    await Promise.all([discoverAgentSessions(), discoverAgentSessions()]);
+    const session = listAgentSessions().find(
+      (item) => item.piSessionId === external.getSessionId(),
+    );
+    expect(session).toBeDefined();
+    if (!session) throw new Error("Session was not discovered");
+    expect(getWorkspace(session.workspaceId)?.rootPath).toBe(cwd);
+    expect(desktopPreferences().workspaces.some((item) => item.rootPath === cwd)).toBe(false);
+    expect(
+      expected.every((entry) =>
+        listAgentSessions().some((item) => item.piSessionFile === entry.path),
+      ),
+    ).toBe(true);
+    expect(open).not.toHaveBeenCalled();
+    external.appendSessionInfo("Renamed in CLI");
+    await discoverAgentSessions();
+    expect(listAgentSessions().find((item) => item.id === session.id)?.title).toBe(
+      "Renamed in CLI",
+    );
+    removeWorkspace(session.workspaceId);
+    expect(listWorkspaces().some((item) => item.rootPath === cwd)).toBe(true);
+    expect(listAgentSessions().some((item) => item.id === session.id)).toBe(true);
+    unlinkSync(external.getSessionFile()!);
+    await discoverAgentSessions();
+    expect(listAgentSessions().some((item) => item.id === session.id)).toBe(false);
+    expect(listWorkspaces().some((item) => item.rootPath === cwd)).toBe(false);
+  } finally {
+    open.mockRestore();
+  }
 });
 it.each([
   "missing",

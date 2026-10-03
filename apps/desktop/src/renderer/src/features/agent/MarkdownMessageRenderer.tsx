@@ -23,10 +23,11 @@ import {
 import { cn } from "../../lib/cn";
 import { type ThemeMode, useTheme } from "../../lib/theme";
 import { FileRefChip, MarkdownFileCode } from "./FileRefChip";
+import { MarkdownImage } from "./MarkdownImage";
 import { useMarkdownFileNav } from "./markdownFileNav";
 import { normalizeMathDelimiters } from "./normalizeMathDelimiters";
 import { Favicon } from "./toolIcons";
-import { parseModusFileHref, rehypeWorkspaceFileLinks } from "./workspaceFileLinks";
+import { parseModusFileHref, rehypeWorkspaceFiles } from "./workspaceFileLinks";
 
 type MarkdownMessageRendererProps = {
   className?: string | undefined;
@@ -144,7 +145,7 @@ const REMARK_PLUGINS = [...Object.values(defaultRemarkPlugins), remarkBreaks];
  */
 const { raw, sanitize } = defaultRehypePlugins;
 if (!raw || !sanitize) throw new Error("Streamdown rehype defaults are incomplete.");
-const REHYPE_PLUGINS = [raw, rehypeWorkspaceFileLinks, sanitize];
+const REHYPE_PLUGINS = [raw, rehypeWorkspaceFiles, sanitize];
 
 /**
  * Streamdown renders incomplete ```mermaid fences mid-stream; mermaid.parse
@@ -257,6 +258,7 @@ function MarkdownAnchor({
 
 const components: Components = {
   a: MarkdownAnchor,
+  img: MarkdownImage,
   inlineCode: InlineCodeWithFileNav,
 };
 

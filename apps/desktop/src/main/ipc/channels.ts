@@ -11,6 +11,7 @@ export const IPC_CHANNELS = {
   workspaceRemove: "workspace:remove",
   workspaceReveal: "workspace:reveal",
   fileOpen: "file:open",
+  fileReadImage: "file:read-image",
   agentCreate: "agent:create",
   agentList: "agent:list",
   agentCommands: "agent:commands",

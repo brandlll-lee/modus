@@ -27,6 +27,7 @@ const api: ModusApi = {
   },
   file: {
     open: (input) => ipcRenderer.invoke("file:open", input),
+    readImage: (input) => ipcRenderer.invoke("file:read-image", input),
     getPath: (file) => webUtils.getPathForFile(file),
     prepareImage: (input) => ipcRenderer.invoke("file:prepare-image", input),
   },

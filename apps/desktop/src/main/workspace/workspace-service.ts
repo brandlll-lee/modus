@@ -44,10 +44,6 @@ export async function deleteProjectChats(id: string): Promise<SessionDeletionRes
 }
 
 export async function removeProject(id: string): Promise<WorkspaceInfo[]> {
-  const { getAgentRuntime } = await import("../agent/runtime-registry");
-  const { listAgentSessions } = await import("../agent/agent-store");
-  for (const session of listAgentSessions().filter((item) => item.workspaceId === id))
-    await getAgentRuntime().dispose(session.id);
   removeWorkspace(id);
   return listWorkspaces();
 }

@@ -11,7 +11,7 @@ import {
   nativeImage,
   shell,
 } from "electron";
-import type { DiffReview, DiffTarget } from "../../shared/contracts";
+import type { DiffReview } from "../../shared/contracts";
 import { listAgentEvents } from "../agent/agent-history";
 import { listAgentRuns } from "../agent/agent-run-store";
 import {
@@ -51,13 +51,12 @@ import {
 } from "../browser/browser-service";
 import { listDirectory, readWorkspaceFile, writeWorkspaceFile } from "../files/files-service";
 import { emitFilesEvent, unwatchWorkspace, watchWorkspace } from "../files/files-watcher";
-import { readWorkspacePreview } from "../files/preview-kind";
+import { readImagePreview, readWorkspacePreview } from "../files/preview-kind";
 import { preparePromptImage } from "../files/prompt-image";
 import {
   checkoutBranch,
   commitOrPush,
   discardUnstagedFile,
-  type GitDiffTarget,
   getStatusSummary,
   getWorkingChangeStats,
   initRepository,
@@ -225,8 +224,9 @@ export function registerAppIpc({
     return await openWorkspace();
   });
 
-  ipcMain.handle(IPC_CHANNELS.workspaceList, (event) => {
+  ipcMain.handle(IPC_CHANNELS.workspaceList, async (event) => {
     assertTrustedSender(event);
+    await discoverAgentSessions();
     return getRecentWorkspaces();
   });
 
@@ -725,6 +725,12 @@ export function registerAppIpc({
     assertTrustedSender(event);
     const parsed = parseIpcInput(previewReadSchema, input, IPC_CHANNELS.previewRead);
     return readWorkspacePreview(parsed.cwd, parsed.path);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.fileReadImage, (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(previewReadSchema, input, IPC_CHANNELS.fileReadImage);
+    return readImagePreview(parsed.cwd, parsed.path);
   });
 
   ipcMain.handle(IPC_CHANNELS.gitBranches, async (event, cwd: string) => {

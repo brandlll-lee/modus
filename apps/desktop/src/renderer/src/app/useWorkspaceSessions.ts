@@ -31,8 +31,14 @@ export function useWorkspaceSessions(setSettingsOpen: (open: boolean) => void) {
       let version: number;
       do {
         version = refreshVersionRef.current;
-        const sessions = await window.modus.agent.list();
-        if (version === refreshVersionRef.current) setAgentSessions(sessions);
+        const [sessions, directories] = await Promise.all([
+          window.modus.agent.list(),
+          window.modus.workspace.list(),
+        ]);
+        if (version === refreshVersionRef.current) {
+          setWorkspaces(directories);
+          setAgentSessions(sessions);
+        }
       } while (version !== refreshVersionRef.current);
     };
     refreshRef.current = refresh().finally(() => {

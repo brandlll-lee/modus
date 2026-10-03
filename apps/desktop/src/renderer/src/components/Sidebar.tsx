@@ -711,7 +711,7 @@ function ProjectActions({
               Delete chats
             </ProjectMenuItem>
             <ProjectMenuItem danger icon={<IconX size={15} stroke={1.7} />} onClick={onRemove}>
-              Remove
+              Remove from recents
             </ProjectMenuItem>
           </Menu.Popup>
         </Menu.Positioner>

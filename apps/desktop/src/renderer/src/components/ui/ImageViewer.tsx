@@ -109,12 +109,14 @@ export function ImageThumb({
   className,
   onSaveEdited,
   title,
+  onError,
 }: {
   src: string;
   alt: string;
   className?: string;
   onSaveEdited?: (dataUrl: string) => void;
   title?: string | undefined;
+  onError?: (() => void) | undefined;
 }) {
   const { open } = useImageViewer();
   const imgRef = useRef<HTMLImageElement>(null);
@@ -145,6 +147,7 @@ export function ImageThumb({
         alt={alt}
         className={cn("cursor-zoom-in", className)}
         draggable={false}
+        onError={onError}
         ref={imgRef}
         src={src}
         {...(title ? { title } : {})}

@@ -4,7 +4,7 @@
  */
 
 import { readFileSync, statSync } from "node:fs";
-import { relative, resolve } from "node:path";
+import { dirname, relative, resolve } from "node:path";
 import type { PreviewKind, PreviewReadResult } from "../../shared/contracts";
 import { resolveWithin } from "./path-within";
 
@@ -110,4 +110,11 @@ export function readWorkspacePreview(
     mime: mimeForPreview(previewKind, bytes),
     bytes: new Uint8Array(bytes),
   };
+}
+
+export function readImagePreview(cwd: string, path: string): PreviewReadResult {
+  const abs = resolve(cwd, path);
+  const preview = readWorkspacePreview(dirname(abs), abs);
+  if (preview.previewKind !== "image") throw new Error("File is not a supported image.");
+  return preview;
 }

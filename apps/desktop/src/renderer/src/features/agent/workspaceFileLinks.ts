@@ -22,9 +22,9 @@ export function workspacePathFromHref(href: string): string | undefined {
   }
   let path = href;
   if (path.startsWith("file:")) {
-    path = decodeURIComponent(path.replace(/^file:\/\//i, ""));
-    if (path.startsWith("/")) {
-      // file:///F:/x → /F:/x → F:/x
+    const url = new URL(path);
+    path = decodeURIComponent(url.hostname ? `//${url.hostname}${url.pathname}` : url.pathname);
+    if (/^\/[a-zA-Z]:/.test(path)) {
       path = path.slice(1);
     }
   } else if (path.startsWith("/") && /^\/[a-zA-Z]:/.test(path)) {
@@ -48,25 +48,35 @@ export function parseModusFileHref(href: string | undefined): string | undefined
   }
 }
 
+export function workspaceImagePath(src: string): string | undefined {
+  const path = workspacePathFromHref(src);
+  if (src.startsWith("file:")) return path;
+  if (!src || (!path && /^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(src))) return undefined;
+  try {
+    return decodeURIComponent(path ?? src);
+  } catch {
+    return path ?? src;
+  }
+}
+
 /**
  * Before sanitize: rewrite workspace path hrefs to the https sentinel so they
  * are not stripped (f: scheme) and rehype-harden never emits " [blocked]".
  */
-export function rehypeWorkspaceFileLinks() {
+export function rehypeWorkspaceFiles() {
   return (tree: Root) => {
     visit(tree, "element", (node) => {
-      if (node.tagName !== "a") {
-        return;
-      }
-      const href = node.properties?.href;
+      const property = node.tagName === "a" ? "href" : node.tagName === "img" ? "src" : undefined;
+      if (!property) return;
+      const href = node.properties?.[property];
       if (typeof href !== "string") {
         return;
       }
-      const path = workspacePathFromHref(href);
+      const path = node.tagName === "img" ? workspaceImagePath(href) : workspacePathFromHref(href);
       if (!path) {
         return;
       }
-      node.properties.href = toModusFileHref(path);
+      node.properties[property] = toModusFileHref(path);
     });
   };
 }
