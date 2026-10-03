@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fauxAssistantMessage, fauxProvider, InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import { ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
 import type { BrowserWindow } from "electron";
@@ -12,6 +12,7 @@ let root: string;
 let models: ModelRuntime;
 const faux = fauxProvider({ tokensPerSecond: 0 });
 const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
+const originalSessionDir = process.env.PI_CODING_AGENT_SESSION_DIR;
 vi.mock("electron", () => ({
   app: { getPath: () => root },
   shell: { openPath: vi.fn(), openExternal: vi.fn() },
@@ -58,6 +59,7 @@ const window = {
 beforeAll(async () => {
   root = mkdtempSync(join(tmpdir(), "modus-runtime-native-"));
   process.env.PI_CODING_AGENT_DIR = join(root, "agent");
+  process.env.PI_CODING_AGENT_SESSION_DIR = join(root, "sessions");
   mkdirSync(process.env.PI_CODING_AGENT_DIR);
   writeFileSync(
     join(process.env.PI_CODING_AGENT_DIR, "settings.json"),
@@ -79,10 +81,15 @@ beforeAll(async () => {
   await models.refresh({ allowNetwork: false });
 }, 30000);
 afterAll(async () => {
-  await runtime.shutdown();
-  if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-  else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
-  rmSync(root, { recursive: true, force: true });
+  try {
+    await runtime.shutdown();
+  } finally {
+    if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
+    if (originalSessionDir === undefined) delete process.env.PI_CODING_AGENT_SESSION_DIR;
+    else process.env.PI_CODING_AGENT_SESSION_DIR = originalSessionDir;
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 function workspace() {
   const id = crypto.randomUUID(),
@@ -116,6 +123,11 @@ it("shows the real session and preparing feedback before native initialization f
     events.some((event) => event.type === "message.started" && event.messageId === "early"),
   ).toBe(true);
   await pending;
+  const file = getAgentSession(session.id)?.piSessionFile;
+  expect(file).toBeDefined();
+  if (!file) throw new Error("Session file was not persisted");
+  expect(dirname(file)).toBe(join(root, "sessions"));
+  expect(SessionManager.open(file).getCwd()).toBe(cwd);
   expect(
     listAgentEvents(session.id).filter(
       ({ event }) => event.type === "message.started" && event.role === "user",
