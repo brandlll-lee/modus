@@ -470,14 +470,13 @@ export function Composer({
           {!hasText && !hasInlineTokens && !isComposing ? (
             <div
               aria-hidden
-              className="pointer-events-none absolute inset-x-0 top-0 px-4 pt-3 text-md font-light text-fg-placeholder leading-normal"
+              className="composer-text pointer-events-none absolute inset-x-0 top-0 text-fg-subtle"
             >
               {COMPOSER_PLACEHOLDER}
             </div>
           ) : null}
-          {/* One typing line + airy pad (top/bottom) — not a multi-line empty runway. */}
           <MentionEditor
-            className="min-h-[68px] px-4 pt-4 pb-2 text-md font-normal text-fg leading-normal"
+            className="composer-text min-h-[68px] pb-2 text-fg"
             contextItems={contextItems}
             onChange={handleEditorChange}
             onKeyDown={handleKeyDown}

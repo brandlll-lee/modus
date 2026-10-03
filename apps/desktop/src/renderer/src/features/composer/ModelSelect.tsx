@@ -57,15 +57,15 @@ export function ModelSelect({
             <Combobox.Popup
               aria-label="Models"
               initialFocus={false}
-              className="popup-chrome selection-surface p-1.5"
+              className="popup-chrome selection-surface"
             >
               <Combobox.Input
                 aria-label="Search models"
                 placeholder="Search models"
-                className="search-control mb-1 h-9 w-full shrink-0 rounded-md border border-hairline bg-canvas px-3 text-sm"
+                className="search-control px-3"
               />
-              <Combobox.Empty className="p-4 text-sm text-fg-subtle">
-                No matching models
+              <Combobox.Empty>
+                <div className="p-4 text-sm text-fg-subtle">No matching models</div>
               </Combobox.Empty>
               <ModelOptions virtualizerRef={virtualizerRef} />
             </Combobox.Popup>
@@ -135,8 +135,8 @@ function ModelOptions({
               aria-setsize={items.length}
               aria-posinset={row.index + 1}
               disabled={!item.available}
-              className="absolute top-0 left-0 flex h-14 w-full cursor-default items-center gap-2 rounded-md px-2 py-2 text-sm outline-none data-highlighted:bg-hover data-disabled:opacity-40"
-              style={{ transform: `translateY(${row.start}px)` }}
+              className="absolute top-0 left-0 flex w-full cursor-default items-center gap-2 rounded-md px-2 text-sm outline-none data-highlighted:bg-hover data-disabled:opacity-40"
+              style={{ height: row.size, transform: `translateY(${row.start}px)` }}
             >
               <ProviderLogo
                 provider={item.provider}
@@ -150,9 +150,11 @@ function ModelOptions({
                   {item.providerName ?? item.provider}
                 </span>
               </span>
-              <Combobox.ItemIndicator>
-                <IconCheck size={15} />
-              </Combobox.ItemIndicator>
+              <span className="flex w-4 shrink-0 justify-center">
+                <Combobox.ItemIndicator>
+                  <IconCheck size={15} />
+                </Combobox.ItemIndicator>
+              </span>
             </Combobox.Item>
           );
         })}
