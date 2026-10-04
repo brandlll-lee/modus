@@ -248,8 +248,6 @@ export function ChatPane({
     setPendingPrompt(true);
     const mergedAttachments = attachments ?? [];
     const paths = context.map((item) => item.path);
-    const turnModel = models.find((item) => item.id === paneModel);
-    const turnThinking = turnModel?.thinkingVariant ?? turnModel?.thinkingLevel;
     const userMessageId = `local-user:${crypto.randomUUID()}`;
     setEnteringMessageId(userMessageId);
     setAgentEvents((events) =>
@@ -274,8 +272,6 @@ export function ChatPane({
         userMessageId,
         ...(mergedAttachments.length > 0 ? { attachments: mergedAttachments } : {}),
         ...(skills && skills.length > 0 ? { skills } : {}),
-        ...(paneModel ? { model: paneModel } : {}),
-        ...(turnThinking ? { thinkingVariant: turnThinking } : {}),
       })
       .then(() => onSessionsChanged())
       .catch((error: unknown) => {
@@ -336,16 +332,6 @@ export function ChatPane({
     setAgentEvents(await window.modus.agent.listEvents(sessionId));
     onSessionsChanged();
     submitPrompt(message, contextItems ?? [], "normal", attachments, skills);
-  }
-
-  async function changeModel(nextModel: string): Promise<void> {
-    if (!nextModel) {
-      return;
-    }
-    onModelChange(nextModel);
-    await window.modus.model.setDefault(nextModel);
-    await window.modus.agent.setModel({ sessionId, model: nextModel });
-    onSessionsChanged();
   }
 
   return (
@@ -417,7 +403,7 @@ export function ChatPane({
               onCompact={() => window.modus.agent.compact(sessionId)}
               onContextChange={setContextItems}
               onDraftChange={setComposerFields}
-              onModelChange={(next) => void changeModel(next)}
+              onModelChange={onModelChange}
               onModelConfigChange={onModelConfigChange}
               onSubmit={submitPrompt}
               workspaceId={workspace?.id}

@@ -3,7 +3,7 @@ import type {
   AgentEvent,
   AgentRunInfo,
   AgentSessionInfo,
-  ContextUsageInfo,
+  AgentSessionSnapshot,
   ModelInfo,
   ModelSettingsState,
   PromptDelivery,
@@ -39,10 +39,7 @@ export type AgentRuntime = {
   assertIdle(): void;
   reloadConfiguration(): Promise<ModelSettingsState>;
   create(window: BrowserWindowType, input: CreateAgentRuntimeInput): Promise<AgentSessionInfo>;
-  ensure(
-    window: BrowserWindowType,
-    sessionId: string,
-  ): Promise<AgentSessionInfo & { contextUsage?: ContextUsageInfo }>;
+  ensure(window: BrowserWindowType, sessionId: string): Promise<AgentSessionSnapshot>;
   prompt(window: BrowserWindowType, input: PromptAgentInput): Promise<void>;
   navigate(window: BrowserWindowType, sessionId: string, messageId: string): Promise<void>;
   compact(window: BrowserWindowType, sessionId: string): Promise<void>;
@@ -56,7 +53,12 @@ export type AgentRuntime = {
     sessionId: string,
     model: string,
     thinkingVariant?: string,
-  ): Promise<AgentSessionInfo>;
+  ): Promise<AgentSessionSnapshot>;
+  setThinking(
+    window: BrowserWindowType,
+    sessionId: string,
+    thinkingVariant: string,
+  ): Promise<AgentSessionSnapshot>;
   cycleModel(
     window: BrowserWindowType | undefined,
     sessionId: string | undefined,

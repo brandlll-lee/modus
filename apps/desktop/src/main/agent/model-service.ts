@@ -198,10 +198,6 @@ export function getModelThinkingLevel(reference: string | undefined): ThinkingLe
   return getModelInfo(reference)?.thinkingLevel ?? "off";
 }
 
-export function getModelThinkingVariant(reference: string | undefined): string | undefined {
-  return getModelInfo(reference)?.thinkingVariant;
-}
-
 export function toPiThinkingLevel(level: ThinkingLevel): ThinkingLevel {
   return level;
 }

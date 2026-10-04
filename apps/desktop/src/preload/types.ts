@@ -2,11 +2,11 @@ import type {
   AgentEvent,
   AgentRunInfo,
   AgentSessionInfo,
+  AgentSessionSnapshot,
   BrowserBounds,
   BrowserEvent,
   BrowserRecentInfo,
   BrowserTabInfo,
-  ContextUsageInfo,
   DiffFilePatch,
   DiffReview,
   DiffTarget,
@@ -88,7 +88,7 @@ export type ModusApi = {
       sessionId: string,
     ): Promise<Array<{ id: string; event: AgentEvent; createdAt?: string }>>;
     listRuns(sessionId: string): Promise<AgentRunInfo[]>;
-    ensure(sessionId: string): Promise<AgentSessionInfo & { contextUsage?: ContextUsageInfo }>;
+    ensure(sessionId: string): Promise<AgentSessionSnapshot>;
     /**
      * Drop in-memory SDK runtime for this session only (no descendant abort /
      * no DB status rewrite). Used when a ChatPane unmounts while idle.
@@ -117,7 +117,11 @@ export type ModusApi = {
       model: string;
       thinkingLevel?: ThinkingLevel;
       thinkingVariant?: string;
-    }): Promise<AgentSessionInfo>;
+    }): Promise<AgentSessionSnapshot>;
+    setThinking(input: {
+      sessionId: string;
+      thinkingVariant: string;
+    }): Promise<AgentSessionSnapshot>;
     cycleModel(input: {
       sessionId?: string | undefined;
       direction?: "forward" | "backward";

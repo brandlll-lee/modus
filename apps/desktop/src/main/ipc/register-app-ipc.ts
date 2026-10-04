@@ -108,6 +108,7 @@ import {
   agentNavigateSchema,
   agentPromptSchema,
   agentSetModelSchema,
+  agentSetThinkingSchema,
   browserBoundsSchema,
   browserCreateTabSchema,
   browserFindSchema,
@@ -415,6 +416,16 @@ export function registerAppIpc({
       parsed.sessionId,
       parsed.model,
       parsed.thinkingVariant ?? parsed.thinkingLevel,
+    );
+  });
+
+  ipcMain.handle(IPC_CHANNELS.agentSetThinking, async (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(agentSetThinkingSchema, input, IPC_CHANNELS.agentSetThinking);
+    return await getAgentRuntime().setThinking(
+      getSenderWindow(event),
+      parsed.sessionId,
+      parsed.thinkingVariant,
     );
   });
 

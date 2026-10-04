@@ -76,7 +76,7 @@ export function App() {
     activeSession,
     agentSessions,
     refreshSessions,
-    updateSessionTitle,
+    updateSession,
     sessionCreateError,
     setSessionCreateError,
     openWorkspace,
@@ -107,13 +107,7 @@ export function App() {
     dismissNotice,
     restoreError,
     publishLocalAgentEvent,
-  } = useAgentEvents(
-    activeSessionId,
-    refreshSessions,
-    focusSession,
-    updateSessionTitle,
-    !settingsOpen,
-  );
+  } = useAgentEvents(activeSessionId, refreshSessions, focusSession, updateSession, !settingsOpen);
   const {
     models,
     model,
@@ -122,7 +116,7 @@ export function App() {
     reloadConfiguration,
     changeDefaultModel,
     updateModelThinking,
-  } = useModels(activeSession, refreshSessions);
+  } = useModels(activeSession, refreshSessions, updateSession);
   const {
     showSidebar,
     setSidebarOpen,

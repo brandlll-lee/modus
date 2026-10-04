@@ -47,6 +47,7 @@ const api: ModusApi = {
     pin: (input) => ipcRenderer.invoke("agent:pin", input),
     delete: (sessionId) => ipcRenderer.invoke("agent:delete", sessionId),
     setModel: (input) => ipcRenderer.invoke("agent:set-model", input),
+    setThinking: (input) => ipcRenderer.invoke("agent:set-thinking", input),
     cycleModel: (input) => ipcRenderer.invoke("agent:cycle-model", input),
     onEvent: (callback) => {
       const listener = (_event: IpcRendererEvent, payload: unknown) =>

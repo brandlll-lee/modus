@@ -56,6 +56,8 @@ export type ContextUsageInfo = {
   };
 };
 
+export type AgentSessionSnapshot = AgentSessionInfo & { contextUsage?: ContextUsageInfo };
+
 /** Why PI started/finished an auto or manual compaction (authoritative from the SDK). */
 export type CompactionReason = "manual" | "threshold" | "overflow";
 
@@ -224,7 +226,7 @@ export type AgentEvent =
     }
   | { type: "context.updated"; sessionId: string; usage: ContextUsageInfo }
   | { type: "session.status"; sessionId: string; status: SessionRunStatus }
-  | { type: "session.updated"; sessionId: string; title: string }
+  | { type: "session.updated"; sessionId: string; session: AgentSessionSnapshot }
   | {
       type: "extension.notice";
       sessionId: string;

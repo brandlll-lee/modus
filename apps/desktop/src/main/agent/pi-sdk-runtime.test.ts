@@ -10,7 +10,14 @@ import { desktopPreferences } from "../preferences/desktop-preferences";
 
 let root: string;
 let models: ModelRuntime;
-const faux = fauxProvider({ tokensPerSecond: 0 });
+const faux = fauxProvider({
+  tokensPerSecond: 0,
+  models: [
+    { id: "default" },
+    { id: "wide", reasoning: true, contextWindow: 1048576 },
+    { id: "compact", reasoning: true, contextWindow: 272000 },
+  ],
+});
 const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
 const originalSessionDir = process.env.PI_CODING_AGENT_SESSION_DIR;
 vi.mock("electron", () => ({
@@ -26,16 +33,17 @@ vi.mock("./model-service", () => ({
   getModelRuntime: () => Promise.resolve(models),
   refreshRemoteModelCatalog: () => models.refresh({ allowNetwork: false }),
   getModelSettings: () => ({ models: [], providers: [], errors: [] }),
-  findModel: (id: string) =>
-    id === `${faux.getModel().provider}/${faux.getModel().id}` ? faux.getModel() : undefined,
+  findModel: (id: string) => faux.models.find((model) => `${model.provider}/${model.id}` === id),
   modelToId: (model: { provider: string; id: string }) => `${model.provider}/${model.id}`,
-  resolveModelThinking: (model: unknown) => ({ model, thinkingLevel: "off" }),
+  resolveModelThinking: (model: unknown, variant?: string) => ({
+    model,
+    thinkingLevel: variant ?? "off",
+  }),
   listScopedModels: () => Promise.resolve([]),
-  getModelThinkingVariant: () => "off",
   setDefaultModel: vi.fn(),
   setModelThinking: vi.fn(),
   cycleDefaultModel: vi.fn(),
-  getModelInfo: vi.fn(),
+  getModelInfo: (id: string) => ({ id }),
 }));
 
 import { listAgentEvents, readAgentHistory } from "./agent-history";
@@ -45,6 +53,7 @@ import {
   getAgentSession,
   releaseSessionManager,
 } from "./agent-store";
+import { setDefaultModel, setModelThinking } from "./model-service";
 import { PiSdkRuntime } from "./pi-sdk-runtime";
 import { sessionResources } from "./session-resources";
 
@@ -185,6 +194,72 @@ it("uses native model fallback when restoring a recorded unavailable model", asy
   expect(restored.contextUsage?.totals).toBeDefined();
   await runtime.dispose(id);
 }, 30000);
+
+it("keeps model and thinking changes in the native session and restores a consistent snapshot", async () => {
+  const { id, cwd } = workspace();
+  const settingsPath = join(root, "agent", "settings.json");
+  const defaults = readFileSync(settingsPath, "utf8");
+  vi.mocked(setDefaultModel).mockClear();
+  vi.mocked(setModelThinking).mockClear();
+  const session = await runtime.create(window, { workspaceId: id, cwd, title: "Selection" });
+  await runtime.ensure(window, session.id);
+  answer();
+  await runtime.prompt(window, { sessionId: session.id, message: "Save session" });
+  const sdk = sessionResources().find(({ id }) => id === session.id)?.session;
+  const wide = faux.getModel("wide");
+  const compact = faux.getModel("compact");
+  if (!sdk || !wide || !compact) throw new Error("Selection fixture was not initialized");
+  const wideId = `${wide.provider}/${wide.id}`;
+  const compactId = `${compact.provider}/${compact.id}`;
+  try {
+    expect(await runtime.setModel(window, session.id, wideId)).toMatchObject({
+      model: wideId,
+      contextUsage: { contextWindow: wide.contextWindow },
+    });
+    const modelChanges = sdk.sessionManager
+      .getEntries()
+      .filter((entry) => entry.type === "model_change").length;
+    expect(await runtime.setThinking(window, session.id, "high")).toMatchObject({
+      model: wideId,
+      thinkingLevel: "high",
+      contextUsage: { contextWindow: wide.contextWindow },
+    });
+    expect(
+      sdk.sessionManager.getEntries().filter((entry) => entry.type === "model_change"),
+    ).toHaveLength(modelChanges);
+    expect(await runtime.setModel(window, session.id, compactId)).toMatchObject({
+      model: compactId,
+      thinkingLevel: "high",
+      contextUsage: { contextWindow: compact.contextWindow },
+    });
+    const cycled = await runtime.cycleModel(window, session.id);
+    expect(cycled.id).toBe(`${sdk.model?.provider}/${sdk.model?.id}`);
+    await sdk.setModel(wide);
+    sdk.setThinkingLevel("medium");
+    expect(
+      events.findLast(
+        (event) => event.type === "session.updated" && event.sessionId === session.id,
+      ),
+    ).toMatchObject({
+      session: {
+        model: wideId,
+        thinkingLevel: "medium",
+        contextUsage: { contextWindow: wide.contextWindow },
+      },
+    });
+    await runtime.releaseRuntime(session.id);
+    expect(await runtime.ensure(window, session.id)).toMatchObject({
+      model: wideId,
+      thinkingLevel: "medium",
+      contextUsage: { contextWindow: wide.contextWindow },
+    });
+    expect(readFileSync(settingsPath, "utf8")).toBe(defaults);
+    expect(setDefaultModel).not.toHaveBeenCalled();
+    expect(setModelThinking).not.toHaveBeenCalled();
+  } finally {
+    await runtime.dispose(session.id);
+  }
+}, 30000);
 it.each([
   "missing",
   "empty",
@@ -279,7 +354,9 @@ it("reloads native resources, keeps the selected model, and publishes current us
     expect(sdk?.settingsManager.getRetrySettings().maxRetries).toBe(5);
     expect(sdk?.getActiveToolNames()).toContain("write");
     expect(sdk?.model?.id).toBe(faux.getModel().id);
-    expect(events.some((event) => event.type === "context.updated")).toBe(true);
+    expect(
+      events.some((event) => event.type === "session.updated" && event.session.contextUsage),
+    ).toBe(true);
     expect(JSON.stringify(sdk?.state.messages)).toContain("Saved before reload");
   } finally {
     writeFileSync(join(root, "agent", "settings.json"), initial);

@@ -12,7 +12,7 @@ import type {
   AgentEvent,
   AgentRunInfo,
   AgentSessionInfo,
-  ContextUsageInfo,
+  AgentSessionSnapshot,
   ModelInfo,
 } from "../../shared/contracts";
 import { deriveSessionTitle, shouldReplaceSessionTitle } from "../../shared/session-title";
@@ -54,12 +54,9 @@ import {
   findModel,
   getModelInfo,
   getModelRuntime,
-  getModelThinkingVariant,
   listScopedModels,
   modelToId,
   resolveModelThinking,
-  setDefaultModel,
-  setModelThinking,
 } from "./model-service";
 import { createPiEventNormalizer } from "./pi-event-normalizer";
 import type {
@@ -130,6 +127,23 @@ export class PiSdkRuntime implements AgentRuntime {
     }
   }
 
+  private sessionSnapshot(runtime: SdkRuntimeSession): AgentSessionSnapshot {
+    const model = runtime.session.model;
+    runtime.info =
+      updateAgentSessionMetadata(runtime.info.id, {
+        ...(model ? { model: modelToId(model) } : {}),
+        thinkingLevel: runtime.session.thinkingLevel,
+      }) ?? runtime.info;
+    const usage = createContextUsageEvent(runtime.info.id, runtime.session)?.usage;
+    return { ...runtime.info, ...(usage ? { contextUsage: usage } : {}) };
+  }
+
+  private publishSession(runtime: SdkRuntimeSession): AgentSessionSnapshot {
+    const session = this.sessionSnapshot(runtime);
+    runtime.emitVolatile({ type: "session.updated", sessionId: session.id, session });
+    return session;
+  }
+
   private async getOrResume(
     window: BrowserWindowType,
     sessionId: string,
@@ -172,20 +186,16 @@ export class PiSdkRuntime implements AgentRuntime {
 
   async reloadConfiguration() {
     const state = await reloadPiConfiguration(this);
-    for (const session of this.sessions.values()) this.emitContextUsage(session);
+    for (const session of this.sessions.values()) this.publishSession(session);
     return state;
   }
 
-  async ensure(
-    window: BrowserWindowType,
-    sessionId: string,
-  ): Promise<AgentSessionInfo & { contextUsage?: ContextUsageInfo }> {
+  async ensure(window: BrowserWindowType, sessionId: string): Promise<AgentSessionSnapshot> {
     const runtimeSession = await this.getOrResume(window, sessionId);
     if (!runtimeSession) {
       throw new Error(`Agent session not found: ${sessionId}`);
     }
-    const usage = createContextUsageEvent(sessionId, runtimeSession.session)?.usage;
-    return { ...runtimeSession.info, ...(usage ? { contextUsage: usage } : {}) };
+    return this.sessionSnapshot(runtimeSession);
   }
 
   private async createSessionResources(
@@ -203,16 +213,12 @@ export class PiSdkRuntime implements AgentRuntime {
         {
           name: "session-model",
           factory: (pi) => {
-            pi.on("model_select", ({ model }) => {
-              const info = updateAgentSessionMetadata(sessionId, { model: modelToId(model) });
+            const publish = () => {
               const runtime = this.sessions.get(sessionId);
-              if (info && runtime) runtime.info = info;
-              if (info) emit({ type: "session.updated", sessionId, title: info.title });
-            });
-            pi.on("thinking_level_select", () => {
-              const info = getAgentSession(sessionId);
-              if (info) emit({ type: "session.updated", sessionId, title: info.title });
-            });
+              if (runtime) this.publishSession(runtime);
+            };
+            pi.on("model_select", publish);
+            pi.on("thinking_level_select", publish);
           },
         },
       ],
@@ -387,7 +393,7 @@ export class PiSdkRuntime implements AgentRuntime {
       session.dispose();
       throw error;
     }
-    publishContextUsage();
+    this.publishSession(runtimeSession);
     return runtimeSession;
   }
 
@@ -583,7 +589,7 @@ export class PiSdkRuntime implements AgentRuntime {
       const updated = updateAgentSessionTitle(input.sessionId, title);
       if (updated) {
         runtimeSession.info = updated;
-        runtimeSession.emitVolatile({ type: "session.updated", sessionId: input.sessionId, title });
+        this.publishSession(runtimeSession);
       }
     }
     const runInput: Parameters<typeof createAgentRun>[0] = {
@@ -710,7 +716,7 @@ export class PiSdkRuntime implements AgentRuntime {
     if (result.cancelled) throw new Error("Session navigation was cancelled.");
     releaseAgentView(sessionId);
     seedAgentView(sessionId);
-    this.emitContextUsage(runtime);
+    this.publishSession(runtime);
   }
 
   async compact(window: BrowserWindowType, sessionId: string): Promise<void> {
@@ -915,22 +921,14 @@ export class PiSdkRuntime implements AgentRuntime {
     runtimeSession: SdkRuntimeSession,
     modelId: string,
     thinkingVariant?: string,
-  ): Promise<ReturnType<typeof findModel>> {
+  ): Promise<void> {
     const model = findModel(modelId);
     if (!model) throw new Error(`Model is not available: ${modelId}`);
-    const resolved = resolveModelThinking(
-      model,
-      thinkingVariant ?? getModelThinkingVariant(modelId),
-    );
-    await runtimeSession.session.setModel(resolved.model);
-    runtimeSession.session.setThinkingLevel(resolved.thinkingLevel);
-    const updated = updateAgentSessionMetadata(runtimeSession.info.id, {
-      model: modelToId(model),
-    });
-    if (updated) {
-      runtimeSession.info = updated;
+    await runtimeSession.session.setModel(model);
+    if (thinkingVariant !== undefined) {
+      const resolved = resolveModelThinking(model, thinkingVariant);
+      runtimeSession.session.setThinkingLevel(resolved.thinkingLevel);
     }
-    return model;
   }
 
   async setModel(
@@ -938,19 +936,25 @@ export class PiSdkRuntime implements AgentRuntime {
     sessionId: string,
     modelId: string,
     thinkingVariant?: string,
-  ): Promise<AgentSessionInfo> {
-    const runtimeSession = await this.getOrResume(window, sessionId, modelId);
+  ): Promise<AgentSessionSnapshot> {
+    const runtimeSession = await this.getOrResume(window, sessionId);
     if (!runtimeSession) {
       throw new Error(`Unable to set model: ${modelId}`);
     }
-    const model = await this.applyModelSelection(runtimeSession, modelId, thinkingVariant);
-    if (!model) {
-      throw new Error(`Unable to set model: ${modelId}`);
-    }
-    if (thinkingVariant) await setModelThinking({ model: modelToId(model), thinkingVariant });
-    await setDefaultModel(modelToId(model));
-    this.emitContextUsage(runtimeSession);
-    return runtimeSession.info;
+    await this.applyModelSelection(runtimeSession, modelId, thinkingVariant);
+    return this.publishSession(runtimeSession);
+  }
+
+  async setThinking(
+    window: BrowserWindowType,
+    sessionId: string,
+    thinkingVariant: string,
+  ): Promise<AgentSessionSnapshot> {
+    const runtime = await this.getOrResume(window, sessionId);
+    if (!runtime?.session.model) throw new Error(`Agent session has no model: ${sessionId}`);
+    const resolved = resolveModelThinking(runtime.session.model, thinkingVariant);
+    runtime.session.setThinkingLevel(resolved.thinkingLevel);
+    return this.publishSession(runtime);
   }
 
   async cycleModel(
@@ -964,17 +968,14 @@ export class PiSdkRuntime implements AgentRuntime {
 
     const runtimeSession = await this.getOrResume(window, sessionId);
     if (!runtimeSession) {
-      return cycleDefaultModel(direction);
+      throw new Error(`Agent session not found: ${sessionId}`);
     }
 
     const selected = await runtimeSession.session.cycleModel(direction);
     if (!selected)
       throw new Error("No other model is available in this session's native model scope.");
     const id = modelToId(selected.model);
-    const updated = updateAgentSessionMetadata(sessionId, { model: id });
-    if (updated) runtimeSession.info = updated;
-    await setDefaultModel(id);
-    this.emitContextUsage(runtimeSession);
+    this.publishSession(runtimeSession);
     const info = getModelInfo(id);
     if (!info) throw new Error(`Model is no longer available: ${id}`);
     return { ...info, thinkingLevel: selected.thinkingLevel };

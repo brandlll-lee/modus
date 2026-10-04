@@ -27,6 +27,7 @@ export const IPC_CHANNELS = {
   agentPin: "agent:pin",
   agentDelete: "agent:delete",
   agentSetModel: "agent:set-model",
+  agentSetThinking: "agent:set-thinking",
   agentCycleModel: "agent:cycle-model",
   agentEvent: "agent:event",
   // 系统通知点击 → 渲染端把对应会话带到聚焦分栏（main→renderer push）

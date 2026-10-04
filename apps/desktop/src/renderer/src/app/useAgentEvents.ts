@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import type { AgentEvent, ContextUsageInfo, QuestionRequest } from "../../../shared/contracts";
+import type {
+  AgentEvent,
+  AgentSessionInfo,
+  ContextUsageInfo,
+  QuestionRequest,
+} from "../../../shared/contracts";
 import {
   AgentEventHub,
   affectsActivity,
@@ -11,7 +16,7 @@ export function useAgentEvents(
   watchedSessionId: string | undefined,
   refreshSessions: () => Promise<void>,
   setActiveSessionId: (id: string) => void,
-  updateSessionTitle: (sessionId: string, title: string) => void,
+  updateSession: (session: AgentSessionInfo) => void,
   watching = true,
 ) {
   const [notice, setNotice] = useState<Extract<AgentEvent, { type: "extension.notice" }>>();
@@ -60,6 +65,14 @@ export function useAgentEvents(
         }));
         return;
       }
+      if (event.type === "session.updated") {
+        updateSession(event.session);
+        if (event.session.contextUsage) {
+          const usage = event.session.contextUsage;
+          setContextUsageBySession((current) => ({ ...current, [event.sessionId]: usage }));
+        }
+        return;
+      }
       if (
         event.type === "session.status" &&
         event.status.type === "idle" &&
@@ -88,10 +101,8 @@ export function useAgentEvents(
       if (
         event.type === "run.completed" ||
         event.type === "run.failed" ||
-        event.type === "run.cancelled" ||
-        event.type === "session.updated"
+        event.type === "run.cancelled"
       ) {
-        if (event.type === "session.updated") updateSessionTitle(event.sessionId, event.title);
         void refreshSessions();
       }
     });
@@ -105,7 +116,7 @@ export function useAgentEvents(
       unsubscribe();
       unsubscribeFocus();
     };
-  }, [refreshSessions, setActiveSessionId, updateSessionTitle]);
+  }, [refreshSessions, setActiveSessionId, updateSession]);
 
   useEffect(() => {
     if (!activeSessionId) return;
@@ -114,7 +125,9 @@ export function useAgentEvents(
     void window.modus.agent
       .ensure(activeSessionId)
       .then((snapshot) => {
-        if (active && snapshot.contextUsage) {
+        if (!active) return;
+        updateSession(snapshot);
+        if (snapshot.contextUsage) {
           const usage = snapshot.contextUsage;
           setContextUsageBySession((current) => ({ ...current, [activeSessionId]: usage }));
         }
@@ -126,7 +139,7 @@ export function useAgentEvents(
       active = false;
       void window.modus.agent.releaseRuntime(activeSessionId).catch(console.error);
     };
-  }, [activeSessionId]);
+  }, [activeSessionId, updateSession]);
 
   // The open session is "watched": its unread flag clears.
   useEffect(() => {

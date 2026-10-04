@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import type { AgentSessionInfo } from "../../shared/contracts";
+import type { AgentSessionInfo, ThinkingLevel } from "../../shared/contracts";
 import { deriveSessionTitle } from "../../shared/session-title";
 import { desktopPreferences, saveDesktopPreferences } from "../preferences/desktop-preferences";
 import { listWorkspaces, syncSessionWorkspaces } from "../workspace/workspace-store";
@@ -120,6 +120,7 @@ export function getAgentSession(id: string): AgentSessionInfo | undefined {
       header?.timestamp ??
       statSync(memory.piSessionFile ?? "").mtime.toISOString(),
     ...(model ? { model } : {}),
+    thinkingLevel: context.thinkingLevel as ThinkingLevel,
     ...(preference.pinnedAt ? { pinnedAt: preference.pinnedAt } : {}),
   };
   sessions.set(id, info);
@@ -187,7 +188,9 @@ export function updateAgentSessionStatus(id: string, status: AgentSessionInfo["s
 
 export function updateAgentSessionMetadata(
   id: string,
-  metadata: Partial<Pick<AgentSessionInfo, "model" | "piSessionId" | "piSessionFile">>,
+  metadata: Partial<
+    Pick<AgentSessionInfo, "model" | "thinkingLevel" | "piSessionId" | "piSessionFile">
+  >,
 ): AgentSessionInfo | undefined {
   const info = getAgentSession(id);
   if (!info) return undefined;

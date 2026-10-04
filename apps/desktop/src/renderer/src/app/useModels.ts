@@ -4,10 +4,11 @@ import type { AgentSessionInfo, ModelSettingsState } from "../../../shared/contr
 export function useModels(
   activeSession: AgentSessionInfo | undefined,
   refreshSessions: () => Promise<void>,
+  updateSession: (session: AgentSessionInfo) => void,
 ) {
   const [modelSettings, setModelSettings] = useState<ModelSettingsState | null>(null);
   const applyModelSettings = setModelSettings;
-  const model = activeSession?.model ?? modelSettings?.defaultModel ?? "";
+  const model = activeSession ? (activeSession.model ?? "") : (modelSettings?.defaultModel ?? "");
 
   const refreshModelSettings = useCallback(async (): Promise<void> => {
     const settings = await window.modus.model.settings();
@@ -45,11 +46,11 @@ export function useModels(
   async function changeDefaultModel(nextModel: string): Promise<void> {
     if (!nextModel) return;
     if (activeSession) {
-      await window.modus.agent.setModel({
+      const session = await window.modus.agent.setModel({
         sessionId: activeSession.id,
         model: nextModel,
       });
-      await refreshSessions();
+      updateSession(session);
     } else {
       await window.modus.model.setDefault(nextModel);
       await refreshModelSettings();
@@ -58,17 +59,15 @@ export function useModels(
 
   async function updateModelThinking(modelId: string, thinkingVariant: string): Promise<void> {
     if (activeSession) {
-      await window.modus.agent.setModel({
+      const session = await window.modus.agent.setThinking({
         sessionId: activeSession.id,
-        model: modelId,
         thinkingVariant,
       });
-      await refreshSessions();
+      updateSession(session);
     } else {
       await window.modus.model.setThinking({ model: modelId, thinkingVariant });
-      await window.modus.model.setDefault(modelId);
+      await refreshModelSettings();
     }
-    await refreshModelSettings();
   }
 
   const cycleModel = useCallback(
@@ -77,9 +76,9 @@ export function useModels(
         direction,
         sessionId: activeSession?.id,
       });
-      await Promise.all([refreshSessions(), refreshModelSettings()]);
+      if (!activeSession) await refreshModelSettings();
     },
-    [activeSession?.id, refreshSessions, refreshModelSettings],
+    [activeSession, refreshModelSettings],
   );
 
   useEffect(() => {

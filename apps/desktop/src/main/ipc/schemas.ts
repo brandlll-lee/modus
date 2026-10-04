@@ -89,6 +89,11 @@ export const agentCycleModelSchema = z.object({
   direction: z.enum(["forward", "backward"]).optional(),
 });
 
+export const agentSetThinkingSchema = z.object({
+  sessionId: nonEmptyString,
+  thinkingVariant: nonEmptyString,
+});
+
 export const terminalCreateSchema = z.object({
   workspaceId: nonEmptyString,
   cwd: optionalNonEmptyString,

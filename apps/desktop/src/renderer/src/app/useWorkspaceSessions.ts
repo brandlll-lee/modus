@@ -47,9 +47,9 @@ export function useWorkspaceSessions(setSettingsOpen: (open: boolean) => void) {
     return refreshRef.current;
   }, []);
 
-  const updateSessionTitle = useCallback((sessionId: string, title: string): void => {
+  const updateSession = useCallback((updated: AgentSessionInfo): void => {
     setAgentSessions((sessions) =>
-      sessions.map((session) => (session.id === sessionId ? { ...session, title } : session)),
+      sessions.map((session) => (session.id === updated.id ? { ...session, ...updated } : session)),
     );
   }, []);
 
@@ -208,7 +208,7 @@ export function useWorkspaceSessions(setSettingsOpen: (open: boolean) => void) {
     activeSessionIdRef,
     activeSession,
     refreshSessions,
-    updateSessionTitle,
+    updateSession,
     sessionCreateError,
     setSessionCreateError,
     openWorkspace,
