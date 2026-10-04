@@ -203,17 +203,6 @@ export function registerAppIpc({
     return app.getVersion();
   });
 
-  ipcMain.handle(IPC_CHANNELS.securityState, (event) => {
-    assertTrustedSender(event);
-
-    return {
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      senderValidation: true,
-    };
-  });
-
   ipcMain.handle(IPC_CHANNELS.appStartupMetric, (event, input) => {
     assertTrustedSender(event);
     const metric = parseIpcInput(startupMetricSchema, input, IPC_CHANNELS.appStartupMetric);

@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from "vitest";
-import type { SecurityState } from "../../../preload/types";
 import { beginInitialAppHydration, type InitialAppDataSource } from "./initial-hydration";
 
 type Deferred<T> = {
@@ -23,12 +22,10 @@ function deferred<T>(): Deferred<T> {
 
 describe("beginInitialAppHydration", () => {
   it("starts every independent read once and settles after every result completes", async () => {
-    const securityState = deferred<SecurityState>();
     const workspaces = deferred<[]>();
     const sessions = deferred<[]>();
     const modelSettings = deferred<{ providers: []; models: []; errors: [] }>();
     const source = {
-      app: { securityState: vi.fn(() => securityState.promise) },
       workspace: { list: vi.fn(() => workspaces.promise) },
       agent: { list: vi.fn(() => sessions.promise) },
       model: { settings: vi.fn(() => modelSettings.promise) },
@@ -40,17 +37,10 @@ describe("beginInitialAppHydration", () => {
       settled = true;
     });
 
-    expect(source.app.securityState).toHaveBeenCalledOnce();
     expect(source.workspace.list).toHaveBeenCalledOnce();
     expect(source.agent.list).toHaveBeenCalledOnce();
     expect(source.model.settings).toHaveBeenCalledOnce();
 
-    securityState.resolve({
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      senderValidation: true,
-    });
     workspaces.resolve([]);
     sessions.resolve([]);
     await Promise.resolve();

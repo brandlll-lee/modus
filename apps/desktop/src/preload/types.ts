@@ -40,17 +40,9 @@ import type {
 } from "../shared/contracts";
 import type { StartupMetricInput } from "../shared/startup";
 
-export type SecurityState = {
-  contextIsolation: boolean;
-  nodeIntegration: boolean;
-  sandbox: boolean;
-  senderValidation: boolean;
-};
-
 export type ModusApi = {
   app: {
     version(): Promise<string>;
-    securityState(): Promise<SecurityState>;
     startupMetric(input: StartupMetricInput): Promise<void>;
     reloadConfiguration(): Promise<ModelSettingsState>;
   };

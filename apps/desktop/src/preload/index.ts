@@ -7,13 +7,12 @@ import type {
   GitChangeEvent,
   TerminalEvent,
 } from "../shared/contracts";
-import type { ModusApi, SecurityState } from "./types";
+import type { ModusApi } from "./types";
 
 const api: ModusApi = {
   app: {
     reloadConfiguration: () => ipcRenderer.invoke("app:reload-configuration"),
     version: () => ipcRenderer.invoke("app:version") as Promise<string>,
-    securityState: () => ipcRenderer.invoke("app:security-state") as Promise<SecurityState>,
     startupMetric: (input) => ipcRenderer.invoke("app:startup-metric", input),
   },
   workspace: {

@@ -1,7 +1,6 @@
 import { IconLayoutSidebar } from "@tabler/icons-react";
 import { AnimatePresence, domMax, LazyMotion, m, useReducedMotion } from "motion/react";
 import { Activity, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { SecurityState } from "../../../preload/types";
 import type {
   ContextItem,
   PromptDelivery,
@@ -54,7 +53,6 @@ const SettingsPanel = lazy(() =>
 
 export function App() {
   const reduceMotion = useReducedMotion();
-  const [securityState, setSecurityState] = useState<SecurityState | null>(null);
   const [initialEventsBySession, setInitialEventsBySession] = useState<
     Record<string, AgentEventItem[]>
   >({});
@@ -141,7 +139,6 @@ export function App() {
     workspaceId: string | undefined;
   }>({ sessionId: undefined, workspaceId: undefined });
   useInitialHydration({
-    setSecurityState,
     setWorkspaces,
     setActiveWorkspace,
     setAgentSessions,
@@ -539,7 +536,6 @@ export function App() {
                             onRevealConsumed={() => setFilesRevealPath(undefined)}
                             revealPath={filesRevealPath}
                             open={inspectorOpen}
-                            securityState={securityState}
                             tab={inspectorTab}
                             width={inspectorWidth}
                           />

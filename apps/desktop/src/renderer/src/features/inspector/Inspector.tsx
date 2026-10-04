@@ -3,19 +3,15 @@ import {
   IconFileText,
   IconGitBranch,
   IconLayoutSidebarRight,
-  IconShieldCheck,
-  IconShieldX,
   IconTerminal2,
   IconWorld,
 } from "@tabler/icons-react";
 import { animate, m, useMotionValue } from "motion/react";
 import { lazy, type PointerEvent, Suspense, useEffect, useRef, useState } from "react";
-import type { SecurityState } from "../../../../preload/types";
 import type { ContextItem, WorkspaceInfo } from "../../../../shared/contracts";
 import { INSPECTOR_MIN_WIDTH } from "../../components/layout/usePanelLayout";
 import { ChromeMoreMenu } from "../../components/ui/ChromeMoreMenu";
 import { ModusLoadingFallback } from "../../components/ui/ModusLoadingMark";
-import { PanelHeader } from "../../components/ui/Panel";
 import { TOOLBAR_ICON, ToolbarButton } from "../../components/ui/ToolbarButton";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
@@ -26,7 +22,6 @@ type InspectorProps = {
   activeWorkspace: WorkspaceInfo | null;
   cwd?: string | undefined;
 
-  securityState: SecurityState | null;
   open: boolean;
   width: number;
   /** Upper bound from App so the panel can't crush the main column's min width. */
@@ -80,17 +75,11 @@ const TABS = [
     label: "Terminal",
     icon: <IconTerminal2 size={TOOLBAR_ICON.size} stroke={TOOLBAR_ICON.stroke} />,
   },
-  {
-    value: "security",
-    label: "Security",
-    icon: <IconShieldCheck size={TOOLBAR_ICON.size} stroke={TOOLBAR_ICON.stroke} />,
-  },
 ];
 
 export function Inspector({
   activeWorkspace,
   cwd,
-  securityState,
   open,
   width,
   maxWidth,
@@ -304,52 +293,11 @@ export function Inspector({
                     </Suspense>
                   ) : null}
                 </Tabs.Panel>
-                <Tabs.Panel
-                  className="scroll-thin min-h-0 flex-1 overflow-y-auto outline-none"
-                  value="security"
-                >
-                  <SecurityPanel securityState={securityState} />
-                </Tabs.Panel>
               </Tabs.Root>
             </m.div>
           ) : null}
         </>
       ) : null}
     </m.aside>
-  );
-}
-
-function SecurityPanel({ securityState }: { securityState: SecurityState | null }) {
-  return (
-    <div className="flex h-full flex-col">
-      <PanelHeader title="Security" />
-      <div className="space-y-0.5 px-2 py-1">
-        {securityState ? (
-          Object.entries(securityState).map(([key, value]) => (
-            <div
-              className="flex items-center justify-between rounded-lg px-2.5 py-2 transition-colors hover:bg-hover"
-              key={key}
-            >
-              <span className="font-mono text-xs text-fg-muted">{key}</span>
-              <span
-                className={cn(
-                  "flex items-center gap-1.5 text-2xs",
-                  value ? "text-fg-subtle" : "text-danger",
-                )}
-              >
-                {value ? (
-                  <IconShieldCheck size={15} stroke={1.6} />
-                ) : (
-                  <IconShieldX size={15} stroke={1.6} />
-                )}
-                {value ? "enforced" : "off"}
-              </span>
-            </div>
-          ))
-        ) : (
-          <div className="px-2.5 py-2 text-sm text-fg-subtle">Loading preload IPC state…</div>
-        )}
-      </div>
-    </div>
   );
 }

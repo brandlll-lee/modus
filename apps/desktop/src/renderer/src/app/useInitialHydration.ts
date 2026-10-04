@@ -1,5 +1,4 @@
 import { useEffect, useRef } from "react";
-import type { SecurityState } from "../../../preload/types";
 import type {
   AgentSessionInfo,
   ModelSettingsState,
@@ -9,13 +8,11 @@ import { beginInitialAppHydration, type InitialAppHydration } from "./initial-hy
 import { reportRendererStartup } from "./startup-report";
 
 export function useInitialHydration({
-  setSecurityState,
   setWorkspaces,
   setActiveWorkspace,
   setAgentSessions,
   applyModelSettings,
 }: {
-  setSecurityState(state: SecurityState): void;
   setWorkspaces(workspaces: WorkspaceInfo[]): void;
   setActiveWorkspace(workspace: WorkspaceInfo | null): void;
   setAgentSessions(sessions: AgentSessionInfo[]): void;
@@ -38,7 +35,6 @@ export function useInitialHydration({
           if (active) console.error(`Unable to load initial ${resource}.`, error);
         });
     };
-    load("security state", hydration.securityState, setSecurityState);
     load("workspaces", hydration.workspaces, (items) => {
       setWorkspaces(items);
       setActiveWorkspace(items[0] ?? null);
@@ -51,5 +47,5 @@ export function useInitialHydration({
     return () => {
       active = false;
     };
-  }, [setSecurityState, setWorkspaces, setActiveWorkspace, setAgentSessions, applyModelSettings]);
+  }, [setWorkspaces, setActiveWorkspace, setAgentSessions, applyModelSettings]);
 }
