@@ -1,18 +1,3 @@
-/**
- * Structured git errors.
- *
- * Two complementary strategies, in order of preference (no guessing):
- *  1. **Preflight on authoritative state** — callers check `GitStatusSummary`
- *     (no remote / no upstream / detached) and the on-disk `index.lock` BEFORE
- *     running a write, and throw a typed `GitError` with a clear message. This
- *     is the primary path and never depends on parsing prose.
- *  2. **Classify failures** — when git still fails for a reason we could not
- *     preflight, `classifyGitError` maps git's own stderr vocabulary to a code
- *     so the UI can show a friendly, localizable message instead of raw stderr.
- *     This interprets git's authoritative output (like an exit code), not file
- *     names or heuristics.
- */
-
 export type GitErrorCode =
   | "no-remote"
   | "no-upstream"

@@ -73,12 +73,6 @@ export function resolveGitBinary(): string {
 export type RunGitOptions = {
   /** Extra env vars merged over the hardened base (e.g. a temporary index file). */
   env?: Record<string, string> | undefined;
-  /**
-   * Full PATH to expose to the child so user-installed hook binaries (e.g.
-   * `git-lfs` invoked by a `pre-push` hook) resolve. Packaged Electron strips
-   * the user's shell PATH, which is why push/commit must pass it explicitly.
-   */
-  hookPath?: string | undefined;
   signal?: AbortSignal | undefined;
   maxBuffer?: number | undefined;
 };
@@ -87,7 +81,6 @@ function buildEnv(options: RunGitOptions): NodeJS.ProcessEnv {
   return {
     ...process.env,
     ...BASE_ENV,
-    ...(options.hookPath ? { PATH: options.hookPath } : {}),
     ...options.env,
   };
 }
@@ -142,70 +135,4 @@ export async function runGitSafe(
   } catch {
     return "";
   }
-}
-
-/** Like {@link runGitSafe} but preserves trailing whitespace (blob contents are not trimmed). */
-export async function runGitSafeRaw(
-  cwd: string,
-  args: string[],
-  options: RunGitOptions = {},
-): Promise<string> {
-  try {
-    return await runGit(cwd, args, options);
-  } catch {
-    return "";
-  }
-}
-
-/**
- * Run a `git diff`-family command. Diff commands exit 1 (not an error) when
- * differences exist under `--exit-code`/`--quiet`; treat that as success and
- * return stdout. Exit > 1 is a real failure.
- */
-export async function runGitDiff(cwd: string, args: string[]): Promise<string> {
-  try {
-    const { stdout } = await execFileAsync(resolveGitBinary(), [...GLOBAL_ARGS, ...args], {
-      cwd,
-      windowsHide: true,
-      maxBuffer: MAX_BUFFER,
-      env: buildEnv({}),
-    });
-    return stdout;
-  } catch (error) {
-    const e = error as { code?: number; stdout?: string };
-    if (e.code === 1 && typeof e.stdout === "string") {
-      return e.stdout;
-    }
-    throw toGitError(error);
-  }
-}
-
-/** True when a git operation holds the index lock — callers must not write. */
-export function isIndexLocked(gitDir: string): boolean {
-  return existsSync(join(gitDir, "index.lock"));
-}
-
-/* ── Hook PATH (P4) ─────────────────────────────────────────────────────────
- * A packaged GUI app on macOS/Linux does NOT inherit the user's login-shell
- * PATH, so a `pre-push`/`pre-commit` hook that shells out to a user-installed
- * binary (e.g. `git-lfs`, in a Homebrew prefix) fails. We resolve the login
- * shell's PATH once and pass it to hook-running ops. Windows GUIs inherit PATH,
- * so this is a no-op there. Defensive: short timeout, falls back to the current
- * PATH, never throws. */
-let cachedUserPath: string | undefined | null = null;
-
-export async function resolveUserPath(): Promise<string | undefined> {
-  if (process.platform === "win32") return undefined;
-  if (cachedUserPath !== null) return cachedUserPath;
-  const shell = process.env.SHELL || "/bin/bash";
-  try {
-    const { stdout } = await execFileAsync(shell, ["-lc", 'printf %s "$PATH"'], {
-      timeout: 2500,
-      windowsHide: true,
-    });
-    cachedUserPath = stdout.trim() || process.env.PATH;
-  } catch {
-    cachedUserPath = process.env.PATH;
-  }
-  return cachedUserPath;
 }

@@ -99,17 +99,6 @@ const api: ModusApi = {
       return () => ipcRenderer.removeListener("browser:event", listener);
     },
   },
-  diff: {
-    review: (input) => ipcRenderer.invoke("diff:review", input),
-    read: (input) => ipcRenderer.invoke("diff:read", input),
-    filePatch: (input) => ipcRenderer.invoke("diff:file-patch", input),
-    stage: (input) => ipcRenderer.invoke("diff:stage", input),
-    unstage: (input) => ipcRenderer.invoke("diff:unstage", input),
-    discardUnstaged: (input) => ipcRenderer.invoke("diff:discard-unstaged", input),
-    status: (cwd) => ipcRenderer.invoke("diff:status", cwd),
-    stats: (cwd) => ipcRenderer.invoke("diff:stats", cwd),
-    commitOrPush: (input) => ipcRenderer.invoke("diff:commit-or-push", input),
-  },
   files: {
     list: (input) => ipcRenderer.invoke("files:list", input),
     read: (input) => ipcRenderer.invoke("files:read", input),
@@ -129,9 +118,6 @@ const api: ModusApi = {
   git: {
     branches: (cwd) => ipcRenderer.invoke("git:branches", cwd),
     checkout: (input) => ipcRenderer.invoke("git:checkout", input),
-    isRepository: (cwd) => ipcRenderer.invoke("git:is-repository", cwd),
-    init: (cwd) => ipcRenderer.invoke("git:init", cwd),
-    log: (input) => ipcRenderer.invoke("git:log", input),
     watch: (cwd) => ipcRenderer.invoke("git:watch", cwd),
     unwatch: (cwd) => ipcRenderer.invoke("git:unwatch", cwd),
     onChanged: (callback) => {

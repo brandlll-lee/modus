@@ -1,6 +1,6 @@
 import { IconLayoutSidebar } from "@tabler/icons-react";
 import { AnimatePresence, domMax, LazyMotion, m, useReducedMotion } from "motion/react";
-import { Activity, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Activity, lazy, Suspense, useCallback, useMemo, useState } from "react";
 import type {
   ContextItem,
   PromptDelivery,
@@ -31,7 +31,6 @@ import { contextItemKey } from "../features/composer/composerTokens";
 import { useGitBranch } from "../lib/useGitBranch";
 import { RuntimeNotice } from "./RuntimeNotice";
 import { useAgentEvents } from "./useAgentEvents";
-import { useEnvironmentStats } from "./useEnvironmentStats";
 import { useInitialHydration } from "./useInitialHydration";
 import { useModels } from "./useModels";
 import { useWorkspaceSessions } from "./useWorkspaceSessions";
@@ -130,26 +129,14 @@ export function App() {
     sidebarMaxWidth,
     inspectorMaxWidth,
   } = usePanelLayout(Boolean(activeWorkspace));
-  const [inspectorTab, setInspectorTab] = useState("changes");
+  const [inspectorTab, setInspectorTab] = useState("files");
   const [filesRevealPath, setFilesRevealPath] = useState<string | undefined>();
-  const [reviewCwd, setReviewCwd] = useState<string | undefined>();
-
-  const reviewScopeRef = useRef<{
-    sessionId: string | undefined;
-    workspaceId: string | undefined;
-  }>({ sessionId: undefined, workspaceId: undefined });
   useInitialHydration({
     setWorkspaces,
     setActiveWorkspace,
     setAgentSessions,
     applyModelSettings,
   });
-
-  function openReview(cwd?: string): void {
-    setReviewCwd(cwd);
-    setInspectorTab("changes");
-    setInspectorOpen(true);
-  }
 
   async function submitHeroPrompt(
     message: string,
@@ -224,23 +211,6 @@ export function App() {
 
   const activeCwd = activeSession?.cwd ?? activeWorkspace?.rootPath;
   const branch = useGitBranch(activeCwd);
-  const activeRunning = activeSession
-    ? (activityBySession[activeSession.id]?.running ?? false)
-    : false;
-
-  useEffect(() => {
-    const next = { sessionId: activeSessionId, workspaceId: activeWorkspace?.id };
-    if (
-      reviewScopeRef.current.sessionId !== next.sessionId ||
-      reviewScopeRef.current.workspaceId !== next.workspaceId
-    ) {
-      reviewScopeRef.current = next;
-      setReviewCwd(undefined);
-    }
-  }, [activeSessionId, activeWorkspace?.id]);
-
-  const environmentStats = useEnvironmentStats(activeCwd, activeRunning);
-
   const canCreateSession = Boolean(activeWorkspace) && Boolean(model);
   const workspaceById = useMemo(
     () => new Map(workspaces.map((workspace) => [workspace.id, workspace])),
@@ -389,9 +359,7 @@ export function App() {
                             <WorkspaceHeaderActions
                               activeWorkspace={activeWorkspace}
                               branch={branch}
-                              environmentStats={environmentStats}
                               inspectorOpen={responsiveInspectorOpen}
-                              onOpenReview={() => openReview(activeCwd)}
                               onToggleInspector={() => setInspectorOpen((open) => !open)}
                             />
                           </div>
@@ -526,7 +494,7 @@ export function App() {
                         >
                           <Inspector
                             activeWorkspace={activeWorkspace}
-                            cwd={reviewCwd ?? activeCwd}
+                            cwd={activeCwd}
                             maxWidth={inspectorMaxWidth}
                             onOpenChange={setInspectorOpen}
                             onOpenSettings={() => setSettingsOpen(true)}

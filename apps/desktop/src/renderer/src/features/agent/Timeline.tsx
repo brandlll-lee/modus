@@ -366,8 +366,6 @@ export function buildBlocks(agentEvents: AgentEventItem[]): TimelineBlock[] {
         }
         blocks.push(completedBlock);
       }
-      // Per-turn file stats stay on ChangesStrip above the composer (Review),
-      // not as an end-of-turn card in the timeline.
       if (activeRunId === event.runId) {
         activeRunId = undefined;
       }

@@ -1,7 +1,6 @@
 import { Tabs } from "@base-ui/react/tabs";
 import {
   IconFileText,
-  IconGitBranch,
   IconLayoutSidebarRight,
   IconTerminal2,
   IconWorld,
@@ -15,7 +14,6 @@ import { ModusLoadingFallback } from "../../components/ui/ModusLoadingMark";
 import { TOOLBAR_ICON, ToolbarButton } from "../../components/ui/ToolbarButton";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
-import { DiffPanel } from "../diff/DiffPanel";
 import { FilesPanel } from "../files/FilesPanel";
 
 type InspectorProps = {
@@ -56,11 +54,6 @@ const TerminalPanel = lazy(() =>
 
 const TABS = [
   {
-    value: "changes",
-    label: "Changes",
-    icon: <IconGitBranch size={TOOLBAR_ICON.size} stroke={TOOLBAR_ICON.stroke} />,
-  },
-  {
     value: "files",
     label: "Files",
     icon: <IconFileText size={TOOLBAR_ICON.size} stroke={TOOLBAR_ICON.stroke} />,
@@ -95,7 +88,7 @@ export function Inspector({
   const dragStartRef = useRef<{ x: number; width: number } | null>(null);
   const latestWidthRef = useRef(width);
   const [contentVisible, setContentVisible] = useState(open);
-  const [internalTab, setInternalTab] = useState("changes");
+  const [internalTab, setInternalTab] = useState("files");
   const tab = controlledTab ?? internalTab;
   const [browserVisited, setBrowserVisited] = useState(tab === "browser");
   const [terminalVisited, setTerminalVisited] = useState(tab === "terminal");
@@ -260,10 +253,6 @@ export function Inspector({
                     </ToolbarButton>
                   </div>
                 </div>
-
-                <Tabs.Panel className="min-h-0 flex-1 outline-none" value="changes">
-                  <DiffPanel cwd={cwd} workspaceId={activeWorkspace?.id} />
-                </Tabs.Panel>
 
                 <Tabs.Panel className="min-h-0 flex-1 outline-none" value="files">
                   <FilesPanel

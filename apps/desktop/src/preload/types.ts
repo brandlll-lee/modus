@@ -7,10 +7,6 @@ import type {
   BrowserEvent,
   BrowserRecentInfo,
   BrowserTabInfo,
-  DiffFilePatch,
-  DiffReview,
-  DiffTarget,
-  FileDiff,
   FileEntry,
   FileReadResult,
   FilesChangeEvent,
@@ -18,9 +14,6 @@ import type {
   GitActionResult,
   GitBranchSummary,
   GitChangeEvent,
-  GitCommit,
-  GitCommitResult,
-  GitStatusSummary,
   ModelInfo,
   ModelProviderDetail,
   ModelSettingsState,
@@ -35,7 +28,6 @@ import type {
   TerminalEvent,
   TerminalInfo,
   ThinkingLevel,
-  WorkingChangeStats,
   WorkspaceInfo,
 } from "../shared/contracts";
 import type { StartupMetricInput } from "../shared/startup";
@@ -172,31 +164,6 @@ export type ModusApi = {
     deleteRecent(input: { id: string }): Promise<void>;
     onEvent(callback: (event: BrowserEvent) => void): () => void;
   };
-  diff: {
-    review(input: { cwd: string; target: DiffTarget }): Promise<DiffReview>;
-    read(input: { cwd: string; path?: string }): Promise<FileDiff>;
-    filePatch(input: {
-      cwd: string;
-      path: string;
-      target: DiffTarget;
-      originalPath?: string;
-      untracked: boolean;
-      ignoreWhitespace: boolean;
-    }): Promise<DiffFilePatch>;
-    stage(input: { cwd: string; path: string }): Promise<void>;
-    unstage(input: { cwd: string; path: string }): Promise<void>;
-    discardUnstaged(input: { cwd: string; path: string }): Promise<void>;
-    status(cwd: string): Promise<GitStatusSummary>;
-    /** File list + ± line counters for the changes strip / apply review. */
-    stats(cwd: string): Promise<WorkingChangeStats>;
-    commitOrPush(input: {
-      cwd: string;
-      message?: string;
-      commit: boolean;
-      push: boolean;
-      includeUnstaged?: boolean;
-    }): Promise<GitCommitResult>;
-  };
   files: {
     list(input: { cwd: string; dir?: string }): Promise<FileEntry[]>;
     read(input: { cwd: string; path: string }): Promise<FileReadResult>;
@@ -214,10 +181,6 @@ export type ModusApi = {
   git: {
     branches(cwd: string): Promise<GitBranchSummary>;
     checkout(input: { cwd: string; name: string; remote?: boolean }): Promise<GitActionResult>;
-    isRepository(cwd: string): Promise<boolean>;
-    init(cwd: string): Promise<GitActionResult>;
-    /** Recent commit history for the Source Control "All commits" scope. */
-    log(input: { cwd: string; limit?: number }): Promise<GitCommit[]>;
     /** Start live-watching the repo containing cwd (ref-counted). */
     watch(cwd: string): Promise<string | undefined>;
     /** Stop live-watching (ref-counted). */

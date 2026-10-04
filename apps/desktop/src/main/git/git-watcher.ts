@@ -5,19 +5,6 @@ import type { GitChangeEvent } from "../../shared/contracts";
 import { IPC_CHANNELS } from "../ipc/channels";
 import { resolveRepo } from "./git-repo";
 
-/**
- * Live git refresh (Warp-style). Watches a repository's working tree + git dir,
- * debounces a burst of filesystem events into a single notification, and
- * broadcasts a typed `git:event` so the renderer can refresh the Changes panel
- * and commit dialog without the user pressing refresh.
- *
- * Why this is safe against feedback loops: every git *read* in `git-service`
- * runs with `GIT_OPTIONAL_LOCKS=0` and `-c diff.autoRefreshIndex=false`, so
- * merely refreshing status never writes the index — only real writes (commit,
- * stage, fetch) touch the git dir, and those are exactly what we want to react
- * to.
- */
-
 const DEBOUNCE_MS = 400;
 
 type WatchEntry = {

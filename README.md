@@ -32,7 +32,7 @@ Modus is early and currently runs best from source.
 
 - **Workspaces and sessions** - Open local projects, switch recent workspaces, pin projects, and keep separate agent sessions per repo.
 - **Bring your own models** - Configure built-in or custom PI-compatible providers, defaults, reasoning effort, thinking variants, and model limits.
-- **Git workflow** - Review working tree changes, file diffs, branches, commit history, commits, pushes, and change statistics.
+- **Editing diffs** - Inspect PI's native file edit results in the chat.
 - **Terminal, browser, and files** - Use a real PTY terminal, an in-app browser with tabs and DevTools, and a workspace file explorer.
 - **Files and images** - Select local paths and preview images before sending them to PI.
 - **MCP, skills, and extensions** - Use PI resource discovery, project trust, and extension commands.

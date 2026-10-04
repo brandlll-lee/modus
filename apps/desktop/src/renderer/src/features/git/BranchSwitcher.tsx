@@ -16,20 +16,8 @@ type BranchSwitcherProps = {
   disabled?: boolean;
   /** Surface a failed checkout (uncommitted changes, etc.) to the host UI. */
   onError?: (message: string) => void;
-  /** Fired after a successful checkout so the host can refresh derived views. */
-  onAfterSwitch?: () => void;
-  /** Fired when Git says this branch is already checked out in a linked worktree. */
-  onWorktreeBranch?: (path: string, branch: string) => void;
 };
 
-/**
- * Local-branch viewer + switcher shared by the Changes panel and the workspace
- * top bar. Branches load lazily from the authoritative `git branches` listing on
- * open (never inferred); selecting a non-current branch checks it out. The host
- * owns only presentation (the trigger) and side effects (error / refresh) — the
- * menu, loading, busy state, and checkout call live here so every surface that
- * switches branches stays in lockstep.
- */
 export function BranchSwitcher({
   cwd,
   children,
@@ -37,8 +25,6 @@ export function BranchSwitcher({
   align = "start",
   disabled = false,
   onError,
-  onAfterSwitch,
-  onWorktreeBranch,
 }: BranchSwitcherProps) {
   const [open, setOpen] = useState(false);
   const [branchState, setBranchState] = useState<
@@ -77,19 +63,14 @@ export function BranchSwitcher({
       }
       setBusy(name);
       try {
-        const result = await window.modus.git.checkout({ cwd, name });
-        if (result.kind === "worktree" && result.worktreePath) {
-          onWorktreeBranch?.(result.worktreePath, result.branch ?? name);
-          return;
-        }
-        onAfterSwitch?.();
+        await window.modus.git.checkout({ cwd, name });
       } catch (cause) {
         onError?.(cause instanceof Error ? cause.message : String(cause));
       } finally {
         setBusy(undefined);
       }
     },
-    [cwd, onAfterSwitch, onError, onWorktreeBranch],
+    [cwd, onError],
   );
 
   const locals = branches?.local ?? [];

@@ -266,125 +266,6 @@ export type TerminalEvent =
       signal?: number;
     };
 
-export type FileChange = {
-  path: string;
-  status: string;
-  staged?: boolean;
-  unstaged?: boolean;
-  untracked?: boolean;
-  renamedFrom?: string;
-};
-
-export type ReviewFile = FileChange & {
-  added: number;
-  removed: number;
-  binary: boolean;
-};
-
-export type DiffMode = "unstaged" | "staged" | "working-state";
-
-/** Authoritative comparison selected by the Git review panel. */
-export type DiffTarget =
-  | { type: "unstaged" }
-  | { type: "staged" }
-  | { type: "commit"; commit: string }
-  | { type: "branch"; base?: string | undefined };
-
-/** Per-file line counters for change summaries (turn cards / composer strip). */
-export type FileChangeStat = {
-  path: string;
-  /** Lines added ("+" side). 0 for binary files. */
-  added: number;
-  /** Lines removed ("-" side). 0 for binary files. */
-  removed: number;
-  /** True for files git does not track yet (counts come from the file body). */
-  untracked: boolean;
-  /** True when either side of the diff is binary (counters are 0). */
-  binary: boolean;
-};
-
-/**
- * Aggregated change summary — used for the working tree (composer strip,
- * apply review) and for a single completed turn (timeline changes card).
- */
-export type WorkingChangeStats = {
-  files: FileChangeStat[];
-  /** Total lines added across files. */
-  added: number;
-  /** Total lines removed across files. */
-  removed: number;
-  fileCount: number;
-  /** True when the file list was capped for IPC size. */
-  truncated: boolean;
-};
-
-export type DiffTotals = {
-  added: number;
-  removed: number;
-  fileCount: number;
-};
-
-export type DiffReviewReady = {
-  state: "ready";
-  files: ReviewFile[];
-  totals: DiffTotals;
-  /** Branch ref chosen by Git when the caller omitted an explicit base. */
-  resolvedBase?: string;
-};
-
-export type DiffReview = DiffReviewReady | { state: "superseded" };
-
-export type FileDiff = {
-  path: string;
-  diff: string;
-  mode?: DiffMode;
-};
-
-/** Compact single-file patch for the read-only Git review renderer. */
-export type DiffFilePatch = {
-  patch: string;
-  binary: boolean;
-  truncated: boolean;
-  bytes: number;
-  maxLineLength: number;
-};
-
-/** Branch / remote / sync state for the git review panel header + commit dialog. */
-export type GitStatusSummary = {
-  /** Current branch name, or undefined when HEAD is detached. */
-  branch?: string;
-  /** True when at least one remote is configured. */
-  hasRemote: boolean;
-  /** True when the current branch tracks an upstream ref. */
-  hasUpstream: boolean;
-  /** Commits on the current branch not yet on the upstream (push count). */
-  ahead: number;
-  /** Commits on the upstream not yet local (pull count). */
-  behind: number;
-  /** Total +added lines across the working tree (staged + unstaged). */
-  added: number;
-  /** Total -removed lines across the working tree (staged + unstaged). */
-  removed: number;
-  /** Number of staged files. */
-  stagedCount: number;
-  /** Number of unstaged (tracked-modified + untracked) files. */
-  unstagedCount: number;
-  /** True while Git has an unfinished merge in this checkout. */
-  mergeInProgress: boolean;
-  /** Files with unresolved merge entries, when any. */
-  conflictFiles: string[];
-};
-
-/** Result of a commit and/or push action surfaced back to the renderer. */
-export type GitCommitResult = {
-  committed: boolean;
-  pushed: boolean;
-  /** Short commit hash when a commit was created. */
-  commit?: string;
-  /** Human-readable git output (commit + push), shown on error or as a toast. */
-  output: string;
-};
-
 /** A single git branch (local head or remote-tracking ref). */
 export type GitBranch = {
   /** Display + checkout name. Locals are short ("main"); remotes keep the remote prefix ("origin/main"). */
@@ -399,7 +280,7 @@ export type GitBranch = {
   worktreePath?: string;
 };
 
-/** Local + remote branch listing for the commit dialog branch switcher. */
+/** Local and remote branches for the workspace branch selector. */
 export type GitBranchSummary = {
   /** Current branch name, or undefined when HEAD is detached. */
   current?: string;
@@ -418,38 +299,9 @@ export type GitActionResult = {
   worktreePath?: string;
 };
 
-/**
- * Broadcast when a watched repository changes on disk (commit, stage, branch
- * switch, fetch, or a working-tree edit). Drives live refresh of the Changes
- * panel + commit dialog. `kind` is the most-specific area that changed in the
- * debounced burst, so the renderer can refresh narrowly if it wants.
- */
 export type GitChangeEvent = {
   cwd: string;
   kind: "working" | "index" | "head" | "refs" | "remote-refs" | "config" | "lock";
-};
-
-/**
- * One commit in the Source Control "All commits" scope. Files are fetched
- * lazily per commit through `diff.review`, keeping the log payload bounded.
- */
-export type GitCommit = {
-  /** Full 40-char object id (used as the authoritative diff base). */
-  hash: string;
-  /** Abbreviated id for display. */
-  shortHash: string;
-  /** First line of the commit message. */
-  subject: string;
-  /** Author name. */
-  author: string;
-  /** Author date, ISO 8601. */
-  date: string;
-  /** Human relative date ("3 hours ago"), from git itself. */
-  relativeDate: string;
-  /** Parent object ids (`%P`). Empty for root; length ≥ 2 means merge. */
-  parents: string[];
-  /** Ref decorations from git `%D`, already split on `, ` (may include `HEAD -> …`, `tag: …`). */
-  refs: string[];
 };
 
 export type ContextKind = "file" | "folder";

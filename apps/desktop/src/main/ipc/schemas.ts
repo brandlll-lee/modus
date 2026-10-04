@@ -193,29 +193,6 @@ export const mcpCommandSchema = z.object({
   args: z.string(),
 });
 
-export const diffReadSchema = z.object({
-  cwd: nonEmptyString,
-  path: optionalNonEmptyString,
-  mode: z.enum(["unstaged", "staged", "working-state"]).optional(),
-});
-
-export const diffPathSchema = z.object({
-  cwd: nonEmptyString,
-  path: nonEmptyString,
-});
-
-export const diffTargetSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("unstaged") }),
-  z.object({ type: z.literal("staged") }),
-  z.object({ type: z.literal("commit"), commit: nonEmptyString }),
-  z.object({ type: z.literal("branch"), base: optionalNonEmptyString }),
-]);
-
-export const diffReviewSchema = z.object({
-  cwd: nonEmptyString,
-  target: diffTargetSchema,
-});
-
 /**
  * Open a workspace file in the OS default app. `path` is the tool's reported
  * path (relative to cwd or absolute); the handler resolves + sandboxes it.
@@ -224,36 +201,6 @@ export const fileOpenSchema = z.object({
   cwd: nonEmptyString,
   path: nonEmptyString,
 });
-
-export const diffFilePatchSchema = z.object({
-  cwd: nonEmptyString,
-  path: nonEmptyString,
-  target: diffTargetSchema,
-  originalPath: optionalNonEmptyString,
-  untracked: z.boolean(),
-  ignoreWhitespace: z.boolean(),
-});
-
-/** Recent commit history for the All commits scope. */
-export const gitLogSchema = z.object({
-  cwd: nonEmptyString,
-  limit: z.number().int().positive().max(500).optional(),
-});
-
-export const diffCommitOrPushSchema = z
-  .object({
-    cwd: nonEmptyString,
-    message: optionalNonEmptyString,
-    commit: z.boolean(),
-    push: z.boolean(),
-    includeUnstaged: z.boolean().optional(),
-  })
-  .refine((value) => value.commit || value.push, {
-    message: "At least one of commit or push must be requested.",
-  })
-  .refine((value) => !value.commit || (value.message?.trim().length ?? 0) > 0, {
-    message: "Commit message is required when committing.",
-  });
 
 export const gitCheckoutSchema = z.object({
   cwd: nonEmptyString,

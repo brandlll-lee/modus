@@ -1,23 +1,18 @@
 import { Popover } from "@base-ui/react/popover";
 import { IconGitBranch, IconLayoutSidebarRight, IconListDetails } from "@tabler/icons-react";
 import type { WorkspaceInfo } from "../../../shared/contracts";
-import { Button } from "../components/ui/Button";
 import { TOOLBAR_ICON, ToolbarButton } from "../components/ui/ToolbarButton";
 
 export function WorkspaceHeaderActions({
   activeWorkspace,
   branch,
-  environmentStats,
   inspectorOpen,
   onToggleInspector,
-  onOpenReview,
 }: {
   activeWorkspace: WorkspaceInfo | null;
   branch: string | undefined;
-  environmentStats: { added: number; removed: number };
   inspectorOpen: boolean;
   onToggleInspector(): void;
-  onOpenReview(): void;
 }) {
   return (
     <div className="app-no-drag flex h-8 items-center gap-1">
@@ -35,17 +30,6 @@ export function WorkspaceHeaderActions({
                   <IconGitBranch size={15} />
                   {branch ?? "No branch"}
                 </p>
-                <div className="flex items-center justify-between gap-3">
-                  <span className="flex gap-2 font-mono">
-                    <span className="text-success">+{environmentStats.added}</span>
-                    <span className="text-danger">-{environmentStats.removed}</span>
-                  </span>
-                  <Popover.Close
-                    render={<Button disabled={!activeWorkspace} onClick={onOpenReview} />}
-                  >
-                    View changes
-                  </Popover.Close>
-                </div>
               </div>
             </Popover.Popup>
           </Popover.Positioner>

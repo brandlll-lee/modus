@@ -585,14 +585,6 @@ describe("buildBlocks", () => {
     );
   });
 
-  it("omits the changes card for turns without file changes", () => {
-    const blocks = buildBlocks([
-      item("1", { type: "run.started", sessionId: "s", runId: "r", delivery: "normal" }),
-      item("2", { type: "run.completed", sessionId: "s", runId: "r" }),
-    ]);
-    expect(blocks.some((block) => (block as { type: string }).type === "changes")).toBe(false);
-  });
-
   it("creates a fallback assistant message when text deltas arrive without a message start", () => {
     const blocks = buildBlocks([
       item("1", {
